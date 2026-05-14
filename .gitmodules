@@ -1,0 +1,3 @@
+[submodule "cimgo"]
+	path = cimgo
+	url = https://github.com/m-mirz/cimgo.git
