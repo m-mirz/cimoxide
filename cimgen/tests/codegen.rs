@@ -65,7 +65,7 @@ fn cimvalidation_codegen_stable() {
     std::fs::create_dir_all(&shacl_out).unwrap();
 
     let shacl_glob = root.join(
-        "cimgo/application-profiles-library/CGMES/CurrentRelease/SHACL/TTL/*.ttl",
+        "application-profiles-library/CGMES/CurrentRelease/SHACL/TTL/*.ttl",
     );
 
     let status = Command::new(env!("CARGO_BIN_EXE_cimgen"))

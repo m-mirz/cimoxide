@@ -6,7 +6,7 @@ use std::path::Path;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use cimdecoder::CimDataset;
 
-const BASE: &str = "../cimgo/CGMES-Test-Configurations/v3.0/RealGrid/RealGrid-Merged";
+const BASE: &str = "../CGMES-Test-Configurations/v3.0/RealGrid/RealGrid-Merged";
 
 fn load_files() -> Vec<(String, String)> {
     ["RealGrid_EQ.xml", "RealGrid_SSH.xml", "RealGrid_TP.xml", "RealGrid_SV.xml"]

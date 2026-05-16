@@ -5,7 +5,7 @@ mod shacl;
 use std::path::Path;
 
 const DEFAULT_SCHEMA: &str =
-    "cimgo/application-profiles-library/CGMES/CurrentRelease/RDFS/61970-600-2_*-AP-Voc-RDFS2020.rdf";
+    "application-profiles-library/CGMES/CurrentRelease/RDFS/61970-600-2_*-AP-Voc-RDFS2020.rdf";
 const DEFAULT_OUTPUT: &str = "cimstructs/src";
 
 fn main() {

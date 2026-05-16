@@ -1,3 +1,9 @@
 [submodule "cimgo"]
 	path = cimgo
 	url = https://github.com/m-mirz/cimgo.git
+[submodule "application-profiles-library"]
+	path = application-profiles-library
+	url = https://github.com/m-mirz/application-profiles-library.git
+[submodule "CGMES-Test-Configurations"]
+	path = CGMES-Test-Configurations
+	url = https://github.com/m-mirz/CGMES-Test-Configurations.git
