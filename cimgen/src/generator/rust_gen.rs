@@ -12,12 +12,14 @@ pub fn generate_rust(
     fs::create_dir_all(output_dir)?;
 
     set_lang_types(spec);
+    let spec: &CimSpecification = &*spec;
 
     let mut module_ids: Vec<String> = Vec::new();
 
     // Structs
     for (id, t) in &spec.types {
-        let code = render_struct(t);
+        let mut code = render_struct(t);
+        code.push_str(&render_from_block(spec, t));
         let file = output_dir.join(format!("{id}.rs"));
         fs::write(&file, code)?;
         module_ids.push(id.clone());
@@ -45,11 +47,14 @@ pub fn generate_rust(
         module_ids.push(id.clone());
     }
 
-    // base.rs — helper reference types
+    // base.rs — shared runtime types
     fs::write(output_dir.join("base.rs"), BASE_RS)?;
 
     // constants.rs
     fs::write(output_dir.join("constants.rs"), render_constants(spec))?;
+
+    // registry.rs — type-name → from_block dispatch table
+    fs::write(output_dir.join("registry.rs"), render_registry(spec))?;
 
     // lib.rs / mod.rs
     module_ids.sort();
@@ -206,6 +211,7 @@ fn render_lib(ids: &[String]) -> String {
     writeln!(s).unwrap();
     writeln!(s, "pub mod base;").unwrap();
     writeln!(s, "pub mod constants;").unwrap();
+    writeln!(s, "pub mod registry;").unwrap();
     writeln!(s).unwrap();
 
     // Collect unique IDs (struct/enum/alias files may share names in edge cases)
@@ -270,9 +276,197 @@ fn sanitize_variant(label: &str) -> String {
     }
 }
 
+// --- from_block code generation ---------------------------------------------
+
+fn id_obj_path(spec: &CimSpecification, t: &CimType, obj: &str) -> String {
+    let mut depth = 0usize;
+    let mut current = t.super_type.clone();
+    while !current.is_empty() {
+        depth += 1;
+        current = spec
+            .types
+            .get(&current)
+            .map(|p| p.super_type.clone())
+            .unwrap_or_default();
+    }
+    if depth == 0 {
+        format!("{obj}.id")
+    } else {
+        format!("{obj}.{}id", "base.".repeat(depth))
+    }
+}
+
+fn emit_attr_arm(s: &mut String, prefix: &str, attr: &CimAttribute) {
+    let fname = sanitize_field(to_snake_case(&attr.label));
+    writeln!(s, "                \"{}\" => {{", attr.id).unwrap();
+
+    if attr.is_primitive || attr.is_cim_datatype {
+        if attr.is_list {
+            writeln!(s, "                    if let crate::base::FieldValue::Text(sv) = val {{").unwrap();
+            if attr.lang_type == "Vec<String>" || attr.lang_type == "String" {
+                writeln!(s, "                        {prefix}.{fname}.push(sv.trim().to_string());").unwrap();
+            } else {
+                writeln!(s, "                        if let Ok(v) = sv.trim().parse() {{ {prefix}.{fname}.push(v); }}").unwrap();
+            }
+            writeln!(s, "                    }}").unwrap();
+        } else {
+            match attr.lang_type.as_str() {
+                "String" => {
+                    writeln!(s, "                    if let crate::base::FieldValue::Text(sv) = val {{").unwrap();
+                    writeln!(s, "                        {prefix}.{fname}.clone_from(sv);").unwrap();
+                    writeln!(s, "                    }}").unwrap();
+                }
+                "bool" => {
+                    writeln!(s, "                    if let crate::base::FieldValue::Text(sv) = val {{").unwrap();
+                    writeln!(s, "                        {prefix}.{fname} = sv.trim() == \"true\";").unwrap();
+                    writeln!(s, "                    }}").unwrap();
+                }
+                _ => {
+                    writeln!(s, "                    if let crate::base::FieldValue::Text(sv) = val {{").unwrap();
+                    writeln!(s, "                        if let Ok(v) = sv.trim().parse() {{ {prefix}.{fname} = v; }}").unwrap();
+                    writeln!(s, "                    }}").unwrap();
+                }
+            }
+        }
+    } else if attr.is_enum_value {
+        writeln!(s, "                    if let crate::base::FieldValue::Resource(sv) = val {{").unwrap();
+        writeln!(s, "                        {prefix}.{fname} = Some(crate::base::UriRef {{ uri: sv.clone() }});").unwrap();
+        writeln!(s, "                    }}").unwrap();
+    } else if attr.is_list {
+        writeln!(s, "                    match val {{").unwrap();
+        writeln!(s, "                        crate::base::FieldValue::Resource(sv) => {prefix}.{fname}.push(crate::base::MridRef {{ mrid: sv.clone() }}),").unwrap();
+        writeln!(s, "                        crate::base::FieldValue::ResourceList(svs) => {{").unwrap();
+        writeln!(s, "                            for sv in svs {{ {prefix}.{fname}.push(crate::base::MridRef {{ mrid: sv.clone() }}); }}").unwrap();
+        writeln!(s, "                        }}").unwrap();
+        writeln!(s, "                        _ => {{}}").unwrap();
+        writeln!(s, "                    }}").unwrap();
+    } else {
+        writeln!(s, "                    if let crate::base::FieldValue::Resource(sv) = val {{").unwrap();
+        writeln!(s, "                        {prefix}.{fname} = Some(crate::base::MridRef {{ mrid: sv.clone() }});").unwrap();
+        writeln!(s, "                    }}").unwrap();
+    }
+
+    writeln!(s, "                }}").unwrap();
+}
+
+fn render_from_block(spec: &CimSpecification, t: &CimType) -> String {
+    let mut s = String::new();
+
+    // CimElement trait impl
+    let self_id = id_obj_path(spec, t, "self");
+    writeln!(s, "impl crate::base::CimElement for {id} {{", id = t.id).unwrap();
+    writeln!(s, "    fn mrid(&self) -> &str {{ &{self_id} }}").unwrap();
+    writeln!(s, "    fn type_name(&self) -> &'static str {{ \"{}\" }}", t.id).unwrap();
+    writeln!(s, "}}").unwrap();
+    writeln!(s).unwrap();
+
+    // Collect all (field-access-prefix, attrs) layers: own first, then ancestors
+    let mut layers: Vec<(String, Vec<CimAttribute>)> = Vec::new();
+    layers.push(("obj".to_string(), t.attributes.clone()));
+    let mut prefix = "obj.base".to_string();
+    let mut current_id = t.super_type.clone();
+    while let Some(ancestor) = spec.types.get(&current_id) {
+        layers.push((prefix.clone(), ancestor.attributes.clone()));
+        prefix = format!("{prefix}.base");
+        current_id = ancestor.super_type.clone();
+    }
+
+    let has_fields = layers
+        .iter()
+        .any(|(_, attrs)| attrs.iter().any(|a| a.is_association_used));
+
+    let obj_id = id_obj_path(spec, t, "obj");
+    writeln!(s, "impl {id} {{", id = t.id).unwrap();
+    writeln!(s, "    pub fn from_block(b: &crate::base::RdfBlock) -> Self {{").unwrap();
+    writeln!(s, "        let mut obj = Self::default();").unwrap();
+    writeln!(s, "        {obj_id}.clone_from(&b.mrid);").unwrap();
+
+    if has_fields {
+        writeln!(s, "        for (key, val) in &b.fields {{").unwrap();
+        writeln!(s, "            match key.as_str() {{").unwrap();
+        for (pfx, attrs) in &layers {
+            for attr in attrs.iter().filter(|a| a.is_association_used) {
+                emit_attr_arm(&mut s, pfx, attr);
+            }
+        }
+        writeln!(s, "                _ => {{}}").unwrap();
+        writeln!(s, "            }}").unwrap();
+        writeln!(s, "        }}").unwrap();
+    }
+
+    writeln!(s, "        obj").unwrap();
+    writeln!(s, "    }}").unwrap();
+    writeln!(s, "}}").unwrap();
+    s
+}
+
+fn render_registry(spec: &CimSpecification) -> String {
+    let mut s = String::new();
+    writeln!(s, "// Generated by cimgen — do not edit by hand.").unwrap();
+    writeln!(s, "use std::collections::HashMap;").unwrap();
+    writeln!(s, "use crate::base::{{CimElement, RdfBlock}};").unwrap();
+    writeln!(s).unwrap();
+    writeln!(s, "pub type ParseFn = fn(&RdfBlock) -> Box<dyn CimElement>;").unwrap();
+    writeln!(s).unwrap();
+    writeln!(s, "pub fn registry() -> HashMap<&'static str, ParseFn> {{").unwrap();
+    writeln!(s, "    let mut m: HashMap<&'static str, ParseFn> = HashMap::new();").unwrap();
+
+    let mut ids: Vec<&String> = spec.types.keys().collect();
+    ids.sort();
+    for id in ids {
+        writeln!(s, "    m.insert(\"{id}\", |b| Box::new(super::{id}::from_block(b)));").unwrap();
+    }
+
+    writeln!(s, "    m").unwrap();
+    writeln!(s, "}}").unwrap();
+    s
+}
+
 // --- static content ---------------------------------------------------------
 
-const BASE_RS: &str = r#"
+const BASE_RS: &str = r#"use std::collections::HashMap;
+
+pub trait CimElement {
+    fn mrid(&self) -> &str;
+    fn type_name(&self) -> &'static str;
+}
+
+#[derive(Debug, Clone)]
+pub enum FieldValue {
+    Text(String),
+    Resource(String),
+    ResourceList(Vec<String>),
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct RdfBlock {
+    pub type_name: String,
+    pub mrid: String,
+    pub fields: HashMap<String, FieldValue>,
+}
+
+impl RdfBlock {
+    pub fn merge_from(&mut self, other: &RdfBlock) {
+        for (k, v) in &other.fields {
+            match v {
+                FieldValue::ResourceList(new_list) => {
+                    match self.fields.get_mut(k) {
+                        Some(FieldValue::ResourceList(existing)) => {
+                            existing.extend(new_list.iter().cloned())
+                        }
+                        _ => {
+                            self.fields.insert(k.clone(), v.clone());
+                        }
+                    }
+                }
+                _ => {
+                    self.fields.insert(k.clone(), v.clone());
+                }
+            }
+        }
+    }
+}
+
 /// A reference to another CIM object by MRID.
 #[derive(Debug, Default, Clone)]
 pub struct MridRef {
