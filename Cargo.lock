@@ -96,6 +96,14 @@ name = "cimstructs"
 version = "0.1.0"
 
 [[package]]
+name = "cimvalidation"
+version = "0.1.0"
+dependencies = [
+ "cimdecoder",
+ "cimstructs",
+]
+
+[[package]]
 name = "clap"
 version = "4.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

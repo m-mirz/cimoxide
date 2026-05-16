@@ -14,6 +14,8 @@ pub struct CimEntry {
 
 pub struct CimDataset {
     pub entries: HashMap<String, CimEntry>,
+    /// Maps `type_name()` → list of MRIDs of that type. Populated on insert, maintained on merge.
+    pub by_type: HashMap<String, Vec<String>>,
 }
 
 impl Default for CimDataset {
@@ -26,6 +28,7 @@ impl CimDataset {
     pub fn new() -> Self {
         Self {
             entries: HashMap::new(),
+            by_type: HashMap::new(),
         }
     }
 
@@ -62,6 +65,8 @@ impl CimDataset {
                     existing.element = f(&existing.block);
                 }
             } else {
+                let type_name = incoming.element.type_name().to_string();
+                self.by_type.entry(type_name).or_default().push(mrid.clone());
                 self.entries.insert(mrid, incoming);
             }
         }
@@ -150,6 +155,8 @@ fn parse_rdf(
                         if !block.mrid.is_empty() {
                             if let Some(f) = reg.get(block.type_name.as_str()) {
                                 let element = f(&block);
+                                let type_name = element.type_name().to_string();
+                                ds.by_type.entry(type_name).or_default().push(block.mrid.clone());
                                 ds.entries.insert(block.mrid.clone(), CimEntry { element, block });
                             }
                         }

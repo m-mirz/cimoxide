@@ -127,6 +127,14 @@ fn render_struct(t: &CimType) -> String {
 
 fn field_type(attr: &CimAttribute) -> String {
     if attr.is_primitive || attr.is_cim_datatype {
+        if !attr.is_list {
+            match attr.lang_type.as_str() {
+                "f64" => return "Option<f64>".to_string(),
+                "i64" => return "Option<i64>".to_string(),
+                "bool" => return "Option<bool>".to_string(),
+                _ => {}
+            }
+        }
         attr.lang_type.clone()
     } else if attr.is_enum_value {
         format!("Option<super::base::UriRef>")
@@ -250,7 +258,7 @@ pub fn to_snake_case(s: &str) -> String {
     out
 }
 
-fn sanitize_field(name: String) -> String {
+pub fn sanitize_field(name: String) -> String {
     match name.as_str() {
         "type" | "where" | "in" | "for" | "let" | "pub" | "use" | "mod" | "match" | "if"
         | "else" | "fn" | "struct" | "enum" | "impl" | "trait" | "return" | "break"
@@ -318,12 +326,12 @@ fn emit_attr_arm(s: &mut String, prefix: &str, attr: &CimAttribute) {
                 }
                 "bool" => {
                     writeln!(s, "                    if let crate::base::FieldValue::Text(sv) = val {{").unwrap();
-                    writeln!(s, "                        {prefix}.{fname} = sv.trim() == \"true\";").unwrap();
+                    writeln!(s, "                        {prefix}.{fname} = Some(sv.trim() == \"true\");").unwrap();
                     writeln!(s, "                    }}").unwrap();
                 }
                 _ => {
                     writeln!(s, "                    if let crate::base::FieldValue::Text(sv) = val {{").unwrap();
-                    writeln!(s, "                        if let Ok(v) = sv.trim().parse() {{ {prefix}.{fname} = v; }}").unwrap();
+                    writeln!(s, "                        if let Ok(v) = sv.trim().parse() {{ {prefix}.{fname} = Some(v); }}").unwrap();
                     writeln!(s, "                    }}").unwrap();
                 }
             }
@@ -357,6 +365,7 @@ fn render_from_block(spec: &CimSpecification, t: &CimType) -> String {
     writeln!(s, "impl crate::base::CimElement for {id} {{", id = t.id).unwrap();
     writeln!(s, "    fn mrid(&self) -> &str {{ &{self_id} }}").unwrap();
     writeln!(s, "    fn type_name(&self) -> &'static str {{ \"{}\" }}", t.id).unwrap();
+    writeln!(s, "    fn as_any(&self) -> &dyn std::any::Any {{ self }}").unwrap();
     writeln!(s, "}}").unwrap();
     writeln!(s).unwrap();
 
@@ -429,6 +438,7 @@ const BASE_RS: &str = r#"use std::collections::HashMap;
 pub trait CimElement {
     fn mrid(&self) -> &str;
     fn type_name(&self) -> &'static str;
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 #[derive(Debug, Clone)]
