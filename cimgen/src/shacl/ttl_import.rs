@@ -631,7 +631,7 @@ const RDF_TYPE: &str = "rdf:type";
 
 fn extract_shapes(g: &Graph) -> Vec<ShapeInfo> {
     // Find all NodeShape subjects
-    let node_shapes: Vec<String> = g
+    let mut node_shapes: Vec<String> = g
         .keys()
         .filter(|s| {
             get_all(g, s, RDF_TYPE)
@@ -640,6 +640,7 @@ fn extract_shapes(g: &Graph) -> Vec<ShapeInfo> {
         })
         .cloned()
         .collect();
+    node_shapes.sort();
 
     node_shapes
         .into_iter()
