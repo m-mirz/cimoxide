@@ -3,7 +3,7 @@ use cimdecoder::CimDataset;
 
 #[test]
 fn decode_small_file() {
-    let path = Path::new("../cimgo/testdata/test_003.xml");
+    let path = Path::new("../testdata/test_003.xml");
     let ds = CimDataset::decode_file(path).expect("decode failed");
     assert!(!ds.entries.is_empty(), "expected at least one object");
 
@@ -14,7 +14,7 @@ fn decode_small_file() {
 
 #[test]
 fn decode_eq_file_fields() {
-    let path = Path::new("../cimgo/testdata/test_sparql_EQ_001.xml");
+    let path = Path::new("../testdata/test_sparql_EQ_001.xml");
     let ds = CimDataset::decode_file(path).expect("decode failed");
 
     // BaseVoltage.nominalVoltage (f64 field) should be decoded
@@ -31,8 +31,8 @@ fn decode_eq_file_fields() {
 
 #[test]
 fn decode_merge_two_files() {
-    let eq = Path::new("../cimgo/testdata/test_003.xml");
-    let tp = Path::new("../cimgo/testdata/test_004.xml");
+    let eq = Path::new("../testdata/test_003.xml");
+    let tp = Path::new("../testdata/test_004.xml");
     let ds = CimDataset::decode_files(&[eq, tp]).expect("decode_files failed");
     assert!(!ds.entries.is_empty(), "expected objects after merge");
 }
