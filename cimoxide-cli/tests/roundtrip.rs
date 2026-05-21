@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use cimdecoder::CimDataset;
-use cimoxide_cli_convert::{dataset_from_json, dataset_to_json, dataset_to_xml};
+use cimoxide_cli_convert::{dataset_from_json, dataset_to_json, dataset_to_xml, dataset_to_xml_for_profile};
 
 // Re-export convert module for tests
 mod cimoxide_cli_convert {
@@ -102,4 +102,107 @@ fn numeric_fields_are_numbers() {
             break;
         }
     }
+}
+
+// ── Profile-aware XML tests ──────────────────────────────────────────────────
+//
+// test_003.xml contains:
+//   - Terminal.N0  (Terminal, EQ-primary, has Terminal.TopologicalNode → TP attr)
+//   - N0           (TopologicalNode, SV-primary, has IdentifiedObject.name → EQ/SV attr)
+
+#[test]
+fn profile_tp_secondary_uses_rdf_about() {
+    let ds = CimDataset::decode_file(test_xml_path()).expect("decode failed");
+    let json = serde_json::to_string(&dataset_to_json(&ds)).expect("serialize");
+    let ds2 = dataset_from_json(&json).expect("from_json");
+    let xml = dataset_to_xml_for_profile(&ds2, "TP").expect("to_xml_for_profile failed");
+
+    // Terminal is EQ-primary, so it appears as secondary in TP → rdf:about
+    assert!(
+        xml.contains("rdf:about=\"#Terminal.N0\""),
+        "Terminal should use rdf:about in TP output, got:\n{xml}"
+    );
+    // Terminal.TopologicalNode is TP-primary → must appear
+    assert!(
+        xml.contains("Terminal.TopologicalNode"),
+        "TP output must include Terminal.TopologicalNode, got:\n{xml}"
+    );
+    // No rdf:ID expected (nothing is TP-primary in this fixture)
+    assert!(
+        !xml.contains("rdf:ID="),
+        "TP output must not contain rdf:ID for this fixture, got:\n{xml}"
+    );
+}
+
+#[test]
+fn profile_tp_excludes_eq_only_attrs() {
+    let ds = CimDataset::decode_file(test_xml_path()).expect("decode failed");
+    let json = serde_json::to_string(&dataset_to_json(&ds)).expect("serialize");
+    let ds2 = dataset_from_json(&json).expect("from_json");
+    let xml = dataset_to_xml_for_profile(&ds2, "TP").expect("to_xml_for_profile failed");
+
+    // IdentifiedObject.name is EQ-primary — must not appear in TP output for secondary elements
+    assert!(
+        !xml.contains("IdentifiedObject.name"),
+        "TP output must not include EQ-primary IdentifiedObject.name, got:\n{xml}"
+    );
+}
+
+#[test]
+fn profile_eq_skips_tp_only_terminal() {
+    let ds = CimDataset::decode_file(test_xml_path()).expect("decode failed");
+    let json = serde_json::to_string(&dataset_to_json(&ds)).expect("serialize");
+    let ds2 = dataset_from_json(&json).expect("from_json");
+    let xml = dataset_to_xml_for_profile(&ds2, "EQ").expect("to_xml_for_profile failed");
+
+    // Terminal.N0 in this fixture only has Terminal.TopologicalNode (TP-primary attr)
+    // → no EQ-relevant fields → the element is skipped entirely
+    assert!(
+        !xml.contains("Terminal.N0"),
+        "EQ output must skip Terminal.N0 (no EQ fields), got:\n{xml}"
+    );
+}
+
+#[test]
+fn profile_sv_primary_uses_rdf_id() {
+    let ds = CimDataset::decode_file(test_xml_path()).expect("decode failed");
+    let json = serde_json::to_string(&dataset_to_json(&ds)).expect("serialize");
+    let ds2 = dataset_from_json(&json).expect("from_json");
+    let xml = dataset_to_xml_for_profile(&ds2, "SV").expect("to_xml_for_profile failed");
+
+    // TopologicalNode is SV-primary and has IdentifiedObject.name (which is in SV origins)
+    // → should appear with rdf:ID
+    assert!(
+        xml.contains("rdf:ID=\"N0\""),
+        "SV output must emit TopologicalNode N0 with rdf:ID (no # prefix), got:\n{xml}"
+    );
+    // Must not contain rdf:about for N0
+    assert!(
+        !xml.contains("rdf:about=\"#N0\""),
+        "SV output must use rdf:ID, not rdf:about, for primary N0, got:\n{xml}"
+    );
+}
+
+#[test]
+fn profile_sv_xml_parses_back() {
+    let ds = CimDataset::decode_file(test_xml_path()).expect("decode failed");
+    let json = serde_json::to_string(&dataset_to_json(&ds)).expect("serialize");
+    let ds2 = dataset_from_json(&json).expect("from_json");
+    let xml = dataset_to_xml_for_profile(&ds2, "SV").expect("to_xml_for_profile failed");
+
+    CimDataset::decode_str(&xml).expect("SV profile XML must be parseable");
+}
+
+#[test]
+fn profile_unknown_yields_empty_rdf() {
+    let ds = CimDataset::decode_file(test_xml_path()).expect("decode failed");
+    let json = serde_json::to_string(&dataset_to_json(&ds)).expect("serialize");
+    let ds2 = dataset_from_json(&json).expect("from_json");
+    let xml = dataset_to_xml_for_profile(&ds2, "UNKNOWN_PROFILE").expect("to_xml failed");
+
+    // No elements should appear for an unknown profile
+    assert!(
+        !xml.contains("<cim:"),
+        "unknown profile must yield empty RDF, got:\n{xml}"
+    );
 }
