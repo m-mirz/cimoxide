@@ -102,8 +102,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "cimoxide-cli"
+version = "0.1.0"
+dependencies = [
+ "cimdecoder",
+ "cimstructs",
+ "quick-xml",
+ "serde_json",
+]
+
+[[package]]
 name = "cimstructs"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "cimvalidation"

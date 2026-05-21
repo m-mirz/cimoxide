@@ -2,8 +2,6 @@
 
 Rust tooling for CGMES CIM data: struct generation, SHACL validation, decoding, and protobuf conversion.
 
-The Go reference implementation lives in the `cimgo/` submodule.
-
 ## Repository layout
 
 | Crate | Description |
@@ -37,7 +35,7 @@ cargo test
 # Regenerate cimstructs and cimvalidation from schema files
 cargo run -p cimgen -- \
   --output cimstructs/src \
-  --shacl "cimgo/application-profiles-library/CGMES/CurrentRelease/SHACL/TTL/*.ttl" \
+  --shacl "application-profiles-library/CGMES/CurrentRelease/SHACL/TTL/*.ttl" \
   --shacl-output cimvalidation/src
 ```
 
@@ -67,7 +65,7 @@ the stored hashes:
    ```bash
    cargo run -p cimgen -- \
      --output cimstructs/src \
-     --shacl "cimgo/application-profiles-library/CGMES/CurrentRelease/SHACL/TTL/*.ttl" \
+     --shacl "application-profiles-library/CGMES/CurrentRelease/SHACL/TTL/*.ttl" \
      --shacl-output cimvalidation/src
    ```
 4. Commit both the updated test hashes and the regenerated source files together.

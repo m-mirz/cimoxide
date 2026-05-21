@@ -1,4 +1,4 @@
 target
-cimstructs
+cimstructs/src
 cimvalidation/src/generated*
 *.out.xml

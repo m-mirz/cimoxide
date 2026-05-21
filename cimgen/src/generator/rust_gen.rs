@@ -103,12 +103,13 @@ fn render_struct(t: &CimType) -> String {
     if !t.comment.is_empty() {
         writeln!(s, "/// {}", t.comment).unwrap();
     }
-    writeln!(s, "#[derive(Debug, Default, Clone)]").unwrap();
+    writeln!(s, "#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]").unwrap();
     writeln!(s, "pub struct {} {{", t.id).unwrap();
 
     if t.super_type.is_empty() {
         writeln!(s, "    pub id: String,").unwrap();
     } else {
+        writeln!(s, "    #[serde(flatten)]").unwrap();
         writeln!(s, "    pub base: super::{},", t.super_type).unwrap();
     }
 
@@ -118,6 +119,9 @@ fn render_struct(t: &CimType) -> String {
         }
         let fname = sanitize_field(to_snake_case(&attr.label));
         let ftype = field_type(attr);
+        if ftype.starts_with("Option<") {
+            writeln!(s, "    #[serde(skip_serializing_if = \"Option::is_none\")]").unwrap();
+        }
         writeln!(s, "    pub {fname}: {ftype},").unwrap();
     }
 
@@ -150,7 +154,7 @@ fn render_enum(e: &CimEnum) -> String {
     if !e.comment.is_empty() {
         writeln!(s, "/// {}", e.comment).unwrap();
     }
-    writeln!(s, "#[derive(Debug, Clone, PartialEq)]").unwrap();
+    writeln!(s, "#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]").unwrap();
     writeln!(s, "pub enum {} {{", e.id).unwrap();
     for v in &e.values {
         if !v.comment.is_empty() {
@@ -357,6 +361,42 @@ fn emit_attr_arm(s: &mut String, prefix: &str, attr: &CimAttribute) {
     writeln!(s, "                }}").unwrap();
 }
 
+fn emit_to_block_field(s: &mut String, attr: &CimAttribute) {
+    let fname = sanitize_field(to_snake_case(&attr.label));
+    if attr.is_primitive || attr.is_cim_datatype {
+        if attr.is_list {
+            writeln!(s, "        for v in &self.{fname} {{").unwrap();
+            writeln!(s, "            block.fields.insert(\"{}\".into(), crate::base::FieldValue::Text(v.to_string()));", attr.id).unwrap();
+            writeln!(s, "        }}").unwrap();
+        } else {
+            match attr.lang_type.as_str() {
+                "String" => {
+                    writeln!(s, "        if !self.{fname}.is_empty() {{").unwrap();
+                    writeln!(s, "            block.fields.insert(\"{}\".into(), crate::base::FieldValue::Text(self.{fname}.clone()));", attr.id).unwrap();
+                    writeln!(s, "        }}").unwrap();
+                }
+                _ => {
+                    writeln!(s, "        if let Some(v) = self.{fname} {{").unwrap();
+                    writeln!(s, "            block.fields.insert(\"{}\".into(), crate::base::FieldValue::Text(v.to_string()));", attr.id).unwrap();
+                    writeln!(s, "        }}").unwrap();
+                }
+            }
+        }
+    } else if attr.is_enum_value {
+        writeln!(s, "        if let Some(ref v) = self.{fname} {{").unwrap();
+        writeln!(s, "            block.fields.insert(\"{}\".into(), crate::base::FieldValue::Resource(v.uri.clone()));", attr.id).unwrap();
+        writeln!(s, "        }}").unwrap();
+    } else if attr.is_list {
+        writeln!(s, "        if !self.{fname}.is_empty() {{").unwrap();
+        writeln!(s, "            block.fields.insert(\"{}\".into(), crate::base::FieldValue::ResourceList(self.{fname}.iter().map(|r| r.mrid.clone()).collect()));", attr.id).unwrap();
+        writeln!(s, "        }}").unwrap();
+    } else {
+        writeln!(s, "        if let Some(ref v) = self.{fname} {{").unwrap();
+        writeln!(s, "            block.fields.insert(\"{}\".into(), crate::base::FieldValue::Resource(v.mrid.clone()));", attr.id).unwrap();
+        writeln!(s, "        }}").unwrap();
+    }
+}
+
 fn render_from_block(spec: &CimSpecification, t: &CimType) -> String {
     let mut s = String::new();
 
@@ -366,6 +406,29 @@ fn render_from_block(spec: &CimSpecification, t: &CimType) -> String {
     writeln!(s, "    fn mrid(&self) -> &str {{ &{self_id} }}").unwrap();
     writeln!(s, "    fn type_name(&self) -> &'static str {{ \"{}\" }}", t.id).unwrap();
     writeln!(s, "    fn as_any(&self) -> &dyn std::any::Any {{ self }}").unwrap();
+    writeln!(s, "    fn to_json_value(&self) -> serde_json::Value {{").unwrap();
+    writeln!(s, "        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)").unwrap();
+    writeln!(s, "    }}").unwrap();
+    writeln!(s, "    fn to_block(&self) -> crate::base::RdfBlock {{").unwrap();
+    let has_own = t.attributes.iter().any(|a| a.is_association_used);
+    // root types: mut only if fields to insert; inherited types: always mut (type_name update)
+    let needs_mut = has_own || !t.super_type.is_empty();
+    let mut_kw = if needs_mut { "mut " } else { "" };
+    if t.super_type.is_empty() {
+        writeln!(s, "        let {mut_kw}block = crate::base::RdfBlock {{").unwrap();
+        writeln!(s, "            type_name: \"{}\".to_string(),", t.id).unwrap();
+        writeln!(s, "            mrid: self.id.clone(),").unwrap();
+        writeln!(s, "            fields: std::collections::HashMap::new(),").unwrap();
+        writeln!(s, "        }};").unwrap();
+    } else {
+        writeln!(s, "        let {mut_kw}block = self.base.to_block();").unwrap();
+        writeln!(s, "        block.type_name = \"{}\".to_string();", t.id).unwrap();
+    }
+    for attr in t.attributes.iter().filter(|a| a.is_association_used) {
+        emit_to_block_field(&mut s, attr);
+    }
+    writeln!(s, "        block").unwrap();
+    writeln!(s, "    }}").unwrap();
     writeln!(s, "}}").unwrap();
     writeln!(s).unwrap();
 
@@ -422,10 +485,21 @@ fn render_registry(spec: &CimSpecification) -> String {
 
     let mut ids: Vec<&String> = spec.types.keys().collect();
     ids.sort();
-    for id in ids {
+    for id in &ids {
         writeln!(s, "    m.insert(\"{id}\", |b| Box::new(super::{id}::from_block(b)));").unwrap();
     }
 
+    writeln!(s, "    m").unwrap();
+    writeln!(s, "}}").unwrap();
+
+    writeln!(s).unwrap();
+    writeln!(s, "pub type JsonParseFn = fn(serde_json::Value) -> Result<Box<dyn CimElement>, serde_json::Error>;").unwrap();
+    writeln!(s).unwrap();
+    writeln!(s, "pub fn json_registry() -> HashMap<&'static str, JsonParseFn> {{").unwrap();
+    writeln!(s, "    let mut m: HashMap<&'static str, JsonParseFn> = HashMap::new();").unwrap();
+    for id in &ids {
+        writeln!(s, "    m.insert(\"{id}\", |v| Ok(Box::new(serde_json::from_value::<super::{id}>(v)?)));").unwrap();
+    }
     writeln!(s, "    m").unwrap();
     writeln!(s, "}}").unwrap();
     s
@@ -439,6 +513,8 @@ pub trait CimElement {
     fn mrid(&self) -> &str;
     fn type_name(&self) -> &'static str;
     fn as_any(&self) -> &dyn std::any::Any;
+    fn to_json_value(&self) -> serde_json::Value;
+    fn to_block(&self) -> RdfBlock;
 }
 
 #[derive(Debug, Clone)]
@@ -478,13 +554,15 @@ impl RdfBlock {
 }
 
 /// A reference to another CIM object by MRID.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct MridRef {
     pub mrid: String,
 }
 
 /// A reference to a CIM enum value by URI.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct UriRef {
     pub uri: String,
 }
