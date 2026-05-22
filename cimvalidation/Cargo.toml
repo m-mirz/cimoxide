@@ -1,0 +1,8 @@
+[package]
+name = "cimvalidation"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cimstructs = { path = "../cimstructs" }
+cimdecoder  = { path = "../cimdecoder" }
