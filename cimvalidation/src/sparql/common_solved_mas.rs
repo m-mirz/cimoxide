@@ -261,8 +261,10 @@ fn check_regulating_control_contradictory(dataset: &CimDataset) -> Vec<Violation
     let mut v = Vec::new();
     for ((_, _), pairs) in &groups {
         if pairs.len() < 2 { continue; }
-        let val0 = pairs[0].1;
-        for (rc_id, target) in &pairs[1..] {
+        let mut sorted = pairs.clone();
+        sorted.sort_by(|a, b| a.0.cmp(&b.0));
+        let val0 = sorted[0].1;
+        for (rc_id, target) in &sorted[1..] {
             if *target != val0 {
                 v.push(Violation {
                     object_id:   rc_id.clone(),
