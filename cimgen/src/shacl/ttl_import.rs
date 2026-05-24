@@ -31,6 +31,7 @@ pub enum RdfVal {
     Str(String),             // string literal
     Int(i64),
     Float(f64),
+    #[allow(dead_code)]
     Bool(bool),
     List(Vec<RdfVal>),       // RDF collection ( ... )
 }
@@ -101,12 +102,11 @@ enum Token {
 struct Lexer<'a> {
     src: &'a [u8],
     pos: usize,
-    bnode_counter: usize,
 }
 
 impl<'a> Lexer<'a> {
     fn new(src: &'a str) -> Self {
-        Self { src: src.as_bytes(), pos: 0, bnode_counter: 0 }
+        Self { src: src.as_bytes(), pos: 0 }
     }
 
     fn peek(&self) -> Option<u8> {
@@ -375,20 +375,6 @@ impl Parser {
         let id = format!("_:b{}", self.bnode_counter);
         self.bnode_counter += 1;
         id
-    }
-
-    fn expand(&self, s: &str) -> String {
-        if s.starts_with('<') && s.ends_with('>') {
-            return s[1..s.len() - 1].to_string();
-        }
-        if let Some(colon) = s.find(':') {
-            let prefix = &s[..colon];
-            let local = &s[colon + 1..];
-            if let Some(base) = self.prefixes.get(prefix) {
-                return format!("{base}{local}");
-            }
-        }
-        s.to_string()
     }
 
     fn simplify(&self, iri: &str) -> String {

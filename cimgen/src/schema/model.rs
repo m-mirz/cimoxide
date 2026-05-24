@@ -12,6 +12,7 @@ pub const DATA_TYPE_DECIMAL: &str = "Decimal";
 pub const DATA_TYPE_MONTH_DAY: &str = "MonthDay";
 
 #[derive(Debug, Default, Clone)]
+#[allow(dead_code)]
 pub struct CimAttribute {
     pub id: String,
     pub label: String,
@@ -46,6 +47,7 @@ pub struct CimAttribute {
 }
 
 #[derive(Debug, Default, Clone)]
+#[allow(dead_code)]
 pub struct CimType {
     pub id: String,
     pub label: String,
@@ -65,6 +67,7 @@ pub struct CimType {
 }
 
 #[derive(Debug, Default, Clone)]
+#[allow(dead_code)]
 pub struct CimDatatype {
     pub id: String,
     pub label: String,
@@ -79,6 +82,7 @@ pub struct CimDatatype {
 }
 
 #[derive(Debug, Default, Clone)]
+#[allow(dead_code)]
 pub struct CimPrimitive {
     pub id: String,
     pub label: String,
@@ -91,6 +95,7 @@ pub struct CimPrimitive {
 }
 
 #[derive(Debug, Default, Clone)]
+#[allow(dead_code)]
 pub struct CimEnum {
     pub id: String,
     pub label: String,
@@ -104,6 +109,7 @@ pub struct CimEnum {
 }
 
 #[derive(Debug, Default, Clone)]
+#[allow(dead_code)]
 pub struct CimEnumValue {
     pub id: String,
     pub label: String,
@@ -113,6 +119,7 @@ pub struct CimEnumValue {
 }
 
 #[derive(Debug, Default, Clone)]
+#[allow(dead_code)]
 pub struct CimOntology {
     pub id: String,
     pub namespace: String,

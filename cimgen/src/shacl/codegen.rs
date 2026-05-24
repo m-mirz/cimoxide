@@ -858,7 +858,7 @@ fn safe_fn_name(raw: &str) -> String {
     if collapsed.starts_with(|c: char| c.is_ascii_digit()) {
         format!("check_{collapsed}")
     } else if collapsed.len() > 100 {
-        format!("{}_etc", &collapsed[..97])
+        format!("{}_etc", collapsed[..97].trim_end_matches('_'))
     } else {
         collapsed
     }
