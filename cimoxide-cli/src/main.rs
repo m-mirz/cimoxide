@@ -5,6 +5,7 @@ use std::process;
 
 fn usage() -> ! {
     eprintln!("Usage:");
+    eprintln!("  cimoxide-cli import [--json] <xml-files...>");
     eprintln!("  cimoxide-cli convert --to json <xml-files...> [--out <output.json>]");
     eprintln!("  cimoxide-cli convert --to xml  <input.json>   [--out <output.xml>]");
     eprintln!("  cimoxide-cli convert --to xml  <input.json>   --profile EQ,SSH [--out <dir/>]");
@@ -18,6 +19,10 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() {
         usage();
+    }
+    if args[0] == "import" {
+        cmd_import(&args[1..]);
+        return;
     }
     if args[0] == "validate" {
         cmd_validate(&args[1..]);
@@ -168,6 +173,82 @@ fn write_output(text: &str, out: Option<&std::path::Path>) {
             process::exit(1);
         }),
         None => print!("{text}"),
+    }
+}
+
+fn cmd_import(args: &[String]) {
+    let mut input_files: Vec<PathBuf> = Vec::new();
+    let mut output_json = false;
+
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--json" => { output_json = true; }
+            arg if !arg.starts_with('-') => {
+                input_files.push(PathBuf::from(arg));
+            }
+            unknown => {
+                eprintln!("error: unknown flag: {unknown}");
+                usage();
+            }
+        }
+        i += 1;
+    }
+
+    if input_files.is_empty() {
+        eprintln!("error: at least one input file is required");
+        usage();
+    }
+
+    struct FileResult { name: String, count: usize }
+
+    let mut per_file: Vec<FileResult> = Vec::new();
+    let mut combined = cimdecoder::CimDataset::new();
+
+    for path in &input_files {
+        let ds = cimdecoder::CimDataset::decode_file(path).unwrap_or_else(|e| {
+            eprintln!("error decoding {}: {e}", path.display());
+            process::exit(1);
+        });
+        per_file.push(FileResult {
+            name: path.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string()),
+            count: ds.entries.len(),
+        });
+        combined.merge(ds);
+    }
+
+    let total = combined.entries.len();
+    let mut type_counts: Vec<(String, usize)> = combined.by_type
+        .iter()
+        .map(|(t, v)| (t.clone(), v.len()))
+        .collect();
+    type_counts.sort_by(|a, b| a.0.cmp(&b.0));
+
+    if output_json {
+        let files_json: Vec<serde_json::Value> = per_file.iter()
+            .map(|f| serde_json::json!({ "file": f.name, "count": f.count }))
+            .collect();
+        let type_map: serde_json::Map<String, serde_json::Value> = type_counts.iter()
+            .map(|(t, n)| (t.clone(), serde_json::Value::from(*n)))
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+            "total": total,
+            "files": files_json,
+            "type_counts": type_map,
+        })).unwrap());
+    } else {
+        println!("Total elements: {} (from {} file(s))\n", total, per_file.len());
+        for f in &per_file {
+            println!("  {}: {} elements", f.name, f.count);
+        }
+        if !type_counts.is_empty() {
+            println!("\nBy type:");
+            for (t, n) in &type_counts {
+                println!("  {:<50} {}", t, n);
+            }
+        }
     }
 }
 
