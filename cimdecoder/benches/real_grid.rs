@@ -40,6 +40,39 @@ fn bench_sequential(c: &mut Criterion) {
     group.finish();
 }
 
+/// Decode all four files in parallel using one thread per file, then merge sequentially.
+/// Uses the same pre-loaded in-memory blobs as bench_sequential for a fair comparison.
+fn bench_parallel(c: &mut Criterion) {
+    let blobs = load_files();
+    let total_bytes: u64 = blobs.iter().map(|(_, s)| s.len() as u64).sum();
+
+    let mut group = c.benchmark_group("decode_parallel");
+    group.throughput(Throughput::Bytes(total_bytes));
+
+    group.bench_function("all_four_profiles", |b| {
+        b.iter(|| {
+            let datasets: Vec<CimDataset> = std::thread::scope(|s| {
+                blobs
+                    .iter()
+                    .map(|(_, content)| s.spawn(|| CimDataset::decode_str(content).unwrap()))
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .map(|h| h.join().expect("decode thread panicked"))
+                    .collect()
+            });
+            datasets
+                .into_iter()
+                .reduce(|mut a, b| {
+                    a.merge(b);
+                    a
+                })
+                .unwrap()
+        })
+    });
+
+    group.finish();
+}
+
 /// Decode individual profiles to show per-file throughput.
 fn bench_per_profile(c: &mut Criterion) {
     let blobs = load_files();
@@ -62,6 +95,6 @@ fn bench_per_profile(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = Criterion::default().sample_size(10);
-    targets = bench_sequential, bench_per_profile
+    targets = bench_sequential, bench_parallel, bench_per_profile
 }
 criterion_main!(benches);

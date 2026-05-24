@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use cimdecoder::CimDataset;
 use crate::Violation;
 

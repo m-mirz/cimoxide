@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 /// A single value in a SHACL constraint payload.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum ShaclValue {
     Str(String),
     Int(i64),
@@ -31,6 +32,7 @@ impl ShaclValue {
 
 /// One constraint on a property shape (e.g. sh:minCount, sh:in, sh:pattern).
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ConstraintInfo {
     /// SHACL property path as simplified IRI segments (e.g. ["cim:ACLineSegment.r"]).
     pub path: Vec<String>,
@@ -47,6 +49,7 @@ pub struct ConstraintInfo {
 
 /// The target of a NodeShape (what objects it applies to).
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct TargetInfo {
     /// "targetClass", "targetImplicitClass", or "targetNode".
     pub kind: String,
@@ -56,6 +59,7 @@ pub struct TargetInfo {
 
 /// A parsed and simplified SHACL shape (NodeShape or PropertyShape).
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ShapeInfo {
     pub id: String,
     pub targets: Vec<TargetInfo>,
