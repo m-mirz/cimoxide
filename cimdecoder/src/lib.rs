@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::BufReader;
 use std::path::Path;
 
 use quick_xml::events::Event;
@@ -35,12 +36,17 @@ impl CimDataset {
     pub fn decode_str(content: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let mut ds = Self::new();
         let reg = registry::registry();
-        parse_rdf(content, &reg, &mut ds)?;
+        let mut reader = Reader::from_str(content);
+        parse_rdf(&mut reader, reg, &mut ds)?;
         Ok(ds)
     }
 
     pub fn decode_file(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::decode_str(&std::fs::read_to_string(path)?)
+        let mut ds = Self::new();
+        let reg = registry::registry();
+        let mut reader = Reader::from_reader(BufReader::new(std::fs::File::open(path)?));
+        parse_rdf(&mut reader, reg, &mut ds)?;
+        Ok(ds)
     }
 
     pub fn decode_files(paths: &[&Path]) -> Result<Self, Box<dyn std::error::Error>> {
@@ -110,12 +116,11 @@ impl CimDataset {
 
 // --- XML streaming parser ---------------------------------------------------
 
-fn parse_rdf(
-    content: &str,
+fn parse_rdf<R: std::io::BufRead>(
+    reader: &mut Reader<R>,
     reg: &HashMap<&'static str, ParseFn>,
     ds: &mut CimDataset,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut reader = Reader::from_str(content);
     let mut buf = Vec::new();
 
     let mut depth: u32 = 0;
