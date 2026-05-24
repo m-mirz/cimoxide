@@ -612,7 +612,7 @@ fn render_registry(spec: &CimSpecification) -> String {
 
 const BASE_RS: &str = r#"use std::collections::HashMap;
 
-pub trait CimElement {
+pub trait CimElement: Send + Sync {
     fn mrid(&self) -> &str;
     fn type_name(&self) -> &'static str;
     fn as_any(&self) -> &dyn std::any::Any;
