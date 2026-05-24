@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::io::BufReader;
 use std::path::Path;
 
@@ -34,56 +35,60 @@ impl CimDataset {
     }
 
     pub fn decode_str(content: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut ds = Self::new();
-        let reg = registry::registry();
         let mut reader = Reader::from_str(content);
-        parse_rdf(&mut reader, reg, &mut ds)?;
-        Ok(ds)
+        let raw = parse_to_raw(&mut reader)?;
+        Ok(instantiate(raw, registry::registry()))
     }
 
     pub fn decode_file(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut ds = Self::new();
-        let reg = registry::registry();
         let mut reader = Reader::from_reader(BufReader::new(std::fs::File::open(path)?));
-        parse_rdf(&mut reader, reg, &mut ds)?;
-        Ok(ds)
+        let raw = parse_to_raw(&mut reader)?;
+        Ok(instantiate(raw, registry::registry()))
     }
 
     pub fn decode_files(paths: &[&Path]) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut combined = Self::new();
+        let mut merged: HashMap<String, RdfBlock> = HashMap::new();
         for path in paths {
-            let file_ds = Self::decode_file(path)?;
-            combined.merge(file_ds);
+            let mut reader = Reader::from_reader(BufReader::new(std::fs::File::open(path)?));
+            merge_raw(&mut merged, parse_to_raw(&mut reader)?);
         }
-        Ok(combined)
+        Ok(instantiate(merged, registry::registry()))
     }
 
-    /// Decode files in parallel using one thread per file, then merge sequentially.
+    /// Decode files in parallel using one thread per file, merge raw blocks, then instantiate once.
     /// Falls back to `decode_files` for 0–1 paths to avoid thread-spawn overhead.
     pub fn decode_files_parallel(paths: &[&Path]) -> Result<Self, Box<dyn std::error::Error>> {
         if paths.len() <= 1 {
             return Self::decode_files(paths);
         }
-        let results: Vec<Result<Self, String>> = std::thread::scope(|s| {
+        let (ds, _) = Self::decode_files_parallel_with_counts(paths)?;
+        Ok(ds)
+    }
+
+    /// Like `decode_files_parallel` but also returns the per-file element count (before
+    /// deduplication) in the same order as `paths`.
+    pub fn decode_files_parallel_with_counts(
+        paths: &[&Path],
+    ) -> Result<(Self, Vec<usize>), Box<dyn std::error::Error>> {
+        let results: Vec<Result<HashMap<String, RdfBlock>, String>> = std::thread::scope(|s| {
             paths
                 .iter()
-                .map(|p| s.spawn(|| Self::decode_file(p).map_err(|e| e.to_string())))
+                .map(|p| s.spawn(|| parse_file_raw(p).map_err(|e| e.to_string())))
                 .collect::<Vec<_>>()
                 .into_iter()
                 .map(|h| h.join().expect("decode thread panicked"))
                 .collect()
         });
-        let datasets: Vec<Self> = results
+        let raws: Vec<HashMap<String, RdfBlock>> = results
             .into_iter()
             .collect::<Result<_, String>>()
             .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-        Ok(datasets
-            .into_iter()
-            .reduce(|mut a, b| {
-                a.merge(b);
-                a
-            })
-            .unwrap_or_default())
+        let counts: Vec<usize> = raws.iter().map(|r| r.len()).collect();
+        let mut merged: HashMap<String, RdfBlock> = HashMap::new();
+        for raw in raws {
+            merge_raw(&mut merged, raw);
+        }
+        Ok((instantiate(merged, registry::registry()), counts))
     }
 
     /// Merge another dataset into self, combining objects with the same MRID.
@@ -114,13 +119,44 @@ impl CimDataset {
     }
 }
 
-// --- XML streaming parser ---------------------------------------------------
+// --- raw-block pipeline ------------------------------------------------------
 
-fn parse_rdf<R: std::io::BufRead>(
+fn parse_file_raw(path: &Path) -> Result<HashMap<String, RdfBlock>, Box<dyn std::error::Error>> {
+    let mut reader = Reader::from_reader(BufReader::new(std::fs::File::open(path)?));
+    parse_to_raw(&mut reader)
+}
+
+fn merge_raw(base: &mut HashMap<String, RdfBlock>, other: HashMap<String, RdfBlock>) {
+    for (mrid, incoming) in other {
+        match base.entry(mrid) {
+            Entry::Occupied(mut e) => e.get_mut().merge_from(&incoming),
+            Entry::Vacant(e) => { e.insert(incoming); }
+        }
+    }
+}
+
+fn instantiate(raw: HashMap<String, RdfBlock>, reg: &HashMap<&'static str, ParseFn>) -> CimDataset {
+    let mut ds = CimDataset {
+        entries: HashMap::with_capacity(raw.len()),
+        by_type: HashMap::new(),
+    };
+    for (mrid, block) in raw {
+        if let Some(f) = reg.get(block.type_name.as_str()) {
+            let element = f(&block);
+            let type_name = element.type_name().to_string();
+            ds.by_type.entry(type_name).or_default().push(mrid.clone());
+            ds.entries.insert(mrid, CimEntry { element, block });
+        }
+    }
+    ds
+}
+
+// --- XML streaming parser (raw blocks only) ----------------------------------
+
+fn parse_to_raw<R: std::io::BufRead>(
     reader: &mut Reader<R>,
-    reg: &HashMap<&'static str, ParseFn>,
-    ds: &mut CimDataset,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<HashMap<String, RdfBlock>, Box<dyn std::error::Error>> {
+    let mut raw: HashMap<String, RdfBlock> = HashMap::new();
     let mut buf = Vec::new();
 
     let mut depth: u32 = 0;
@@ -159,20 +195,16 @@ fn parse_rdf<R: std::io::BufRead>(
                 let local = local_name(e.name().as_ref())?;
                 match depth {
                     1 => {
-                        // Top-level self-closing element: <cim:Foo rdf:ID="x" />
                         let mrid = extract_about(e.attributes())?;
                         if !mrid.is_empty() {
-                            if let Some(f) = reg.get(local.as_str()) {
-                                let block = RdfBlock { type_name: local, mrid: mrid.clone(), fields: HashMap::new() };
-                                let element = f(&block);
-                                let type_name = element.type_name().to_string();
-                                ds.by_type.entry(type_name).or_default().push(mrid.clone());
-                                ds.entries.insert(mrid, CimEntry { element, block });
-                            }
+                            raw.insert(mrid.clone(), RdfBlock {
+                                type_name: local,
+                                mrid,
+                                fields: HashMap::new(),
+                            });
                         }
                     }
                     2 => {
-                        // Self-closing field element within the current type block.
                         if let Some(ref mut block) = current {
                             if let Some(res) = find_resource(e.attributes())? {
                                 add_field(block, &local, FieldValue::Resource(res));
@@ -185,9 +217,7 @@ fn parse_rdf<R: std::io::BufRead>(
 
             Ok(Event::Text(ref e)) => {
                 if depth == 3 {
-                    if let (Some(block), Some(key)) =
-                        (&mut current, pending_key.take())
-                    {
+                    if let (Some(block), Some(key)) = (&mut current, pending_key.take()) {
                         let text = e.unescape()?.trim().to_string();
                         if !text.is_empty() {
                             add_field(block, &key, FieldValue::Text(text));
@@ -201,12 +231,7 @@ fn parse_rdf<R: std::io::BufRead>(
                     pending_key = None;
                     if let Some(block) = current.take() {
                         if !block.mrid.is_empty() {
-                            if let Some(f) = reg.get(block.type_name.as_str()) {
-                                let element = f(&block);
-                                let type_name = element.type_name().to_string();
-                                ds.by_type.entry(type_name).or_default().push(block.mrid.clone());
-                                ds.entries.insert(block.mrid.clone(), CimEntry { element, block });
-                            }
+                            raw.insert(block.mrid.clone(), block);
                         }
                     }
                 }
@@ -220,7 +245,7 @@ fn parse_rdf<R: std::io::BufRead>(
         buf.clear();
     }
 
-    Ok(())
+    Ok(raw)
 }
 
 // --- helpers ----------------------------------------------------------------

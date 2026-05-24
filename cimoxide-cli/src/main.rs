@@ -202,34 +202,20 @@ fn cmd_import(args: &[String]) {
 
     struct FileResult { name: String, count: usize }
 
-    // Decode all files in parallel, collecting per-file counts before merging.
-    let raw: Vec<(String, cimdecoder::CimDataset)> = std::thread::scope(|s| {
-        input_files
-            .iter()
-            .map(|p| {
-                let name = p.file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| p.display().to_string());
-                s.spawn(move || {
-                    let ds = cimdecoder::CimDataset::decode_file(p).unwrap_or_else(|e| {
-                        eprintln!("error decoding {}: {e}", p.display());
-                        process::exit(1);
-                    });
-                    (name, ds)
-                })
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
-            .map(|h| h.join().expect("decode thread panicked"))
-            .collect()
-    });
-
-    let mut per_file: Vec<FileResult> = Vec::new();
-    let mut combined = cimdecoder::CimDataset::new();
-    for (name, ds) in raw {
-        per_file.push(FileResult { name, count: ds.entries.len() });
-        combined.merge(ds);
-    }
+    let paths: Vec<&std::path::Path> = input_files.iter().map(PathBuf::as_path).collect();
+    let (combined, counts) = cimdecoder::CimDataset::decode_files_parallel_with_counts(&paths)
+        .unwrap_or_else(|e| {
+            eprintln!("error decoding input: {e}");
+            process::exit(1);
+        });
+    let per_file: Vec<FileResult> = input_files.iter().zip(counts)
+        .map(|(p, count)| FileResult {
+            name: p.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| p.display().to_string()),
+            count,
+        })
+        .collect();
 
     let total = combined.entries.len();
     let mut type_counts: Vec<(String, usize)> = combined.by_type
