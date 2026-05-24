@@ -211,11 +211,99 @@ impl PyCimDataset {
         }
         Ok(dict.into_any().unbind())
     }
+
+    /// Run validation checks and return a list of violations.
+    ///
+    /// Profiles and the solved/not-solved flag are auto-detected from FullModel
+    /// headers unless overridden.
+    ///
+    /// Parameters
+    /// ----------
+    /// profiles:
+    ///     Profile short names to check, e.g. ``["EQ", "SSH"]``.
+    ///     ``None`` (default) uses auto-detected profiles.
+    /// solved:
+    ///     ``True`` forces solved-case checks; ``False`` forces not-solved checks;
+    ///     ``None`` (default) auto-detects from the dataset.
+    /// common:
+    ///     Enable cross-profile common checks (default ``False``).
+    /// quality:
+    ///     Enable CIMdesk modeling quality checks (default ``False``).
+    /// silence:
+    ///     Rule IDs to suppress, e.g. ``["Rule-EQ-1", "Rule-EQ-2"]``.
+    #[pyo3(signature = (profiles=None, solved=None, common=false, quality=false, silence=None))]
+    fn validate(
+        &self,
+        profiles: Option<Vec<String>>,
+        solved: Option<bool>,
+        common: bool,
+        quality: bool,
+        silence: Option<Vec<String>>,
+    ) -> PyResult<Vec<PyViolation>> {
+        let ds = self.inner.lock().map_err(|e| map_err(e.to_string()))?;
+        let mut cfg = cimvalidation::detect_config(&ds);
+        if let Some(p) = profiles {
+            cfg.profiles = p;
+        }
+        if let Some(s) = solved {
+            cfg.solved = s;
+            cfg.not_solved = !s;
+        }
+        cfg.common = common;
+        cfg.quality = quality;
+        if let Some(s) = silence {
+            cfg.silenced_rules = s;
+        }
+        Ok(cimvalidation::run_validation(&ds, &cfg)
+            .into_iter()
+            .map(|v| PyViolation {
+                object_id:   v.object_id,
+                rule_id:     v.rule_id,
+                name:        v.name,
+                class:       v.class,
+                property:    v.property,
+                message:     v.message,
+                severity:    v.severity,
+                description: v.description,
+            })
+            .collect())
+    }
+}
+
+/// A single SHACL or custom validation finding.
+#[pyclass(frozen)]
+pub struct PyViolation {
+    pub object_id:   String,
+    pub rule_id:     String,
+    pub name:        String,
+    pub class:       String,
+    pub property:    String,
+    pub message:     String,
+    pub severity:    String,
+    pub description: String,
+}
+
+#[pymethods]
+impl PyViolation {
+    #[getter] fn object_id(&self)   -> &str { &self.object_id }
+    #[getter] fn rule_id(&self)     -> &str { &self.rule_id }
+    #[getter] fn name(&self)        -> &str { &self.name }
+    /// The CIM class of the offending element. Named ``class_`` to avoid the Python keyword.
+    #[getter] fn class_(&self)      -> &str { &self.class }
+    #[getter] fn property(&self)    -> &str { &self.property }
+    #[getter] fn message(&self)     -> &str { &self.message }
+    #[getter] fn severity(&self)    -> &str { &self.severity }
+    #[getter] fn description(&self) -> &str { &self.description }
+
+    fn __repr__(&self) -> String {
+        format!("[{}] {} — {} ({})", self.severity, self.rule_id, self.message, self.object_id)
+    }
 }
 
 #[pymodule]
 fn cimoxide(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCimDataset>()?;
     m.add_class::<PyCimDatasetIter>()?;
+    m.add_class::<PyViolation>()?;
     Ok(())
 }

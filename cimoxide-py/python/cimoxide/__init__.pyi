@@ -12,6 +12,28 @@ populated CIM attribute (snake_case).  Numeric/bool fields are ``float``,
 values; string fields are ``str``.
 """
 
+class Violation:
+    """A single SHACL or custom validation finding."""
+
+    object_id:   str
+    """MRID of the offending element."""
+    rule_id:     str
+    """Unique rule identifier (e.g. ``"Rule-EQ-1"``)."""
+    name:        str
+    """Short rule name."""
+    class_:      str
+    """CIM class of the offending element."""
+    property:    str
+    """CIM property that triggered the violation (empty string if not applicable)."""
+    message:     str
+    """Human-readable violation description."""
+    severity:    str
+    """``"Violation"`` or ``"Warning"``."""
+    description: str
+    """Longer rule description."""
+
+    def __repr__(self) -> str: ...
+
 class PyCimDatasetIter:
     def __iter__(self) -> PyCimDatasetIter: ...
     def __next__(self) -> str: ...
@@ -78,6 +100,36 @@ class CimDataset:
 
         Deserializes every element — prefer ``get_type`` or ``__getitem__`` for
         partial access on large datasets.
+        """
+        ...
+
+    def validate(
+        self,
+        profiles: list[str] | None = None,
+        solved: bool | None = None,
+        common: bool = False,
+        quality: bool = False,
+        silence: list[str] | None = None,
+    ) -> list[Violation]:
+        """Run validation checks and return a list of violations.
+
+        Profiles and the solved/not-solved flag are auto-detected from
+        FullModel headers unless overridden.
+
+        Parameters
+        ----------
+        profiles:
+            Profile short names to check, e.g. ``["EQ", "SSH"]``.
+            ``None`` (default) uses auto-detected profiles.
+        solved:
+            ``True`` forces solved-case checks; ``False`` forces
+            not-solved checks; ``None`` (default) auto-detects.
+        common:
+            Enable cross-profile common checks (default ``False``).
+        quality:
+            Enable CIMdesk modeling quality checks (default ``False``).
+        silence:
+            Rule IDs to suppress, e.g. ``["Rule-EQ-1"]``.
         """
         ...
 

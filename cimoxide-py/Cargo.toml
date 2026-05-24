@@ -8,7 +8,8 @@ name = "cimoxide"
 crate-type = ["cdylib"]
 
 [dependencies]
-cimdecoder  = { path = "../cimdecoder" }
-cimstructs  = { path = "../cimstructs" }
-pyo3        = { version = "0.25", features = ["extension-module"] }
-pythonize   = "0.25"
+cimdecoder    = { path = "../cimdecoder" }
+cimstructs    = { path = "../cimstructs" }
+cimvalidation = { path = "../cimvalidation" }
+pyo3          = { version = "0.25", features = ["extension-module"] }
+pythonize     = "0.25"
