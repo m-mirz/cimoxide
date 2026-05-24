@@ -2,3 +2,6 @@ target
 cimstructs/src
 cimvalidation/src/generated*
 *.out.xml
+cimoxide-py/python/cimoxide/types.pyi
+__pycache__
+*.so

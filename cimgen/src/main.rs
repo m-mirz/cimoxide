@@ -14,6 +14,7 @@ fn main() {
     let mut output = DEFAULT_OUTPUT.to_string();
     let mut shacl_glob: Option<String> = None;
     let mut shacl_output: Option<String> = None;
+    let mut python_stubs_output: Option<String> = None;
     let mut verbose = false;
 
     let mut i = 0;
@@ -34,6 +35,10 @@ fn main() {
             "--shacl-output" => {
                 i += 1;
                 shacl_output = args.get(i).cloned();
+            }
+            "--python-stubs-output" => {
+                i += 1;
+                python_stubs_output = args.get(i).cloned();
             }
             "--verbose" | "-v" => verbose = true,
             other => {
@@ -79,6 +84,16 @@ fn main() {
 
     if let (Some(glob), Some(out_dir)) = (shacl_glob, shacl_output) {
         run_shacl(&spec, &glob, &out_dir, verbose);
+    }
+
+    if let Some(out_dir) = python_stubs_output {
+        if let Err(e) =
+            generator::python_stubs_gen::generate_python_stubs(&spec, Path::new(&out_dir))
+        {
+            eprintln!("error generating Python stubs: {e}");
+            std::process::exit(1);
+        }
+        eprintln!("python stubs: types.pyi → {out_dir}");
     }
 }
 
