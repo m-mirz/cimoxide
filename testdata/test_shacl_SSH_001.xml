@@ -2,12 +2,19 @@
 <rdf:RDF xmlns:cim="http://iec.ch/TC57/CIM100#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
   <!-- BatteryUnit.storedE must be < ratedE (sh:lessThan) -->
   <cim:BatteryUnit rdf:ID="BatteryUnit.OK">
+    <cim:IdentifiedObject.mRID>BatteryUnit.OK</cim:IdentifiedObject.mRID>
     <cim:IdentifiedObject.name>Battery-OK</cim:IdentifiedObject.name>
+    <cim:Equipment.inService>true</cim:Equipment.inService>
+    <cim:BatteryUnit.batteryState rdf:resource="cim:BatteryStateKind.discharging"/>
     <cim:BatteryUnit.storedE>50.0</cim:BatteryUnit.storedE>
     <cim:BatteryUnit.ratedE>100.0</cim:BatteryUnit.ratedE>
   </cim:BatteryUnit>
+  <!-- storedE=150 violates sh:lessThan ratedE (must be < ratedE=100) -->
   <cim:BatteryUnit rdf:ID="BatteryUnit.BAD">
+    <cim:IdentifiedObject.mRID>BatteryUnit.BAD</cim:IdentifiedObject.mRID>
     <cim:IdentifiedObject.name>Battery-BAD</cim:IdentifiedObject.name>
+    <cim:Equipment.inService>true</cim:Equipment.inService>
+    <cim:BatteryUnit.batteryState rdf:resource="cim:BatteryStateKind.discharging"/>
     <cim:BatteryUnit.storedE>150.0</cim:BatteryUnit.storedE>
     <cim:BatteryUnit.ratedE>100.0</cim:BatteryUnit.ratedE>
   </cim:BatteryUnit>

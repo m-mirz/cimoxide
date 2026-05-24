@@ -8,12 +8,22 @@ fn usage() -> ! {
     eprintln!("  cimoxide-cli convert --to json <xml-files...> [--out <output.json>]");
     eprintln!("  cimoxide-cli convert --to xml  <input.json>   [--out <output.xml>]");
     eprintln!("  cimoxide-cli convert --to xml  <input.json>   --profile EQ,SSH [--out <dir/>]");
+    eprintln!("  cimoxide-cli validate [--profiles EQ,SSH,...] [--solved] [--not-solved]");
+    eprintln!("                        [--common] [--quality] [--silence rule1,rule2]");
+    eprintln!("                        [--format json|text] <xml-files...>");
     process::exit(1);
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.is_empty() || args[0] != "convert" {
+    if args.is_empty() {
+        usage();
+    }
+    if args[0] == "validate" {
+        cmd_validate(&args[1..]);
+        return;
+    }
+    if args[0] != "convert" {
         usage();
     }
 
@@ -158,5 +168,97 @@ fn write_output(text: &str, out: Option<&std::path::Path>) {
             process::exit(1);
         }),
         None => print!("{text}"),
+    }
+}
+
+fn cmd_validate(args: &[String]) {
+    let mut input_files: Vec<PathBuf> = Vec::new();
+    let mut profiles_override: Option<Vec<String>> = None;
+    let mut force_solved = false;
+    let mut force_not_solved = false;
+    let mut enable_common = false;
+    let mut enable_quality = false;
+    let mut silenced: Vec<String> = Vec::new();
+    let mut output_json = false;
+
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--profiles" => {
+                i += 1;
+                if i >= args.len() { eprintln!("error: --profiles requires an argument"); usage(); }
+                profiles_override = Some(args[i].split(',').map(str::to_string).collect());
+            }
+            "--solved" => { force_solved = true; }
+            "--not-solved" => { force_not_solved = true; }
+            "--common" => { enable_common = true; }
+            "--quality" => { enable_quality = true; }
+            "--silence" => {
+                i += 1;
+                if i >= args.len() { eprintln!("error: --silence requires an argument"); usage(); }
+                silenced.extend(args[i].split(',').map(str::to_string));
+            }
+            "--format" => {
+                i += 1;
+                if i >= args.len() { eprintln!("error: --format requires an argument"); usage(); }
+                match args[i].as_str() {
+                    "json" => output_json = true,
+                    "text" => output_json = false,
+                    other => { eprintln!("error: unknown format '{other}', expected 'json' or 'text'"); usage(); }
+                }
+            }
+            arg if !arg.starts_with('-') => {
+                input_files.push(PathBuf::from(arg));
+            }
+            unknown => {
+                eprintln!("error: unknown flag: {unknown}");
+                usage();
+            }
+        }
+        i += 1;
+    }
+
+    if input_files.is_empty() {
+        eprintln!("error: at least one input file is required");
+        usage();
+    }
+
+    let paths: Vec<&std::path::Path> = input_files.iter().map(PathBuf::as_path).collect();
+    let dataset = cimdecoder::CimDataset::decode_files(&paths).unwrap_or_else(|e| {
+        eprintln!("error decoding input: {e}");
+        process::exit(1);
+    });
+
+    let mut cfg = cimvalidation::detect_config(&dataset);
+    if let Some(p) = profiles_override { cfg.profiles = p; }
+    if force_solved { cfg.solved = true; cfg.not_solved = false; }
+    if force_not_solved { cfg.not_solved = true; cfg.solved = false; }
+    if enable_common { cfg.common = true; }
+    if enable_quality { cfg.quality = true; }
+    cfg.silenced_rules = silenced;
+
+    let violations = cimvalidation::run_validation(&dataset, &cfg);
+
+    if output_json {
+        let arr: Vec<serde_json::Value> = violations.iter().map(|v| {
+            serde_json::json!({
+                "object_id": v.object_id,
+                "rule_id":   v.rule_id,
+                "name":      v.name,
+                "class":     v.class,
+                "property":  v.property,
+                "message":   v.message,
+                "severity":  v.severity,
+            })
+        }).collect();
+        println!("{}", serde_json::to_string_pretty(&arr).unwrap());
+    } else if violations.is_empty() {
+        println!("No violations found.");
+    } else {
+        for v in &violations {
+            println!("[{}] {} — {} ({})", v.severity, v.rule_id, v.message, v.object_id);
+        }
+        eprintln!("{} violation(s) found.", violations.len());
+        process::exit(2);
     }
 }

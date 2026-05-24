@@ -107,6 +107,7 @@ version = "0.1.0"
 dependencies = [
  "cimdecoder",
  "cimstructs",
+ "cimvalidation",
  "quick-xml",
  "serde_json",
 ]
@@ -125,6 +126,7 @@ version = "0.1.0"
 dependencies = [
  "cimdecoder",
  "cimstructs",
+ "regex",
 ]
 
 [[package]]

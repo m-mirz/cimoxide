@@ -8,10 +8,11 @@ name = "cimoxide-cli"
 path = "src/main.rs"
 
 [dependencies]
-cimdecoder  = { path = "../cimdecoder" }
-cimstructs  = { path = "../cimstructs" }
-serde_json  = "1"
-quick-xml   = { version = "0.37", features = ["encoding"] }
+cimdecoder     = { path = "../cimdecoder" }
+cimstructs     = { path = "../cimstructs" }
+cimvalidation  = { path = "../cimvalidation" }
+serde_json     = "1"
+quick-xml      = { version = "0.37", features = ["encoding"] }
 
 [dev-dependencies]
 cimdecoder  = { path = "../cimdecoder" }
