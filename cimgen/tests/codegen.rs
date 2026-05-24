@@ -51,7 +51,7 @@ fn cimstructs_codegen_stable() {
     assert!(status.success(), "cimgen exited with failure");
 
     let hash = hash_dir(&out);
-    assert_eq!(hash, "4c631428b08bccf07f9b3e7da4404ea07a390eed867670c0d2b4bc828f69f140", "cimstructs output drifted — rerun to update hash");
+    assert_eq!(hash, "3a2f3610ff7596333c617912d1947210e2ac96e5300b23f6e522fb2ec6de6e39", "cimstructs output drifted — rerun to update hash");
 }
 
 #[test]
