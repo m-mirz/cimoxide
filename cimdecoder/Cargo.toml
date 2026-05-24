@@ -4,6 +4,7 @@ version = "0.0.4"
 edition = "2024"
 
 [dependencies]
+ahash      = "0.8"
 cimstructs = { path = "../cimstructs" }
 quick-xml  = { version = "0.37", features = ["encoding"] }
 

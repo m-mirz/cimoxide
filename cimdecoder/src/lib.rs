@@ -1,8 +1,8 @@
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::io::BufReader;
 use std::path::Path;
 
+use ahash::AHashMap;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
@@ -15,9 +15,9 @@ pub struct CimEntry {
 }
 
 pub struct CimDataset {
-    pub entries: HashMap<String, CimEntry>,
+    pub entries: AHashMap<String, CimEntry>,
     /// Maps `type_name()` → list of MRIDs of that type. Populated on insert, maintained on merge.
-    pub by_type: HashMap<String, Vec<String>>,
+    pub by_type: AHashMap<String, Vec<String>>,
 }
 
 impl Default for CimDataset {
@@ -29,8 +29,8 @@ impl Default for CimDataset {
 impl CimDataset {
     pub fn new() -> Self {
         Self {
-            entries: HashMap::new(),
-            by_type: HashMap::new(),
+            entries: AHashMap::new(),
+            by_type: AHashMap::new(),
         }
     }
 
@@ -47,7 +47,7 @@ impl CimDataset {
     }
 
     pub fn decode_files(paths: &[&Path]) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut merged: HashMap<String, RdfBlock> = HashMap::new();
+        let mut merged: AHashMap<String, RdfBlock> = AHashMap::new();
         for path in paths {
             let mut reader = Reader::from_reader(BufReader::new(std::fs::File::open(path)?));
             merge_raw(&mut merged, parse_to_raw(&mut reader)?);
@@ -70,7 +70,7 @@ impl CimDataset {
     pub fn decode_files_parallel_with_counts(
         paths: &[&Path],
     ) -> Result<(Self, Vec<usize>), Box<dyn std::error::Error>> {
-        let results: Vec<Result<HashMap<String, RdfBlock>, String>> = std::thread::scope(|s| {
+        let results: Vec<Result<AHashMap<String, RdfBlock>, String>> = std::thread::scope(|s| {
             paths
                 .iter()
                 .map(|p| s.spawn(|| parse_file_raw(p).map_err(|e| e.to_string())))
@@ -79,12 +79,12 @@ impl CimDataset {
                 .map(|h| h.join().expect("decode thread panicked"))
                 .collect()
         });
-        let raws: Vec<HashMap<String, RdfBlock>> = results
+        let raws: Vec<AHashMap<String, RdfBlock>> = results
             .into_iter()
             .collect::<Result<_, String>>()
             .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
         let counts: Vec<usize> = raws.iter().map(|r| r.len()).collect();
-        let mut merged: HashMap<String, RdfBlock> = HashMap::new();
+        let mut merged: AHashMap<String, RdfBlock> = AHashMap::new();
         for raw in raws {
             merge_raw(&mut merged, raw);
         }
@@ -121,12 +121,12 @@ impl CimDataset {
 
 // --- raw-block pipeline ------------------------------------------------------
 
-fn parse_file_raw(path: &Path) -> Result<HashMap<String, RdfBlock>, Box<dyn std::error::Error>> {
+fn parse_file_raw(path: &Path) -> Result<AHashMap<String, RdfBlock>, Box<dyn std::error::Error>> {
     let mut reader = Reader::from_reader(BufReader::new(std::fs::File::open(path)?));
     parse_to_raw(&mut reader)
 }
 
-fn merge_raw(base: &mut HashMap<String, RdfBlock>, other: HashMap<String, RdfBlock>) {
+fn merge_raw(base: &mut AHashMap<String, RdfBlock>, other: AHashMap<String, RdfBlock>) {
     for (mrid, incoming) in other {
         match base.entry(mrid) {
             Entry::Occupied(mut e) => e.get_mut().merge_from(&incoming),
@@ -135,10 +135,10 @@ fn merge_raw(base: &mut HashMap<String, RdfBlock>, other: HashMap<String, RdfBlo
     }
 }
 
-fn instantiate(raw: HashMap<String, RdfBlock>, reg: &HashMap<&'static str, ParseFn>) -> CimDataset {
+fn instantiate(raw: AHashMap<String, RdfBlock>, reg: &AHashMap<&'static str, ParseFn>) -> CimDataset {
     let mut ds = CimDataset {
-        entries: HashMap::with_capacity(raw.len()),
-        by_type: HashMap::new(),
+        entries: AHashMap::with_capacity(raw.len()),
+        by_type: AHashMap::new(),
     };
     for (mrid, block) in raw {
         if let Some(f) = reg.get(block.type_name.as_str()) {
@@ -155,8 +155,8 @@ fn instantiate(raw: HashMap<String, RdfBlock>, reg: &HashMap<&'static str, Parse
 
 fn parse_to_raw<R: std::io::BufRead>(
     reader: &mut Reader<R>,
-) -> Result<HashMap<String, RdfBlock>, Box<dyn std::error::Error>> {
-    let mut raw: HashMap<String, RdfBlock> = HashMap::new();
+) -> Result<AHashMap<String, RdfBlock>, Box<dyn std::error::Error>> {
+    let mut raw: AHashMap<String, RdfBlock> = AHashMap::new();
     let mut buf = Vec::new();
 
     let mut depth: u32 = 0;
@@ -175,7 +175,7 @@ fn parse_to_raw<R: std::io::BufRead>(
                         current = Some(RdfBlock {
                             type_name: local,
                             mrid,
-                            fields: HashMap::new(),
+                            fields: AHashMap::new(),
                         });
                     }
                     3 => {
@@ -200,7 +200,7 @@ fn parse_to_raw<R: std::io::BufRead>(
                             raw.insert(mrid.clone(), RdfBlock {
                                 type_name: local,
                                 mrid,
-                                fields: HashMap::new(),
+                                fields: AHashMap::new(),
                             });
                         }
                     }
