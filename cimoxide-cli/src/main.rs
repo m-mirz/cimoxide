@@ -103,7 +103,7 @@ fn main() {
 
 fn cmd_to_json(xml_files: &[PathBuf], out: Option<&std::path::Path>) {
     let paths: Vec<&std::path::Path> = xml_files.iter().map(PathBuf::as_path).collect();
-    let ds = cimdecoder::CimDataset::decode_files(&paths).unwrap_or_else(|e| {
+    let ds = cimdecoder::CimDataset::decode_files_parallel(&paths).unwrap_or_else(|e| {
         eprintln!("error decoding XML: {e}");
         process::exit(1);
     });
@@ -202,20 +202,32 @@ fn cmd_import(args: &[String]) {
 
     struct FileResult { name: String, count: usize }
 
+    // Decode all files in parallel, collecting per-file counts before merging.
+    let raw: Vec<(String, cimdecoder::CimDataset)> = std::thread::scope(|s| {
+        input_files
+            .iter()
+            .map(|p| {
+                let name = p.file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| p.display().to_string());
+                s.spawn(move || {
+                    let ds = cimdecoder::CimDataset::decode_file(p).unwrap_or_else(|e| {
+                        eprintln!("error decoding {}: {e}", p.display());
+                        process::exit(1);
+                    });
+                    (name, ds)
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|h| h.join().expect("decode thread panicked"))
+            .collect()
+    });
+
     let mut per_file: Vec<FileResult> = Vec::new();
     let mut combined = cimdecoder::CimDataset::new();
-
-    for path in &input_files {
-        let ds = cimdecoder::CimDataset::decode_file(path).unwrap_or_else(|e| {
-            eprintln!("error decoding {}: {e}", path.display());
-            process::exit(1);
-        });
-        per_file.push(FileResult {
-            name: path.file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| path.display().to_string()),
-            count: ds.entries.len(),
-        });
+    for (name, ds) in raw {
+        per_file.push(FileResult { name, count: ds.entries.len() });
         combined.merge(ds);
     }
 
@@ -305,7 +317,7 @@ fn cmd_validate(args: &[String]) {
     }
 
     let paths: Vec<&std::path::Path> = input_files.iter().map(PathBuf::as_path).collect();
-    let dataset = cimdecoder::CimDataset::decode_files(&paths).unwrap_or_else(|e| {
+    let dataset = cimdecoder::CimDataset::decode_files_parallel(&paths).unwrap_or_else(|e| {
         eprintln!("error decoding input: {e}");
         process::exit(1);
     });

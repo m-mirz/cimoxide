@@ -52,6 +52,34 @@ impl CimDataset {
         Ok(combined)
     }
 
+    /// Decode files in parallel using one thread per file, then merge sequentially.
+    /// Falls back to `decode_files` for 0–1 paths to avoid thread-spawn overhead.
+    pub fn decode_files_parallel(paths: &[&Path]) -> Result<Self, Box<dyn std::error::Error>> {
+        if paths.len() <= 1 {
+            return Self::decode_files(paths);
+        }
+        let results: Vec<Result<Self, String>> = std::thread::scope(|s| {
+            paths
+                .iter()
+                .map(|p| s.spawn(|| Self::decode_file(p).map_err(|e| e.to_string())))
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|h| h.join().expect("decode thread panicked"))
+                .collect()
+        });
+        let datasets: Vec<Self> = results
+            .into_iter()
+            .collect::<Result<_, String>>()
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+        Ok(datasets
+            .into_iter()
+            .reduce(|mut a, b| {
+                a.merge(b);
+                a
+            })
+            .unwrap_or_default())
+    }
+
     /// Merge another dataset into self, combining objects with the same MRID.
     /// For conflicting MRIDs: merge RdfBlocks (later scalar wins, lists union),
     /// then re-instantiate the typed element.
