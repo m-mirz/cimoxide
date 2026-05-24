@@ -66,10 +66,10 @@ fn check_excitation_system_smd(dataset: &CimDataset) -> Vec<Violation> {
 // -- SynchronousMachineTimeConstantReactance model type check --
 
 fn check_smtcr_model_type(dataset: &CimDataset) -> Vec<Violation> {
-    const SUBTRANS_SIMPLIFIED: &str = "http://iec.ch/TC57/CIM100#SynchronousMachineModelKind.subtransientSimplified";
-    const SUBTRANS:            &str = "http://iec.ch/TC57/CIM100#SynchronousMachineModelKind.subtransient";
-    const ROUND_ROTOR:         &str = "http://iec.ch/TC57/CIM100#RotorKind.roundRotor";
-    const SALIENT_POLE:        &str = "http://iec.ch/TC57/CIM100#RotorKind.salientPole";
+    const SUBTRANS_SIMPLIFIED: &str = "SynchronousMachineModelKind.subtransientSimplified";
+    const SUBTRANS:            &str = "SynchronousMachineModelKind.subtransient";
+    const ROUND_ROTOR:         &str = "RotorKind.roundRotor";
+    const SALIENT_POLE:        &str = "RotorKind.salientPole";
 
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SynchronousMachineTimeConstantReactance").into_iter().flatten() {
@@ -275,9 +275,9 @@ fn check_pss_input_signals(dataset: &CimDataset) -> Vec<Violation> {
 
 fn check_gov_hydro4_gain_points(dataset: &CimDataset) -> Vec<Violation> {
     const RULE: &str = "various point sequence rules for GovHydro4";
-    const SIMPLE:         &str = "http://iec.ch/TC57/CIM100#GovHydro4ModelKind.simple";
-    const FRANCIS_PELTON: &str = "http://iec.ch/TC57/CIM100#GovHydro4ModelKind.francisPelton";
-    const KAPLAN:         &str = "http://iec.ch/TC57/CIM100#GovHydro4ModelKind.kaplan";
+    const SIMPLE:         &str = "GovHydro4ModelKind.simple";
+    const FRANCIS_PELTON: &str = "GovHydro4ModelKind.francisPelton";
+    const KAPLAN:         &str = "GovHydro4ModelKind.kaplan";
 
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("GovHydro4").into_iter().flatten() {
@@ -330,10 +330,10 @@ fn check_gov_hydro4_gain_points(dataset: &CimDataset) -> Vec<Violation> {
 
 fn check_load_static_model_attributes(dataset: &CimDataset) -> Vec<Violation> {
     const RULE: &str = "required/prohibited rules for LoadStatic models";
-    const CONSTANT_Z:  &str = "http://iec.ch/TC57/CIM100#StaticLoadModelKind.constantZ";
-    const EXPONENTIAL: &str = "http://iec.ch/TC57/CIM100#StaticLoadModelKind.exponential";
-    const ZIP1:        &str = "http://iec.ch/TC57/CIM100#StaticLoadModelKind.zIP1";
-    const ZIP2:        &str = "http://iec.ch/TC57/CIM100#StaticLoadModelKind.zIP2";
+    const CONSTANT_Z:  &str = "StaticLoadModelKind.constantZ";
+    const EXPONENTIAL: &str = "StaticLoadModelKind.exponential";
+    const ZIP1:        &str = "StaticLoadModelKind.zIP1";
+    const ZIP2:        &str = "StaticLoadModelKind.zIP2";
 
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("LoadStatic").into_iter().flatten() {

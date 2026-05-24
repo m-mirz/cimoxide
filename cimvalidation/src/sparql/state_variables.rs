@@ -10,8 +10,8 @@ pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
 
 fn check_cs_converter_state_value_range(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
-    const RECTIFIER: &str = "http://iec.ch/TC57/CIM100#CsOperatingModeKind.rectifier";
-    const INVERTER:  &str = "http://iec.ch/TC57/CIM100#CsOperatingModeKind.inverter";
+    const RECTIFIER: &str = "CsOperatingModeKind.rectifier";
+    const INVERTER:  &str = "CsOperatingModeKind.inverter";
 
     for mrid in dataset.by_type.get("CsConverter").into_iter().flatten() {
         let entry = &dataset.entries[mrid];

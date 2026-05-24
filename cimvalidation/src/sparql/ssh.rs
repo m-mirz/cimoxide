@@ -79,8 +79,8 @@ fn check_regulating_control_target_deadband_applicability(dataset: &CimDataset) 
 }
 
 fn check_cs_converter_value_range(dataset: &CimDataset) -> Vec<Violation> {
-    let rectifier = "http://iec.ch/TC57/CIM100#CsOperatingModeKind.rectifier";
-    let inverter  = "http://iec.ch/TC57/CIM100#CsOperatingModeKind.inverter";
+    let rectifier = "CsOperatingModeKind.rectifier";
+    let inverter  = "CsOperatingModeKind.inverter";
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("CsConverter").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
@@ -131,9 +131,9 @@ fn check_cs_converter_value_range(dataset: &CimDataset) -> Vec<Violation> {
 }
 
 fn check_cs_converter_p_pcc_control(dataset: &CimDataset) -> Vec<Violation> {
-    let dc_current   = "http://iec.ch/TC57/CIM100#CsPpccControlKind.dcCurrent";
-    let dc_voltage   = "http://iec.ch/TC57/CIM100#CsPpccControlKind.dcVoltage";
-    let active_power = "http://iec.ch/TC57/CIM100#CsPpccControlKind.activePower";
+    let dc_current   = "CsPpccControlKind.dcCurrent";
+    let dc_voltage   = "CsPpccControlKind.dcVoltage";
+    let active_power = "CsPpccControlKind.activePower";
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("CsConverter").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
@@ -164,7 +164,7 @@ fn check_cs_converter_p_pcc_control(dataset: &CimDataset) -> Vec<Violation> {
 }
 
 fn check_vs_converter_p_pcc_control(dataset: &CimDataset) -> Vec<Violation> {
-    let prefix = "http://iec.ch/TC57/CIM100#VsPpccControlKind.";
+    let prefix = "VsPpccControlKind.";
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("VsConverter").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
@@ -202,7 +202,7 @@ fn check_vs_converter_p_pcc_control(dataset: &CimDataset) -> Vec<Violation> {
 }
 
 fn check_vs_converter_q_pcc_control(dataset: &CimDataset) -> Vec<Violation> {
-    let prefix = "http://iec.ch/TC57/CIM100#VsQpccControlKind.";
+    let prefix = "VsQpccControlKind.";
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("VsConverter").into_iter().flatten() {
         let entry = &dataset.entries[mrid];

@@ -123,15 +123,30 @@ fn parse_rdf(
             }
 
             Ok(Event::Empty(ref e)) => {
-                // Self-closing element: logically at depth+1 but no net depth change.
-                // At current depth==2, this is a field element of the type block.
-                if depth == 2 {
-                    if let Some(ref mut block) = current {
-                        let local = local_name(e.name().as_ref())?;
-                        if let Some(res) = find_resource(e.attributes())? {
-                            add_field(block, &local, FieldValue::Resource(res));
+                let local = local_name(e.name().as_ref())?;
+                match depth {
+                    1 => {
+                        // Top-level self-closing element: <cim:Foo rdf:ID="x" />
+                        let mrid = extract_about(e.attributes())?;
+                        if !mrid.is_empty() {
+                            if let Some(f) = reg.get(local.as_str()) {
+                                let block = RdfBlock { type_name: local, mrid: mrid.clone(), fields: HashMap::new() };
+                                let element = f(&block);
+                                let type_name = element.type_name().to_string();
+                                ds.by_type.entry(type_name).or_default().push(mrid.clone());
+                                ds.entries.insert(mrid, CimEntry { element, block });
+                            }
                         }
                     }
+                    2 => {
+                        // Self-closing field element within the current type block.
+                        if let Some(ref mut block) = current {
+                            if let Some(res) = find_resource(e.attributes())? {
+                                add_field(block, &local, FieldValue::Resource(res));
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
 

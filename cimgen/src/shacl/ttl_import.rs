@@ -482,7 +482,7 @@ impl Parser {
                 let val = s.clone();
                 // Consume optional language tag or datatype
                 match self.peek() {
-                    Some(Token::At) => { self.advance(); self.advance(); } // @langcode
+                    Some(Token::At) => { self.advance(); } // @langcode — Token::At already includes the tag
                     Some(Token::DoubleCaret) => {
                         self.advance(); // ^^
                         // Coerce to numeric type based on xsd datatype
@@ -649,10 +649,12 @@ fn extract_shapes(g: &Graph) -> Vec<ShapeInfo> {
 }
 
 fn build_node_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
-    // Targets from sh:targetClass (may be multiple comma-separated IRIs)
+    // Targets from sh:targetClass (deduplicated — same subject may appear in multiple statements)
+    let mut seen_targets = std::collections::HashSet::new();
     let targets: Vec<TargetInfo> = get_all(g, id, "sh:targetClass")
         .into_iter()
         .filter_map(|v| v.as_iri())
+        .filter(|iri| seen_targets.insert(iri.to_string()))
         .map(|iri| TargetInfo {
             kind: "targetClass".to_string(),
             value: iri.to_string(),
@@ -952,6 +954,42 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
                     component: "sh:OrInversePathConstraintComponent".to_string(),
                     payload,
                 });
+            }
+        }
+    }
+
+    // sh:lessThan
+    if let Some(lt_val) = get_one(g, id, "sh:lessThan").and_then(|v| v.as_iri()) {
+        let mut payload = HashMap::new();
+        payload.insert("lessThan".to_string(), ShaclValue::Str(lt_val.to_string()));
+        constraints.push(ConstraintInfo {
+            path: path.clone(),
+            severity: severity.clone(),
+            message: message.clone(),
+            name: name.clone(),
+            description: description.clone(),
+            component: "sh:LessThanConstraintComponent".to_string(),
+            payload,
+        });
+    }
+
+    // sh:not with sh:class inside → NotClassConstraintComponent
+    for not_val in get_all(g, id, "sh:not") {
+        if let Some(bnode_id) = not_val.as_iri() {
+            if let Some(class_val) = get_one(g, bnode_id, "sh:class") {
+                if let Some(class) = class_val.as_iri() {
+                    let mut payload = HashMap::new();
+                    payload.insert("class".to_string(), ShaclValue::Str(class.to_string()));
+                    constraints.push(ConstraintInfo {
+                        path: path.clone(),
+                        severity: severity.clone(),
+                        message: message.clone(),
+                        name: name.clone(),
+                        description: description.clone(),
+                        component: "sh:NotClassConstraintComponent".to_string(),
+                        payload,
+                    });
+                }
             }
         }
     }

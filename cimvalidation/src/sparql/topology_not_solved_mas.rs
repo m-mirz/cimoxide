@@ -11,9 +11,9 @@ pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
 }
 
 fn check_terminal_phases_consistency_topological_node(dataset: &CimDataset) -> Vec<Violation> {
-    const ABCN: &str = "http://iec.ch/TC57/CIM100#PhaseCode.ABCN";
-    const N:    &str = "http://iec.ch/TC57/CIM100#PhaseCode.N";
-    const ABC:  &str = "http://iec.ch/TC57/CIM100#PhaseCode.ABC";
+    const ABCN: &str = "PhaseCode.ABCN";
+    const N:    &str = "PhaseCode.N";
+    const ABC:  &str = "PhaseCode.ABC";
 
     // Group terminals by topological node
     let mut node_terminals: HashMap<String, Vec<(String, String)>> = HashMap::new();

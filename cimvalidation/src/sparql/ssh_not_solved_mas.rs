@@ -118,7 +118,7 @@ fn check_shunt_compensator_sections_integer(dataset: &CimDataset) -> Vec<Violati
 }
 
 fn check_regulating_control_power_factor_required_attrs(dataset: &CimDataset) -> Vec<Violation> {
-    let power_factor_uri = "http://iec.ch/TC57/CIM100#RegulatingControlModeKind.powerFactor";
+    let power_factor_uri = "RegulatingControlModeKind.powerFactor";
     let mut v = Vec::new();
     let check = |mrid: &str, class: &str, mode_uri: &str, min_val: f64, max_val: f64, v: &mut Vec<Violation>| {
         if mode_uri != power_factor_uri { return; }
@@ -220,8 +220,8 @@ fn check_cs_converter_target_gamma_applicability(dataset: &CimDataset) -> Vec<Vi
 }
 
 fn check_cs_converter_target_angle_applicability(dataset: &CimDataset, for_alpha: bool) -> Vec<Violation> {
-    let inverter   = "http://iec.ch/TC57/CIM100#CsOperatingModeKind.inverter";
-    let rectifier  = "http://iec.ch/TC57/CIM100#CsOperatingModeKind.rectifier";
+    let inverter   = "CsOperatingModeKind.inverter";
+    let rectifier  = "CsOperatingModeKind.rectifier";
     // terminalID → RC.discrete
     let mut rc_discrete: HashMap<String, bool> = HashMap::new();
     for mrid in dataset.by_type.get("RegulatingControl").into_iter().flatten() {
@@ -280,7 +280,7 @@ fn check_cs_converter_target_angle_applicability(dataset: &CimDataset, for_alpha
 }
 
 fn check_control_area_net_interchange_calculation(dataset: &CimDataset) -> Vec<Violation> {
-    let interchange_uri = "http://iec.ch/TC57/CIM100#ControlAreaTypeKind.Interchange";
+    let interchange_uri = "ControlAreaTypeKind.Interchange";
     let mut cn_has_bp: std::collections::HashSet<String> = std::collections::HashSet::new();
     for mrid in dataset.by_type.get("BoundaryPoint").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
