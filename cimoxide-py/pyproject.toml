@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "cimoxide"
-version = "0.1.0"
+version = "0.0.4"
 description = "Python bindings for the cimoxide CGMES parser"
 requires-python = ">=3.9"
 classifiers = [
