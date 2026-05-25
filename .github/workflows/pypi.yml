@@ -34,8 +34,8 @@ jobs:
       - uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          manifest-path: cimoxide-py/Cargo.toml
-          args: --release --out dist
+          working-directory: cimoxide-py
+          args: --release --out ../dist
           manylinux: auto
 
       - uses: actions/upload-artifact@v4
@@ -66,8 +66,8 @@ jobs:
 
       - uses: PyO3/maturin-action@v1
         with:
-          manifest-path: cimoxide-py/Cargo.toml
-          args: --release --out dist
+          working-directory: cimoxide-py
+          args: --release --out ../dist
 
       - uses: actions/upload-artifact@v4
         with:
@@ -101,8 +101,8 @@ jobs:
       - uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          manifest-path: cimoxide-py/Cargo.toml
-          args: --release --out dist
+          working-directory: cimoxide-py
+          args: --release --out ../dist
 
       - uses: actions/upload-artifact@v4
         with:
@@ -124,8 +124,8 @@ jobs:
       - uses: PyO3/maturin-action@v1
         with:
           command: sdist
-          manifest-path: cimoxide-py/Cargo.toml
-          args: --out dist
+          working-directory: cimoxide-py
+          args: --out ../dist
 
       - uses: actions/upload-artifact@v4
         with:
