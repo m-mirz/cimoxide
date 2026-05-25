@@ -2,6 +2,7 @@
 name = "cimstructs"
 version = "0.1.0"
 edition = "2024"
+include = ["src/**/*.rs", "Cargo.toml"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

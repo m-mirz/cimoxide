@@ -2,6 +2,7 @@
 name = "cimoxide-py"
 version = "0.1.0"
 edition = "2024"
+include = ["src/**/*.rs", "python/**/*", "Cargo.toml"]
 
 [lib]
 name = "cimoxide"
@@ -11,5 +12,5 @@ crate-type = ["cdylib"]
 cimdecoder    = { path = "../cimdecoder" }
 cimstructs    = { path = "../cimstructs" }
 cimvalidation = { path = "../cimvalidation" }
-pyo3          = { version = "0.25", features = ["extension-module"] }
+pyo3          = { version = "0.25", features = ["extension-module", "abi3-py39"] }
 pythonize     = "0.25"
