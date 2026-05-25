@@ -39,6 +39,27 @@ cargo run -p cimgen -- \
   --shacl-output cimvalidation/src
 ```
 
+## Benchmarks
+
+```bash
+# Run all benchmarks
+cargo bench -p cimdecoder
+
+# Run a specific group (e.g. the import benchmark)
+cargo bench -p cimdecoder --bench real_grid -- import
+```
+
+Benchmarks are in `cimdecoder/benches/real_grid.rs` and use the RealGrid test dataset
+from the `CGMES-Test-Configurations` submodule (must be initialised). The `import`
+group measures `decode_files_parallel` with real file paths, matching what
+`cimoxide-cli import` does. Add debug symbols to get useful flamegraphs:
+
+```toml
+# Cargo.toml
+[profile.bench]
+debug = true
+```
+
 ## Codegen stability tests
 
 `cimgen/tests/codegen.rs` contains two hash-based tests that detect unintended drift in
