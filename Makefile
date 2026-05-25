@@ -6,12 +6,7 @@ all: generate build test
 
 generate:
 	mkdir -p cimstructs/src cimvalidation/src cimoxide-py/python/cimoxide
-	touch cimstructs/src/lib.rs cimvalidation/src/lib.rs
-	cargo run -p cimgen -- \
-		--output cimstructs/src \
-		--shacl "$(SHACL_GLOB)" \
-		--shacl-output cimvalidation/src \
-		--python-stubs-output cimoxide-py/python/cimoxide
+	cargo run -p cimgen
 
 build:
 	cargo build --workspace

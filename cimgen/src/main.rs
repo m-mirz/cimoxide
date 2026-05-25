@@ -7,14 +7,18 @@ use std::path::Path;
 const DEFAULT_SCHEMA: &str =
     "application-profiles-library/CGMES/CurrentRelease/RDFS/61970-600-2_*-AP-Voc-RDFS2020.rdf";
 const DEFAULT_OUTPUT: &str = "cimstructs/src";
+const DEFAULT_SHACL: &str =
+    "application-profiles-library/CGMES/CurrentRelease/SHACL/TTL/*.ttl";
+const DEFAULT_SHACL_OUTPUT: &str = "cimvalidation/src";
+const DEFAULT_PYTHON_STUBS_OUTPUT: &str = "cimoxide-py/python/cimoxide";
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut schema = DEFAULT_SCHEMA.to_string();
     let mut output = DEFAULT_OUTPUT.to_string();
-    let mut shacl_glob: Option<String> = None;
-    let mut shacl_output: Option<String> = None;
-    let mut python_stubs_output: Option<String> = None;
+    let mut shacl_glob: Option<String> = Some(DEFAULT_SHACL.to_string());
+    let mut shacl_output: Option<String> = Some(DEFAULT_SHACL_OUTPUT.to_string());
+    let mut python_stubs_output: Option<String> = Some(DEFAULT_PYTHON_STUBS_OUTPUT.to_string());
     let mut verbose = false;
 
     let mut i = 0;

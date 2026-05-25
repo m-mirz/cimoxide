@@ -33,10 +33,7 @@ cargo build -v
 cargo test
 
 # Regenerate cimstructs and cimvalidation from schema files
-cargo run -p cimgen -- \
-  --output cimstructs/src \
-  --shacl "application-profiles-library/CGMES/CurrentRelease/SHACL/TTL/*.ttl" \
-  --shacl-output cimvalidation/src
+cargo run -p cimgen
 ```
 
 ## Benchmarks
@@ -84,10 +81,7 @@ the stored hashes:
 2. Copy the printed hash into the corresponding `assert_eq!` in `cimgen/tests/codegen.rs`.
 3. Regenerate the checked-in files so they match:
    ```bash
-   cargo run -p cimgen -- \
-     --output cimstructs/src \
-     --shacl "application-profiles-library/CGMES/CurrentRelease/SHACL/TTL/*.ttl" \
-     --shacl-output cimvalidation/src
+   cargo run -p cimgen
    ```
 4. Commit both the updated test hashes and the regenerated source files together.
 
