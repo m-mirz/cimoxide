@@ -36,21 +36,25 @@ impl CimDataset {
 
     pub fn decode_str(content: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let mut reader = Reader::from_str(content);
-        let raw = parse_to_raw(&mut reader)?;
+        let raw = parse_to_raw(&mut reader, content.len())?;
         Ok(instantiate(raw, registry::registry()))
     }
 
     pub fn decode_file(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut reader = Reader::from_reader(BufReader::new(std::fs::File::open(path)?));
-        let raw = parse_to_raw(&mut reader)?;
+        let file = std::fs::File::open(path)?;
+        let size_hint = file.metadata().map(|m| m.len() as usize).unwrap_or(0);
+        let mut reader = Reader::from_reader(BufReader::new(file));
+        let raw = parse_to_raw(&mut reader, size_hint)?;
         Ok(instantiate(raw, registry::registry()))
     }
 
     pub fn decode_files(paths: &[&Path]) -> Result<Self, Box<dyn std::error::Error>> {
         let mut merged: AHashMap<String, RdfBlock> = AHashMap::new();
         for path in paths {
-            let mut reader = Reader::from_reader(BufReader::new(std::fs::File::open(path)?));
-            merge_raw(&mut merged, parse_to_raw(&mut reader)?);
+            let file = std::fs::File::open(path)?;
+            let size_hint = file.metadata().map(|m| m.len() as usize).unwrap_or(0);
+            let mut reader = Reader::from_reader(BufReader::new(file));
+            merge_raw(&mut merged, parse_to_raw(&mut reader, size_hint)?);
         }
         Ok(instantiate(merged, registry::registry()))
     }
@@ -122,8 +126,10 @@ impl CimDataset {
 // --- raw-block pipeline ------------------------------------------------------
 
 fn parse_file_raw(path: &Path) -> Result<AHashMap<String, RdfBlock>, Box<dyn std::error::Error>> {
-    let mut reader = Reader::from_reader(BufReader::new(std::fs::File::open(path)?));
-    parse_to_raw(&mut reader)
+    let file = std::fs::File::open(path)?;
+    let size_hint = file.metadata().map(|m| m.len() as usize).unwrap_or(0);
+    let mut reader = Reader::from_reader(BufReader::new(file));
+    parse_to_raw(&mut reader, size_hint)
 }
 
 fn merge_raw(base: &mut AHashMap<String, RdfBlock>, other: AHashMap<String, RdfBlock>) {
@@ -138,7 +144,7 @@ fn merge_raw(base: &mut AHashMap<String, RdfBlock>, other: AHashMap<String, RdfB
 fn instantiate(raw: AHashMap<String, RdfBlock>, reg: &AHashMap<&'static str, ParseFn>) -> CimDataset {
     let mut ds = CimDataset {
         entries: AHashMap::with_capacity(raw.len()),
-        by_type: AHashMap::new(),
+        by_type: AHashMap::with_capacity(64),
     };
     for (mrid, block) in raw {
         if let Some(f) = reg.get(block.type_name.as_str()) {
@@ -155,8 +161,11 @@ fn instantiate(raw: AHashMap<String, RdfBlock>, reg: &AHashMap<&'static str, Par
 
 fn parse_to_raw<R: std::io::BufRead>(
     reader: &mut Reader<R>,
+    size_hint: usize,
 ) -> Result<AHashMap<String, RdfBlock>, Box<dyn std::error::Error>> {
-    let mut raw: AHashMap<String, RdfBlock> = AHashMap::new();
+    // ~800 bytes of XML per CIM element on average; over-allocate slightly to avoid rehash
+    let capacity = if size_hint > 0 { (size_hint / 600).next_power_of_two() } else { 64 };
+    let mut raw: AHashMap<String, RdfBlock> = AHashMap::with_capacity(capacity);
     let mut buf = Vec::new();
 
     let mut depth: u32 = 0;
