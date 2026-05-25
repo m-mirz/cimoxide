@@ -1,7 +1,10 @@
 target
-cimstructs/src
+
+cimstructs/src/*.rs
+!cimstructs/src/base.rs
 cimvalidation/src/generated*
-*.out.xml
 cimoxide-py/python/cimoxide/types.pyi
+
 __pycache__
 *.so
+*.out.xml

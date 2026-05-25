@@ -37,9 +37,6 @@ pub fn generate_validation(
     let lib = render_lib_additions(&generated_modules);
     fs::write(output_dir.join("generated_lib.rs"), lib)?;
 
-    // Write shared helpers
-    fs::write(output_dir.join("helpers.rs"), HELPERS_RS)?;
-
     Ok(total_checks)
 }
 
@@ -892,33 +889,3 @@ fn guess_profile_from_mod(mod_name: &str) -> Option<&'static str> {
 // Shared runtime helpers (written to helpers.rs in the output crate)
 // ---------------------------------------------------------------------------
 
-const HELPERS_RS: &str = r#"
-/// Returns true if the string is a valid xsd:dateTime value.
-pub fn is_xsd_datetime(s: &str) -> bool {
-    // ISO 8601: YYYY-MM-DDTHH:MM:SS or with timezone
-    let s = s.trim();
-    if s.len() < 19 { return false; }
-    s.as_bytes().get(4) == Some(&b'-')
-        && s.as_bytes().get(7) == Some(&b'-')
-        && s.as_bytes().get(10) == Some(&b'T')
-}
-
-/// Returns true if the string is a valid xsd:date value.
-pub fn is_xsd_date(s: &str) -> bool {
-    let s = s.trim();
-    s.len() >= 10
-        && s.as_bytes().get(4) == Some(&b'-')
-        && s.as_bytes().get(7) == Some(&b'-')
-}
-
-/// Returns true if the string is a valid xsd:gMonthDay value (--MM-DD).
-pub fn is_xsd_gmonthday(s: &str) -> bool {
-    let s = s.trim();
-    s.len() >= 7 && s.starts_with("--")
-}
-
-/// Returns true if the string is a non-empty anyURI (basic check).
-pub fn is_xsd_anyuri(s: &str) -> bool {
-    !s.trim().is_empty()
-}
-"#;
