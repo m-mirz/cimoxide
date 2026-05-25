@@ -19,9 +19,6 @@ jobs:
           - os: windows-latest
             binary: cimcli.exe
             artifact: cimcli-windows-amd64.exe
-          - os: macos-13
-            binary: cimcli
-            artifact: cimcli-darwin-amd64
           - os: macos-latest
             binary: cimcli
             artifact: cimcli-darwin-arm64
@@ -79,5 +76,4 @@ jobs:
             --repo ${{ github.repository }} \
             cimcli-linux-amd64 \
             cimcli-windows-amd64.exe \
-            cimcli-darwin-amd64 \
             cimcli-darwin-arm64
