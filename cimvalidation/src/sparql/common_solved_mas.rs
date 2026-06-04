@@ -119,7 +119,10 @@ fn check_dangling_references(dataset: &CimDataset) -> Vec<Violation> {
             for target in refs {
                 let target_id = target.trim_start_matches('#');
                 if target_id.is_empty() { continue; }
-                if target_id.contains("://") || target_id.starts_with("http") { continue; }
+                let is_cim_id = target.starts_with("urn:uuid:")
+                    || target.contains("#_")
+                    || target.ends_with('#');
+                if !is_cim_id { continue; }
                 if !dataset.entries.contains_key(target_id) {
                     v.push(Violation {
                         object_id:   id.clone(),

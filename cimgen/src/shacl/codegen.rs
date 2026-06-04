@@ -61,21 +61,15 @@ fn render_file(fr: &FileResults, spec: &CimSpecification) -> (String, usize) {
             }
 
             for prop_shape in &node_shape.properties {
-                let path_seg = match prop_shape.path.first() {
-                    Some(p) => p.as_str(),
-                    None => continue,
-                };
-                let attr_id = local_name(path_seg); // e.g. "IdentifiedObject.name"
-                let is_multi_seg = prop_shape.path.len() > 1;
-
+                if prop_shape.path.is_empty() {
+                    continue;
+                }
                 for constraint in &prop_shape.constraints {
                     let (opt_code, opt_regex) = render_check(
                         &file_snake,
                         &class_name,
                         spec,
-                        path_seg,
-                        &attr_id,
-                        is_multi_seg,
+                        &prop_shape.path,
                         constraint,
                         &mut regex_counter,
                     );
@@ -159,19 +153,17 @@ fn render_check(
     file_snake: &str,
     class_name: &str,
     spec: &CimSpecification,
-    path_seg: &str,   // original path segment, e.g. "cim:ACLineSegment.r" or "~cim:Terminal.TopologicalNode"
-    attr_id: &str,    // local_name(path_seg), e.g. "ACLineSegment.r" or "Terminal.TopologicalNode"
-    is_multi_seg: bool,
+    full_path: &[String],
     constraint: &ConstraintInfo,
     regex_counter: &mut usize,
 ) -> (Option<String>, Option<String>) {
-    if is_multi_seg {
-        return (None, None);
-    }
+    let path_seg = full_path[0].as_str();
+    let attr_id = local_name(path_seg);
+    let is_multi_seg = full_path.len() > 1;
 
     let comp = constraint.component.as_str();
 
-    // Compute fn_name early so inverse paths can use it too.
+    // Compute fn_name early so all branches can use it.
     let attr_part = to_snake_case(&attr_id.replace('.', "_"));
     let comp_suffix = component_suffix(comp);
     let raw_name = format!(
@@ -179,6 +171,18 @@ fn render_check(
         class_snake = to_snake_case(class_name),
     );
     let fn_name = safe_fn_name(&raw_name);
+
+    // Multi-segment paths: handle [slice_field, rdf:type] for sh:In / sh:HasValue;
+    // everything else is skipped.
+    if is_multi_seg {
+        if full_path.len() == 2 && full_path[1] == "rdf:type"
+            && !path_seg.starts_with('~')
+            && matches!(comp, "sh:InConstraintComponent" | "sh:HasValueConstraintComponent")
+        {
+            return gen_slice_mrid_rdf_type_check(&fn_name, class_name, spec, &attr_id, constraint);
+        }
+        return (None, None);
+    }
 
     // Inverse path (encoded as "~<forward-iri>" by the parser) — route to dedicated generator
     // before the component skip list so MaxCount is not dropped for inverse shapes.
@@ -190,13 +194,11 @@ fn render_check(
     match comp {
         "sh:NodeKindConstraintComponent"
         | "sh:MaxCountConstraintComponent"
-        | "sh:OrInversePathConstraintComponent"
-        | "sh:ClassConstraintComponent"
-        | "sh:OrClassConstraintComponent" => return (None, None),
+        | "sh:OrInversePathConstraintComponent" => return (None, None),
         _ => {}
     }
 
-    let (accessor_prefix, attr) = match find_attr_in_hierarchy(spec, class_name, attr_id) {
+    let (accessor_prefix, attr) = match find_attr_in_hierarchy(spec, class_name, &attr_id) {
         Some(pair) => pair,
         None => return (None, None),
     };
@@ -240,6 +242,12 @@ fn render_check(
         }
         "sh:LessThanConstraintComponent" => {
             gen_less_than(&fn_name, class_name, spec, &full_accessor, &attr, constraint)
+        }
+        "sh:ClassConstraintComponent" => {
+            gen_class(&fn_name, class_name, spec, &full_accessor, &attr, constraint)
+        }
+        "sh:OrClassConstraintComponent" => {
+            gen_or_class(&fn_name, class_name, spec, &full_accessor, &attr, constraint)
         }
         "sh:NotClassConstraintComponent" => {
             gen_not_class(&fn_name, class_name, &full_accessor, &attr, constraint)
@@ -297,7 +305,12 @@ fn gen_in(
     attr: &CimAttribute,
     c: &ConstraintInfo,
 ) -> (Option<String>, Option<String>) {
-    if attr.is_list { return (None, None); }
+    if attr.is_list {
+        if (attr.is_primitive || attr.is_cim_datatype) && attr.lang_type == "String" {
+            return gen_slice_string_in(fn_name, class_name, accessor, attr, c);
+        }
+        return (None, None);
+    }
     if (attr.is_primitive || attr.is_cim_datatype) && attr.lang_type != "String" {
         return (None, None);
     }
@@ -550,6 +563,272 @@ fn gen_not_class(
     writeln!(s, "        }};").unwrap();
     writeln!(s, "        if let Some(ref_entry) = dataset.entries.get(ref_mrid) {{").unwrap();
     writeln!(s, "            if ref_entry.element.type_name() == \"{forbidden}\" {{").unwrap();
+    writeln!(s, "                violations.push(Violation {{").unwrap();
+    writeln!(s, "                    object_id:   mrid.clone(),").unwrap();
+    writeln!(s, "                    rule_id:     \"{name_str}\".to_string(),").unwrap();
+    writeln!(s, "                    class:       \"{class_name}\".to_string(),").unwrap();
+    writeln!(s, "                    property:    \"{prop}\".to_string(),").unwrap();
+    writeln!(s, "                    message:     \"{message}\".to_string(),").unwrap();
+    writeln!(s, "                    severity:    \"{severity}\".to_string(),").unwrap();
+    writeln!(s, "                    name:        \"{name_str}\".to_string(),").unwrap();
+    writeln!(s, "                    description: \"{desc_str}\".to_string(),").unwrap();
+    writeln!(s, "                }});").unwrap();
+    writeln!(s, "            }}").unwrap();
+    writeln!(s, "        }}").unwrap();
+    writeln!(s, "    }}").unwrap();
+    writeln!(s, "    violations").unwrap();
+    writeln!(s, "}}").unwrap();
+    (Some(s), None)
+}
+
+fn gen_class(
+    fn_name: &str,
+    class_name: &str,
+    spec: &CimSpecification,
+    accessor: &str,
+    attr: &CimAttribute,
+    c: &ConstraintInfo,
+) -> (Option<String>, Option<String>) {
+    if attr.is_primitive || attr.is_cim_datatype || attr.is_enum_value {
+        return (None, None);
+    }
+    let wanted = match c.payload.get("class").and_then(|v| v.as_str()) {
+        Some(v) => local_name(v),
+        None => return (None, None),
+    };
+    // Expand to all types that ARE or inherit from `wanted`. If everything
+    // qualifies, the constraint is vacuously true and can be skipped.
+    let allowed_types = class_and_subclasses(spec, &wanted);
+    if allowed_types.is_empty() || allowed_types.len() >= spec.types.len() {
+        return (None, None);
+    }
+    gen_ref_type_check(fn_name, class_name, accessor, attr, c, &allowed_types)
+}
+
+fn gen_or_class(
+    fn_name: &str,
+    class_name: &str,
+    spec: &CimSpecification,
+    accessor: &str,
+    attr: &CimAttribute,
+    c: &ConstraintInfo,
+) -> (Option<String>, Option<String>) {
+    if attr.is_primitive || attr.is_cim_datatype || attr.is_enum_value {
+        return (None, None);
+    }
+    let raw_classes: Vec<String> = match c.payload.get("classes").and_then(|v| v.as_list()) {
+        Some(v) if !v.is_empty() => v.iter().map(|s| local_name(s)).collect(),
+        _ => return (None, None),
+    };
+    // Expand each listed class to include its subclasses.
+    let mut allowed_set = std::collections::BTreeSet::new();
+    for cls in &raw_classes {
+        for t in class_and_subclasses(spec, cls) {
+            allowed_set.insert(t);
+        }
+    }
+    let allowed_types: Vec<String> = allowed_set.into_iter().collect();
+    if allowed_types.is_empty() || allowed_types.len() >= spec.types.len() {
+        return (None, None);
+    }
+    gen_ref_type_check(fn_name, class_name, accessor, attr, c, &allowed_types)
+}
+
+fn gen_ref_type_check(
+    fn_name: &str,
+    class_name: &str,
+    accessor: &str,
+    attr: &CimAttribute,
+    c: &ConstraintInfo,
+    allowed_types: &[String],
+) -> (Option<String>, Option<String>) {
+    fn esc(x: &str) -> String { x.replace('\\', "\\\\").replace('"', "\\\"") }
+    let message  = esc(&c.message);
+    let severity = &c.severity;
+    let name_str = esc(&c.name);
+    let desc_str = esc(&c.description);
+    let prop = &attr.id;
+    let allowed_str = allowed_types.iter()
+        .map(|t| format!("\"{}\"", t))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let mut s = String::new();
+    writeln!(s, "pub fn {fn_name}(dataset: &CimDataset) -> Vec<Violation> {{").unwrap();
+    writeln!(s, "    let mut violations = Vec::new();").unwrap();
+    writeln!(s, "    for mrid in dataset.by_type.get(\"{class_name}\").into_iter().flatten() {{").unwrap();
+    writeln!(s, "        let entry = &dataset.entries[mrid];").unwrap();
+    writeln!(s, "        let obj = match entry.element.as_any()").unwrap();
+    writeln!(s, "            .downcast_ref::<cimstructs::{class_name}>() {{").unwrap();
+    writeln!(s, "            Some(o) => o, None => continue,").unwrap();
+    writeln!(s, "        }};").unwrap();
+
+    if attr.is_list {
+        writeln!(s, "        for r in &{accessor} {{").unwrap();
+        writeln!(s, "            let ref_id = r.mrid.trim_start_matches('#');").unwrap();
+        writeln!(s, "            if ref_id.is_empty() {{ continue; }}").unwrap();
+        writeln!(s, "            if let Some(ref_entry) = dataset.entries.get(ref_id) {{").unwrap();
+        writeln!(s, "                let allowed: &[&str] = &[{allowed_str}];").unwrap();
+        writeln!(s, "                if !allowed.contains(&ref_entry.element.type_name()) {{").unwrap();
+        writeln!(s, "                    violations.push(Violation {{").unwrap();
+        writeln!(s, "                        object_id:   mrid.clone(),").unwrap();
+        writeln!(s, "                        rule_id:     \"{name_str}\".to_string(),").unwrap();
+        writeln!(s, "                        class:       \"{class_name}\".to_string(),").unwrap();
+        writeln!(s, "                        property:    \"{prop}\".to_string(),").unwrap();
+        writeln!(s, "                        message:     \"{message}\".to_string(),").unwrap();
+        writeln!(s, "                        severity:    \"{severity}\".to_string(),").unwrap();
+        writeln!(s, "                        name:        \"{name_str}\".to_string(),").unwrap();
+        writeln!(s, "                        description: \"{desc_str}\".to_string(),").unwrap();
+        writeln!(s, "                    }});").unwrap();
+        writeln!(s, "                }}").unwrap();
+        writeln!(s, "            }}").unwrap();
+        writeln!(s, "        }}").unwrap();
+    } else {
+        writeln!(s, "        let ref_mrid = match {accessor}.as_ref() {{").unwrap();
+        writeln!(s, "            Some(r) => r.mrid.trim_start_matches('#'), None => continue,").unwrap();
+        writeln!(s, "        }};").unwrap();
+        writeln!(s, "        if let Some(ref_entry) = dataset.entries.get(ref_mrid) {{").unwrap();
+        writeln!(s, "            let allowed: &[&str] = &[{allowed_str}];").unwrap();
+        writeln!(s, "            if !allowed.contains(&ref_entry.element.type_name()) {{").unwrap();
+        writeln!(s, "                violations.push(Violation {{").unwrap();
+        writeln!(s, "                    object_id:   mrid.clone(),").unwrap();
+        writeln!(s, "                    rule_id:     \"{name_str}\".to_string(),").unwrap();
+        writeln!(s, "                    class:       \"{class_name}\".to_string(),").unwrap();
+        writeln!(s, "                    property:    \"{prop}\".to_string(),").unwrap();
+        writeln!(s, "                    message:     \"{message}\".to_string(),").unwrap();
+        writeln!(s, "                    severity:    \"{severity}\".to_string(),").unwrap();
+        writeln!(s, "                    name:        \"{name_str}\".to_string(),").unwrap();
+        writeln!(s, "                    description: \"{desc_str}\".to_string(),").unwrap();
+        writeln!(s, "                }});").unwrap();
+        writeln!(s, "            }}").unwrap();
+        writeln!(s, "        }}").unwrap();
+    }
+
+    writeln!(s, "    }}").unwrap();
+    writeln!(s, "    violations").unwrap();
+    writeln!(s, "}}").unwrap();
+    (Some(s), None)
+}
+
+fn gen_slice_mrid_rdf_type_check(
+    fn_name: &str,
+    class_name: &str,
+    spec: &CimSpecification,
+    attr_id: &str,
+    c: &ConstraintInfo,
+) -> (Option<String>, Option<String>) {
+    let (accessor_prefix, attr) = match find_attr_in_hierarchy(spec, class_name, attr_id) {
+        Some(p) => p,
+        None => return (None, None),
+    };
+    if !attr.is_list || attr.is_primitive || attr.is_cim_datatype || attr.is_enum_value || !attr.is_association_used {
+        return (None, None);
+    }
+    let field_name = sanitize_field(to_snake_case(&attr.label));
+    let accessor = format!("{accessor_prefix}.{field_name}");
+
+    let comp = c.component.as_str();
+    let allowed_types: Vec<String> = match comp {
+        "sh:InConstraintComponent" => {
+            match c.payload.get("in").and_then(|v| v.as_list()) {
+                Some(v) if !v.is_empty() => v.iter().map(|s| local_name(s)).collect(),
+                _ => return (None, None),
+            }
+        }
+        "sh:HasValueConstraintComponent" => {
+            match c.payload.get("hasValue").and_then(|v| v.as_str()) {
+                Some(v) => vec![local_name(v)],
+                None => return (None, None),
+            }
+        }
+        _ => return (None, None),
+    };
+    if allowed_types.is_empty() {
+        return (None, None);
+    }
+    let allowed_str = allowed_types.iter()
+        .map(|t| format!("\"{t}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    fn esc(x: &str) -> String { x.replace('\\', "\\\\").replace('"', "\\\"") }
+    let message  = esc(&c.message);
+    let severity = &c.severity;
+    let name_str = esc(&c.name);
+    let desc_str = esc(&c.description);
+    let prop = &attr.id;
+
+    let mut s = String::new();
+    writeln!(s, "pub fn {fn_name}(dataset: &CimDataset) -> Vec<Violation> {{").unwrap();
+    writeln!(s, "    let mut violations = Vec::new();").unwrap();
+    writeln!(s, "    for mrid in dataset.by_type.get(\"{class_name}\").into_iter().flatten() {{").unwrap();
+    writeln!(s, "        let entry = &dataset.entries[mrid];").unwrap();
+    writeln!(s, "        let obj = match entry.element.as_any()").unwrap();
+    writeln!(s, "            .downcast_ref::<cimstructs::{class_name}>() {{").unwrap();
+    writeln!(s, "            Some(o) => o, None => continue,").unwrap();
+    writeln!(s, "        }};").unwrap();
+    writeln!(s, "        for r in &{accessor} {{").unwrap();
+    writeln!(s, "            let ref_id = r.mrid.trim_start_matches('#');").unwrap();
+    writeln!(s, "            if ref_id.is_empty() {{ continue; }}").unwrap();
+    writeln!(s, "            if let Some(ref_entry) = dataset.entries.get(ref_id) {{").unwrap();
+    writeln!(s, "                let allowed: &[&str] = &[{allowed_str}];").unwrap();
+    writeln!(s, "                if !allowed.contains(&ref_entry.element.type_name()) {{").unwrap();
+    writeln!(s, "                    violations.push(Violation {{").unwrap();
+    writeln!(s, "                        object_id:   mrid.clone(),").unwrap();
+    writeln!(s, "                        rule_id:     \"{name_str}\".to_string(),").unwrap();
+    writeln!(s, "                        class:       \"{class_name}\".to_string(),").unwrap();
+    writeln!(s, "                        property:    \"{prop}\".to_string(),").unwrap();
+    writeln!(s, "                        message:     \"{message}\".to_string(),").unwrap();
+    writeln!(s, "                        severity:    \"{severity}\".to_string(),").unwrap();
+    writeln!(s, "                        name:        \"{name_str}\".to_string(),").unwrap();
+    writeln!(s, "                        description: \"{desc_str}\".to_string(),").unwrap();
+    writeln!(s, "                    }});").unwrap();
+    writeln!(s, "                }}").unwrap();
+    writeln!(s, "            }}").unwrap();
+    writeln!(s, "        }}").unwrap();
+    writeln!(s, "    }}").unwrap();
+    writeln!(s, "    violations").unwrap();
+    writeln!(s, "}}").unwrap();
+    (Some(s), None)
+}
+
+fn gen_slice_string_in(
+    fn_name: &str,
+    class_name: &str,
+    accessor: &str,
+    attr: &CimAttribute,
+    c: &ConstraintInfo,
+) -> (Option<String>, Option<String>) {
+    let values = match c.payload.get("in").and_then(|v| v.as_list()) {
+        Some(v) if !v.is_empty() => v,
+        _ => return (None, None),
+    };
+    let allowed_items: Vec<String> = values
+        .iter()
+        .map(|v| format!("\"{}\"", v.replace('"', "\\\"")))
+        .collect();
+    let allowed_str = allowed_items.join(", ");
+
+    fn esc(x: &str) -> String { x.replace('\\', "\\\\").replace('"', "\\\"") }
+    let message  = esc(&c.message);
+    let severity = &c.severity;
+    let name_str = esc(&c.name);
+    let desc_str = esc(&c.description);
+    let prop = &attr.id;
+
+    let mut s = String::new();
+    writeln!(s, "pub fn {fn_name}(dataset: &CimDataset) -> Vec<Violation> {{").unwrap();
+    writeln!(s, "    let mut violations = Vec::new();").unwrap();
+    writeln!(s, "    for mrid in dataset.by_type.get(\"{class_name}\").into_iter().flatten() {{").unwrap();
+    writeln!(s, "        let entry = &dataset.entries[mrid];").unwrap();
+    writeln!(s, "        let obj = match entry.element.as_any()").unwrap();
+    writeln!(s, "            .downcast_ref::<cimstructs::{class_name}>() {{").unwrap();
+    writeln!(s, "            Some(o) => o, None => continue,").unwrap();
+    writeln!(s, "        }};").unwrap();
+    writeln!(s, "        let allowed: &[&str] = &[{allowed_str}];").unwrap();
+    writeln!(s, "        for val in &{accessor} {{").unwrap();
+    writeln!(s, "            if val.is_empty() {{ continue; }}").unwrap();
+    writeln!(s, "            if !allowed.contains(&val.as_str()) {{").unwrap();
     writeln!(s, "                violations.push(Violation {{").unwrap();
     writeln!(s, "                    object_id:   mrid.clone(),").unwrap();
     writeln!(s, "                    rule_id:     \"{name_str}\".to_string(),").unwrap();
@@ -883,6 +1162,42 @@ fn guess_profile_from_mod(mod_name: &str) -> Option<&'static str> {
     else if m.contains("geographicallocation") { Some("GL") }
     else if m.contains("operation") { Some("OP") }
     else { None }
+}
+
+// ---------------------------------------------------------------------------
+// Class hierarchy helpers
+// ---------------------------------------------------------------------------
+
+fn is_subtype_of(spec: &CimSpecification, type_name: &str, ancestor: &str) -> bool {
+    let mut current = type_name.to_string();
+    let mut visited = std::collections::HashSet::new();
+    loop {
+        if !visited.insert(current.clone()) {
+            return false;
+        }
+        match spec.types.get(&current) {
+            Some(t) => {
+                if t.super_type.is_empty() || t.super_type == current {
+                    return false;
+                }
+                if t.super_type == ancestor {
+                    return true;
+                }
+                current = t.super_type.clone();
+            }
+            None => return false,
+        }
+    }
+}
+
+fn class_and_subclasses(spec: &CimSpecification, class: &str) -> Vec<String> {
+    let mut result: Vec<String> = spec.types
+        .keys()
+        .filter(|name| name.as_str() == class || is_subtype_of(spec, name, class))
+        .cloned()
+        .collect();
+    result.sort();
+    result
 }
 
 // ---------------------------------------------------------------------------

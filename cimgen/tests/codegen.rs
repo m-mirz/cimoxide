@@ -65,7 +65,7 @@ fn cimvalidation_codegen_stable() {
     std::fs::create_dir_all(&shacl_out).unwrap();
 
     let shacl_glob = root.join(
-        "application-profiles-library/CGMES/CurrentRelease/SHACL/TTL/*.ttl",
+        "application-profiles-library/CGMES/CurrentRelease/SHACL/*.ttl",
     );
 
     let status = Command::new(env!("CARGO_BIN_EXE_cimgen"))
@@ -81,5 +81,5 @@ fn cimvalidation_codegen_stable() {
     assert!(status.success(), "cimgen exited with failure");
 
     let hash = hash_dir(&shacl_out);
-    assert_eq!(hash, "e8f6880f2ff51365a7f72872fe2dda4d0ea48d184a10d1c89a3b51fef7cf13f1", "cimvalidation output drifted — rerun to update hash");
+    assert_eq!(hash, "cb074220f0c2db7a86f30ceeb0ca91a9be318f5734fefd0669abd8447ca870cb", "cimvalidation output drifted — rerun to update hash");
 }

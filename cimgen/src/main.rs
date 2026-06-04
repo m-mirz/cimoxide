@@ -8,7 +8,7 @@ const DEFAULT_SCHEMA: &str =
     "application-profiles-library/CGMES/CurrentRelease/RDFS/61970-600-2_*-AP-Voc-RDFS2020.rdf";
 const DEFAULT_OUTPUT: &str = "cimstructs/src";
 const DEFAULT_SHACL: &str =
-    "application-profiles-library/CGMES/CurrentRelease/SHACL/TTL/*.ttl";
+    "application-profiles-library/CGMES/CurrentRelease/SHACL/*.ttl";
 const DEFAULT_SHACL_OUTPUT: &str = "cimvalidation/src";
 const DEFAULT_PYTHON_STUBS_OUTPUT: &str = "cimoxide-py/python/cimoxide";
 
