@@ -60,6 +60,21 @@ fn render_file(fr: &FileResults, spec: &CimSpecification) -> (String, usize) {
                 continue; // class not in schema (e.g. md:FullModel)
             }
 
+            // Compound node-level constraints (sh:xone, sh:or, sh:and)
+            for node_constraint in &node_shape.constraints {
+                if let Some(fn_code) = gen_compound_check(&file_snake, &class_name, spec, node_constraint) {
+                    let raw_name = extract_fn_name(&fn_code);
+                    let fn_name = dedup_fn_name(raw_name.clone(), &used_fn_names);
+                    let patched = if fn_name != raw_name {
+                        fn_code.replacen(&format!("pub fn {raw_name}("), &format!("pub fn {fn_name}("), 1)
+                    } else { fn_code };
+                    used_fn_names.insert(fn_name.clone());
+                    check_names.push(fn_name);
+                    checks_body.push_str(&patched);
+                    checks_body.push('\n');
+                }
+            }
+
             for prop_shape in &node_shape.properties {
                 if prop_shape.path.is_empty() {
                     continue;
@@ -78,26 +93,10 @@ fn render_file(fr: &FileResults, spec: &CimSpecification) -> (String, usize) {
                             regex_decls.push(decl);
                         }
                         let raw_name = extract_fn_name(&fn_code);
-                        // Deduplicate: if the name was already used (can happen after
-                        // truncation), rename by appending a counter suffix.
-                        let fn_name = if used_fn_names.contains(&raw_name) {
-                            let mut n = 2usize;
-                            loop {
-                                let candidate = format!("{raw_name}_{n}");
-                                if !used_fn_names.contains(&candidate) {
-                                    break candidate;
-                                }
-                                n += 1;
-                            }
-                        } else {
-                            raw_name.clone()
-                        };
-                        // Patch the fn name in the emitted code if it changed
+                        let fn_name = dedup_fn_name(raw_name.clone(), &used_fn_names);
                         let patched = if fn_name != raw_name {
                             fn_code.replacen(&format!("pub fn {raw_name}("), &format!("pub fn {fn_name}("), 1)
-                        } else {
-                            fn_code
-                        };
+                        } else { fn_code };
                         used_fn_names.insert(fn_name.clone());
                         check_names.push(fn_name);
                         checks_body.push_str(&patched);
@@ -1162,6 +1161,345 @@ fn guess_profile_from_mod(mod_name: &str) -> Option<&'static str> {
     else if m.contains("geographicallocation") { Some("GL") }
     else if m.contains("operation") { Some("OP") }
     else { None }
+}
+
+// ---------------------------------------------------------------------------
+// Compound constraint generators (sh:xone, sh:or, sh:and)
+// ---------------------------------------------------------------------------
+
+fn gen_compound_check(
+    file_snake: &str,
+    class_name: &str,
+    spec: &CimSpecification,
+    c: &ConstraintInfo,
+) -> Option<String> {
+    let branches = c.payload.get("branches").and_then(|v| v.as_shapes())?;
+
+    let comp_suffix = match c.component.as_str() {
+        "sh:XoneConstraintComponent" => "xone",
+        "sh:OrConstraintComponent" => "or",
+        "sh:AndConstraintComponent" => "and",
+        _ => return None,
+    };
+    let raw_name = format!(
+        "check_{file_snake}_{class_snake}_{comp_suffix}",
+        class_snake = to_snake_case(class_name),
+    );
+    let fn_name = safe_fn_name(&raw_name);
+
+    match c.component.as_str() {
+        "sh:XoneConstraintComponent" => gen_xone_check(&fn_name, class_name, spec, c, branches),
+        "sh:OrConstraintComponent"   => gen_or_compound_check(&fn_name, class_name, spec, c, branches),
+        "sh:AndConstraintComponent"  => gen_and_compound_check(&fn_name, class_name, spec, c, branches),
+        _ => None,
+    }
+}
+
+/// sh:xone: exactly one of N forward-pointer fields must be non-None.
+/// Each branch must have a single MinCount=1 on a forward association path.
+fn gen_xone_check(
+    fn_name: &str,
+    class_name: &str,
+    spec: &CimSpecification,
+    c: &ConstraintInfo,
+    branches: &[Vec<ConstraintInfo>],
+) -> Option<String> {
+    let mut field_accessors: Vec<String> = Vec::new();
+    for branch in branches {
+        let min1 = branch.iter().find(|ci|
+            ci.component == "sh:MinCountConstraintComponent"
+            && ci.payload.get("minCount").and_then(|v| v.as_int()) == Some(1)
+            && ci.path.len() == 1 && !ci.path[0].starts_with('~'))?;
+        let attr_id = local_name(&min1.path[0]);
+        let (acc_prefix, attr) = find_attr_in_hierarchy(spec, class_name, &attr_id)?;
+        if !attr.is_association_used || attr.is_list { return None; }
+        let field = sanitize_field(to_snake_case(&attr.label));
+        field_accessors.push(format!("{acc_prefix}.{field}"));
+    }
+    if field_accessors.len() < 2 { return None; }
+
+    let (message, severity, name_str, desc_str, prop) = extract_violation_fields(c);
+    let mut s = String::new();
+    write_fn_header(&mut s, fn_name, class_name);
+    writeln!(s, "        let mut pass_count = 0usize;").unwrap();
+    for acc in &field_accessors {
+        writeln!(s, "        if {acc}.is_some() {{ pass_count += 1; }}").unwrap();
+    }
+    writeln!(s, "        if pass_count != 1 {{").unwrap();
+    write_violation(&mut s, class_name, &prop, &message, &severity, &name_str, &desc_str, "            ");
+    writeln!(s, "        }}").unwrap();
+    write_fn_footer(&mut s);
+    Some(s)
+}
+
+/// sh:or: violation when ALL branches fail their inverse-count range.
+/// Each branch must have exactly one inverse-path with min/max count.
+fn gen_or_compound_check(
+    fn_name: &str,
+    class_name: &str,
+    spec: &CimSpecification,
+    c: &ConstraintInfo,
+    branches: &[Vec<ConstraintInfo>],
+) -> Option<String> {
+    struct InvBranch { prelude: String, fail_cond: String }
+    let mut parsed: Vec<InvBranch> = Vec::new();
+
+    for (i, branch) in branches.iter().enumerate() {
+        // Must have at least one constraint with inverse path
+        let inv = branch.iter().find(|ci|
+            !ci.path.is_empty() && ci.path[0].starts_with('~'))?;
+        if inv.path.len() != 1 { return None; } // multi-segment: skip
+
+        let prelude = build_inverse_count_prelude(spec, &inv.path[0], i)?;
+        let min = branch.iter().find(|ci| ci.component == "sh:MinCountConstraintComponent")
+            .and_then(|ci| ci.payload.get("minCount").and_then(|v| v.as_int()))
+            .unwrap_or(0);
+        let max = branch.iter().find(|ci| ci.component == "sh:MaxCountConstraintComponent")
+            .and_then(|ci| ci.payload.get("maxCount").and_then(|v| v.as_int()))
+            .unwrap_or(i64::MAX / 2);
+        let fail_cond = inverse_fail_cond(i, min, max);
+        parsed.push(InvBranch { prelude, fail_cond });
+    }
+    if parsed.len() < 2 { return None; }
+
+    let (message, severity, name_str, desc_str, prop) = extract_violation_fields(c);
+    let all_fail = parsed.iter().map(|b| b.fail_cond.as_str()).collect::<Vec<_>>().join(" && ");
+
+    let mut s = String::new();
+    writeln!(s, "pub fn {fn_name}(dataset: &CimDataset) -> Vec<Violation> {{").unwrap();
+    for b in &parsed { s.push_str(&b.prelude); }
+    writeln!(s, "    let mut violations = Vec::new();").unwrap();
+    writeln!(s, "    for mrid in dataset.by_type.get(\"{class_name}\").into_iter().flatten() {{").unwrap();
+    writeln!(s, "        if {all_fail} {{").unwrap();
+    write_violation(&mut s, class_name, &prop, &message, &severity, &name_str, &desc_str, "            ");
+    writeln!(s, "        }}").unwrap();
+    writeln!(s, "    }}").unwrap();
+    writeln!(s, "    violations").unwrap();
+    writeln!(s, "}}").unwrap();
+    Some(s)
+}
+
+/// sh:and: violation when ANY branch fails.
+/// Branches can be:
+///   - forward MaxCount=0 (field must be absent)
+///   - forward MinCount=1+MaxCount=1 (field must be present, scalar only)
+///   - inverse single-segment path with min/max count
+///   - multi-segment (skipped — returns None for whole check)
+fn gen_and_compound_check(
+    fn_name: &str,
+    class_name: &str,
+    spec: &CimSpecification,
+    c: &ConstraintInfo,
+    branches: &[Vec<ConstraintInfo>],
+) -> Option<String> {
+    let mut prelude_parts: Vec<String> = Vec::new();
+    let mut fail_conds: Vec<String> = Vec::new();
+    let mut needs_obj = false;
+    let mut inv_idx = 0usize;
+
+    for branch in branches {
+        // Find a path from any constraint in this branch
+        let any_path = branch.iter().find(|ci| !ci.path.is_empty()).map(|ci| &ci.path[0]);
+        let path0 = any_path?;
+
+        if path0.starts_with('~') {
+            // Inverse path branch
+            if branch.iter().any(|ci| ci.path.len() > 1) { return None; } // multi-seg: skip
+            let inv_ci = branch.iter().find(|ci| !ci.path.is_empty())?;
+            if inv_ci.path.len() != 1 { return None; }
+            let prelude = build_inverse_count_prelude(spec, &inv_ci.path[0], inv_idx)?;
+            let min = branch.iter().find(|ci| ci.component == "sh:MinCountConstraintComponent")
+                .and_then(|ci| ci.payload.get("minCount").and_then(|v| v.as_int()))
+                .unwrap_or(0);
+            let max = branch.iter().find(|ci| ci.component == "sh:MaxCountConstraintComponent")
+                .and_then(|ci| ci.payload.get("maxCount").and_then(|v| v.as_int()))
+                .unwrap_or(i64::MAX / 2);
+            prelude_parts.push(prelude);
+            fail_conds.push(inverse_fail_cond(inv_idx, min, max));
+            inv_idx += 1;
+        } else {
+            // Forward field branch — determine what kind
+            if branch.iter().any(|ci| ci.path.len() > 1) { return None; } // multi-seg: skip
+            let attr_id = local_name(path0);
+            let (acc_prefix, attr) = find_attr_in_hierarchy(spec, class_name, &attr_id)?;
+            let field = sanitize_field(to_snake_case(&attr.label));
+            let accessor = format!("{acc_prefix}.{field}");
+
+            let max = branch.iter().find(|ci| ci.component == "sh:MaxCountConstraintComponent")
+                .and_then(|ci| ci.payload.get("maxCount").and_then(|v| v.as_int()));
+            let min = branch.iter().find(|ci| ci.component == "sh:MinCountConstraintComponent")
+                .and_then(|ci| ci.payload.get("minCount").and_then(|v| v.as_int()));
+
+            let fail_cond = if max == Some(0) {
+                // Field must be absent
+                field_absent_cond(&attr, &accessor)?
+            } else if min == Some(1) && (max == Some(1) || max.is_none()) {
+                // Field must be present
+                field_required_cond(&attr, &accessor)?
+            } else {
+                return None; // unsupported pattern
+            };
+            needs_obj = true;
+            fail_conds.push(fail_cond);
+        }
+    }
+
+    if fail_conds.is_empty() { return None; }
+    let any_fail = fail_conds.join(" || ");
+
+    let (message, severity, name_str, desc_str, prop) = extract_violation_fields(c);
+
+    let mut s = String::new();
+    writeln!(s, "pub fn {fn_name}(dataset: &CimDataset) -> Vec<Violation> {{").unwrap();
+    for p in &prelude_parts { s.push_str(p); }
+    writeln!(s, "    let mut violations = Vec::new();").unwrap();
+    writeln!(s, "    for mrid in dataset.by_type.get(\"{class_name}\").into_iter().flatten() {{").unwrap();
+    if needs_obj {
+        writeln!(s, "        let entry = &dataset.entries[mrid];").unwrap();
+        writeln!(s, "        let obj = match entry.element.as_any()").unwrap();
+        writeln!(s, "            .downcast_ref::<cimstructs::{class_name}>() {{").unwrap();
+        writeln!(s, "            Some(o) => o, None => continue,").unwrap();
+        writeln!(s, "        }};").unwrap();
+    }
+    writeln!(s, "        if {any_fail} {{").unwrap();
+    write_violation(&mut s, class_name, &prop, &message, &severity, &name_str, &desc_str, "            ");
+    writeln!(s, "        }}").unwrap();
+    writeln!(s, "    }}").unwrap();
+    writeln!(s, "    violations").unwrap();
+    writeln!(s, "}}").unwrap();
+    Some(s)
+}
+
+// ---------------------------------------------------------------------------
+// Compound generator helpers
+// ---------------------------------------------------------------------------
+
+/// Build the prelude code that counts inverse references for one branch.
+/// `path0` is the raw inverse path segment like "~cim:Terminal.ConductingEquipment".
+fn build_inverse_count_prelude(spec: &CimSpecification, path0: &str, idx: usize) -> Option<String> {
+    let forward_pred = &path0[1..]; // strip leading '~'
+    let local = local_name(forward_pred);
+    let (src_class, _) = local.split_once('.')?;
+    let (acc_prefix, attr) = find_attr_in_hierarchy(spec, src_class, &local)?;
+    if !attr.is_association_used { return None; }
+    let field = sanitize_field(to_snake_case(&attr.label));
+    let src_prefix = acc_prefix.replacen("obj", "src", 1);
+    let src_field = format!("{src_prefix}.{field}");
+
+    let mut s = String::new();
+    writeln!(s, "    let mut counts{idx}: std::collections::HashMap<String, usize> = std::collections::HashMap::new();").unwrap();
+    writeln!(s, "    for src_mrid in dataset.by_type.get(\"{src_class}\").into_iter().flatten() {{").unwrap();
+    writeln!(s, "        if let Some(src) = dataset.entries.get(src_mrid)").unwrap();
+    writeln!(s, "            .and_then(|e| e.element.as_any().downcast_ref::<cimstructs::{src_class}>()) {{").unwrap();
+    if attr.is_list {
+        writeln!(s, "            for r in &{src_field} {{").unwrap();
+        writeln!(s, "                *counts{idx}.entry(r.mrid.trim_start_matches('#').to_string()).or_insert(0) += 1;").unwrap();
+        writeln!(s, "            }}").unwrap();
+    } else {
+        writeln!(s, "            if let Some(r) = &{src_field} {{").unwrap();
+        writeln!(s, "                *counts{idx}.entry(r.mrid.trim_start_matches('#').to_string()).or_insert(0) += 1;").unwrap();
+        writeln!(s, "            }}").unwrap();
+    }
+    writeln!(s, "        }}").unwrap();
+    writeln!(s, "    }}").unwrap();
+    Some(s)
+}
+
+fn inverse_fail_cond(idx: usize, min: i64, max: i64) -> String {
+    let count = format!("counts{idx}.get(mrid.as_str()).copied().unwrap_or(0)");
+    if min == max {
+        format!("{count} != {min}")
+    } else if max == i64::MAX / 2 {
+        format!("{count} < {min}")
+    } else if min == 0 {
+        format!("{count} > {max}")
+    } else {
+        format!("{{ let c = {count}; c < {min} || c > {max} }}")
+    }
+}
+
+/// Violation condition for "field must be absent" (sh:maxCount 0).
+fn field_absent_cond(attr: &CimAttribute, accessor: &str) -> Option<String> {
+    if attr.is_list {
+        Some(format!("!{accessor}.is_empty()"))
+    } else if attr.is_primitive || attr.is_cim_datatype {
+        Some(match attr.lang_type.as_str() {
+            "String" => format!("!{accessor}.is_empty()"),
+            _ => format!("{accessor}.is_some()"),  // Option<f64>, Option<i64>, Option<bool>
+        })
+    } else if attr.is_enum_value {
+        Some(format!("{accessor}.is_some()"))
+    } else {
+        Some(format!("{accessor}.is_some()"))  // Option<MridRef>
+    }
+}
+
+/// Violation condition for "field must be present" (sh:minCount 1 + maxCount 1).
+fn field_required_cond(attr: &CimAttribute, accessor: &str) -> Option<String> {
+    if attr.is_list {
+        Some(format!("{accessor}.is_empty()"))
+    } else if attr.is_primitive || attr.is_cim_datatype {
+        Some(match attr.lang_type.as_str() {
+            "String" => format!("{accessor}.is_empty()"),
+            _ => format!("{accessor}.is_none()"),
+        })
+    } else if attr.is_enum_value {
+        Some(format!("{accessor}.is_none()"))
+    } else {
+        Some(format!("{accessor}.is_none()"))
+    }
+}
+
+fn extract_violation_fields(c: &ConstraintInfo) -> (String, String, String, String, String) {
+    fn esc(x: &str) -> String { x.replace('\\', "\\\\").replace('"', "\\\"") }
+    let message  = esc(&c.message);
+    let severity = if c.severity.is_empty() { "sh:Violation".to_string() } else { c.severity.clone() };
+    let name_str = esc(&c.name);
+    let desc_str = esc(&c.description);
+    let prop     = esc(&c.name);
+    (message, severity, name_str, desc_str, prop)
+}
+
+fn write_fn_header(s: &mut String, fn_name: &str, class_name: &str) {
+    writeln!(s, "pub fn {fn_name}(dataset: &CimDataset) -> Vec<Violation> {{").unwrap();
+    writeln!(s, "    let mut violations = Vec::new();").unwrap();
+    writeln!(s, "    for mrid in dataset.by_type.get(\"{class_name}\").into_iter().flatten() {{").unwrap();
+    writeln!(s, "        let entry = &dataset.entries[mrid];").unwrap();
+    writeln!(s, "        let obj = match entry.element.as_any()").unwrap();
+    writeln!(s, "            .downcast_ref::<cimstructs::{class_name}>() {{").unwrap();
+    writeln!(s, "            Some(o) => o, None => continue,").unwrap();
+    writeln!(s, "        }};").unwrap();
+}
+
+fn write_fn_footer(s: &mut String) {
+    writeln!(s, "    }}").unwrap();
+    writeln!(s, "    violations").unwrap();
+    writeln!(s, "}}").unwrap();
+}
+
+fn write_violation(s: &mut String, class_name: &str, prop: &str, message: &str, severity: &str, name_str: &str, desc_str: &str, indent: &str) {
+    writeln!(s, "{indent}violations.push(Violation {{").unwrap();
+    writeln!(s, "{indent}    object_id:   mrid.clone(),").unwrap();
+    writeln!(s, "{indent}    rule_id:     \"{name_str}\".to_string(),").unwrap();
+    writeln!(s, "{indent}    class:       \"{class_name}\".to_string(),").unwrap();
+    writeln!(s, "{indent}    property:    \"{prop}\".to_string(),").unwrap();
+    writeln!(s, "{indent}    message:     \"{message}\".to_string(),").unwrap();
+    writeln!(s, "{indent}    severity:    \"{severity}\".to_string(),").unwrap();
+    writeln!(s, "{indent}    name:        \"{name_str}\".to_string(),").unwrap();
+    writeln!(s, "{indent}    description: \"{desc_str}\".to_string(),").unwrap();
+    writeln!(s, "{indent}}});").unwrap();
+}
+
+fn dedup_fn_name(raw_name: String, used: &std::collections::HashSet<String>) -> String {
+    if !used.contains(&raw_name) {
+        return raw_name;
+    }
+    let mut n = 2usize;
+    loop {
+        let candidate = format!("{raw_name}_{n}");
+        if !used.contains(&candidate) { return candidate; }
+        n += 1;
+    }
 }
 
 // ---------------------------------------------------------------------------

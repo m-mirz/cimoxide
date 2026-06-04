@@ -669,6 +669,7 @@ fn build_node_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
 
     let name = get_str(g, id, "sh:name").unwrap_or_default();
     let description = get_str(g, id, "sh:description").unwrap_or_default();
+    let constraints = extract_node_compound_constraints(g, id, &name, &description);
 
     Some(ShapeInfo {
         id: id.to_string(),
@@ -676,9 +677,103 @@ fn build_node_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
         path: Vec::new(),
         name,
         description,
-        constraints: Vec::new(),
+        constraints,
         properties,
     })
+}
+
+/// Extract compound node constraints (sh:or, sh:and, sh:xone) from a NodeShape.
+/// Each constraint's sub-shape branches are stored as ShaclValue::Shapes.
+fn extract_node_compound_constraints(
+    g: &Graph,
+    id: &str,
+    name: &str,
+    description: &str,
+) -> Vec<ConstraintInfo> {
+    let severity = get_str(g, id, "sh:severity").unwrap_or_else(|| "sh:Violation".to_string());
+    let message = get_str(g, id, "sh:message").unwrap_or_default();
+    let mut constraints = Vec::new();
+
+    for (pred, component) in &[
+        ("sh:xone", "sh:XoneConstraintComponent"),
+        ("sh:or",   "sh:OrConstraintComponent"),
+        ("sh:and",  "sh:AndConstraintComponent"),
+    ] {
+        for val in get_all(g, id, pred) {
+            let items = match val.as_list() {
+                Some(v) => v,
+                None => continue,
+            };
+            let mut branches: Vec<Vec<ConstraintInfo>> = Vec::new();
+            for item in items {
+                if let Some(bnode_id) = item.as_iri() {
+                    let branch = extract_branch_constraints(g, bnode_id);
+                    if !branch.is_empty() {
+                        branches.push(branch);
+                    }
+                }
+            }
+            if branches.len() < 2 {
+                continue;
+            }
+            let mut payload = HashMap::new();
+            payload.insert("branches".to_string(), ShaclValue::Shapes(branches));
+            constraints.push(ConstraintInfo {
+                path: Vec::new(),
+                severity: severity.clone(),
+                message: message.clone(),
+                name: name.to_string(),
+                description: description.to_string(),
+                component: component.to_string(),
+                payload,
+            });
+        }
+    }
+    constraints
+}
+
+/// Extract constraints from a single compound-shape branch blank node.
+/// Handles direct sh:path, sh:minCount, sh:maxCount, sh:hasValue, sh:in.
+fn extract_branch_constraints(g: &Graph, bnode_id: &str) -> Vec<ConstraintInfo> {
+    let mut constraints = Vec::new();
+    let path = extract_path(g, bnode_id);
+
+    let mk = |component: &str, key: &str, val: ShaclValue, path: Vec<String>| -> ConstraintInfo {
+        let mut payload = HashMap::new();
+        payload.insert(key.to_string(), val);
+        ConstraintInfo {
+            path,
+            severity: String::new(),
+            message: String::new(),
+            name: String::new(),
+            description: String::new(),
+            component: component.to_string(),
+            payload,
+        }
+    };
+
+    if let Some(n) = get_one(g, bnode_id, "sh:minCount").and_then(|v| v.as_int()) {
+        constraints.push(mk("sh:MinCountConstraintComponent", "minCount", ShaclValue::Int(n), path.clone()));
+    }
+    if let Some(n) = get_one(g, bnode_id, "sh:maxCount").and_then(|v| v.as_int()) {
+        constraints.push(mk("sh:MaxCountConstraintComponent", "maxCount", ShaclValue::Int(n), path.clone()));
+    }
+    if let Some(v) = get_one(g, bnode_id, "sh:hasValue") {
+        let sv = v.as_iri().or_else(|| v.as_str()).map(str::to_string);
+        if let Some(s) = sv {
+            constraints.push(mk("sh:HasValueConstraintComponent", "hasValue", ShaclValue::Str(s), path.clone()));
+        }
+    }
+    if let Some(in_list) = get_one(g, bnode_id, "sh:in").and_then(|v| v.as_list()) {
+        let values: Vec<String> = in_list
+            .iter()
+            .filter_map(|v| v.as_iri().or_else(|| v.as_str()).map(str::to_string))
+            .collect();
+        if !values.is_empty() {
+            constraints.push(mk("sh:InConstraintComponent", "in", ShaclValue::List(values), path.clone()));
+        }
+    }
+    constraints
 }
 
 fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {

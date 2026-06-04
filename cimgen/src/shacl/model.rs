@@ -9,6 +9,9 @@ pub enum ShaclValue {
     Float(f64),
     Bool(bool),
     List(Vec<String>),
+    /// Nested sub-shape branches for sh:or / sh:and / sh:xone.
+    /// Each inner Vec is one branch; each branch is a list of constraints.
+    Shapes(Vec<Vec<ConstraintInfo>>),
 }
 
 impl ShaclValue {
@@ -27,6 +30,9 @@ impl ShaclValue {
     }
     pub fn as_list(&self) -> Option<&Vec<String>> {
         if let ShaclValue::List(v) = self { Some(v) } else { None }
+    }
+    pub fn as_shapes(&self) -> Option<&Vec<Vec<ConstraintInfo>>> {
+        if let ShaclValue::Shapes(v) = self { Some(v) } else { None }
     }
 }
 
