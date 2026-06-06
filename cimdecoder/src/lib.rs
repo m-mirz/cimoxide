@@ -135,6 +135,7 @@ fn parse_rdf(
                             type_name: local,
                             mrid,
                             fields: HashMap::new(),
+                            duplicate_fields: std::collections::HashSet::new(),
                         });
                     }
                     3 => {
@@ -158,7 +159,7 @@ fn parse_rdf(
                         let mrid = extract_about(e.attributes())?;
                         if !mrid.is_empty() {
                             if let Some(f) = reg.get(local.as_str()) {
-                                let block = RdfBlock { type_name: local, mrid: mrid.clone(), fields: HashMap::new() };
+                                let block = RdfBlock { type_name: local, mrid: mrid.clone(), fields: HashMap::new(), duplicate_fields: std::collections::HashSet::new() };
                                 let element = f(&block);
                                 let type_name = element.type_name().to_string();
                                 ds.by_type.entry(type_name).or_default().push(mrid.clone());
@@ -258,11 +259,13 @@ fn find_resource(
 }
 
 /// Insert a field value, upgrading Resource → ResourceList on repeated keys.
+/// Records duplicate Text assignments in `block.duplicate_fields`.
 fn add_field(block: &mut RdfBlock, key: &str, val: FieldValue) {
     if let FieldValue::Resource(ref new_ref) = val {
         match block.fields.get_mut(key) {
             Some(FieldValue::ResourceList(list)) => {
                 list.push(new_ref.clone());
+                block.duplicate_fields.insert(key.to_string());
                 return;
             }
             Some(existing @ FieldValue::Resource(_)) => {
@@ -271,10 +274,14 @@ fn add_field(block: &mut RdfBlock, key: &str, val: FieldValue) {
                     _ => unreachable!(),
                 };
                 *existing = FieldValue::ResourceList(vec![old, new_ref.clone()]);
+                block.duplicate_fields.insert(key.to_string());
                 return;
             }
             _ => {}
         }
+    } else if block.fields.contains_key(key) {
+        // Text field assigned more than once in the same element.
+        block.duplicate_fields.insert(key.to_string());
     }
     block.fields.insert(key.to_string(), val);
 }

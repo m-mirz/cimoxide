@@ -519,6 +519,7 @@ fn render_from_block(spec: &CimSpecification, t: &CimType) -> String {
         writeln!(s, "            type_name: \"{}\".to_string(),", t.id).unwrap();
         writeln!(s, "            mrid: self.id.clone(),").unwrap();
         writeln!(s, "            fields: std::collections::HashMap::new(),").unwrap();
+        writeln!(s, "            duplicate_fields: std::collections::HashSet::new(),").unwrap();
         writeln!(s, "        }};").unwrap();
     } else {
         writeln!(s, "        let {mut_kw}block = self.base.to_block();").unwrap();

@@ -51,7 +51,7 @@ fn cimstructs_codegen_stable() {
     assert!(status.success(), "cimgen exited with failure");
 
     let hash = hash_dir(&out);
-    assert_eq!(hash, "8291e82ddccd3b45cf4f2f3ffa5ff16fe197b5a217a43b00640e29e9ccfe667f", "cimstructs output drifted — rerun to update hash");
+    assert_eq!(hash, "f7e9b3499d8c9e718e076a8fe657aefb3e023a09956486e8fb0482fa249c21d6", "cimstructs output drifted — rerun to update hash");
 }
 
 #[test]
@@ -81,5 +81,5 @@ fn cimvalidation_codegen_stable() {
     assert!(status.success(), "cimgen exited with failure");
 
     let hash = hash_dir(&shacl_out);
-    assert_eq!(hash, "cba733f4ee02fe12d6b432eb3d1399c3d7ac18c973c1bbd898b042b10725a35d", "cimvalidation output drifted — rerun to update hash");
+    assert_eq!(hash, "24a02046f271faa98d87af194d70346d2831ed673d7d34cb5cf1b4d4997ad481", "cimvalidation output drifted — rerun to update hash");
 }

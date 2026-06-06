@@ -20,6 +20,7 @@ fn main() {
     let mut shacl_output: Option<String> = Some(DEFAULT_SHACL_OUTPUT.to_string());
     let mut python_stubs_output: Option<String> = Some(DEFAULT_PYTHON_STUBS_OUTPUT.to_string());
     let mut verbose = false;
+    let mut skip_report = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -45,6 +46,7 @@ fn main() {
                 python_stubs_output = args.get(i).cloned();
             }
             "--verbose" | "-v" => verbose = true,
+            "--skip-report" => skip_report = true,
             other => {
                 eprintln!("unknown argument: {other}");
                 std::process::exit(1);
@@ -87,7 +89,7 @@ fn main() {
     );
 
     if let (Some(glob), Some(out_dir)) = (shacl_glob, shacl_output) {
-        run_shacl(&spec, &glob, &out_dir, verbose);
+        run_shacl(&spec, &glob, &out_dir, verbose, skip_report);
     }
 
     if let Some(out_dir) = python_stubs_output {
@@ -106,6 +108,7 @@ fn run_shacl(
     glob: &str,
     out_dir: &str,
     verbose: bool,
+    skip_report: bool,
 ) {
     let pattern = glob::Pattern::new(glob).unwrap_or_else(|e| {
         eprintln!("invalid shacl glob pattern: {e}");
@@ -147,11 +150,31 @@ fn run_shacl(
 
     shacl::simplify::simplify(&mut results);
 
-    if let Err(e) = shacl::codegen::generate_validation(&results, spec, Path::new(out_dir)) {
-        eprintln!("error generating SHACL validation code: {e}");
-        std::process::exit(1);
-    }
+    let (total_checks, file_skips) = match shacl::codegen::generate_validation(&results, spec, Path::new(out_dir)) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error generating SHACL validation code: {e}");
+            std::process::exit(1);
+        }
+    };
 
-    eprintln!("shacl codegen: {} files → {out_dir}", results.len());
+    let total_skipped: usize = file_skips.iter().map(|f| f.skips.len()).sum();
+    eprintln!(
+        "shacl codegen: {} files, {} checks, {} skipped → {out_dir}",
+        results.len(), total_checks, total_skipped
+    );
+
+    if skip_report {
+        let mut global_counts: std::collections::HashMap<&'static str, usize> =
+            std::collections::HashMap::new();
+        for fi in &file_skips {
+            for e in &fi.skips {
+                eprintln!("{}\t{}", fi.file_name, e);
+            }
+            shacl::skip::print_file_summary(&fi.file_name, fi.check_count, &fi.skips);
+            shacl::skip::accumulate_counts(&mut global_counts, &fi.skips);
+        }
+        shacl::skip::print_global_summary(&global_counts);
+    }
 }
 

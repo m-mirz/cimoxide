@@ -63,10 +63,10 @@ fn simplify_constraints(constraints: Vec<ConstraintInfo>) -> Vec<ConstraintInfo>
                     continue;
                 }
 
-                // Rule 4: min=0 + max=1 → Optional (already matches Option<T>).
-                // Keep as MaxCount=1 so the codegen can skip it (structurally satisfied).
-                if min == 0 && max == Some(1) {
-                    // Structurally satisfied by Option<T> — drop.
+                // Rule 4: min=0 + max=1 — keep MaxCountConstraintComponent so the
+                // codegen can emit a duplicate-field check; drop MinCountConstraintComponent
+                // with min=0 (vacuously true) when paired with an explicit max.
+                if min == 0 && max == Some(1) && c.component == "sh:MinCountConstraintComponent" {
                     continue;
                 }
 

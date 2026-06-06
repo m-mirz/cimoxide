@@ -1075,6 +1075,20 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
         }
     }
 
+    // sh:sparql — emit a marker constraint so the codegen skip reporter can count it.
+    // We don't extract the SPARQL query; the constraint is always skipped.
+    if !get_all(g, id, "sh:sparql").is_empty() {
+        constraints.push(ConstraintInfo {
+            path: path.clone(),
+            severity: severity.clone(),
+            message: message.clone(),
+            name: name.clone(),
+            description: description.clone(),
+            component: "sh:SPARQLConstraintComponent".to_string(),
+            payload: HashMap::new(),
+        });
+    }
+
     if constraints.is_empty() {
         return None;
     }

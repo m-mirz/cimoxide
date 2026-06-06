@@ -6,6 +6,7 @@ use crate::generator::rust_gen::{sanitize_field, to_snake_case};
 use crate::schema::model::{CimAttribute, CimSpecification};
 
 use super::model::*;
+use super::skip;
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -15,19 +16,21 @@ pub fn generate_validation(
     results: &[FileResults],
     spec: &CimSpecification,
     output_dir: &Path,
-) -> Result<usize, Box<dyn std::error::Error>> {
+) -> Result<(usize, Vec<skip::FileSkipInfo>), Box<dyn std::error::Error>> {
     fs::create_dir_all(output_dir)?;
 
     let mut total_checks = 0usize;
     let mut generated_modules: Vec<String> = Vec::new();
+    let mut file_skips: Vec<skip::FileSkipInfo> = Vec::new();
 
     for fr in results {
-        let (code, count) = render_file(fr, spec);
+        let (code, count, skips) = render_file(fr, spec);
+        let mod_name = file_to_mod_name(&fr.file_name);
+        file_skips.push(skip::FileSkipInfo { file_name: fr.file_name.clone(), check_count: count, skips });
         if count == 0 {
             continue;
         }
         total_checks += count;
-        let mod_name = file_to_mod_name(&fr.file_name);
         let out_path = output_dir.join(format!("generated_{mod_name}.rs"));
         fs::write(&out_path, code)?;
         generated_modules.push(mod_name);
@@ -37,14 +40,14 @@ pub fn generate_validation(
     let lib = render_lib_additions(&generated_modules);
     fs::write(output_dir.join("generated_lib.rs"), lib)?;
 
-    Ok(total_checks)
+    Ok((total_checks, file_skips))
 }
 
 // ---------------------------------------------------------------------------
 // Per-file rendering
 // ---------------------------------------------------------------------------
 
-fn render_file(fr: &FileResults, spec: &CimSpecification) -> (String, usize) {
+fn render_file(fr: &FileResults, spec: &CimSpecification) -> (String, usize, Vec<skip::SkipEntry>) {
     let file_snake = file_to_mod_name(&fr.file_name);
 
     let mut regex_decls: Vec<String> = Vec::new();
@@ -52,6 +55,7 @@ fn render_file(fr: &FileResults, spec: &CimSpecification) -> (String, usize) {
     let mut check_names: Vec<String> = Vec::new();
     let mut checks_body = String::new();
     let mut used_fn_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut collector = skip::SkipCollector::new();
 
     for node_shape in &fr.shapes {
         for target in &node_shape.targets {
@@ -62,16 +66,21 @@ fn render_file(fr: &FileResults, spec: &CimSpecification) -> (String, usize) {
 
             // Compound node-level constraints (sh:xone, sh:or, sh:and)
             for node_constraint in &node_shape.constraints {
-                if let Some(fn_code) = gen_compound_check(&file_snake, &class_name, spec, node_constraint) {
-                    let raw_name = extract_fn_name(&fn_code);
-                    let fn_name = dedup_fn_name(raw_name.clone(), &used_fn_names);
-                    let patched = if fn_name != raw_name {
-                        fn_code.replacen(&format!("pub fn {raw_name}("), &format!("pub fn {fn_name}("), 1)
-                    } else { fn_code };
-                    used_fn_names.insert(fn_name.clone());
-                    check_names.push(fn_name);
-                    checks_body.push_str(&patched);
-                    checks_body.push('\n');
+                match gen_compound_check(&file_snake, &class_name, spec, node_constraint) {
+                    Ok(fn_code) => {
+                        let raw_name = extract_fn_name(&fn_code);
+                        let fn_name = dedup_fn_name(raw_name.clone(), &used_fn_names);
+                        let patched = if fn_name != raw_name {
+                            fn_code.replacen(&format!("pub fn {raw_name}("), &format!("pub fn {fn_name}("), 1)
+                        } else { fn_code };
+                        used_fn_names.insert(fn_name.clone());
+                        check_names.push(fn_name);
+                        checks_body.push_str(&patched);
+                        checks_body.push('\n');
+                    }
+                    Err(reason) => {
+                        collector.push(&class_name, "", &node_constraint.component, &node_constraint.name, &reason);
+                    }
                 }
             }
 
@@ -87,6 +96,7 @@ fn render_file(fr: &FileResults, spec: &CimSpecification) -> (String, usize) {
                         &prop_shape.path,
                         constraint,
                         &mut regex_counter,
+                        &mut collector,
                     );
                     if let Some(fn_code) = opt_code {
                         if let Some(decl) = opt_regex {
@@ -109,7 +119,7 @@ fn render_file(fr: &FileResults, spec: &CimSpecification) -> (String, usize) {
 
     let count = check_names.len();
     if count == 0 {
-        return (String::new(), 0);
+        return (String::new(), 0, collector.into_entries());
     }
 
     let mut s = String::new();
@@ -141,7 +151,7 @@ fn render_file(fr: &FileResults, spec: &CimSpecification) -> (String, usize) {
 
     s.push_str(&checks_body);
 
-    (s, count)
+    (s, count, collector.into_entries())
 }
 
 // ---------------------------------------------------------------------------
@@ -155,6 +165,7 @@ fn render_check(
     full_path: &[String],
     constraint: &ConstraintInfo,
     regex_counter: &mut usize,
+    collector: &mut skip::SkipCollector,
 ) -> (Option<String>, Option<String>) {
     let path_seg = full_path[0].as_str();
     let attr_id = local_name(path_seg);
@@ -178,8 +189,15 @@ fn render_check(
             && !path_seg.starts_with('~')
             && matches!(comp, "sh:InConstraintComponent" | "sh:HasValueConstraintComponent")
         {
-            return gen_slice_mrid_rdf_type_check(&fn_name, class_name, spec, &attr_id, constraint);
+            return match gen_slice_mrid_rdf_type_check(&fn_name, class_name, spec, &attr_id, constraint) {
+                Ok((code, regex)) => (Some(code), regex),
+                Err(reason) => {
+                    collector.push(class_name, path_seg, comp, &constraint.name, &reason);
+                    (None, None)
+                }
+            };
         }
+        collector.push(class_name, path_seg, comp, &constraint.name, "multi-segment path not supported");
         return (None, None);
     }
 
@@ -187,30 +205,56 @@ fn render_check(
     // before the component skip list so MaxCount is not dropped for inverse shapes.
     if path_seg.starts_with('~') {
         let forward_pred = &path_seg[1..]; // strip "~"
-        return gen_inverse_count(&fn_name, class_name, forward_pred, spec, constraint);
+        return match gen_inverse_count(&fn_name, class_name, forward_pred, spec, constraint) {
+            Ok((code, regex)) => (Some(code), regex),
+            Err(reason) => {
+                collector.push(class_name, path_seg, comp, &constraint.name, &reason);
+                (None, None)
+            }
+        };
     }
 
     match comp {
-        "sh:NodeKindConstraintComponent"
-        | "sh:MaxCountConstraintComponent"
-        | "sh:OrInversePathConstraintComponent" => return (None, None),
+        "sh:NodeKindConstraintComponent" => {
+            collector.push(class_name, path_seg, comp, &constraint.name,
+                "sh:NodeKindConstraintComponent structurally satisfied by Rust type system");
+            return (None, None);
+        }
+        "sh:SPARQLConstraintComponent" => {
+            collector.push(class_name, path_seg, comp, &constraint.name,
+                "sh:SPARQLConstraintComponent: no SPARQL evaluator");
+            return (None, None);
+        }
+        "sh:OrInversePathConstraintComponent" => {
+            collector.push(class_name, path_seg, comp, &constraint.name,
+                "sh:OrInversePathConstraintComponent structurally satisfied");
+            return (None, None);
+        }
         _ => {}
     }
 
     let (accessor_prefix, attr) = match find_attr_in_hierarchy(spec, class_name, &attr_id) {
         Some(pair) => pair,
-        None => return (None, None),
+        None => {
+            collector.push(class_name, path_seg, comp, &constraint.name,
+                &format!("attribute {} not found in hierarchy", attr_id));
+            return (None, None);
+        }
     };
     if !attr.is_association_used {
+        collector.push(class_name, path_seg, comp, &constraint.name, "unused association");
         return (None, None);
     }
 
     let field_name = sanitize_field(to_snake_case(&attr.label));
     let full_accessor = format!("{accessor_prefix}.{field_name}");
 
-    match comp {
+    let result = match comp {
         "sh:RequiredConstraintComponent" | "sh:MinCountConstraintComponent" => {
             gen_required(&fn_name, class_name, &full_accessor, &attr, constraint)
+        }
+        "sh:MaxCountConstraintComponent" => {
+            gen_max_count_one(&fn_name, class_name, &attr_id, &attr, constraint)
         }
         "sh:ExactCountConstraintComponent" => {
             gen_exact_count(&fn_name, class_name, &full_accessor, &attr, constraint)
@@ -251,7 +295,14 @@ fn render_check(
         "sh:NotClassConstraintComponent" => {
             gen_not_class(&fn_name, class_name, &full_accessor, &attr, constraint)
         }
-        _ => (None, None),
+        _ => Err(format!("unknown component: {comp}")),
+    };
+    match result {
+        Ok((code, regex)) => (Some(code), regex),
+        Err(reason) => {
+            collector.push(class_name, path_seg, comp, &constraint.name, &reason);
+            (None, None)
+        }
     }
 }
 
@@ -265,7 +316,7 @@ fn gen_required(
     accessor: &str,
     attr: &CimAttribute,
     c: &ConstraintInfo,
-) -> (Option<String>, Option<String>) {
+) -> Result<(String, Option<String>), String> {
     let condition = if attr.is_list {
         format!("{accessor}.is_empty()")
     } else if attr.is_primitive || attr.is_cim_datatype {
@@ -279,7 +330,50 @@ fn gen_required(
     } else {
         format!("{accessor}.is_none()")
     };
-    (Some(build_fn(fn_name, class_name, None, None, &condition, c, attr)), None)
+    Ok((build_fn(fn_name, class_name, None, None, &condition, c, attr), None))
+}
+
+fn gen_max_count_one(
+    fn_name: &str,
+    class_name: &str,
+    attr_id: &str,
+    attr: &CimAttribute,
+    c: &ConstraintInfo,
+) -> Result<(String, Option<String>), String> {
+    let max = c.payload.get("maxCount").and_then(|v| v.as_int()).unwrap_or(1);
+    if max != 1 {
+        return Err(format!("sh:MaxCount={max} on non-list field (only maxCount=1 is supported)"));
+    }
+    if attr.is_list {
+        return Err("sh:MaxCount=1 on list field — use sh:ExactCount instead".to_string());
+    }
+    fn esc(s: &str) -> String { s.replace('\\', "\\\\").replace('"', "\\\"") }
+    let message  = esc(&c.message);
+    let severity = &c.severity;
+    let name_str = esc(&c.name);
+    let desc_str = esc(&c.description);
+    let prop = &attr.id;
+
+    let mut s = String::new();
+    writeln!(s, "pub fn {fn_name}(dataset: &CimDataset) -> Vec<Violation> {{").unwrap();
+    writeln!(s, "    let mut violations = Vec::new();").unwrap();
+    writeln!(s, "    for mrid in dataset.by_type.get(\"{class_name}\").into_iter().flatten() {{").unwrap();
+    writeln!(s, "        if dataset.entries[mrid].block.duplicate_fields.contains(\"{attr_id}\") {{").unwrap();
+    writeln!(s, "            violations.push(Violation {{").unwrap();
+    writeln!(s, "                object_id:   mrid.clone(),").unwrap();
+    writeln!(s, "                rule_id:     \"{name_str}\".to_string(),").unwrap();
+    writeln!(s, "                class:       \"{class_name}\".to_string(),").unwrap();
+    writeln!(s, "                property:    \"{prop}\".to_string(),").unwrap();
+    writeln!(s, "                message:     \"{message}\".to_string(),").unwrap();
+    writeln!(s, "                severity:    \"{severity}\".to_string(),").unwrap();
+    writeln!(s, "                name:        \"{name_str}\".to_string(),").unwrap();
+    writeln!(s, "                description: \"{desc_str}\".to_string(),").unwrap();
+    writeln!(s, "            }});").unwrap();
+    writeln!(s, "        }}").unwrap();
+    writeln!(s, "    }}").unwrap();
+    writeln!(s, "    violations").unwrap();
+    writeln!(s, "}}").unwrap();
+    Ok((s, None))
 }
 
 fn gen_exact_count(
@@ -288,13 +382,13 @@ fn gen_exact_count(
     accessor: &str,
     attr: &CimAttribute,
     c: &ConstraintInfo,
-) -> (Option<String>, Option<String>) {
+) -> Result<(String, Option<String>), String> {
     if !attr.is_list {
-        return (None, None);
+        return Err("sh:ExactCount on non-list field".to_string());
     }
     let n = c.payload.get("minCount").and_then(|v| v.as_int()).unwrap_or(1);
     let condition = format!("{accessor}.len() != {n}");
-    (Some(build_fn(fn_name, class_name, None, None, &condition, c, attr)), None)
+    Ok((build_fn(fn_name, class_name, None, None, &condition, c, attr), None))
 }
 
 fn gen_in(
@@ -303,19 +397,19 @@ fn gen_in(
     accessor: &str,
     attr: &CimAttribute,
     c: &ConstraintInfo,
-) -> (Option<String>, Option<String>) {
+) -> Result<(String, Option<String>), String> {
     if attr.is_list {
         if (attr.is_primitive || attr.is_cim_datatype) && attr.lang_type == "String" {
             return gen_slice_string_in(fn_name, class_name, accessor, attr, c);
         }
-        return (None, None);
+        return Err("sh:In on non-string list field".to_string());
     }
     if (attr.is_primitive || attr.is_cim_datatype) && attr.lang_type != "String" {
-        return (None, None);
+        return Err(format!("sh:In on non-string primitive field ({})", attr.lang_type));
     }
     let values = match c.payload.get("in").and_then(|v| v.as_list()) {
         Some(v) if !v.is_empty() => v,
-        _ => return (None, None),
+        _ => return Err("sh:In: empty payload".to_string()),
     };
 
     let allowed_items: Vec<String> = values
@@ -328,7 +422,7 @@ fn gen_in(
     let prelude = format!("    const ALLOWED: &[&str] = &[{allowed_str}];\n");
     let condition = format!("!ALLOWED.contains(&{field_expr})");
 
-    (Some(build_fn(fn_name, class_name, guard.as_deref(), Some(&prelude), &condition, c, attr)), None)
+    Ok((build_fn(fn_name, class_name, guard.as_deref(), Some(&prelude), &condition, c, attr), None))
 }
 
 fn gen_has_value(
@@ -337,14 +431,14 @@ fn gen_has_value(
     accessor: &str,
     attr: &CimAttribute,
     c: &ConstraintInfo,
-) -> (Option<String>, Option<String>) {
-    if attr.is_list { return (None, None); }
+) -> Result<(String, Option<String>), String> {
+    if attr.is_list { return Err("sh:HasValue on list field".to_string()); }
     if (attr.is_primitive || attr.is_cim_datatype) && attr.lang_type != "String" {
-        return (None, None);
+        return Err(format!("sh:HasValue on non-string primitive field ({})", attr.lang_type));
     }
     let expected = match c.payload.get("hasValue").and_then(|v| v.as_str()) {
         Some(v) => v.to_string(),
-        None => return (None, None),
+        None => return Err("sh:HasValue: missing payload".to_string()),
     };
     let esc = expected.replace('"', "\\\"");
 
@@ -357,7 +451,7 @@ fn gen_has_value(
         (format!("{accessor}.as_ref().map_or(true, |r| r.mrid != \"{esc}\")"), None)
     };
 
-    (Some(build_fn(fn_name, class_name, guard.as_deref(), None, &condition, c, attr)), None)
+    Ok((build_fn(fn_name, class_name, guard.as_deref(), None, &condition, c, attr), None))
 }
 
 fn gen_datatype(
@@ -366,9 +460,9 @@ fn gen_datatype(
     accessor: &str,
     attr: &CimAttribute,
     c: &ConstraintInfo,
-) -> (Option<String>, Option<String>) {
+) -> Result<(String, Option<String>), String> {
     if attr.lang_type != "String" {
-        return (None, None);
+        return Err(format!("sh:Datatype on non-string field ({})", attr.lang_type));
     }
     let dt = c.payload.get("datatype").and_then(|v| v.as_str()).unwrap_or("");
     let check_fn = match dt {
@@ -376,11 +470,11 @@ fn gen_datatype(
         "xsd:date" | "<http://www.w3.org/2001/XMLSchema#date>" => "is_xsd_date",
         "xsd:gMonthDay" | "<http://www.w3.org/2001/XMLSchema#gMonthDay>" => "is_xsd_gmonthday",
         "xsd:anyURI" | "<http://www.w3.org/2001/XMLSchema#anyURI>" => "is_xsd_anyuri",
-        _ => return (None, None),
+        _ => return Err(format!("sh:Datatype: unsupported datatype {:?}", dt)),
     };
     let guard = format!("if {accessor}.is_empty() {{ continue; }}");
     let condition = format!("!{check_fn}(&{accessor})");
-    (Some(build_fn(fn_name, class_name, Some(&guard), None, &condition, c, attr)), None)
+    Ok((build_fn(fn_name, class_name, Some(&guard), None, &condition, c, attr), None))
 }
 
 fn gen_pattern(
@@ -390,13 +484,13 @@ fn gen_pattern(
     attr: &CimAttribute,
     c: &ConstraintInfo,
     regex_counter: &mut usize,
-) -> (Option<String>, Option<String>) {
+) -> Result<(String, Option<String>), String> {
     if attr.lang_type != "String" {
-        return (None, None);
+        return Err(format!("sh:Pattern on non-string field ({})", attr.lang_type));
     }
     let pattern = match c.payload.get("pattern").and_then(|v| v.as_str()) {
         Some(p) => p.to_string(),
-        None => return (None, None),
+        None => return Err("sh:Pattern: missing pattern payload".to_string()),
     };
     let idx = *regex_counter;
     *regex_counter += 1;
@@ -407,7 +501,7 @@ fn gen_pattern(
     );
     let guard = format!("if {accessor}.is_empty() {{ continue; }}");
     let condition = format!("!{static_name}.is_match(&{accessor})");
-    (Some(build_fn(fn_name, class_name, Some(&guard), None, &condition, c, attr)), Some(regex_decl))
+    Ok((build_fn(fn_name, class_name, Some(&guard), None, &condition, c, attr), Some(regex_decl)))
 }
 
 fn gen_length(
@@ -417,19 +511,19 @@ fn gen_length(
     attr: &CimAttribute,
     c: &ConstraintInfo,
     is_min: bool,
-) -> (Option<String>, Option<String>) {
+) -> Result<(String, Option<String>), String> {
     if attr.lang_type != "String" {
-        return (None, None);
+        return Err(format!("sh:Length on non-string field ({})", attr.lang_type));
     }
     let key = if is_min { "minLength" } else { "maxLength" };
     let n = match c.payload.get(key).and_then(|v| v.as_int()) {
         Some(n) => n,
-        None => return (None, None),
+        None => return Err("sh:Length: missing payload".to_string()),
     };
     let op = if is_min { "<" } else { ">" };
     let guard = format!("if {accessor}.is_empty() {{ continue; }}");
     let condition = format!("{accessor}.chars().count() {op} {n}");
-    (Some(build_fn(fn_name, class_name, Some(&guard), None, &condition, c, attr)), None)
+    Ok((build_fn(fn_name, class_name, Some(&guard), None, &condition, c, attr), None))
 }
 
 fn gen_numeric_range(
@@ -438,18 +532,18 @@ fn gen_numeric_range(
     accessor: &str,
     attr: &CimAttribute,
     c: &ConstraintInfo,
-) -> (Option<String>, Option<String>) {
+) -> Result<(String, Option<String>), String> {
     let comp = c.component.as_str();
     let (key, op) = match comp {
         "sh:MinExclusiveConstraintComponent" => ("minExclusive", "<="),
         "sh:MaxExclusiveConstraintComponent" => ("maxExclusive", ">="),
         "sh:MinInclusiveConstraintComponent" => ("minInclusive", "<"),
         "sh:MaxInclusiveConstraintComponent" => ("maxInclusive", ">"),
-        _ => return (None, None),
+        _ => return Err(format!("unknown numeric range component: {comp}")),
     };
     let val = match c.payload.get(key).and_then(|v| v.as_float()) {
         Some(f) => f,
-        None => return (None, None),
+        None => return Err("sh:NumericRange: missing payload".to_string()),
     };
     let (guard, condition) = match attr.lang_type.as_str() {
         "f64" => (
@@ -460,9 +554,9 @@ fn gen_numeric_range(
             format!("if {accessor}.is_none() {{ continue; }}"),
             format!("({accessor}.unwrap() as f64) {op} {val}_f64"),
         ),
-        _ => return (None, None),
+        _ => return Err(format!("sh:NumericRange on non-numeric field ({})", attr.lang_type)),
     };
-    (Some(build_fn(fn_name, class_name, Some(&guard), None, &condition, c, attr)), None)
+    Ok((build_fn(fn_name, class_name, Some(&guard), None, &condition, c, attr), None))
 }
 
 fn gen_less_than(
@@ -472,21 +566,21 @@ fn gen_less_than(
     accessor: &str,
     attr: &CimAttribute,
     c: &ConstraintInfo,
-) -> (Option<String>, Option<String>) {
+) -> Result<(String, Option<String>), String> {
     if !matches!(attr.lang_type.as_str(), "f64" | "i64") {
-        return (None, None);
+        return Err(format!("sh:LessThan on non-numeric field ({})", attr.lang_type));
     }
     let other_iri = match c.payload.get("lessThan").and_then(|v| v.as_str()) {
         Some(v) => v.to_string(),
-        None => return (None, None),
+        None => return Err("sh:LessThan: missing lessThan payload".to_string()),
     };
     let other_attr_id = local_name(&other_iri);
     let (other_prefix, other_attr) = match find_attr_in_hierarchy(spec, class_name, &other_attr_id) {
         Some(p) => p,
-        None => return (None, None),
+        None => return Err(format!("sh:LessThan: other attribute {} not found in hierarchy", other_attr_id)),
     };
     if !matches!(other_attr.lang_type.as_str(), "f64" | "i64") {
-        return (None, None);
+        return Err(format!("sh:LessThan: other attribute {} is non-numeric ({})", other_attr_id, other_attr.lang_type));
     }
     let other_field = sanitize_field(to_snake_case(&other_attr.label));
     let other_accessor = format!("{other_prefix}.{other_field}");
@@ -523,7 +617,7 @@ fn gen_less_than(
     writeln!(s, "    }}").unwrap();
     writeln!(s, "    violations").unwrap();
     writeln!(s, "}}").unwrap();
-    (Some(s), None)
+    Ok((s, None))
 }
 
 fn gen_not_class(
@@ -532,13 +626,13 @@ fn gen_not_class(
     accessor: &str,
     attr: &CimAttribute,
     c: &ConstraintInfo,
-) -> (Option<String>, Option<String>) {
+) -> Result<(String, Option<String>), String> {
     if attr.is_primitive || attr.is_cim_datatype || attr.is_enum_value || attr.is_list {
-        return (None, None);
+        return Err("sh:NotClass on non-association field".to_string());
     }
     let forbidden = match c.payload.get("class").and_then(|v| v.as_str()) {
         Some(v) => local_name(v),
-        None => return (None, None),
+        None => return Err("sh:NotClass: missing class payload".to_string()),
     };
 
     let mut s = String::new();
@@ -577,7 +671,7 @@ fn gen_not_class(
     writeln!(s, "    }}").unwrap();
     writeln!(s, "    violations").unwrap();
     writeln!(s, "}}").unwrap();
-    (Some(s), None)
+    Ok((s, None))
 }
 
 fn gen_class(
@@ -587,19 +681,19 @@ fn gen_class(
     accessor: &str,
     attr: &CimAttribute,
     c: &ConstraintInfo,
-) -> (Option<String>, Option<String>) {
+) -> Result<(String, Option<String>), String> {
     if attr.is_primitive || attr.is_cim_datatype || attr.is_enum_value {
-        return (None, None);
+        return Err("sh:Class on non-association field".to_string());
     }
     let wanted = match c.payload.get("class").and_then(|v| v.as_str()) {
         Some(v) => local_name(v),
-        None => return (None, None),
+        None => return Err("sh:Class: missing class payload".to_string()),
     };
     // Expand to all types that ARE or inherit from `wanted`. If everything
     // qualifies, the constraint is vacuously true and can be skipped.
     let allowed_types = class_and_subclasses(spec, &wanted);
     if allowed_types.is_empty() || allowed_types.len() >= spec.types.len() {
-        return (None, None);
+        return Err(format!("sh:Class vacuously true: all subtypes of {} qualify", wanted));
     }
     gen_ref_type_check(fn_name, class_name, accessor, attr, c, &allowed_types)
 }
@@ -611,13 +705,13 @@ fn gen_or_class(
     accessor: &str,
     attr: &CimAttribute,
     c: &ConstraintInfo,
-) -> (Option<String>, Option<String>) {
+) -> Result<(String, Option<String>), String> {
     if attr.is_primitive || attr.is_cim_datatype || attr.is_enum_value {
-        return (None, None);
+        return Err("sh:OrClass on non-association field".to_string());
     }
     let raw_classes: Vec<String> = match c.payload.get("classes").and_then(|v| v.as_list()) {
         Some(v) if !v.is_empty() => v.iter().map(|s| local_name(s)).collect(),
-        _ => return (None, None),
+        _ => return Err("sh:OrClass: empty class list".to_string()),
     };
     // Expand each listed class to include its subclasses.
     let mut allowed_set = std::collections::BTreeSet::new();
@@ -628,7 +722,7 @@ fn gen_or_class(
     }
     let allowed_types: Vec<String> = allowed_set.into_iter().collect();
     if allowed_types.is_empty() || allowed_types.len() >= spec.types.len() {
-        return (None, None);
+        return Err("sh:OrClass vacuously true: all subtypes qualify".to_string());
     }
     gen_ref_type_check(fn_name, class_name, accessor, attr, c, &allowed_types)
 }
@@ -640,7 +734,7 @@ fn gen_ref_type_check(
     attr: &CimAttribute,
     c: &ConstraintInfo,
     allowed_types: &[String],
-) -> (Option<String>, Option<String>) {
+) -> Result<(String, Option<String>), String> {
     fn esc(x: &str) -> String { x.replace('\\', "\\\\").replace('"', "\\\"") }
     let message  = esc(&c.message);
     let severity = &c.severity;
@@ -706,7 +800,7 @@ fn gen_ref_type_check(
     writeln!(s, "    }}").unwrap();
     writeln!(s, "    violations").unwrap();
     writeln!(s, "}}").unwrap();
-    (Some(s), None)
+    Ok((s, None))
 }
 
 fn gen_slice_mrid_rdf_type_check(
@@ -715,13 +809,13 @@ fn gen_slice_mrid_rdf_type_check(
     spec: &CimSpecification,
     attr_id: &str,
     c: &ConstraintInfo,
-) -> (Option<String>, Option<String>) {
+) -> Result<(String, Option<String>), String> {
     let (accessor_prefix, attr) = match find_attr_in_hierarchy(spec, class_name, attr_id) {
         Some(p) => p,
-        None => return (None, None),
+        None => return Err(format!("slice-mrid: attribute {} not found in hierarchy", attr_id)),
     };
     if !attr.is_list || attr.is_primitive || attr.is_cim_datatype || attr.is_enum_value || !attr.is_association_used {
-        return (None, None);
+        return Err("slice-mrid: field is not a usable list of associations".to_string());
     }
     let field_name = sanitize_field(to_snake_case(&attr.label));
     let accessor = format!("{accessor_prefix}.{field_name}");
@@ -731,19 +825,19 @@ fn gen_slice_mrid_rdf_type_check(
         "sh:InConstraintComponent" => {
             match c.payload.get("in").and_then(|v| v.as_list()) {
                 Some(v) if !v.is_empty() => v.iter().map(|s| local_name(s)).collect(),
-                _ => return (None, None),
+                _ => return Err("slice-mrid sh:In: empty payload".to_string()),
             }
         }
         "sh:HasValueConstraintComponent" => {
             match c.payload.get("hasValue").and_then(|v| v.as_str()) {
                 Some(v) => vec![local_name(v)],
-                None => return (None, None),
+                None => return Err("slice-mrid sh:HasValue: missing payload".to_string()),
             }
         }
-        _ => return (None, None),
+        _ => return Err(format!("slice-mrid: component {} not supported", comp)),
     };
     if allowed_types.is_empty() {
-        return (None, None);
+        return Err("slice-mrid: empty allowed types list".to_string());
     }
     let allowed_str = allowed_types.iter()
         .map(|t| format!("\"{t}\""))
@@ -788,7 +882,7 @@ fn gen_slice_mrid_rdf_type_check(
     writeln!(s, "    }}").unwrap();
     writeln!(s, "    violations").unwrap();
     writeln!(s, "}}").unwrap();
-    (Some(s), None)
+    Ok((s, None))
 }
 
 fn gen_slice_string_in(
@@ -797,10 +891,10 @@ fn gen_slice_string_in(
     accessor: &str,
     attr: &CimAttribute,
     c: &ConstraintInfo,
-) -> (Option<String>, Option<String>) {
+) -> Result<(String, Option<String>), String> {
     let values = match c.payload.get("in").and_then(|v| v.as_list()) {
         Some(v) if !v.is_empty() => v,
-        _ => return (None, None),
+        _ => return Err("sh:SliceStringIn: empty list".to_string()),
     };
     let allowed_items: Vec<String> = values
         .iter()
@@ -843,7 +937,7 @@ fn gen_slice_string_in(
     writeln!(s, "    }}").unwrap();
     writeln!(s, "    violations").unwrap();
     writeln!(s, "}}").unwrap();
-    (Some(s), None)
+    Ok((s, None))
 }
 
 // ---------------------------------------------------------------------------
@@ -856,20 +950,24 @@ fn gen_inverse_count(
     forward_pred: &str,
     spec: &CimSpecification,
     c: &ConstraintInfo,
-) -> (Option<String>, Option<String>) {
+) -> Result<(String, Option<String>), String> {
     let local = local_name(forward_pred);
     let (src_class, src_prop) = match local.split_once('.') {
         Some(p) => p,
-        None => return (None, None),
+        None => return Err("inverse path has no class.prop shape".to_string()),
     };
 
     let (obj_prefix, attr) = match find_attr_in_hierarchy(spec, src_class, &local) {
         Some(p) => p,
-        None => return (None, None),
+        None => return Err(format!("inverse attribute {} not found in hierarchy", local)),
     };
-    if !attr.is_association_used { return (None, None); }
+    if !attr.is_association_used {
+        return Err("inverse unused association".to_string());
+    }
     // Inverse path requires an association field (Option<MridRef> or Vec<MridRef>)
-    if attr.is_primitive || attr.is_cim_datatype || attr.is_enum_value { return (None, None); }
+    if attr.is_primitive || attr.is_cim_datatype || attr.is_enum_value {
+        return Err("inverse path on non-association field".to_string());
+    }
 
     let field_name = sanitize_field(to_snake_case(src_prop));
     let src_prefix = obj_prefix.replacen("obj", "src", 1);
@@ -886,10 +984,10 @@ fn gen_inverse_count(
             ("<", c.payload.get("minCount").and_then(|v| v.as_int()).unwrap_or(1)),
         "sh:MaxCountConstraintComponent" =>
             (">", c.payload.get("maxCount").and_then(|v| v.as_int()).unwrap_or(1)),
-        _ => return (None, None),
+        _ => return Err(format!("inverse path: component {} not supported", c.component)),
     };
 
-    (Some(build_inverse_fn(fn_name, target_class, src_class, &index_snippet, threshold, op, c)), None)
+    Ok((build_inverse_fn(fn_name, target_class, src_class, &index_snippet, threshold, op, c), None))
 }
 
 fn build_inverse_fn(
@@ -1172,14 +1270,15 @@ fn gen_compound_check(
     class_name: &str,
     spec: &CimSpecification,
     c: &ConstraintInfo,
-) -> Option<String> {
-    let branches = c.payload.get("branches").and_then(|v| v.as_shapes())?;
+) -> Result<String, String> {
+    let branches = c.payload.get("branches").and_then(|v| v.as_shapes())
+        .ok_or_else(|| "compound check: missing branches payload".to_string())?;
 
     let comp_suffix = match c.component.as_str() {
         "sh:XoneConstraintComponent" => "xone",
         "sh:OrConstraintComponent" => "or",
         "sh:AndConstraintComponent" => "and",
-        _ => return None,
+        _ => return Err(format!("unknown compound component: {}", c.component)),
     };
     let raw_name = format!(
         "check_{file_snake}_{class_snake}_{comp_suffix}",
@@ -1188,10 +1287,13 @@ fn gen_compound_check(
     let fn_name = safe_fn_name(&raw_name);
 
     match c.component.as_str() {
-        "sh:XoneConstraintComponent" => gen_xone_check(&fn_name, class_name, spec, c, branches),
-        "sh:OrConstraintComponent"   => gen_or_compound_check(&fn_name, class_name, spec, c, branches),
-        "sh:AndConstraintComponent"  => gen_and_compound_check(&fn_name, class_name, spec, c, branches),
-        _ => None,
+        "sh:XoneConstraintComponent" => gen_xone_check(&fn_name, class_name, spec, c, branches)
+            .ok_or_else(|| "sh:xone: branch structure not supported".to_string()),
+        "sh:OrConstraintComponent"   => gen_or_compound_check(&fn_name, class_name, spec, c, branches)
+            .ok_or_else(|| "sh:or: branch structure not supported".to_string()),
+        "sh:AndConstraintComponent"  => gen_and_compound_check(&fn_name, class_name, spec, c, branches)
+            .ok_or_else(|| "sh:and: branch structure not supported".to_string()),
+        _ => Err(format!("unknown compound component: {}", c.component)),
     }
 }
 

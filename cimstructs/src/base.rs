@@ -15,11 +15,25 @@ pub enum FieldValue {
     ResourceList(Vec<String>),
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct RdfBlock {
     pub type_name: String,
     pub mrid: String,
     pub fields: HashMap<String, FieldValue>,
+    /// Field names (local XML element name) that were assigned more than once
+    /// within a single parsed element, indicating a MaxCount violation.
+    pub duplicate_fields: std::collections::HashSet<String>,
+}
+
+impl Default for RdfBlock {
+    fn default() -> Self {
+        Self {
+            type_name: String::new(),
+            mrid: String::new(),
+            fields: HashMap::new(),
+            duplicate_fields: std::collections::HashSet::new(),
+        }
+    }
 }
 
 impl RdfBlock {
