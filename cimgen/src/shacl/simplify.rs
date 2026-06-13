@@ -1,22 +1,47 @@
 use super::model::*;
+use super::skip;
 
 /// Apply all 7 normalisation rules to every FileResults.
-pub fn simplify(results: &mut Vec<FileResults>) {
+/// Returns per-file skip entries for every constraint dropped during simplification.
+pub fn simplify(results: &mut Vec<FileResults>) -> Vec<(String, Vec<skip::SkipEntry>)> {
+    let mut all_skips = Vec::new();
     for fr in results.iter_mut() {
+        let mut collector = skip::SkipCollector::new();
         for shape in &mut fr.shapes {
-            simplify_shape(shape);
+            let class_names: Vec<String> = shape.targets.iter()
+                .map(|t| local_name(&t.value))
+                .filter(|n| !n.is_empty())
+                .collect();
+            simplify_shape(shape, &class_names, &mut collector);
         }
+        all_skips.push((fr.file_name.clone(), collector.into_entries()));
     }
+    all_skips
 }
 
-fn simplify_shape(shape: &mut ShapeInfo) {
+fn local_name(iri: &str) -> String {
+    iri.find(':').map(|i| iri[i + 1..].to_string()).unwrap_or_else(|| iri.to_string())
+}
+
+fn simplify_shape(shape: &mut ShapeInfo, class_names: &[String], collector: &mut skip::SkipCollector) {
     for prop in &mut shape.properties {
-        prop.constraints = simplify_constraints(std::mem::take(&mut prop.constraints));
+        let path = prop.path.first().map(|s| s.as_str()).unwrap_or("");
+        prop.constraints = simplify_constraints(
+            std::mem::take(&mut prop.constraints),
+            class_names,
+            path,
+            collector,
+        );
     }
 }
 
 /// Apply rules 1–7 to a flat list of constraints on one property shape.
-fn simplify_constraints(constraints: Vec<ConstraintInfo>) -> Vec<ConstraintInfo> {
+fn simplify_constraints(
+    constraints: Vec<ConstraintInfo>,
+    class_names: &[String],
+    path: &str,
+    collector: &mut skip::SkipCollector,
+) -> Vec<ConstraintInfo> {
     // Pass 1: determine whether a sh:datatype is present on this shape's constraints.
     let has_datatype = constraints
         .iter()
@@ -31,12 +56,16 @@ fn simplify_constraints(constraints: Vec<ConstraintInfo>) -> Vec<ConstraintInfo>
             "sh:NodeKindConstraintComponent" => {
                 let nk = c.payload.get("nodeKind").and_then(|v| v.as_str()).unwrap_or("");
                 if nk == "sh:Literal" && has_datatype {
-                    continue; // drop
+                    push_for_classes(collector, class_names, path, &c.component, &c.name,
+                        "NodeKind=Literal structurally satisfied: datatype constraint implies literal");
+                    continue;
                 }
                 // Rule 2: Drop NodeKind=BlankNodeOrIRI and NodeKind=IRI —
                 // MridRef / UriRef already enforce these in Rust.
                 if nk == "sh:BlankNodeOrIRI" || nk == "sh:IRI" {
-                    continue; // drop
+                    push_for_classes(collector, class_names, path, &c.component, &c.name,
+                        "NodeKind structurally satisfied by Rust type system (MridRef/UriRef)");
+                    continue;
                 }
                 out.push(c);
             }
@@ -45,7 +74,9 @@ fn simplify_constraints(constraints: Vec<ConstraintInfo>) -> Vec<ConstraintInfo>
             "sh:DatatypeConstraintComponent" => {
                 let dt = c.payload.get("datatype").and_then(|v| v.as_str()).unwrap_or("");
                 if is_native_rust_type(dt) {
-                    continue; // drop
+                    push_for_classes(collector, class_names, path, &c.component, &c.name,
+                        "Datatype structurally satisfied by Rust type system");
+                    continue;
                 }
                 out.push(c);
             }
@@ -60,6 +91,8 @@ fn simplify_constraints(constraints: Vec<ConstraintInfo>) -> Vec<ConstraintInfo>
 
                 // Rule 3: Drop minCount=0 — vacuously true.
                 if min == 0 && max.is_none() && c.component == "sh:MinCountConstraintComponent" {
+                    push_for_classes(collector, class_names, path, &c.component, &c.name,
+                        "MinCount=0 vacuously true");
                     continue;
                 }
 
@@ -67,6 +100,8 @@ fn simplify_constraints(constraints: Vec<ConstraintInfo>) -> Vec<ConstraintInfo>
                 // codegen can emit a duplicate-field check; drop MinCountConstraintComponent
                 // with min=0 (vacuously true) when paired with an explicit max.
                 if min == 0 && max == Some(1) && c.component == "sh:MinCountConstraintComponent" {
+                    push_for_classes(collector, class_names, path, &c.component, &c.name,
+                        "MinCount=0 vacuously true (paired with MaxCount=1)");
                     continue;
                 }
 
@@ -99,6 +134,19 @@ fn simplify_constraints(constraints: Vec<ConstraintInfo>) -> Vec<ConstraintInfo>
     }
 
     out
+}
+
+fn push_for_classes(
+    collector: &mut skip::SkipCollector,
+    class_names: &[String],
+    prop: &str,
+    component: &str,
+    name: &str,
+    reason: &str,
+) {
+    for class in class_names {
+        collector.push(class, prop, component, name, reason);
+    }
 }
 
 /// Rule 7: datatypes whose validity is guaranteed by the Rust type system.

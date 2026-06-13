@@ -635,9 +635,9 @@ fn extract_shapes(g: &Graph) -> Vec<ShapeInfo> {
 }
 
 fn build_node_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
-    // Targets from sh:targetClass (deduplicated — same subject may appear in multiple statements)
+    // Targets from sh:targetClass and sh:targetNode (deduplicated)
     let mut seen_targets = std::collections::HashSet::new();
-    let targets: Vec<TargetInfo> = get_all(g, id, "sh:targetClass")
+    let mut targets: Vec<TargetInfo> = get_all(g, id, "sh:targetClass")
         .into_iter()
         .filter_map(|v| v.as_iri())
         .filter(|iri| seen_targets.insert(iri.to_string()))
@@ -647,8 +647,22 @@ fn build_node_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
         })
         .collect();
 
+    // sh:targetNode targets a specific RDF individual rather than a class.
+    // The individual is not in the schema, so the codegen will skip it — but
+    // the simplify stage needs the target to report structural drops.
+    for v in get_all(g, id, "sh:targetNode") {
+        if let Some(iri) = v.as_iri() {
+            if seen_targets.insert(iri.to_string()) {
+                targets.push(TargetInfo {
+                    kind: "targetNode".to_string(),
+                    value: iri.to_string(),
+                });
+            }
+        }
+    }
+
     if targets.is_empty() {
-        return None; // Skip shapes with no targetClass
+        return None; // Skip shapes with no recognised target
     }
 
     // Nested property shapes from sh:property (may be List or individual IRIs)
@@ -798,28 +812,54 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
     let mut constraints = Vec::new();
 
     // sh:minCount / sh:maxCount
+    // When both min and max are present: (1,1) stays as a single Required constraint;
+    // all other combinations generate separate MinCount and MaxCount constraints so
+    // that the unique-pattern count matches cimgo (which always splits them).
     if let Some(min) = get_one(g, id, "sh:minCount").and_then(|v| v.as_int()) {
         let max = get_one(g, id, "sh:maxCount").and_then(|v| v.as_int());
-        let component = match (min, max) {
-            (1, Some(1)) => "sh:RequiredConstraintComponent",
-            (n, Some(m)) if n == m => "sh:ExactCountConstraintComponent",
-            (n, _) if n > 0 => "sh:MinCountConstraintComponent",
-            _ => "sh:MinCountConstraintComponent",
-        };
-        let mut payload = HashMap::new();
-        payload.insert("minCount".to_string(), ShaclValue::Int(min));
-        if let Some(m) = max {
-            payload.insert("maxCount".to_string(), ShaclValue::Int(m));
+        if min == 1 && max == Some(1) {
+            // Required: single constraint
+            let mut payload = HashMap::new();
+            payload.insert("minCount".to_string(), ShaclValue::Int(1));
+            payload.insert("maxCount".to_string(), ShaclValue::Int(1));
+            constraints.push(ConstraintInfo {
+                path: path.clone(),
+                severity: severity.clone(),
+                message: message.clone(),
+                name: name.clone(),
+                description: description.clone(),
+                component: "sh:RequiredConstraintComponent".to_string(),
+                payload,
+            });
+        } else {
+            // Separate MinCount and MaxCount constraints
+            {
+                let mut payload = HashMap::new();
+                payload.insert("minCount".to_string(), ShaclValue::Int(min));
+                constraints.push(ConstraintInfo {
+                    path: path.clone(),
+                    severity: severity.clone(),
+                    message: message.clone(),
+                    name: name.clone(),
+                    description: description.clone(),
+                    component: "sh:MinCountConstraintComponent".to_string(),
+                    payload,
+                });
+            }
+            if let Some(m) = max {
+                let mut payload = HashMap::new();
+                payload.insert("maxCount".to_string(), ShaclValue::Int(m));
+                constraints.push(ConstraintInfo {
+                    path: path.clone(),
+                    severity: severity.clone(),
+                    message: message.clone(),
+                    name: name.clone(),
+                    description: description.clone(),
+                    component: "sh:MaxCountConstraintComponent".to_string(),
+                    payload,
+                });
+            }
         }
-        constraints.push(ConstraintInfo {
-            path: path.clone(),
-            severity: severity.clone(),
-            message: message.clone(),
-            name: name.clone(),
-            description: description.clone(),
-            component: component.to_string(),
-            payload,
-        });
     } else if let Some(max) = get_one(g, id, "sh:maxCount").and_then(|v| v.as_int()) {
         let mut payload = HashMap::new();
         payload.insert("maxCount".to_string(), ShaclValue::Int(max));
@@ -1054,6 +1094,21 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
         });
     }
 
+    // sh:lessThanOrEquals
+    if let Some(lte_val) = get_one(g, id, "sh:lessThanOrEquals").and_then(|v| v.as_iri()) {
+        let mut payload = HashMap::new();
+        payload.insert("lessThanOrEquals".to_string(), ShaclValue::Str(lte_val.to_string()));
+        constraints.push(ConstraintInfo {
+            path: path.clone(),
+            severity: severity.clone(),
+            message: message.clone(),
+            name: name.clone(),
+            description: description.clone(),
+            component: "sh:LessThanOrEqualsConstraintComponent".to_string(),
+            payload,
+        });
+    }
+
     // sh:not with sh:class inside → NotClassConstraintComponent
     for not_val in get_all(g, id, "sh:not") {
         if let Some(bnode_id) = not_val.as_iri() {
@@ -1115,16 +1170,29 @@ fn extract_path(g: &Graph, id: &str) -> Vec<String> {
         RdfVal::Iri(iri) if iri.starts_with("_:") => {
             // Blank node — unpack sh:inversePath if present
             if let Some(RdfVal::Iri(inv)) = get_one(g, iri, "sh:inversePath") {
-                vec![format!("~{inv}")]
+                vec![format!("^{inv}")]
             } else {
                 Vec::new()
             }
         }
         RdfVal::Iri(iri) => vec![iri.clone()],
-        RdfVal::List(items) => items
-            .iter()
-            .filter_map(|item| item.as_iri().map(str::to_string))
-            .collect(),
+        RdfVal::List(items) => {
+            let mut segs = Vec::new();
+            for item in items.iter() {
+                if let Some(iri) = item.as_iri() {
+                    if iri.starts_with("_:") {
+                        // Blank-node path element — try to resolve as inverse path.
+                        if let Some(RdfVal::Iri(inv)) = get_one(g, iri, "sh:inversePath") {
+                            segs.push(format!("^{inv}"));
+                        }
+                        // Other blank-node element types (e.g. zero-or-more) are not yet resolved.
+                    } else {
+                        segs.push(iri.to_string());
+                    }
+                }
+            }
+            segs
+        }
         _ => Vec::new(),
     }
 }
@@ -1160,7 +1228,7 @@ fn nested_shape_ids(g: &Graph, id: &str) -> Vec<String> {
                             let is_prop = get_all(g, bnode, RDF_TYPE)
                                 .iter()
                                 .any(|v| v.as_iri().map_or(false, |i| i == SH_PROPERTY_SHAPE));
-                            if is_prop || g.get(bnode).map_or(false, |p| p.iter().any(|(k,_)| k == "sh:path")) {
+                            if is_prop {
                                 result.push(bnode.to_string());
                             }
                         }

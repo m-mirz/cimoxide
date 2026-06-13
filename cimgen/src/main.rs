@@ -148,15 +148,25 @@ fn run_shacl(
         }
     }
 
-    shacl::simplify::simplify(&mut results);
+    let simplify_skips = shacl::simplify::simplify(&mut results);
 
-    let (total_checks, file_skips) = match shacl::codegen::generate_validation(&results, spec, Path::new(out_dir)) {
+    let (total_checks, mut file_skips) = match shacl::codegen::generate_validation(&results, spec, Path::new(out_dir)) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("error generating SHACL validation code: {e}");
             std::process::exit(1);
         }
     };
+
+    // Merge simplify-stage skips into the per-file skip info.
+    for (file_name, s_skips) in simplify_skips {
+        if s_skips.is_empty() { continue; }
+        if let Some(fi) = file_skips.iter_mut().find(|f| f.file_name == file_name) {
+            fi.skips.extend(s_skips);
+        } else {
+            file_skips.push(shacl::skip::FileSkipInfo { file_name, check_count: 0, skips: s_skips });
+        }
+    }
 
     let total_skipped: usize = file_skips.iter().map(|f| f.skips.len()).sum();
     eprintln!(
@@ -165,6 +175,11 @@ fn run_shacl(
     );
 
     if skip_report {
+        // Per-file totals line for every file (checks + skips), parseable for comparison.
+        for fi in &file_skips {
+            eprintln!("PERFILE\t{}\t{}\t{}", fi.file_name, fi.check_count, fi.skips.len());
+        }
+
         let mut global_counts: std::collections::HashMap<&'static str, usize> =
             std::collections::HashMap::new();
         for fi in &file_skips {

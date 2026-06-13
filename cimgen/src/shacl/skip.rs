@@ -73,16 +73,32 @@ pub struct FileSkipInfo {
 
 pub struct SkipCategory {
     pub label: &'static str,
-    pub section: &'static str, // "skipped" | "cannot_be_conducted" | "other"
+    pub section: &'static str, // "simplified" | "skipped" | "cannot_be_conducted" | "sparql" | "other"
     pub match_fn: fn(&SkipEntry) -> bool,
 }
 
 static SKIP_CATEGORIES: &[SkipCategory] = &[
-    // Structurally satisfied by the Rust type system
+    // Simplified — dropped in simplify.rs before codegen; type-system guarantees
+    SkipCategory {
+        label: "`sh:nodeKind` simplified (type-system guarantee)",
+        section: "simplified",
+        match_fn: |e| e.reason.starts_with("NodeKind") && e.reason.contains("structurally satisfied"),
+    },
+    SkipCategory {
+        label: "`sh:datatype` simplified (native Rust type)",
+        section: "simplified",
+        match_fn: |e| e.reason.contains("Datatype structurally satisfied"),
+    },
+    SkipCategory {
+        label: "`sh:minCount=0` vacuously true",
+        section: "simplified",
+        match_fn: |e| e.reason.contains("MinCount=0 vacuously true"),
+    },
+    // Skipped — codegen-level structural guarantees
     SkipCategory {
         label: "`sh:nodeKind` structurally satisfied",
         section: "skipped",
-        match_fn: |e| e.reason.contains("NodeKind") && e.reason.contains("structurally satisfied"),
+        match_fn: |e| e.reason.contains("sh:NodeKindConstraintComponent") && e.reason.contains("structurally satisfied"),
     },
     SkipCategory {
         label: "`sh:maxCount` on list field or unsupported value",
@@ -148,12 +164,13 @@ static SKIP_CATEGORIES: &[SkipCategory] = &[
         section: "cannot_be_conducted",
         match_fn: |e| e.reason.starts_with("slice-mrid"),
     },
-    // Other
+    // SPARQL
     SkipCategory {
         label: "SPARQL constraints (no evaluator)",
-        section: "other",
+        section: "sparql",
         match_fn: |e| e.reason.contains("SPARQLConstraint"),
     },
+    // Other
     SkipCategory {
         label: "unknown component",
         section: "other",
@@ -185,10 +202,10 @@ pub fn accumulate_counts<'a>(counts: &mut HashMap<&'a str, usize>, entries: &[Sk
 }
 
 pub fn print_file_summary(file_name: &str, checks: usize, entries: &[SkipEntry]) {
+    eprintln!("-- {} ({} checks, {} skipped) --", file_name, checks, entries.len());
     if entries.is_empty() { return; }
     let mut counts: HashMap<&str, usize> = HashMap::new();
     accumulate_counts(&mut counts, entries);
-    eprintln!("-- {} ({} checks, {} skipped) --", file_name, checks, entries.len());
     let all_cats = SKIP_CATEGORIES.iter().chain(std::iter::once(&SKIP_CATEGORY_OTHER));
     for cat in all_cats {
         let n = counts.get(cat.label).copied().unwrap_or(0);
@@ -200,8 +217,10 @@ pub fn print_file_summary(file_name: &str, checks: usize, entries: &[SkipEntry])
 
 pub fn print_global_summary(counts: &HashMap<&str, usize>) {
     let sections = [
+        ("Simplified (type-system guarantees)", "simplified"),
         ("Skipped", "skipped"),
         ("Cannot be conducted", "cannot_be_conducted"),
+        ("SPARQL (not in README)", "sparql"),
         ("Other", "other"),
     ];
     for (title, key) in &sections {
