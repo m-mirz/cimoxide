@@ -81,5 +81,5 @@ fn cimvalidation_codegen_stable() {
     assert!(status.success(), "cimgen exited with failure");
 
     let hash = hash_dir(&shacl_out);
-    assert_eq!(hash, "24a02046f271faa98d87af194d70346d2831ed673d7d34cb5cf1b4d4997ad481", "cimvalidation output drifted — rerun to update hash");
+    assert_eq!(hash, "77d6e822062839d3c612819b13876ba1239b72914af1c23ed5fb9a7c6460bf8f", "cimvalidation output drifted — rerun to update hash");
 }

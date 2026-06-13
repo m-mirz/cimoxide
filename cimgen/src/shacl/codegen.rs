@@ -1142,23 +1142,49 @@ fn find_attr_in_hierarchy(
 
 fn render_lib_additions(modules: &[String]) -> String {
     let mut s = String::new();
+
+    // Section A: module declarations
     writeln!(s, "// Generated module declarations — include this file from lib.rs.").unwrap();
     writeln!(s, "pub mod helpers;").unwrap();
     for m in modules {
         writeln!(s, "pub mod generated_{m};").unwrap();
     }
     writeln!(s).unwrap();
+
+    let mut groups: std::collections::BTreeMap<&'static str, Vec<&String>> =
+        std::collections::BTreeMap::new();
+    let mut unguarded: Vec<&String> = Vec::new();
+    for m in modules {
+        match guess_profile_from_mod(m) {
+            Some(p) => groups.entry(p).or_default().push(m),
+            None => unguarded.push(m),
+        }
+    }
+
+    // Section B: one pub fn per profile
+    for (profile, mods) in &groups {
+        let fn_name = format!("validate_{}", profile.to_lowercase());
+        writeln!(s, "pub fn {fn_name}(dataset: &cimdecoder::CimDataset) -> Vec<Violation> {{").unwrap();
+        writeln!(s, "    let mut v = Vec::new();").unwrap();
+        for m in mods {
+            writeln!(s, "    v.extend(generated_{m}::validate_{m}(dataset));").unwrap();
+        }
+        writeln!(s, "    v").unwrap();
+        writeln!(s, "}}").unwrap();
+        writeln!(s).unwrap();
+    }
+
+    // Section C: validate_generated (backward-compatible)
     writeln!(s, "pub fn validate_generated(dataset: &cimdecoder::CimDataset, profiles: &[&str]) -> Vec<Violation> {{").unwrap();
     writeln!(s, "    let mut v = Vec::new();").unwrap();
-    for m in modules {
-        let fn_name = format!("generated_{m}::validate_{m}");
-        if let Some(p) = guess_profile_from_mod(m) {
-            writeln!(s, "    if profiles.contains(&\"{p}\") {{").unwrap();
-            writeln!(s, "        v.extend({fn_name}(dataset));").unwrap();
-            writeln!(s, "    }}").unwrap();
-        } else {
-            writeln!(s, "    v.extend({fn_name}(dataset));").unwrap();
-        }
+    for m in &unguarded {
+        writeln!(s, "    v.extend(generated_{m}::validate_{m}(dataset));").unwrap();
+    }
+    for (profile, _) in &groups {
+        let fn_name = format!("validate_{}", profile.to_lowercase());
+        writeln!(s, "    if profiles.contains(&\"{profile}\") {{").unwrap();
+        writeln!(s, "        v.extend({fn_name}(dataset));").unwrap();
+        writeln!(s, "    }}").unwrap();
     }
     writeln!(s, "    v").unwrap();
     writeln!(s, "}}").unwrap();

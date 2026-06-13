@@ -14,17 +14,15 @@ fn shacl_gl_001() {
 }
 
 #[test]
-fn shacl_dl_001_identified_object_class() {
-    // DiagramObject.IdentifiedObject must NOT point to a GeneratingUnit.
+fn shacl_dl_001_diagram_style_name() {
+    // DiagramStyle.name must be one of the allowed values (C:453:DL:DiagramStyle:name).
     let ds = common::load_dataset("../testdata/test_shacl_DL_001.xml");
     let vs = validate_generated(&ds, &["DL"]);
     let by_id = common::violations_by_id(&vs);
-    assert_eq!(by_id.get("DiagramObject.OK").map_or(0, |v| v.len()), 0,
-        "DiagramObject.OK (points to SynchronousMachine): expected 0 violations, got: {:?}", by_id.get("DiagramObject.OK"));
-    assert_eq!(by_id.get("DiagramObject.BAD").map_or(0, |v| v.len()), 1,
-        "DiagramObject.BAD (points to GeneratingUnit): expected 1 violation, got: {:?}", by_id.get("DiagramObject.BAD"));
-    assert_eq!(by_id.get("TextDiagramObject.BAD").map_or(0, |v| v.len()), 1,
-        "TextDiagramObject.BAD (points to GeneratingUnit): expected 1 violation, got: {:?}", by_id.get("TextDiagramObject.BAD"));
+    assert_eq!(by_id.get("DiagramStyle.OK").map_or(0, |v| v.len()), 0,
+        "DiagramStyle.OK (name=node-breaker): expected 0 violations, got: {:?}", by_id.get("DiagramStyle.OK"));
+    assert_eq!(by_id.get("DiagramStyle.BAD").map_or(0, |v| v.len()), 1,
+        "DiagramStyle.BAD (name=invalid-style): expected 1 violation, got: {:?}", by_id.get("DiagramStyle.BAD"));
 }
 
 #[test]
