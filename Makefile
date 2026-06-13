@@ -6,6 +6,7 @@ all: generate build test
 
 generate:
 	mkdir -p cimstructs/src cimvalidation/src cimoxide-py/python/cimoxide
+	touch cimstructs/src/lib.rs
 	cargo run -p cimgen
 
 build:
