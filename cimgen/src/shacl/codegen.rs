@@ -36,10 +36,6 @@ pub fn generate_validation(
         generated_modules.push(mod_name);
     }
 
-    // Write a helper module to include from lib.rs
-    let lib = render_lib_additions(&generated_modules);
-    fs::write(output_dir.join("generated_lib.rs"), lib)?;
-
     Ok((total_checks, file_skips))
 }
 
@@ -1137,61 +1133,6 @@ fn find_attr_in_hierarchy(
 }
 
 // ---------------------------------------------------------------------------
-// lib / module helpers
-// ---------------------------------------------------------------------------
-
-fn render_lib_additions(modules: &[String]) -> String {
-    let mut s = String::new();
-
-    // Section A: module declarations
-    writeln!(s, "// Generated module declarations — include this file from lib.rs.").unwrap();
-    writeln!(s, "pub mod helpers;").unwrap();
-    for m in modules {
-        writeln!(s, "pub mod generated_{m};").unwrap();
-    }
-    writeln!(s).unwrap();
-
-    let mut groups: std::collections::BTreeMap<&'static str, Vec<&String>> =
-        std::collections::BTreeMap::new();
-    let mut unguarded: Vec<&String> = Vec::new();
-    for m in modules {
-        match guess_profile_from_mod(m) {
-            Some(p) => groups.entry(p).or_default().push(m),
-            None => unguarded.push(m),
-        }
-    }
-
-    // Section B: one pub fn per profile
-    for (profile, mods) in &groups {
-        let fn_name = format!("validate_{}", profile.to_lowercase());
-        writeln!(s, "pub fn {fn_name}(dataset: &cimdecoder::CimDataset) -> Vec<Violation> {{").unwrap();
-        writeln!(s, "    let mut v = Vec::new();").unwrap();
-        for m in mods {
-            writeln!(s, "    v.extend(generated_{m}::validate_{m}(dataset));").unwrap();
-        }
-        writeln!(s, "    v").unwrap();
-        writeln!(s, "}}").unwrap();
-        writeln!(s).unwrap();
-    }
-
-    // Section C: validate_generated (backward-compatible)
-    writeln!(s, "pub fn validate_generated(dataset: &cimdecoder::CimDataset, profiles: &[&str]) -> Vec<Violation> {{").unwrap();
-    writeln!(s, "    let mut v = Vec::new();").unwrap();
-    for m in &unguarded {
-        writeln!(s, "    v.extend(generated_{m}::validate_{m}(dataset));").unwrap();
-    }
-    for (profile, _) in &groups {
-        let fn_name = format!("validate_{}", profile.to_lowercase());
-        writeln!(s, "    if profiles.contains(&\"{profile}\") {{").unwrap();
-        writeln!(s, "        v.extend({fn_name}(dataset));").unwrap();
-        writeln!(s, "    }}").unwrap();
-    }
-    writeln!(s, "    v").unwrap();
-    writeln!(s, "}}").unwrap();
-    s
-}
-
-// ---------------------------------------------------------------------------
 // Name helpers
 // ---------------------------------------------------------------------------
 
@@ -1270,21 +1211,6 @@ fn extract_fn_name(code: &str) -> String {
         .and_then(|l| l.split('(').next())
         .unwrap_or("")
         .to_string()
-}
-
-fn guess_profile_from_mod(mod_name: &str) -> Option<&'static str> {
-    let m = mod_name.to_lowercase();
-    if m.contains("equipmentboundary") { Some("EQBD") }
-    else if m.contains("equipment") { Some("EQ") }
-    else if m.contains("steadystatehypothesis") { Some("SSH") }
-    else if m.contains("topology") { Some("TP") }
-    else if m.contains("statevariables") { Some("SV") }
-    else if m.contains("dynamics") { Some("DY") }
-    else if m.contains("shortcircuit") { Some("SC") }
-    else if m.contains("diagramlayout") { Some("DL") }
-    else if m.contains("geographicallocation") { Some("GL") }
-    else if m.contains("operation") { Some("OP") }
-    else { None }
 }
 
 // ---------------------------------------------------------------------------
@@ -1665,8 +1591,3 @@ fn class_and_subclasses(spec: &CimSpecification, class: &str) -> Vec<String> {
     result.sort();
     result
 }
-
-// ---------------------------------------------------------------------------
-// Shared runtime helpers (written to helpers.rs in the output crate)
-// ---------------------------------------------------------------------------
-

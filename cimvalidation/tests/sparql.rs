@@ -1,13 +1,14 @@
 mod common;
 
-use cimvalidation::{run_validation, Config};
+use cimvalidation::Config;
+use cimvalidation::sparql::validate;
 
 #[test]
 fn sparql_dl_001() {
     // DiagramObject.IdentifiedObject must NOT point to Diagram/DiagramObject/etc.
     let ds = common::load_dataset("../testdata/test_sparql_DL_001.xml");
     let cfg = Config { profiles: vec!["DL".into()], ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("DiagramObject.OK").map_or(0, |v| v.len()), 0,
         "DiagramObject.OK: expected 0 violations, got: {:?}", by_id.get("DiagramObject.OK"));
@@ -22,7 +23,7 @@ fn sparql_eqbd_001() {
     // isExcludedFromAreaInterchange=false requires TieFlow; true forbids TieFlow.
     let ds = common::load_dataset("../testdata/test_sparql_EQBD_001.xml");
     let cfg = Config { profiles: vec!["EQBD".into()], ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("BP.OK1").map_or(0, |v| v.len()), 0,
         "BP.OK1: expected 0 violations, got: {:?}", by_id.get("BP.OK1"));
@@ -39,7 +40,7 @@ fn sparql_sc_notsolved_001() {
     // MutualCoupling.First_Terminal and Second_Terminal must point to different ACLineSegments.
     let ds = common::load_dataset("../testdata/test_sparql_SC_NOTSOLVED_001.xml");
     let cfg = Config { profiles: vec!["SC".into()], not_solved: true, ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("MC.OK").map_or(0, |v| v.len()), 0,
         "MC.OK: expected 0 violations, got: {:?}", by_id.get("MC.OK"));
@@ -54,7 +55,7 @@ fn sparql_sc_001_varistor() {
     // varistorRatedCurrent/VoltageThreshold only exchanged if varistorPresent is true.
     let ds = common::load_dataset("../testdata/test_sparql_SC_001.xml");
     let cfg = Config { profiles: vec!["SC".into()], ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("SC.OK.1").map_or(0, |v| v.len()), 0,
         "SC.OK.1: expected 0 violations, got: {:?}", by_id.get("SC.OK.1"));
@@ -70,7 +71,7 @@ fn sparql_sc_001_varistor() {
 fn sparql_sc_002_452() {
     let ds = common::load_dataset("../testdata/test_sparql_SC_002.xml");
     let cfg = Config { profiles: vec!["SC".into()], ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("SM.OK").map_or(0, |v| v.len()), 0,
         "SM.OK: expected 0 violations, got: {:?}", by_id.get("SM.OK"));
@@ -87,7 +88,7 @@ fn sparql_sc_003_6002() {
     // varistorRatedCurrent and varistorVoltageThreshold are required if varistorPresent is true.
     let ds = common::load_dataset("../testdata/test_sparql_SC_003.xml");
     let cfg = Config { profiles: vec!["SC".into()], ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("SC.OK.1").map_or(0, |v| v.len()), 0,
         "SC.OK.1: expected 0 violations, got: {:?}", by_id.get("SC.OK.1"));
@@ -102,7 +103,7 @@ fn sparql_sv_001() {
     // alpha [10, 18] for rectifier, gamma [17, 20] for inverter.
     let ds = common::load_dataset("../testdata/test_sparql_SV_001.xml");
     let cfg = Config { profiles: vec!["SV".into()], ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("CSC.RECT.OK").map_or(0, |v| v.len()), 0,
         "CSC.RECT.OK: expected 0 violations, got: {:?}", by_id.get("CSC.RECT.OK"));
@@ -119,7 +120,7 @@ fn sparql_sv_solved_001_tap() {
     // SvTapStep.position must be within [lowStep, highStep] of the associated TapChanger.
     let ds = common::load_dataset("../testdata/test_sparql_SV_SOLVED_001.xml");
     let cfg = Config { profiles: vec!["SV".into()], solved: true, ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("SV.OK.1").map_or(0, |v| v.len()), 0,
         "SV.OK.1: expected 0 violations, got: {:?}", by_id.get("SV.OK.1"));
@@ -134,7 +135,7 @@ fn sparql_sv_solved_002_angle_ref() {
     // Priority 1 SM must be at the AngleRefTopologicalNode.
     let ds = common::load_dataset("../testdata/test_sparql_SV_SOLVED_002.xml");
     let cfg = Config { profiles: vec!["SV".into()], solved: true, common: true, ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     let sm_ok_non_uuid = by_id.get("SM.OK").map_or(0, |vs| vs.iter()
         .filter(|v| !v.rule_id.starts_with("all600:All-GENC"))
@@ -155,7 +156,7 @@ fn sparql_sv_solved_002_angle_ref() {
 fn sparql_sv_solved_003_456() {
     let ds = common::load_dataset("../testdata/test_sparql_SV_SOLVED_003.xml");
     let cfg = Config { profiles: vec!["SV".into()], solved: true, ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     for id in &["SM.ENERGIZED", "SW.1", "SVSC.BAD", "SVTS.BAD", "SVV.BAD"] {
         assert!(by_id.get(*id).map_or(0, |v| v.len()) >= 1,
@@ -167,7 +168,7 @@ fn sparql_sv_solved_003_456() {
 fn sparql_sv_solved_004_600_1() {
     let ds = common::load_dataset("../testdata/test_sparql_SV_SOLVED_004.xml");
     let cfg = Config { profiles: vec!["SV".into()], solved: true, common: true, ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     for id in &["S1", "LSC.SYNC.BAD", "RTC.SYNC.BAD", "SM.ENERGIZED.NO_STATUS", "LSC.ENERGIZED.NO_SVSC"] {
         assert!(by_id.get(*id).map_or(0, |v| v.len()) >= 1,
@@ -179,7 +180,7 @@ fn sparql_sv_solved_004_600_1() {
 fn sparql_sv_solved_005_rc() {
     let ds = common::load_dataset("../testdata/test_sparql_SV_SOLVED_005.xml");
     let cfg = Config { profiles: vec!["SV".into()], solved: true, common: true, ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     let rc_v2_samepoint = by_id.get("RC.V.2").map_or(0, |vs| vs.iter()
         .filter(|v| v.rule_id.contains("samePoint"))
@@ -194,7 +195,7 @@ fn sparql_sv_solved_005_rc() {
 fn sparql_ssh_notsolved_001() {
     let ds = common::load_dataset("../testdata/test_sparql_SSH_NOTSOLVED_001.xml");
     let cfg = Config { profiles: vec!["SSH".into()], not_solved: true, ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     for id in &[
         "CA.INTERCHANGE.BAD",
@@ -215,7 +216,7 @@ fn sparql_ssh_notsolved_001() {
 fn sparql_ssh_001() {
     let ds = common::load_dataset("../testdata/test_sparql_SSH_001.xml");
     let cfg = Config { profiles: vec!["SSH".into()], ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     for id in &[
         "ES.CONSUMER",
@@ -234,7 +235,7 @@ fn sparql_tp_001_phase_code() {
     // Terminals at the same TopologicalNode must have consistent phase codes.
     let ds = common::load_dataset("../testdata/test_sparql_TP_001.xml");
     let cfg = Config { profiles: vec!["TP".into()], not_solved: true, ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("TN.OK").map_or(0, |v| v.len()), 0,
         "TN.OK: expected 0 violations, got: {:?}", by_id.get("TN.OK"));
@@ -247,7 +248,7 @@ fn sparql_tp_002_exch8() {
     // Terminal.TopologicalNode is required if a RegulatingControl is associated.
     let ds = common::load_dataset("../testdata/test_sparql_TP_002.xml");
     let cfg = Config { profiles: vec!["TP".into()], not_solved: true, ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("Term.OK").map_or(0, |v| v.len()), 0,
         "Term.OK: expected 0 violations, got: {:?}", by_id.get("Term.OK"));
@@ -260,7 +261,7 @@ fn sparql_tp_003_same_tn() {
     // Terminals of a retained Switch shall not be connected to the same TopologicalNode.
     let ds = common::load_dataset("../testdata/test_sparql_TP_003.xml");
     let cfg = Config { profiles: vec!["TP".into()], not_solved: true, ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("SW.OK").map_or(0, |v| v.len()), 0,
         "SW.OK: expected 0 violations, got: {:?}", by_id.get("SW.OK"));
@@ -275,7 +276,7 @@ fn sparql_dy_001_mbase() {
     // mwbase must equal RotatingMachine.ratedPowerFactor * RotatingMachine.ratedS.
     let ds = common::load_dataset("../testdata/test_sparql_DY_001.xml");
     let cfg = Config { profiles: vec!["DY".into()], ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("GOV.OK").map_or(0, |v| v.len()), 0,
         "GOV.OK: expected 0 violations, got: {:?}", by_id.get("GOV.OK"));
@@ -288,7 +289,7 @@ fn sparql_dy_002_exc() {
     // ExcitationSystemDynamics.SynchronousMachineDynamics shall not point to SynchronousMachineSimplified.
     let ds = common::load_dataset("../testdata/test_sparql_DY_002.xml");
     let cfg = Config { profiles: vec!["DY".into()], ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("EXC.OK").map_or(0, |v| v.len()), 0,
         "EXC.OK: expected 0 violations, got: {:?}", by_id.get("EXC.OK"));
@@ -300,7 +301,7 @@ fn sparql_dy_002_exc() {
 fn sparql_dy_003_302() {
     let ds = common::load_dataset("../testdata/test_sparql_DY_003.xml");
     let cfg = Config { profiles: vec!["DY".into()], ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     for id in &[
         "EXC.AC8B.BAD",
@@ -324,7 +325,7 @@ fn sparql_common_001() {
     // Common CGMES rules: model header, UUID syntax, duplicate mRID, NaN, string lengths, EIC.
     let ds = common::load_dataset("../testdata/test_sparql_COMMON_001.xml");
     let cfg = Config { common: true, ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     for id in &[
         "urn:uuid:header-1",
@@ -350,7 +351,7 @@ fn sparql_eq_notsolved_001() {
     // RegulatingControl.targetValue must be within TapChanger capability limits.
     let ds = common::load_dataset("../testdata/test_sparql_EQ_NOTSOLVED_001.xml");
     let cfg = Config { profiles: vec!["EQ".into()], not_solved: true, ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("TCC.OK").map_or(0, |v| v.len()), 0,
         "TCC.OK: expected 0 violations, got: {:?}", by_id.get("TCC.OK"));
@@ -363,7 +364,7 @@ fn sparql_eq_001_452() {
     // Switch terminals must share BaseVoltage; ACLineSegment terminals must use different ConnectivityNodes.
     let ds = common::load_dataset("../testdata/test_sparql_EQ_001.xml");
     let cfg = Config { profiles: vec!["EQ".into()], ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("SW.OK.SAME_VL").map_or(0, |v| v.len()), 0,
         "SW.OK.SAME_VL: expected 0 violations, got: {:?}", by_id.get("SW.OK.SAME_VL"));
@@ -377,7 +378,7 @@ fn sparql_eq_001_452() {
 fn sparql_eq_002_6002() {
     let ds = common::load_dataset("../testdata/test_sparql_EQ_002.xml");
     let cfg = Config { profiles: vec!["EQ".into()], ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     assert!(by_id.get("global").map_or(0, |v| v.len()) >= 1,
         "global: expected violation for substation count, got none");
@@ -393,7 +394,7 @@ fn sparql_op_001() {
     // unless measurementType is TapPosition or SwitchPosition.
     let ds = common::load_dataset("../testdata/test_sparql_OP_001.xml");
     let cfg = Config { profiles: vec!["OP".into()], ..Default::default() };
-    let vs = run_validation(&ds, &cfg);
+    let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("MEAS.OK").map_or(0, |v| v.len()), 0,
         "MEAS.OK: expected 0 violations, got: {:?}", by_id.get("MEAS.OK"));

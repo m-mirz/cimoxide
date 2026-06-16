@@ -16,29 +16,10 @@ pub mod operation;
 pub mod prof10;
 pub mod quality;
 
-use std::collections::HashSet;
 use cimdecoder::CimDataset;
-use crate::Violation;
+use crate::{Config, Violation};
 
-#[derive(Debug, Default, Clone)]
-pub struct Config {
-    /// Profile short names to validate (e.g. "EQ", "SSH"). Empty = all detected.
-    pub profiles: Vec<String>,
-    /// True if SV profile (power-flow results) is present.
-    pub solved: bool,
-    /// True if SV profile is absent.
-    pub not_solved: bool,
-    /// Run common cross-profile checks.
-    pub common: bool,
-    /// Run CIMdesk modeling quality checks.
-    pub quality: bool,
-    /// Rule IDs to suppress in the output.
-    pub silenced_rules: Vec<String>,
-    /// When non-empty, enables the EQBD2 base voltage check.
-    pub eqbd_base_voltage_ids: Option<HashSet<String>>,
-}
-
-pub fn run_validation(dataset: &CimDataset, cfg: &Config) -> Vec<Violation> {
+pub fn validate(dataset: &CimDataset, cfg: &Config) -> Vec<Violation> {
     let profile_selected = |p: &str| -> bool {
         cfg.profiles.is_empty() || cfg.profiles.iter().any(|s| s == p)
     };
@@ -110,11 +91,6 @@ pub fn run_validation(dataset: &CimDataset, cfg: &Config) -> Vec<Violation> {
     }
 
     violations.extend(prof10::validate(dataset));
-
-    if !cfg.silenced_rules.is_empty() {
-        let silenced: HashSet<&str> = cfg.silenced_rules.iter().map(String::as_str).collect();
-        violations.retain(|v| !silenced.contains(v.rule_id.as_str()));
-    }
 
     violations
 }

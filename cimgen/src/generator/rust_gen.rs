@@ -606,5 +606,3 @@ fn render_registry(spec: &CimSpecification) -> String {
     s
 }
 
-// --- static content ---------------------------------------------------------
-

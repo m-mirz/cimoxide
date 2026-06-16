@@ -1,11 +1,15 @@
 mod common;
 
-use cimvalidation::validate_generated;
+use cimvalidation::{Config, validate_generated};
+
+fn cfg(profile: &str) -> Config {
+    Config { profiles: vec![profile.to_string()], ..Config::default() }
+}
 
 #[test]
 fn shacl_gl_001() {
     let ds = common::load_dataset("../testdata/test_shacl_GL_001.xml");
-    let vs = validate_generated(&ds, &["GL"]);
+    let vs = validate_generated(&ds, &cfg("GL"));
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("CoordinateSystem.WGS84").map_or(0, |v| v.len()), 0,
         "CoordinateSystem.WGS84 (default crsUrn): expected 0 violations, got: {:?}", by_id.get("CoordinateSystem.WGS84"));
@@ -17,7 +21,7 @@ fn shacl_gl_001() {
 fn shacl_dl_001_diagram_style_name() {
     // DiagramStyle.name must be one of the allowed values (C:453:DL:DiagramStyle:name).
     let ds = common::load_dataset("../testdata/test_shacl_DL_001.xml");
-    let vs = validate_generated(&ds, &["DL"]);
+    let vs = validate_generated(&ds, &cfg("DL"));
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("DiagramStyle.OK").map_or(0, |v| v.len()), 0,
         "DiagramStyle.OK (name=node-breaker): expected 0 violations, got: {:?}", by_id.get("DiagramStyle.OK"));
@@ -29,7 +33,7 @@ fn shacl_dl_001_diagram_style_name() {
 fn shacl_dl_002_sequence_number() {
     // DiagramObjectPoint.sequenceNumber must be > 0 (sh:minExclusive 0).
     let ds = common::load_dataset("../testdata/test_shacl_DL_002.xml");
-    let vs = validate_generated(&ds, &["DL"]);
+    let vs = validate_generated(&ds, &cfg("DL"));
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("DiagramObjectPoint.OK").map_or(0, |v| v.len()), 0,
         "DiagramObjectPoint.OK (sequenceNumber=1): expected 0 violations, got: {:?}", by_id.get("DiagramObjectPoint.OK"));
@@ -42,7 +46,7 @@ fn shacl_eq_001() {
     // ACLineSegment.length >= 0 (sh:minInclusive 0).
     // BaseVoltage.nominalVoltage > 0 (sh:minExclusive 0).
     let ds = common::load_dataset("../testdata/test_shacl_EQ_001.xml");
-    let vs = validate_generated(&ds, &["EQ"]);
+    let vs = validate_generated(&ds, &cfg("EQ"));
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("ACLineSegment.OK").map_or(0, |v| v.len()), 0,
         "ACLineSegment.OK (length=5): expected 0 violations, got: {:?}", by_id.get("ACLineSegment.OK"));
@@ -56,9 +60,9 @@ fn shacl_eq_001() {
 
 #[test]
 fn shacl_ssh_001_battery_unit() {
-    // BatteryUnit.storedE must be < ratedE (sh:lessThan).
+    // BatteryUnit.storedE must be < ratedE (sh:lessThan) — in notsolvedmas file.
     let ds = common::load_dataset("../testdata/test_shacl_SSH_001.xml");
-    let vs = validate_generated(&ds, &["SSH"]);
+    let vs = validate_generated(&ds, &Config { profiles: vec!["SSH".to_string()], not_solved: true, ..Config::default() });
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("BatteryUnit.OK").map_or(0, |v| v.len()), 0,
         "BatteryUnit.OK (storedE=50 < ratedE=100): expected 0 violations, got: {:?}", by_id.get("BatteryUnit.OK"));
@@ -70,7 +74,7 @@ fn shacl_ssh_001_battery_unit() {
 fn shacl_ssh_002_energy_consumer() {
     // EnergyConsumer.p must be >= 0 (sh:minInclusive 0).
     let ds = common::load_dataset("../testdata/test_shacl_SSH_002.xml");
-    let vs = validate_generated(&ds, &["SSH"]);
+    let vs = validate_generated(&ds, &cfg("SSH"));
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("EnergyConsumer.OK").map_or(0, |v| v.len()), 0,
         "EnergyConsumer.OK (p=100): expected 0 violations, got: {:?}", by_id.get("EnergyConsumer.OK"));
@@ -82,7 +86,7 @@ fn shacl_ssh_002_energy_consumer() {
 fn shacl_sc_001() {
     // PowerTransformerEnd.phaseAngleClock must be in [0, 11] (sh:maxInclusive 11).
     let ds = common::load_dataset("../testdata/test_shacl_SC_001.xml");
-    let vs = validate_generated(&ds, &["SC"]);
+    let vs = validate_generated(&ds, &cfg("SC"));
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("PowerTransformerEnd.OK").map_or(0, |v| v.len()), 0,
         "PowerTransformerEnd.OK (phaseAngleClock=5): expected 0 violations, got: {:?}", by_id.get("PowerTransformerEnd.OK"));
@@ -94,7 +98,7 @@ fn shacl_sc_001() {
 fn shacl_sv_001() {
     // SvVoltage.v must be > 0 (sh:minExclusive 0).
     let ds = common::load_dataset("../testdata/test_shacl_SV_001.xml");
-    let vs = validate_generated(&ds, &["SV"]);
+    let vs = validate_generated(&ds, &cfg("SV"));
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("SvVoltage.OK").map_or(0, |v| v.len()), 0,
         "SvVoltage.OK (v=110): expected 0 violations, got: {:?}", by_id.get("SvVoltage.OK"));
@@ -106,7 +110,7 @@ fn shacl_sv_001() {
 fn shacl_dy_001() {
     // AsynchronousMachineTimeConstantReactance.tppo must be < tpo (sh:lessThan).
     let ds = common::load_dataset("../testdata/test_shacl_DY_001.xml");
-    let vs = validate_generated(&ds, &["DY"]);
+    let vs = validate_generated(&ds, &cfg("DY"));
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("AsynchronousMachineTimeConstantReactance.OK").map_or(0, |v| v.len()), 0,
         "AMTCR.OK (tppo=0.01 < tpo=0.1): expected 0 violations, got: {:?}", by_id.get("AsynchronousMachineTimeConstantReactance.OK"));
@@ -118,7 +122,7 @@ fn shacl_dy_001() {
 fn shacl_op_001() {
     // AccumulatorLimit.value must be > 0 (sh:minExclusive 0).
     let ds = common::load_dataset("../testdata/test_shacl_OP_001.xml");
-    let vs = validate_generated(&ds, &["OP"]);
+    let vs = validate_generated(&ds, &cfg("OP"));
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("AccumulatorLimit.OK").map_or(0, |v| v.len()), 0,
         "AccumulatorLimit.OK (value=5): expected 0 violations, got: {:?}", by_id.get("AccumulatorLimit.OK"));
@@ -130,7 +134,7 @@ fn shacl_op_001() {
 fn shacl_tp_001() {
     // TopologicalNode.name is required (sh:required).
     let ds = common::load_dataset("../testdata/test_shacl_TP_001.xml");
-    let vs = validate_generated(&ds, &["TP"]);
+    let vs = validate_generated(&ds, &cfg("TP"));
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("TopologicalNode.OK").map_or(0, |v| v.len()), 0,
         "TopologicalNode.OK (name present): expected 0 violations, got: {:?}", by_id.get("TopologicalNode.OK"));
@@ -142,7 +146,7 @@ fn shacl_tp_001() {
 fn shacl_eqbd_001() {
     // BoundaryPoint.fromEndIsoCode must be a valid European ISO-3166-1-alpha-2 code (sh:in).
     let ds = common::load_dataset("../testdata/test_shacl_EQBD_001.xml");
-    let vs = validate_generated(&ds, &["EQBD"]);
+    let vs = validate_generated(&ds, &cfg("EQBD"));
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("BoundaryPoint.OK").map_or(0, |v| v.len()), 0,
         "BoundaryPoint.OK (fromEndIsoCode=DE): expected 0 violations, got: {:?}", by_id.get("BoundaryPoint.OK"));

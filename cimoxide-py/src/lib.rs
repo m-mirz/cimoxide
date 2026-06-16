@@ -254,7 +254,7 @@ impl PyCimDataset {
         if let Some(s) = silence {
             cfg.silenced_rules = s;
         }
-        Ok(cimvalidation::run_validation(&ds, &cfg)
+        Ok(cimvalidation::validate(&ds, &cfg)
             .into_iter()
             .map(|v| PyViolation {
                 object_id:   v.object_id,

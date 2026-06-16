@@ -1,5 +1,5 @@
 use cimdecoder::CimDataset;
-use crate::sparql::Config;
+use crate::Config;
 
 const PROF_EQ:   &str = "http://iec.ch/TC57/ns/CIM/CoreEquipment-EU/3.0";
 const PROF_EQBD: &str = "http://iec.ch/TC57/ns/CIM/EquipmentBoundary-EU/3.0";

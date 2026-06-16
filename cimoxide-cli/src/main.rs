@@ -330,7 +330,7 @@ fn cmd_validate(args: &[String]) {
     if enable_quality { cfg.quality = true; }
     cfg.silenced_rules = silenced;
 
-    let violations = cimvalidation::run_validation(&dataset, &cfg);
+    let violations = cimvalidation::validate(&dataset, &cfg);
 
     if output_json {
         let arr: Vec<serde_json::Value> = violations.iter().map(|v| {
