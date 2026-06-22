@@ -65,7 +65,7 @@ fn check_angle_reference(dataset: &CimDataset) -> Vec<Violation> {
         v.push(Violation {
             object_id:   "global".into(),
             rule_id:     "sm456:Model-angleReference".into(),
-            name:        "Model-angleReference".into(),
+            name:        "C:456:SSH:NA:angleReference".into(),
             class:       "SynchronousMachine".into(),
             property:    "referencePriority".into(),
             message:     "Multiple machines with highest SynchronousMachine.referencePriority found.".into(),
@@ -94,7 +94,7 @@ fn check_angle_reference(dataset: &CimDataset) -> Vec<Violation> {
             v.push(Violation {
                 object_id:   sm_id.clone(),
                 rule_id:     "sm456:Model-angleReference".into(),
-                name:        "Model-angleReference".into(),
+                name:        "C:456:SSH:NA:angleReference".into(),
                 class:       "SynchronousMachine".into(),
                 property:    "referencePriority".into(),
                 message:     "The SynchronousMachine with highest priority is not connected to a TopologicalIsland.AngleRefTopologicalNode.".into(),
@@ -127,7 +127,7 @@ fn check_dangling_references(dataset: &CimDataset) -> Vec<Violation> {
                     v.push(Violation {
                         object_id:   id.clone(),
                         rule_id:     "sm600:All-DanglingReferences".into(),
-                        name:        "All-DanglingReferences".into(),
+                        name:        "C:600:ALL:NA:FBOD4".into(),
                         class:       block.type_name.clone(),
                         property:    field.clone(),
                         message:     format!("Dangling reference to '{}'.", target_id),
@@ -160,7 +160,7 @@ fn check_state_variables_instantiated(dataset: &CimDataset) -> Vec<Violation> {
             v.push(Violation {
                 object_id:   tn_id.clone(),
                 rule_id:     "sm600:SvVoltage-SV__4".into(),
-                name:        "SvVoltage-SV__4".into(),
+                name:        "C:600:SV:SvVoltage:SV__4".into(),
                 class:       "TopologicalNode".into(),
                 property:    "rdf:type".into(),
                 message:     format!("SvVoltage is not instantiated for energized TopologicalNode part of island {}.", island_id),
@@ -208,7 +208,7 @@ fn check_state_variables_instantiated(dataset: &CimDataset) -> Vec<Violation> {
                 v.push(Violation {
                     object_id:   mrid.clone(),
                     rule_id:     "sm600:SvSwitch-SV__4".into(),
-                    name:        "SvSwitch-SV__4".into(),
+                    name:        "C:600:SV:SvSwitch:SV__4".into(),
                     class:       "Switch".into(),
                     property:    "rdf:type".into(),
                     message:     "SvSwitch not instantiated for energized retained Switch.".into(),
@@ -237,7 +237,7 @@ fn check_state_variables_instantiated(dataset: &CimDataset) -> Vec<Violation> {
             v.push(Violation {
                 object_id:   eq_id.clone(),
                 rule_id:     "sm600:SvStatus-SV__4".into(),
-                name:        "SvStatus-SV__4".into(),
+                name:        "C:600:SV:SvStatus:SV__4".into(),
                 class:       type_name.to_string(),
                 property:    "rdf:type".into(),
                 message:     "SvStatus is not instantiated for energized ConductingEquipment.".into(),
@@ -272,7 +272,7 @@ fn check_regulating_control_contradictory(dataset: &CimDataset) -> Vec<Violation
                 v.push(Violation {
                     object_id:   rc_id.clone(),
                     rule_id:     "sm6002:RegulatingControl-samePoint".into(),
-                    name:        "RegulatingControl-samePoint".into(),
+                    name:        "C:452:EQ:RegulatingControl:samePoint".into(),
                     class:       "RegulatingControl".into(),
                     property:    "RegulatingControl.targetValue".into(),
                     message:     format!("Enabled RegulatingControl-s of the same type associated with the same TopologicalNode have different target values. RegulatingControl ID: {}.", rc_id),
@@ -333,8 +333,8 @@ fn check_sv_shunt_compensator_sections_sync(dataset: &CimDataset) -> Vec<Violati
             if sv_sections != sections {
                 v.push(Violation {
                     object_id:   sc_id.to_string(),
-                    rule_id:     "mas600:SvShuntCompensatorSections.sections-SV__4".into(),
-                    name:        "SvShuntCompensatorSections.sections-SV__4".into(),
+                    rule_id:     "sm600:SvShuntCompensatorSections.sections-SV__4".into(),
+                    name:        "C:600:SV:SvShuntCompensatorSections.sections:SV__4".into(),
                     class:       type_name.to_string(),
                     property:    "ShuntCompensator.sections".into(),
                     message:     format!("SvShuntCompensatorSections.sections ({}) is not the same as ShuntCompensator.sections ({}) for non-regulating ShuntCompensator.", sv_sections, sections),
@@ -364,8 +364,8 @@ fn check_sv_tap_step_position_sync(dataset: &CimDataset) -> Vec<Violation> {
             if position != step {
                 v.push(Violation {
                     object_id:   tc_id.to_string(),
-                    rule_id:     "mas600:SvTapStep.position-SV__4".into(),
-                    name:        "SvTapStep.position-SV__4".into(),
+                    rule_id:     "sm600:SvTapStep.position-SV__4".into(),
+                    name:        "C:600:SV:SvTapStep.position:SV__4".into(),
                     class:       type_name.to_string(),
                     property:    "TapChanger.step".into(),
                     message:     format!("SvTapStep.position ({}) is not the same as TapChanger.step ({}) for non-regulating TapChanger.", position, step),
@@ -439,8 +439,8 @@ fn check_sv_status_instance(dataset: &CimDataset) -> Vec<Violation> {
             if !ce_has_sv_status.contains(mrid) {
                 v.push(Violation {
                     object_id:   mrid.clone(),
-                    rule_id:     "mas600:SvStatus-SV__4".into(),
-                    name:        "SvStatus-SV__4".into(),
+                    rule_id:     "sm600:SvStatus-SV__4".into(),
+                    name:        "C:600:SV:SvStatus:SV__4".into(),
                     class:       type_name.to_string(),
                     property:    "rdf:type".into(),
                     message:     "SvStatus is not instantiated for a ConductingEquipment connected to a TopologicalNode which is referenced by a TopologicalIsland.".into(),
@@ -484,8 +484,8 @@ fn check_sv_shunt_compensator_sections_instance(dataset: &CimDataset) -> Vec<Vio
             if !sc_has_sv.contains(mrid) {
                 v.push(Violation {
                     object_id:   mrid.clone(),
-                    rule_id:     "mas600:SvShuntCompensatorSections-SV__4".into(),
-                    name:        "SvShuntCompensatorSections-SV__4".into(),
+                    rule_id:     "sm600:SvShuntCompensatorSections-SV__4".into(),
+                    name:        "C:600:SV:SvShuntCompensatorSections:SV__4".into(),
                     class:       type_name.to_string(),
                     property:    "rdf:type".into(),
                     message:     "SvShuntCompensatorSections is not instantiated for an energized ShuntCompensator.".into(),
@@ -565,8 +565,8 @@ fn check_sv_tap_step_instance(dataset: &CimDataset) -> Vec<Violation> {
             if !tc_has_sv.contains(mrid) {
                 v.push(Violation {
                     object_id:   mrid.clone(),
-                    rule_id:     "mas600:SvTapStep-SV__4".into(),
-                    name:        "SvTapStep-SV__4".into(),
+                    rule_id:     "sm600:SvTapStep-SV__4".into(),
+                    name:        "C:600:SV:SvTapStep:SV__4".into(),
                     class:       type_name.to_string(),
                     property:    "rdf:type".into(),
                     message:     "SvTapStep is not instantiated for an energized TapChanger.".into(),
@@ -626,7 +626,7 @@ fn check_regulating_control_same_island(dataset: &CimDataset) -> Vec<Violation> 
                             v.push(Violation {
                                 object_id:   mrid.clone(),
                                 rule_id:     "sm6002:RegulatingControl-point".into(),
-                                name:        "RegulatingControl-point".into(),
+                                name:        "C:600:EQ:RegulatingControl:point".into(),
                                 class:       "RegulatingControl".into(),
                                 property:    "rdf:type".into(),
                                 message:     format!("The controlled point and the controlling equipment (SynchronousMachine {}) are not located in the same TopologicalIsland.", sm_mrid),
@@ -677,7 +677,7 @@ fn check_regulating_control_same_island(dataset: &CimDataset) -> Vec<Violation> 
                             v.push(Violation {
                                 object_id:   mrid.clone(),
                                 rule_id:     "sm6002:RegulatingControl-point".into(),
-                                name:        "RegulatingControl-point".into(),
+                                name:        "C:600:EQ:RegulatingControl:point".into(),
                                 class:       "RegulatingControl".into(),
                                 property:    "rdf:type".into(),
                                 message:     format!("The controlled point and the controlling equipment ({} {}) are not located in the same TopologicalIsland.", tc_type, tc_mrid),

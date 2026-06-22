@@ -25,8 +25,8 @@ fn check_cs_converter_state_value_range(dataset: &CimDataset) -> Vec<Violation> 
             if alpha < 10.0 || alpha > 18.0 {
                 v.push(Violation {
                     object_id:   mrid.clone(),
-                    rule_id:     "svc.CsConverter.alpha-valueRangeTypical".into(),
-                    name:        "CsConverter.alpha-valueRangeTypical".into(),
+                    rule_id:     "svu:CsConverter.alpha-valueRangeTypical".into(),
+                    name:        "C:301:SV:CsConverter.alpha:valueRangeTypical".into(),
                     class:       "CsConverter".into(),
                     property:    "CsConverter.alpha".into(),
                     message:     "The alpha value is outside typical range (10-18 degrees) for a rectifier.".into(),
@@ -39,8 +39,8 @@ fn check_cs_converter_state_value_range(dataset: &CimDataset) -> Vec<Violation> 
             if gamma < 17.0 || gamma > 20.0 {
                 v.push(Violation {
                     object_id:   mrid.clone(),
-                    rule_id:     "svc.CsConverter.gamma-valueRangeTypical".into(),
-                    name:        "CsConverter.gamma-valueRangeTypical".into(),
+                    rule_id:     "svu:CsConverter.gamma-valueRangeTypical".into(),
+                    name:        "C:301:SV:CsConverter.gamma:valueRangeTypical".into(),
                     class:       "CsConverter".into(),
                     property:    "CsConverter.gamma".into(),
                     message:     "The gamma value is outside typical range (17-20 degrees) for an inverter.".into(),
@@ -59,7 +59,7 @@ fn check_topological_island_count(dataset: &CimDataset) -> Vec<Violation> {
         vec![Violation {
             object_id:   "global".into(),
             rule_id:     "sv456:TopologicalIsland-instance".into(),
-            name:        "TopologicalIsland-instance".into(),
+            name:        "C:456:SV:TopologicalIsland:instance".into(),
             class:       "TopologicalIsland".into(),
             property:    "rdf:type".into(),
             message:     "No TopologicalIsland instantiated.".into(),

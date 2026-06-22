@@ -50,8 +50,8 @@ fn check_terminal_phases_consistency_topological_node(dataset: &CimDataset) -> V
                 if failed {
                     v.push(Violation {
                         object_id:   node_id.clone(),
-                        rule_id:     "topcns.Terminal.phases-consistencyTopologicalNode".into(),
-                        name:        "Terminal.phases-consistencyTopologicalNode".into(),
+                        rule_id:     "tpn301:Terminal.phases-consistencyTopologicalNode".into(),
+                        name:        "C:301:TP:Terminal.phases:consistencyTopologicalNode".into(),
                         class:       "TopologicalNode".into(),
                         property:    "Terminal.phases".into(),
                         message:     format!("The phase codes for the connected terminals are not consistent. Terminal {} code: {}, Terminal {} code: {}.",
@@ -100,8 +100,8 @@ macro_rules! check_switch_retained {
                     if !tn1.is_empty() && tn1 == tn2 {
                         $v.push(Violation {
                             object_id:   mrid.clone(),
-                            rule_id:     "topc456ns:Switch-sameTopologicalNode".into(),
-                            name:        "Switch-sameTopologicalNode".into(),
+                            rule_id:     "tpn456:Switch-sameTopologicalNode".into(),
+                            name:        "C:456:TP:Terminal:switch".into(),
                             class:       stringify!($T).to_string(),
                             property:    "retained".into(),
                             message:     "Terminals of retained Switch connect to the same TopologicalNode.".into(),
@@ -177,8 +177,8 @@ fn check_terminal_exch8_topological_node(dataset: &CimDataset) -> Vec<Violation>
         if !has_tn {
             v.push(Violation {
                 object_id:   mrid.clone(),
-                rule_id:     "topc600ns:Terminal-EXCH8TopologicalNode".into(),
-                name:        "Terminal-EXCH8TopologicalNode".into(),
+                rule_id:     "tpn600:Terminal-EXCH8TopologicalNode".into(),
+                name:        "C:600:EQ:Terminal:EXCH8TopologicalNode".into(),
                 class:       "Terminal".into(),
                 property:    "TopologicalNode".into(),
                 message:     "The Terminal is referenced by a RegulatingControl but is not associated with a TopologicalNode.".into(),

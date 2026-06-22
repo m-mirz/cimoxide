@@ -41,7 +41,7 @@ fn check_boundary_point_tie_flow(dataset: &CimDataset) -> Vec<Violation> {
             v.push(Violation {
                 object_id:   mrid.clone(),
                 rule_id:     "eqbdn301:BoundaryPoint.isExcludedFromAreaInterchange-requiredTieFlow".into(),
-                name:        "BoundaryPoint.isExcludedFromAreaInterchange-requiredTieFlow".into(),
+                name:        "C:301:EQBD:BoundaryPoint.isExcludedFromAreaInterchange:requiredTieFlow".into(),
                 class:       "BoundaryPoint".into(),
                 property:    "isExcludedFromAreaInterchange".into(),
                 message:     "TieFlow is modelled but isExcludedFromAreaInterchange is true.".into(),
@@ -52,7 +52,7 @@ fn check_boundary_point_tie_flow(dataset: &CimDataset) -> Vec<Violation> {
             v.push(Violation {
                 object_id:   mrid.clone(),
                 rule_id:     "eqbdn301:BoundaryPoint.isExcludedFromAreaInterchange-requiredTieFlow".into(),
-                name:        "BoundaryPoint.isExcludedFromAreaInterchange-requiredTieFlow".into(),
+                name:        "C:301:EQBD:BoundaryPoint.isExcludedFromAreaInterchange:requiredTieFlow".into(),
                 class:       "BoundaryPoint".into(),
                 property:    "isExcludedFromAreaInterchange".into(),
                 message:     "TieFlow is required but not modelled for this BoundaryPoint.".into(),

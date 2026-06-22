@@ -21,8 +21,8 @@ fn check_series_compensator_varistor_usage(dataset: &CimDataset) -> Vec<Violatio
             if obj.varistor_rated_current.unwrap_or(0.0) != 0.0 {
                 v.push(Violation {
                     object_id:   mrid.clone(),
-                    rule_id:     "scc.SeriesCompensator.varistorRatedCurrent-usage".into(),
-                    name:        "SeriesCompensator.varistorRatedCurrent-usage".into(),
+                    rule_id:     "scu:SeriesCompensator.varistorRatedCurrent-usage".into(),
+                    name:        "C:301:SC:SeriesCompensator.varistorRatedCurrent:usage".into(),
                     class:       "SeriesCompensator".into(),
                     property:    "SeriesCompensator.varistorRatedCurrent".into(),
                     message:     "The attribute is present and SeriesCompensator.varistorPresent is false.".into(),
@@ -33,8 +33,8 @@ fn check_series_compensator_varistor_usage(dataset: &CimDataset) -> Vec<Violatio
             if obj.varistor_voltage_threshold.unwrap_or(0.0) != 0.0 {
                 v.push(Violation {
                     object_id:   mrid.clone(),
-                    rule_id:     "scc.SeriesCompensator.varistorVoltageThreshold-usage".into(),
-                    name:        "SeriesCompensator.varistorVoltageThreshold-usage".into(),
+                    rule_id:     "scu:SeriesCompensator.varistorVoltageThreshold-usage".into(),
+                    name:        "C:301:SC:SeriesCompensator.varistorVoltageThreshold:usage".into(),
                     class:       "SeriesCompensator".into(),
                     property:    "SeriesCompensator.varistorVoltageThreshold".into(),
                     message:     "The attribute is present and SeriesCompensator.varistorPresent is false.".into(),
@@ -59,7 +59,7 @@ fn check_transformer_end_grounding(dataset: &CimDataset) -> Vec<Violation> {
                 v.push(Violation {
                     object_id:   mrid.clone(),
                     rule_id:     "sc452:TransformerEnd-grounding".into(),
-                    name:        "TransformerEnd-grounding".into(),
+                    name:        "C:452:SC:PowerTransformerEnd.grounded:grounding".into(),
                     class:       "PowerTransformerEnd".into(),
                     property:    "grounded".into(),
                     message:     "Missing required properties .rground or .xground when grounded=true.".into(),
@@ -84,7 +84,7 @@ fn check_synchronous_machine_earthing(dataset: &CimDataset) -> Vec<Violation> {
                 v.push(Violation {
                     object_id:   mrid.clone(),
                     rule_id:     "sc452:SynchronousMachine-attributes".into(),
-                    name:        "SynchronousMachine-attributes".into(),
+                    name:        "C:452:SC:SynchronousMachine.earthing:attributes".into(),
                     class:       "SynchronousMachine".into(),
                     property:    "earthing".into(),
                     message:     "Missing required properties .earthingStarPointR or .earthingStarPointX when earthing=true.".into(),
@@ -108,8 +108,8 @@ fn check_series_compensator_varistor_required(dataset: &CimDataset) -> Vec<Viola
             if obj.varistor_rated_current.unwrap_or(0.0) == 0.0 {
                 v.push(Violation {
                     object_id:   mrid.clone(),
-                    rule_id:     "scc600-2.SeriesCompensator.varistorRatedCurrent-required".into(),
-                    name:        "SeriesCompensator.varistorRatedCurrent-required".into(),
+                    rule_id:     "sc600:SeriesCompensator.varistorRatedCurrent-required".into(),
+                    name:        "C:600:SC:SeriesCompensator.varistorRatedCurrent:required".into(),
                     class:       "SeriesCompensator".into(),
                     property:    "SeriesCompensator.varistorRatedCurrent".into(),
                     message:     "The attribute is missing when SeriesCompensator.varistorPresent is true.".into(),
@@ -120,8 +120,8 @@ fn check_series_compensator_varistor_required(dataset: &CimDataset) -> Vec<Viola
             if obj.varistor_voltage_threshold.unwrap_or(0.0) == 0.0 {
                 v.push(Violation {
                     object_id:   mrid.clone(),
-                    rule_id:     "scc600-2.SeriesCompensator.varistorVoltageThreshold-required".into(),
-                    name:        "SeriesCompensator.varistorVoltageThreshold-required".into(),
+                    rule_id:     "sc600:SeriesCompensator.varistorVoltageThreshold-required".into(),
+                    name:        "C:600:SC:SeriesCompensator.varistorVoltageThreshold:required".into(),
                     class:       "SeriesCompensator".into(),
                     property:    "SeriesCompensator.varistorVoltageThreshold".into(),
                     message:     "The attribute is missing when SeriesCompensator.varistorPresent is true.".into(),

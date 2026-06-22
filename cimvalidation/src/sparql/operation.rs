@@ -49,7 +49,7 @@ fn check_measurement_terminal_required_cases(dataset: &CimDataset) -> Vec<Violat
                     v.push(Violation {
                         object_id:   mrid.clone(),
                         rule_id:     "opn452:Measurement.Terminal-requiredCases".into(),
-                        name:        "Measurement.Terminal-requiredCases".into(),
+                        name:        "C:452:OP:Measurement.Terminal:requiredCases".into(),
                         class:       (*type_name).to_string(),
                         property:    "Terminal".into(),
                         message:     format!("Measurement.Terminal should not be exchanged for measurementType '{m_type}'."),
@@ -66,7 +66,7 @@ fn check_measurement_terminal_required_cases(dataset: &CimDataset) -> Vec<Violat
                     v.push(Violation {
                         object_id:   mrid.clone(),
                         rule_id:     "opn452:Measurement.Terminal-requiredCases".into(),
-                        name:        "Measurement.Terminal-requiredCases".into(),
+                        name:        "C:452:OP:Measurement.Terminal:requiredCases".into(),
                         class:       (*type_name).to_string(),
                         property:    "Terminal".into(),
                         message:     format!("Measurement.Terminal is required for measurementType '{m_type}'."),

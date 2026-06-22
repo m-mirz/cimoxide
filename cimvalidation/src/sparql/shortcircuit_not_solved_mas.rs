@@ -39,8 +39,8 @@ fn check_mutual_coupling_terminals_assignment(dataset: &CimDataset) -> Vec<Viola
             let t2 = eq2_type.as_deref().unwrap_or("unknown");
             v.push(Violation {
                 object_id:   mrid.clone(),
-                rule_id:     "sccns.MutualCoupling-terminalsAssignment".into(),
-                name:        "MutualCoupling-terminalsAssignment".into(),
+                rule_id:     "scn301:MutualCoupling-terminalsAssignment".into(),
+                name:        "C:301:SC:MutualCoupling:terminalsAssignment".into(),
                 class:       "MutualCoupling".into(),
                 property:    "MutualCoupling.First_Terminal".into(),
                 message:     format!("The terminals are either not related to ACLineSegment or the first and the second terminal associations are not pointing to different ACLineSegments. Type line 1: {t1}. Type line 2: {t2}."),

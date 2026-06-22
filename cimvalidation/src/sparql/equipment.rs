@@ -114,8 +114,8 @@ fn check_acdcterminal_sequence_numbering(dataset: &CimDataset) -> Vec<Violation>
             || (n == 3 && sum_sn != 6);
         if failed {
             v.push(Violation {
-                object_id: eq_id.clone(), rule_id: "eqc.ACDCTerminal.sequenceNumber-numbering".into(),
-                name: "ACDCTerminal.sequenceNumber-numbering".into(), class: "ConductingEquipment".into(),
+                object_id: eq_id.clone(), rule_id: "equ:ACDCTerminal.sequenceNumber-numbering".into(),
+                name: "C:301:EQ:ACDCTerminal.sequenceNumber:numbering".into(), class: "ConductingEquipment".into(),
                 property: "ACDCTerminal.sequenceNumber".into(),
                 message: "There is no terminal with sequenceNumber=1 or the numbering is not unique.".into(),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -156,8 +156,8 @@ fn check_terminal_phases_consistency_equipment(dataset: &CimDataset) -> Vec<Viol
         } else { false };
         if failed {
             v.push(Violation {
-                object_id: eq_id.clone(), rule_id: "eqc.Terminal.phases-consistencyEquipment".into(),
-                name: "Terminal.phases-consistencyEquipment".into(), class: "ConductingEquipment".into(),
+                object_id: eq_id.clone(), rule_id: "equ:Terminal.phases-consistencyEquipment".into(),
+                name: "C:301:EQ:Terminal.phases:consistencyEquipment".into(), class: "ConductingEquipment".into(),
                 property: "Terminal.phases".into(),
                 message: format!("The phase codes for terminals of 2-terminal equipment are not consistent. Terminal 1 code:{} Terminal 2 code: {}.", val1, val2),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -185,8 +185,8 @@ fn check_conducting_equipment_base_voltage_usage(dataset: &CimDataset) -> Vec<Vi
         if let Some(ec_entry) = dataset.entries.get(&ec_id) {
             if ec_entry.element.type_name() == "VoltageLevel" {
                 v.push(Violation {
-                    object_id: mrid.clone(), rule_id: "eqc.ConductingEquipment.BaseVoltage-usage".into(),
-                    name: "ConductingEquipment.BaseVoltage-usage".into(), class: type_name.to_string(),
+                    object_id: mrid.clone(), rule_id: "equ:ConductingEquipment.BaseVoltage-usage".into(),
+                    name: "C:301:EQ:ConductingEquipment.BaseVoltage:usage".into(), class: type_name.to_string(),
                     property: "Equipment.EquipmentContainer".into(),
                     message: "The association ConductingEquipment.BaseVoltage is defined for a ConductingEquipment contained in a VoltageLevel.".into(),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -216,8 +216,8 @@ fn check_power_transformer_end_number_unique(dataset: &CimDataset) -> Vec<Violat
         }
         if duplicate {
             v.push(Violation {
-                object_id: pt_id.clone(), rule_id: "eqc.TransformerEnd.endNumber-unique".into(),
-                name: "TransformerEnd.endNumber-unique".into(), class: "PowerTransformer".into(),
+                object_id: pt_id.clone(), rule_id: "equ:TransformerEnd.endNumber-unique".into(),
+                name: "C:301:EQ:TransformerEnd.endNumber:unique".into(), class: "PowerTransformer".into(),
                 property: "TransformerEnd.endNumber".into(),
                 message: "The PowerTransformer has TransformerEnd.endNumber which is not unique.".into(),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -230,8 +230,8 @@ fn check_power_transformer_end_number_unique(dataset: &CimDataset) -> Vec<Violat
             });
             if !found_max_at_1 {
                 v.push(Violation {
-                    object_id: pt_id.clone(), rule_id: "eqc.TransformerEnd.endNumber-unique".into(),
-                    name: "TransformerEnd.endNumber-unique".into(), class: "PowerTransformer".into(),
+                    object_id: pt_id.clone(), rule_id: "equ:TransformerEnd.endNumber-unique".into(),
+                    name: "C:301:EQ:TransformerEnd.endNumber:unique".into(), class: "PowerTransformer".into(),
                     property: "TransformerEnd.endNumber".into(),
                     message: "The PowerTransformerEnd with endNumber 1 is not the highest voltage winding.".into(),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -253,8 +253,8 @@ fn check_power_transformer_end_terminal_consistency(dataset: &CimDataset) -> Vec
         let term_pt_id = match &term.conducting_equipment { Some(r) => r.mrid.trim_start_matches('#'), None => continue };
         if term_pt_id != pt_id.as_str() {
             v.push(Violation {
-                object_id: mrid.clone(), rule_id: "eqc.PowerTransformerEnd-terminalConsistency".into(),
-                name: "PowerTransformerEnd-terminalConsistency".into(), class: "PowerTransformerEnd".into(),
+                object_id: mrid.clone(), rule_id: "equ:PowerTransformerEnd-terminalConsistency".into(),
+                name: "C:301:EQ:PowerTransformerEnd:terminalConsistency".into(), class: "PowerTransformerEnd".into(),
                 property: "TransformerEnd.Terminal".into(),
                 message: "The Terminal referenced by TransformerEnd.Terminal points to a PowerTransformer which is different than the referenced element via PowerTransformerEnd.PowerTransformer.".into(),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -273,8 +273,8 @@ fn check_operational_limit_type_duration(dataset: &CimDataset) -> Vec<Violation>
         let dur = olt.acceptable_duration.unwrap_or(0.0);
         if is_inf && dur != 0.0 {
             v.push(Violation {
-                object_id: mrid.clone(), rule_id: "eqc.OperationalLimitType.acceptableDuration-usage".into(),
-                name: "OperationalLimitType.acceptableDuration-usage".into(), class: "OperationalLimitType".into(),
+                object_id: mrid.clone(), rule_id: "equ:OperationalLimitType.acceptableDuration-usage".into(),
+                name: "C:301:EQ:OperationalLimitType.acceptableDuration:usage".into(), class: "OperationalLimitType".into(),
                 property: "OperationalLimitType.acceptableDuration".into(),
                 message: "The attribute acceptableDuration is present and isInfiniteDuration is set to true.".into(),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -282,8 +282,8 @@ fn check_operational_limit_type_duration(dataset: &CimDataset) -> Vec<Violation>
         }
         if !is_inf && dur == 0.0 {
             v.push(Violation {
-                object_id: mrid.clone(), rule_id: "eqc.OperationalLimitType.isInfiniteDuration-usage".into(),
-                name: "OperationalLimitType.isInfiniteDuration-usage".into(), class: "OperationalLimitType".into(),
+                object_id: mrid.clone(), rule_id: "equ:OperationalLimitType.isInfiniteDuration-usage".into(),
+                name: "C:301:EQ:OperationalLimitType.isInfiniteDuration:usage".into(), class: "OperationalLimitType".into(),
                 property: "OperationalLimitType.acceptableDuration".into(),
                 message: "The attribute acceptableDuration is not present when isInfiniteDuration is set to false.".into(),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -307,8 +307,8 @@ fn check_power_transformer_two_winding_end_values(dataset: &CimDataset) -> Vec<V
                 let x0 = pte.x0.unwrap_or(0.0);
                 if r != 0.0 || r0 != 0.0 || x != 0.0 || x0 != 0.0 {
                     v.push(Violation {
-                        object_id: pt_id.clone(), rule_id: "eqc.PowerTransformerEnd-secondWindingValues".into(),
-                        name: "PowerTransformerEnd-secondWindingValues".into(), class: "PowerTransformer".into(),
+                        object_id: pt_id.clone(), rule_id: "equ:PowerTransformerEnd-secondWindingValues".into(),
+                        name: "C:301:EQ:PowerTransformerEnd:secondWindingValues".into(), class: "PowerTransformer".into(),
                         property: "PowerTransformerEnd-secondWindingValues".into(),
                         message: format!("Non-zero values for the PowerTransformerEnd with TransformerEnd.endNumber=2 (R={r}, R0={r0}, X={x}, X0={x0}) for a two Terminal PowerTransformer."),
                         severity: "sh:Violation".into(), description: String::new(),
@@ -331,8 +331,8 @@ fn check_phase_tap_changer_linear_x_min_consistency(dataset: &CimDataset) -> Vec
         let end_x = pte.x.unwrap_or(0.0);
         if x_min != end_x {
             v.push(Violation {
-                object_id: mrid.clone(), rule_id: "eqc.PhaseTapChangerLinear.xMin-valueRangePair".into(),
-                name: "PhaseTapChangerLinear.xMin-valueRangePair".into(), class: "PhaseTapChangerLinear".into(),
+                object_id: mrid.clone(), rule_id: "equ:PhaseTapChangerLinear.xMin-valueRangePair".into(),
+                name: "C:301:EQ:PhaseTapChangerLinear.xMin:valueRangePair".into(), class: "PhaseTapChangerLinear".into(),
                 property: "PhaseTapChangerLinear.xMin".into(),
                 message: format!("Inconsistency between PowerTransformerEnd.x ({end_x}) and PhaseTapChangerLinear.xMin ({x_min})."),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -360,8 +360,8 @@ fn check_phase_tap_changer_non_linear_x_min_consistency(dataset: &CimDataset) ->
             let end_x = pte.x.unwrap_or(0.0);
             if x_min != end_x {
                 v.push(Violation {
-                    object_id: mrid.clone(), rule_id: "eqc.PhaseTapChangerNonLinear.xMin-valueRangePair".into(),
-                    name: "PhaseTapChangerNonLinear.xMin-valueRangePair".into(), class: "PhaseTapChangerNonLinear".into(),
+                    object_id: mrid.clone(), rule_id: "equ:PhaseTapChangerNonLinear.xMin-valueRangePair".into(),
+                    name: "C:301:EQ:PhaseTapChangerNonLinear.xMin:valueRangePair".into(), class: "PhaseTapChangerNonLinear".into(),
                     property: "PhaseTapChangerNonLinear.xMin".into(),
                     message: format!("Inconsistency between PowerTransformerEnd.x ({end_x}) and PhaseTapChangerNonLinear.xMin ({x_min})."),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -381,8 +381,8 @@ fn check_power_transformer_end_rated_s_2winding(dataset: &CimDataset) -> Vec<Vio
         let s1 = dataset.entries.get(&end_ids[1]).and_then(|e| e.element.as_any().downcast_ref::<cimstructs::PowerTransformerEnd>()).and_then(|p| p.rated_s).unwrap_or(0.0);
         if s0 != s1 {
             v.push(Violation {
-                object_id: pt_id.clone(), rule_id: "eqc.PowerTransformerEnd.ratedS-valueRange2winding".into(),
-                name: "PowerTransformerEnd.ratedS-valueRange2winding".into(), class: "PowerTransformer".into(),
+                object_id: pt_id.clone(), rule_id: "equ:PowerTransformerEnd.ratedS-valueRange2winding".into(),
+                name: "C:301:EQ:PowerTransformerEnd.ratedS:valueRange2winding".into(), class: "PowerTransformer".into(),
                 property: "PowerTransformerEnd.ratedS".into(),
                 message: format!("The RatedS value is different for a two-winding transformer. End 1: {s0}, End 2: {s1}."),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -399,8 +399,8 @@ fn check_power_transformer_base_voltage_association(dataset: &CimDataset) -> Vec
         let pt = match entry.element.as_any().downcast_ref::<cimstructs::PowerTransformer>() { Some(p) => p, None => continue };
         if pt.base.base_voltage.is_some() {
             v.push(Violation {
-                object_id: mrid.clone(), rule_id: "eqc.PowerTransformer-associationNotUsed".into(),
-                name: "PowerTransformer-associationNotUsed".into(), class: "PowerTransformer".into(),
+                object_id: mrid.clone(), rule_id: "equ:PowerTransformer-associationNotUsed".into(),
+                name: "C:301:EQ:PowerTransformer:associationNotUsed".into(), class: "PowerTransformer".into(),
                 property: "ConductingEquipment.BaseVoltage".into(),
                 message: "The inherited association ConductingEquipment.BaseVoltage is used.".into(),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -421,8 +421,8 @@ fn check_power_transformer_end_r_value_range(dataset: &CimDataset) -> Vec<Violat
         let pt = match dataset.entries.get(&pt_id).and_then(|e| e.element.as_any().downcast_ref::<cimstructs::PowerTransformer>()) { Some(p) => p, None => continue };
         if !pt.base.base.aggregate.unwrap_or(false) {
             v.push(Violation {
-                object_id: mrid.clone(), rule_id: "eqc.PowerTransformerEnd.r-valueRange".into(),
-                name: "PowerTransformerEnd.r-valueRange".into(), class: "PowerTransformerEnd".into(),
+                object_id: mrid.clone(), rule_id: "equ:PowerTransformerEnd.r-valueRange".into(),
+                name: "C:301:EQ:PowerTransformerEnd.r:valueRange".into(), class: "PowerTransformerEnd".into(),
                 property: "PowerTransformerEnd.r".into(),
                 message: "The value is negative for a non-equivalent transformer.".into(),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -446,8 +446,8 @@ fn check_regulating_control_terminal_connectivity_node(dataset: &CimDataset) -> 
             let term = match dataset.entries.get(&term_id).and_then(|e| e.element.as_any().downcast_ref::<cimstructs::Terminal>()) { Some(t) => t, None => continue };
             if term.connectivity_node.is_none() {
                 v.push(Violation {
-                    object_id: mrid.clone(), rule_id: "eqc.RegulatingControl-terminalConnectivityNode".into(),
-                    name: "RegulatingControl-terminalConnectivityNode".into(), class: "RegulatingControl".into(),
+                    object_id: mrid.clone(), rule_id: "equ:RegulatingControl-terminalConnectivityNode".into(),
+                    name: "C:301:EQ:RegulatingControl:terminalConnectivityNode".into(), class: "RegulatingControl".into(),
                     property: "RegulatingControl.Terminal".into(),
                     message: "The Terminal referenced by the RegulatingControl is not associated with a ConnectivityNode.".into(),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -480,8 +480,8 @@ fn check_tap_changer_ltc_flag_control(dataset: &CimDataset) -> Vec<Violation> {
             } else { continue };
             if !ltc_flag && has_tcc {
                 v.push(Violation {
-                    object_id: mrid.clone(), rule_id: "eqc.TapChanger.ltcFlag-tapChangerControl".into(),
-                    name: "TapChanger.ltcFlag-tapChangerControl".into(), class: "TapChanger".into(),
+                    object_id: mrid.clone(), rule_id: "equ:TapChanger.ltcFlag-tapChangerControl".into(),
+                    name: "C:301:EQ:TapChanger.ltcFlag:tapChangerControl".into(), class: "TapChanger".into(),
                     property: "TapChanger.ltcFlag".into(),
                     message: "An artificial tap changer is used to simulate control behaviour in power flow (ltcFlag is false but TapChangerControl is present).".into(),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -507,8 +507,8 @@ fn check_load_response_characteristic_exponent_model(dataset: &CimDataset) -> Ve
         if exp {
             if p_cc != 0.0 || p_ci != 0.0 || p_cp != 0.0 || q_cc != 0.0 || q_ci != 0.0 || q_cp != 0.0 {
                 v.push(Violation {
-                    object_id: mrid.clone(), rule_id: "eqc.LoadResponseCharacteristic.exponentModel-exponentCoefficient".into(),
-                    name: "LoadResponseCharacteristic.exponentModel-exponentCoefficient".into(), class: "LoadResponseCharacteristic".into(),
+                    object_id: mrid.clone(), rule_id: "equ:LoadResponseCharacteristic.exponentModel-exponentCoefficient".into(),
+                    name: "C:301:EQ:LoadResponseCharacteristic.exponentModel:exponent".into(), class: "LoadResponseCharacteristic".into(),
                     property: "LoadResponseCharacteristic.exponentModel".into(),
                     message: "Mixture of exponential and coefficient model attributes when exponentModel is true.".into(),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -520,8 +520,8 @@ fn check_load_response_characteristic_exponent_model(dataset: &CimDataset) -> Ve
             let eps = 1e-6;
             if (p_sum < 1.0 - eps || p_sum > 1.0 + eps) || (q_sum < 1.0 - eps || q_sum > 1.0 + eps) {
                 v.push(Violation {
-                    object_id: mrid.clone(), rule_id: "eqc.LoadResponseCharacteristic.exponentModel-exponentCoefficient".into(),
-                    name: "LoadResponseCharacteristic.exponentModel-exponentCoefficient".into(), class: "LoadResponseCharacteristic".into(),
+                    object_id: mrid.clone(), rule_id: "equ:LoadResponseCharacteristic.exponentModel-exponentCoefficient".into(),
+                    name: "C:301:EQ:LoadResponseCharacteristic.exponentModel:exponent".into(), class: "LoadResponseCharacteristic".into(),
                     property: "LoadResponseCharacteristic.exponentModel".into(),
                     message: format!("The sum of coefficients does not equal 1 (P sum: {p_sum}, Q sum: {q_sum})."),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -550,8 +550,8 @@ fn check_nonlinear_shunt_compensator_point_count(dataset: &CimDataset) -> Vec<Vi
         let max_sec = nsc.base.maximum_sections.unwrap_or(0);
         if max_sec != *count {
             v.push(Violation {
-                object_id: nsc_id.clone(), rule_id: "eqc.ShuntCompensator.maximumSections-numberOfInstances".into(),
-                name: "ShuntCompensator.maximumSections-numberOfInstances".into(), class: "NonlinearShuntCompensator".into(),
+                object_id: nsc_id.clone(), rule_id: "equ:ShuntCompensator.maximumSections-numberOfInstances".into(),
+                name: "C:301:EQ:NonlinearShuntCompensatorPoint:numberOfInstances".into(), class: "NonlinearShuntCompensator".into(),
                 property: "ShuntCompensator.maximumSections".into(),
                 message: format!("The number of NonlinearShuntCompenstorPoint instances ({count}) does not equal to maximumSections ({max_sec})."),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -580,8 +580,8 @@ fn check_shunt_compensator_nom_u(dataset: &CimDataset) -> Vec<Violation> {
             let nom_v = match bv.nominal_voltage { Some(v) => v, None => continue };
             if nom_u < 0.9 * nom_v || nom_u > 1.1 * nom_v {
                 v.push(Violation {
-                    object_id: mrid.clone(), rule_id: "eqc.ShuntCompensator.nomU-nominalVoltageDifference".into(),
-                    name: "ShuntCompensator.nomU-nominalVoltageDifference".into(), class: "ShuntCompensator".into(),
+                    object_id: mrid.clone(), rule_id: "equ:ShuntCompensator.nomU-nominalVoltageDifference".into(),
+                    name: "C:301:EQ:ShuntCompensator.nomU:nominalVoltageDifference".into(), class: "ShuntCompensator".into(),
                     property: "ShuntCompensator.nomU".into(),
                     message: format!("The value nomU ({nom_u}) differs with more than 10% of the nominal voltage ({nom_v})."),
                     severity: "sh:Warning".into(), description: String::new(),
@@ -602,8 +602,8 @@ fn check_phase_tap_changer_asymmetrical_winding_connection_angle(dataset: &CimDa
         let in_range = val >= -150.0 && val <= 150.0 && val != 0.0;
         if !is_multiple_of_30 || !in_range {
             v.push(Violation {
-                object_id: mrid.clone(), rule_id: "eqc.PhaseTapChangerAsymmetrical.windingConnectionAngle-valueRange".into(),
-                name: "PhaseTapChangerAsymmetrical.windingConnectionAngle-valueRange".into(), class: "PhaseTapChangerAsymmetrical".into(),
+                object_id: mrid.clone(), rule_id: "equ:PhaseTapChangerAsymmetrical.windingConnectionAngle-valueRange".into(),
+                name: "C:301:EQ:PhaseTapChangerAsymmetrical.windingConnectionAngle:valueRange".into(), class: "PhaseTapChangerAsymmetrical".into(),
                 property: "PhaseTapChangerAsymmetrical.windingConnectionAngle".into(),
                 message: "The value is not a multiple of 30 degrees in the range of -150 to 150 degrees (excluding 0).".into(),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -624,8 +624,8 @@ fn check_power_transformer_end_rated_u_value_range(dataset: &CimDataset) -> Vec<
             let ru = pte.rated_u.unwrap_or(0.0);
             if ru <= 0.0 {
                 v.push(Violation {
-                    object_id: pt_id.clone(), rule_id: "eqc.PowerTransformerEnd.ratedU-valueRange".into(),
-                    name: "PowerTransformerEnd.ratedU-valueRange".into(), class: "PowerTransformer".into(),
+                    object_id: pt_id.clone(), rule_id: "equ:PowerTransformerEnd.ratedU-valueRange".into(),
+                    name: "C:301:EQ:PowerTransformerEnd.ratedU:valueRange".into(), class: "PowerTransformer".into(),
                     property: "PowerTransformerEnd.ratedU".into(),
                     message: format!("The PowerTransformerEnd {} has a non-positive ratedU ({ru}).", pte.base.base.id),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -637,8 +637,8 @@ fn check_power_transformer_end_rated_u_value_range(dataset: &CimDataset) -> Vec<
         if let Some(e1u) = end1_rated_u {
             if e1u < max_rated_u {
                 v.push(Violation {
-                    object_id: pt_id.clone(), rule_id: "eqc.PowerTransformerEnd.ratedU-valueRange".into(),
-                    name: "PowerTransformerEnd.ratedU-valueRange".into(), class: "PowerTransformer".into(),
+                    object_id: pt_id.clone(), rule_id: "equ:PowerTransformerEnd.ratedU-valueRange".into(),
+                    name: "C:301:EQ:PowerTransformerEnd.ratedU:valueRange".into(), class: "PowerTransformer".into(),
                     property: "PowerTransformerEnd.ratedU".into(),
                     message: "The high voltage side (endNumber=1) does not have the highest ratedU.".into(),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -659,8 +659,8 @@ fn check_voltage_limit_patl(dataset: &CimDataset) -> Vec<Violation> {
         let olt = match dataset.entries.get(&olt_id).and_then(|e| e.element.as_any().downcast_ref::<cimstructs::OperationalLimitType>()) { Some(o) => o, None => continue };
         if olt.kind.as_ref().map(|r| r.mrid.as_str()) == Some(patl) {
             v.push(Violation {
-                object_id: mrid.clone(), rule_id: "eqc.LimitKind.patl-allowedType".into(),
-                name: "LimitKind.patl-allowedType".into(), class: "VoltageLimit".into(),
+                object_id: mrid.clone(), rule_id: "equ:LimitKind.patl-allowedType".into(),
+                name: "C:301:EQ:LimitKind.patl:allowedType".into(), class: "VoltageLimit".into(),
                 property: "OperationalLimit.OperationalLimitType".into(),
                 message: "PATL type is provided for VoltageLimit.".into(),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -730,8 +730,8 @@ fn check_dc_converter_unit_tap_changer_control(dataset: &CimDataset) -> Vec<Viol
             let ec_entry = match dataset.entries.get(&ec_id) { Some(e) => e, None => continue };
             if ec_entry.element.type_name() == "DCConverterUnit" {
                 v.push(Violation {
-                    object_id: mrid.clone(), rule_id: "eqc.DCConverterUnit-tapChangerControl".into(),
-                    name: "DCConverterUnit-tapChangerControl".into(), class: "TapChanger".into(),
+                    object_id: mrid.clone(), rule_id: "equ:DCConverterUnit-tapChangerControl".into(),
+                    name: "C:301:EQ:DCConverterUnit:tapChangerControl".into(), class: "TapChanger".into(),
                     property: "TapChanger.TapChangerControl".into(),
                     message: "TapChangerControl is associated to a transformer contained in DCConverterUnit.".into(),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -773,8 +773,8 @@ fn check_connectivity_node_terminal_phases_consistency(dataset: &CimDataset) -> 
                 } else { false };
                 if failed {
                     v.push(Violation {
-                        object_id: node_id.clone(), rule_id: "eqc.Terminal.phases-consistencyConnectivityNode".into(),
-                        name: "Terminal.phases-consistencyConnectivityNode".into(), class: "ConnectivityNode".into(),
+                        object_id: node_id.clone(), rule_id: "equ:Terminal.phases-consistencyConnectivityNode".into(),
+                        name: "C:301:EQ:Terminal.phases:consistencyConnectivityNode".into(), class: "ConnectivityNode".into(),
                         property: "Terminal.phases".into(),
                         message: format!("The phase codes for the connected terminals are not consistent. Terminal {} code: {}, Terminal {} code: {}.", term_ids[i], val1, term_ids[j], val2),
                         severity: "sh:Violation".into(), description: String::new(),
@@ -794,8 +794,8 @@ fn check_equipment_aggregate_not_used(dataset: &CimDataset) -> Vec<Violation> {
         if let Some(eb) = entry.element.as_any().downcast_ref::<cimstructs::EquivalentBranch>() {
             if eb.base.base.base.aggregate.unwrap_or(false) {
                 v.push(Violation {
-                    object_id: mrid.clone(), rule_id: "eqc.Equipment.aggregate-notUsed".into(),
-                    name: "Equipment.aggregate-notUsed".into(), class: "EquivalentBranch".into(),
+                    object_id: mrid.clone(), rule_id: "equ:Equipment.aggregate-notUsed".into(),
+                    name: "C:301:EQ:Equipment.aggregate:notUsed".into(), class: "EquivalentBranch".into(),
                     property: "Equipment.aggregate".into(),
                     message: "Not allowed property (attribute).".into(),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -808,8 +808,8 @@ fn check_equipment_aggregate_not_used(dataset: &CimDataset) -> Vec<Violation> {
         if let Some(es) = entry.element.as_any().downcast_ref::<cimstructs::EquivalentShunt>() {
             if es.base.base.base.aggregate.unwrap_or(false) {
                 v.push(Violation {
-                    object_id: mrid.clone(), rule_id: "eqc.Equipment.aggregate-notUsed".into(),
-                    name: "Equipment.aggregate-notUsed".into(), class: "EquivalentShunt".into(),
+                    object_id: mrid.clone(), rule_id: "equ:Equipment.aggregate-notUsed".into(),
+                    name: "C:301:EQ:Equipment.aggregate:notUsed".into(), class: "EquivalentShunt".into(),
                     property: "Equipment.aggregate".into(),
                     message: "Not allowed property (attribute).".into(),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -822,8 +822,8 @@ fn check_equipment_aggregate_not_used(dataset: &CimDataset) -> Vec<Violation> {
         if let Some(ei) = entry.element.as_any().downcast_ref::<cimstructs::EquivalentInjection>() {
             if ei.base.base.base.aggregate.unwrap_or(false) {
                 v.push(Violation {
-                    object_id: mrid.clone(), rule_id: "eqc.Equipment.aggregate-notUsed".into(),
-                    name: "Equipment.aggregate-notUsed".into(), class: "EquivalentInjection".into(),
+                    object_id: mrid.clone(), rule_id: "equ:Equipment.aggregate-notUsed".into(),
+                    name: "C:301:EQ:Equipment.aggregate:notUsed".into(), class: "EquivalentInjection".into(),
                     property: "Equipment.aggregate".into(),
                     message: "Not allowed property (attribute).".into(),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -843,8 +843,8 @@ fn check_equivalent_branch_r21_usage(dataset: &CimDataset) -> Vec<Violation> {
             let r = eb.r.unwrap_or(0.0);
             if r21 != 0.0 && r21 != r {
                 v.push(Violation {
-                    object_id: mrid.clone(), rule_id: "eqc.EquivalentBranch.r21-usage".into(),
-                    name: "EquivalentBranch.r21-usage".into(), class: "EquivalentBranch".into(),
+                    object_id: mrid.clone(), rule_id: "equ:EquivalentBranch.r21-usage".into(),
+                    name: "C:301:EQ:EquivalentBranch.r21:usage".into(), class: "EquivalentBranch".into(),
                     property: "EquivalentBranch.r21".into(),
                     message: "Asymmetrical EquivalentBranch is modelled as EquivalentBranch.r is different from EquivalentBranch.r21.".into(),
                     severity: "sh:Info".into(), description: String::new(),
@@ -864,8 +864,8 @@ fn check_equivalent_branch_x21_usage(dataset: &CimDataset) -> Vec<Violation> {
             let x = eb.x.unwrap_or(0.0);
             if x21 != 0.0 && x21 != x {
                 v.push(Violation {
-                    object_id: mrid.clone(), rule_id: "eqc.EquivalentBranch.x21-usage".into(),
-                    name: "EquivalentBranch.x21-usage".into(), class: "EquivalentBranch".into(),
+                    object_id: mrid.clone(), rule_id: "equ:EquivalentBranch.x21-usage".into(),
+                    name: "C:301:EQ:EquivalentBranch.x21:usage".into(), class: "EquivalentBranch".into(),
                     property: "EquivalentBranch.x21".into(),
                     message: "Asymmetrical EquivalentBranch is modelled as EquivalentBranch.x is different from EquivalentBranch.x21.".into(),
                     severity: "sh:Info".into(), description: String::new(),
@@ -883,8 +883,8 @@ fn check_equivalent_injection_regulation_capability(dataset: &CimDataset) -> Vec
         if let Some(ei) = entry.element.as_any().downcast_ref::<cimstructs::EquivalentInjection>() {
             if ei.reactive_capability_curve.is_some() && !ei.regulation_capability.unwrap_or(false) {
                 v.push(Violation {
-                    object_id: mrid.clone(), rule_id: "eqc.EquivalentInjection.regulationCapability-associatedCurve".into(),
-                    name: "EquivalentInjection.regulationCapability-associatedCurve".into(), class: "EquivalentInjection".into(),
+                    object_id: mrid.clone(), rule_id: "equ:EquivalentInjection.regulationCapability-associatedCurve".into(),
+                    name: "C:301:EQ:EquivalentInjection.regulationCapability:associatedCurve".into(), class: "EquivalentInjection".into(),
                     property: "EquivalentInjection.regulationCapability".into(),
                     message: "The value does not allow a ReactiveCapabilityCurve to be associated.".into(),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -934,8 +934,8 @@ fn check_generating_unit_nominal_p(dataset: &CimDataset) -> Vec<Violation> {
             let rated_s = match rated_s_by_gu.get(mrid.as_str()) { Some(&r) => r, None => continue };
             if np <= 0.0 || np > rated_s {
                 v.push(Violation {
-                    object_id: mrid.clone(), rule_id: "eqc.GeneratingUnit.nominalP-valueRangePair".into(),
-                    name: "GeneratingUnit.nominalP-valueRangePair".into(), class: type_name.to_string(),
+                    object_id: mrid.clone(), rule_id: "equ:GeneratingUnit.nominalP-valueRangePair".into(),
+                    name: "C:301:EQ:GeneratingUnit.nominalP:valueRangePair".into(), class: type_name.to_string(),
                     property: "GeneratingUnit.nominalP".into(),
                     message: format!("The value ({np}) is either negative, zero or greater than RotatingMachine.ratedS ({rated_s})."),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -959,8 +959,8 @@ fn check_control_area_generating_unit_instance(dataset: &CimDataset) -> Vec<Viol
         }
     }
     duplicates.into_iter().map(|gu_id| Violation {
-        object_id: gu_id, rule_id: "eqc.ControlAreaGeneratingUnit.GeneratingUnit-instance".into(),
-        name: "ControlAreaGeneratingUnit.GeneratingUnit-instance".into(), class: "GeneratingUnit".into(),
+        object_id: gu_id, rule_id: "equ:ControlAreaGeneratingUnit.GeneratingUnit-instance".into(),
+        name: "C:301:EQ:ControlAreaGeneratingUnit.GeneratingUnit:instance".into(), class: "GeneratingUnit".into(),
         property: "ControlAreaGeneratingUnit.GeneratingUnit".into(),
         message: "The GeneratingUnit is assigned to more than once in a ControlArea.".into(),
         severity: "sh:Violation".into(), description: String::new(),
@@ -987,8 +987,8 @@ fn check_dc_converter_unit_cs_converter_power_transformer(dataset: &CimDataset) 
             if ec_entry.element.type_name() != "DCConverterUnit" { continue; }
             if container_has_pt.contains(&ec_id) || !reported.insert(ec_id.clone()) { continue; }
             v.push(Violation {
-                object_id: ec_id, rule_id: "eqc.DCConverterUnit-cscPowerTransformer".into(),
-                name: "DCConverterUnit-cscPowerTransformer".into(), class: "DCConverterUnit".into(),
+                object_id: ec_id, rule_id: "equ:DCConverterUnit-cscPowerTransformer".into(),
+                name: "C:301:EQ:DCConverterUnit:cscPowerTransformer".into(), class: "DCConverterUnit".into(),
                 property: "Equipment.EquipmentContainer".into(),
                 message: "A DCConverterUnit that contains CsConverter does not contain a PowerTransformer.".into(),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -1040,8 +1040,8 @@ fn check_limit_kind_patl_number_of_limit_type(dataset: &CimDataset) -> Vec<Viola
         let duplicate = per_set.map(|m| m.values().any(|&c| c > 1)).unwrap_or(false);
         if duplicate || (!inf_dur && has_entries) {
             v.push(Violation {
-                object_id: olt_id.clone(), rule_id: "eqc.LimitKind.patl-numberOfLimitType".into(),
-                name: "LimitKind.patl-numberOfLimitType".into(), class: "OperationalLimitType".into(),
+                object_id: olt_id.clone(), rule_id: "equ:LimitKind.patl-numberOfLimitType".into(),
+                name: "C:301:EQ:LimitKind.patl:numberOfLimitType".into(), class: "OperationalLimitType".into(),
                 property: "OperationalLimitType.kind".into(),
                 message: format!("Either there is more than one PATL defined for a given OperationalLimitSet or OperationalLimitType.isInfiniteDuration is not set to true for PATL type. The OperationalLimitType.isInfiniteDuration is: {inf_dur}."),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -1087,8 +1087,8 @@ fn check_limit_kind_tc_duration(dataset: &CimDataset) -> Vec<Violation> {
         let duplicate = counts_per_olt_set.get(olt_id).map(|m| m.values().any(|&c| c > 1)).unwrap_or(false);
         if duplicate || *dur != 0.0 {
             v.push(Violation {
-                object_id: olt_id.clone(), rule_id: "eqc.LimitKind.tc-duration".into(),
-                name: "LimitKind.tc-duration".into(), class: "OperationalLimitType".into(),
+                object_id: olt_id.clone(), rule_id: "equ:LimitKind.tc-duration".into(),
+                name: "C:301:EQ:LimitKind.tc:duration".into(), class: "OperationalLimitType".into(),
                 property: "OperationalLimitType.kind".into(),
                 message: format!("Either OperationalLimitType.acceptableDuration is present and different than 0 or there is more than one limit with TC type. The OperationalLimitType.acceptableDuration is: {dur}."),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -1118,7 +1118,7 @@ fn check_synchronous_machine_aggregate(dataset: &CimDataset) -> Vec<Violation> {
         if sm_agg != gu_agg {
             v.push(Violation {
                 object_id: sm_ids[0].clone(), rule_id: "eq452:SynchronousMachine-aggregate".into(),
-                name: "SynchronousMachine-aggregate".into(), class: "SynchronousMachine".into(),
+                name: "C:452:EQ:SynchronousMachine:aggregate".into(), class: "SynchronousMachine".into(),
                 property: "Equipment.aggregate".into(),
                 message: format!("SynchronousMachine aggregate flag ({sm_agg}) is not consistent with associated GeneratingUnit ({gu_agg})."),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -1148,7 +1148,7 @@ fn check_asynchronous_machine_aggregate(dataset: &CimDataset) -> Vec<Violation> 
         if am_agg != gu_agg {
             v.push(Violation {
                 object_id: am_ids[0].clone(), rule_id: "eq452:AsynchronousMachine-aggregate".into(),
-                name: "AsynchronousMachine-aggregate".into(), class: "AsynchronousMachine".into(),
+                name: "C:452:EQ:AsynchronousMachine:aggregate".into(), class: "AsynchronousMachine".into(),
                 property: "Equipment.aggregate".into(),
                 message: format!("AsynchronousMachine aggregate flag ({am_agg}) is not consistent with associated GeneratingUnit ({gu_agg})."),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -1169,7 +1169,7 @@ fn check_synchronous_machine_control_mode(dataset: &CimDataset) -> Vec<Violation
         if !uri.ends_with("reactivePower") && !uri.ends_with("voltage") && !uri.ends_with("powerFactor") {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "eq452:SynchronousMachine-controlMode".into(),
-                name: "SynchronousMachine-controlMode".into(), class: "SynchronousMachine".into(),
+                name: "C:452:EQ:SynchronousMachine:controlMode".into(), class: "SynchronousMachine".into(),
                 property: "RegulatingCondEq.RegulatingControl".into(),
                 message: format!("Unallowed regulating control mode '{uri}' for a SynchronousMachine."),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -1192,7 +1192,7 @@ fn check_static_var_compensator_control_mode(dataset: &CimDataset) -> Vec<Violat
                     if !uri.ends_with("voltage") && !uri.ends_with("reactivePower") {
                         v.push(Violation {
                             object_id: mrid.clone(), rule_id: "eq452:StaticVarCompensator-controlMode".into(),
-                            name: "StaticVarCompensator-controlMode".into(), class: "StaticVarCompensator".into(),
+                            name: "C:452:EQ:StaticVarCompensator:controlMode".into(), class: "StaticVarCompensator".into(),
                             property: "RegulatingCondEq.RegulatingControl".into(),
                             message: format!("Unallowed regulating control mode '{uri}' for a StaticVarCompensator."),
                             severity: "sh:Violation".into(), description: String::new(),
@@ -1204,7 +1204,7 @@ fn check_static_var_compensator_control_mode(dataset: &CimDataset) -> Vec<Violat
         if svc.s_vc_control_mode.is_some() {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "eq452:StaticVarCompensator-controlMode".into(),
-                name: "StaticVarCompensator-controlMode".into(), class: "StaticVarCompensator".into(),
+                name: "C:452:EQ:StaticVarCompensator:controlMode".into(), class: "StaticVarCompensator".into(),
                 property: "StaticVarCompensator.sVCControlMode".into(),
                 message: "StaticVarCompensator.sVCControlMode attribute is not allowed.".into(),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -1213,7 +1213,7 @@ fn check_static_var_compensator_control_mode(dataset: &CimDataset) -> Vec<Violat
         if svc.voltage_set_point.unwrap_or(0.0) != 0.0 {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "eq452:StaticVarCompensator-controlMode".into(),
-                name: "StaticVarCompensator-controlMode".into(), class: "StaticVarCompensator".into(),
+                name: "C:452:EQ:StaticVarCompensator:controlMode".into(), class: "StaticVarCompensator".into(),
                 property: "StaticVarCompensator.voltageSetPoint".into(),
                 message: "StaticVarCompensator.voltageSetPoint attribute is not allowed.".into(),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -1249,7 +1249,7 @@ fn check_phase_tap_changer_control_mode(dataset: &CimDataset) -> Vec<Violation> 
             if !uri.ends_with("activePower") && !uri.ends_with("voltage") {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "eq452:PhaseTapChanger-controlModeP".into(),
-                    name: "PhaseTapChanger-controlModeP".into(), class: class_name.to_string(),
+                    name: "C:452:EQ:PhaseTapChanger:controlModeP".into(), class: class_name.to_string(),
                     property: "TapChanger.TapChangerControl".into(),
                     message: format!("Unallowed regulating control mode '{uri}' for a PhaseTapChanger."),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -1271,7 +1271,7 @@ fn check_ratio_tap_changer_control_mode(dataset: &CimDataset) -> Vec<Violation> 
         if !uri.ends_with("voltage") && !uri.ends_with("reactivePower") && !uri.ends_with("powerFactor") {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "eq452:RatioTapChanger-controlMode".into(),
-                name: "RatioTapChanger-controlMode".into(), class: "RatioTapChanger".into(),
+                name: "C:452:EQ:RatioTapChanger:controlMode".into(), class: "RatioTapChanger".into(),
                 property: "TapChanger.TapChangerControl".into(),
                 message: format!("Unallowed regulating control mode '{uri}' for a RatioTapChanger."),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -1301,7 +1301,7 @@ fn check_shunt_compensator_control_mode(dataset: &CimDataset) -> Vec<Violation> 
             if !uri.ends_with("voltage") && !uri.ends_with("reactivePower") && !uri.ends_with("powerFactor") {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "eq452:ShuntCompensator-controlMode".into(),
-                    name: "ShuntCompensator-controlMode".into(), class: class_name.to_string(),
+                    name: "C:452:EQ:ShuntCompensator:controlMode".into(), class: class_name.to_string(),
                     property: "RegulatingCondEq.RegulatingControl".into(),
                     message: format!("Unallowed regulating control mode '{uri}' for a ShuntCompensator."),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -1337,7 +1337,7 @@ fn check_synchronous_machine_reactive_limits(dataset: &CimDataset) -> Vec<Violat
         if min_q != 0.0 && (min_q < min_y1 - eps || min_q > min_y1 + eps) {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "eq452:SynchronousMachine-reactiveLimits".into(),
-                name: "SynchronousMachine-reactiveLimits".into(), class: "SynchronousMachine".into(),
+                name: "C:452:EQ:SynchronousMachine:reactiveLimits".into(), class: "SynchronousMachine".into(),
                 property: "SynchronousMachine.minQ".into(),
                 message: format!("SynchronousMachine.minQ ({min_q}) is not equal to min of CurveData.y1value-s ({min_y1})."),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -1346,7 +1346,7 @@ fn check_synchronous_machine_reactive_limits(dataset: &CimDataset) -> Vec<Violat
         if max_q != 0.0 && (max_q < max_y2 - eps || max_q > max_y2 + eps) {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "eq452:SynchronousMachine-reactiveLimits".into(),
-                name: "SynchronousMachine-reactiveLimits".into(), class: "SynchronousMachine".into(),
+                name: "C:452:EQ:SynchronousMachine:reactiveLimits".into(), class: "SynchronousMachine".into(),
                 property: "SynchronousMachine.maxQ".into(),
                 message: format!("SynchronousMachine.maxQ ({max_q}) is not equal to max of CurveData.y2value-s ({max_y2})."),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -1364,7 +1364,7 @@ fn check_synchronous_machine_type_condenser(dataset: &CimDataset) -> Vec<Violati
             if sm.type_.as_ref().map(|r| r.uri.ends_with("condenser")).unwrap_or(false) && sm.base.generating_unit.is_some() {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "eq452:SynchronousMachine.type-condenser".into(),
-                    name: "SynchronousMachine.type-condenser".into(), class: "SynchronousMachine".into(),
+                    name: "C:452:EQ:SynchronousMachine.type:condenser".into(), class: "SynchronousMachine".into(),
                     property: "SynchronousMachine.type".into(),
                     message: "SynchronousMachine of type condenser with associated GeneratingUnit.".into(),
                     severity: "sh:Info".into(), description: String::new(),
@@ -1391,7 +1391,7 @@ fn check_vs_capability_curve_count(dataset: &CimDataset) -> Vec<Violation> {
         if count < 2 {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "eq452:VsCapabilityCurve-VsCapabilityCurveCount".into(),
-                name: "VsCapabilityCurve-VsCapabilityCurveCount".into(), class: "VsCapabilityCurve".into(),
+                name: "C:452:EQ:CurveData.Curve:VsCapabilityCurveCount".into(), class: "VsCapabilityCurve".into(),
                 property: "rdf:type".into(),
                 message: format!("Less than two instances of CurveData are associated ({count} found)."),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -1415,7 +1415,7 @@ fn check_vs_capability_curve_y_values(dataset: &CimDataset) -> Vec<Violation> {
                     if y2 <= y1 {
                         v.push(Violation {
                             object_id: mrid.clone(), rule_id: "eq452:VsCapabilityCurve-yvalues".into(),
-                            name: "VsCapabilityCurve-yvalues".into(), class: "CurveData".into(),
+                            name: "C:452:EQ:CurveData.Curve:VsCapabilityCurve".into(), class: "CurveData".into(),
                             property: "CurveData.y2value".into(),
                             message: format!("CurveData.y2value ({y2}) is not greater than CurveData.y1value ({y1}) for VsCapabilityCurve."),
                             severity: "sh:Violation".into(), description: String::new(),
@@ -1458,7 +1458,7 @@ fn check_generating_unit_type_dependency(dataset: &CimDataset) -> Vec<Violation>
         if let Some(msg) = msg {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "eq452:GeneratingUnit-typeDependency".into(),
-                name: "GeneratingUnit-typeDependency".into(), class: "SynchronousMachine".into(),
+                name: "C:452:EQ:GeneratingUnit:typeDependency".into(), class: "SynchronousMachine".into(),
                 property: "SynchronousMachine.type".into(),
                 message: msg, severity: "sh:Violation".into(), description: String::new(),
             });
@@ -1493,8 +1493,8 @@ fn check_curve_data_reactive_capability_limits(dataset: &CimDataset) -> Vec<Viol
         let eps = 1e-4;
         if xv * xv + y1 * y1 > s2 + eps {
             v.push(Violation {
-                object_id: mrid.clone(), rule_id: "eq452:CurveData.Curve-equationY1".into(),
-                name: "CurveData.Curve-equationY1".into(), class: "CurveData".into(),
+                object_id: mrid.clone(), rule_id: "eq452:CurveData-equationY1".into(),
+                name: "C:452:EQ:CurveData.Curve:equationY1".into(), class: "CurveData".into(),
                 property: "CurveData.y1value".into(),
                 message: format!("x^2 + y1^2 ({}) > ratedS^2 ({s2}).", xv * xv + y1 * y1),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -1502,8 +1502,8 @@ fn check_curve_data_reactive_capability_limits(dataset: &CimDataset) -> Vec<Viol
         }
         if xv * xv + y2 * y2 > s2 + eps {
             v.push(Violation {
-                object_id: mrid.clone(), rule_id: "eq452:CurveData.Curve-equationY2".into(),
-                name: "CurveData.Curve-equationY2".into(), class: "CurveData".into(),
+                object_id: mrid.clone(), rule_id: "eq452:CurveData-equationY2".into(),
+                name: "C:452:EQ:CurveData.Curve:equationY2".into(), class: "CurveData".into(),
                 property: "CurveData.y2value".into(),
                 message: format!("x^2 + y2^2 ({}) > ratedS^2 ({s2}).", xv * xv + y2 * y2),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -1536,8 +1536,8 @@ fn check_curve_data_reactive_consistency(dataset: &CimDataset) -> Vec<Violation>
             let y2 = cd.y2value.unwrap_or(0.0);
             if y2 < y1 {
                 v.push(Violation {
-                    object_id: pid.clone(), rule_id: "eq452:CurveData.Curve-reactive".into(),
-                    name: "CurveData.Curve-reactive".into(), class: "CurveData".into(),
+                    object_id: pid.clone(), rule_id: "eq452:CurveData-reactive".into(),
+                    name: "C:452:EQ:CurveData.Curve:reactive".into(), class: "CurveData".into(),
                     property: "CurveData.y2value".into(),
                     message: format!("CurveData.y2value ({y2}) is less than y1value ({y1})."),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -1547,8 +1547,8 @@ fn check_curve_data_reactive_consistency(dataset: &CimDataset) -> Vec<Violation>
         }
         if all_same && !point_ids.is_empty() {
             v.push(Violation {
-                object_id: curve_id.clone(), rule_id: "eq452:CurveData.Curve-reactive".into(),
-                name: "CurveData.Curve-reactive".into(), class: "ReactiveCapabilityCurve".into(),
+                object_id: curve_id.clone(), rule_id: "eq452:CurveData-reactive".into(),
+                name: "C:452:EQ:CurveData.Curve:reactive".into(), class: "ReactiveCapabilityCurve".into(),
                 property: "rdf:type".into(),
                 message: "All CurveData.y2value values are equal to CurveData.y1value values.".into(),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -1584,7 +1584,7 @@ fn check_synchronous_machine_curve_x_value_consistency(dataset: &CimDataset) -> 
         if (min_p - min_x).abs() > eps {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "eq452:CurveData.xvalue-value".into(),
-                name: "CurveData.xvalue-value".into(), class: "SynchronousMachine".into(),
+                name: "C:452:EQ:CurveData.xvalue:value".into(), class: "SynchronousMachine".into(),
                 property: "GeneratingUnit.minOperatingP".into(),
                 message: format!("GeneratingUnit.minOperatingP ({min_p}) is not consistent with min CurveData.xvalue ({min_x})."),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -1593,7 +1593,7 @@ fn check_synchronous_machine_curve_x_value_consistency(dataset: &CimDataset) -> 
         if (max_p - max_x).abs() > eps {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "eq452:CurveData.xvalue-value".into(),
-                name: "CurveData.xvalue-value".into(), class: "SynchronousMachine".into(),
+                name: "C:452:EQ:CurveData.xvalue:value".into(), class: "SynchronousMachine".into(),
                 property: "GeneratingUnit.maxOperatingP".into(),
                 message: format!("GeneratingUnit.maxOperatingP ({max_p}) is not consistent with max CurveData.xvalue ({max_x})."),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -1643,7 +1643,7 @@ fn check_switch_connection(dataset: &CimDataset) -> Vec<Violation> {
         if cncs.len() > 1 && bvs.len() > 1 {
             v.push(Violation {
                 object_id: eq_id.clone(), rule_id: "eq452:Switch-connection".into(),
-                name: "Switch-connection".into(), class: "Switch".into(),
+                name: "C:452:EQ:Switch:connection".into(), class: "Switch".into(),
                 property: "rdf:type".into(),
                 message: "Switch (or its subclasses) connects ConnectivityNode-s that are not contained in either the same VoltageLevel or in different VoltageLevel-s which have the same BaseVoltage.".into(),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -1680,7 +1680,7 @@ fn check_operational_limit_set_terminal(dataset: &CimDataset) -> Vec<Violation> 
         if aux_term_ids.contains(&t_id) && ols.equipment.is_none() {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "eq452:OperationalLimitSet-limits".into(),
-                name: "OperationalLimitSet-limits".into(), class: "OperationalLimitSet".into(),
+                name: "C:452:EQ:OperationalLimitSet:limits".into(), class: "OperationalLimitSet".into(),
                 property: "OperationalLimitSet.Equipment".into(),
                 message: "OperationalLimitSet.Equipment is not provided for a Terminal associated with AuxiliaryEquipment.".into(),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -1691,7 +1691,7 @@ fn check_operational_limit_set_terminal(dataset: &CimDataset) -> Vec<Violation> 
             if term_eq.get(&t_id).map(|s| s.as_str()) != Some(eq_id) {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "eq452:OperationalLimitSet-limits".into(),
-                    name: "OperationalLimitSet-limits".into(), class: "OperationalLimitSet".into(),
+                    name: "C:452:EQ:OperationalLimitSet:limits".into(), class: "OperationalLimitSet".into(),
                     property: "OperationalLimitSet.Terminal".into(),
                     message: format!("Terminal {t_id} is not a terminal of ConductingEquipment {eq_id}."),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -1736,7 +1736,7 @@ fn check_tap_changer_control_remote_q_control(dataset: &CimDataset) -> Vec<Viola
             if pte_term_id != rc_term_id.as_str() {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "eq452:TapChangerControl-remoteQcontrol".into(),
-                    name: "TapChangerControl-remoteQcontrol".into(), class: "TapChangerControl".into(),
+                    name: "C:452:EQ:TapChangerControl:remoteQcontrol".into(), class: "TapChangerControl".into(),
                     property: "RegulatingControl.Terminal".into(),
                     message: "TapChangerControl in reactivePower mode controls a Terminal not associated with its PowerTransformerEnd.".into(),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -1766,7 +1766,7 @@ fn check_reactive_capability_curve_x_value_unique(dataset: &CimDataset) -> Vec<V
             if !seen.insert(key) {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "eq452:ReactiveCapabilityCurve-xvalue".into(),
-                    name: "ReactiveCapabilityCurve-xvalue".into(), class: "ReactiveCapabilityCurve".into(),
+                    name: "C:452:EQ:ReactiveCapabiltyCurve.CurveData:xvalue".into(), class: "ReactiveCapabilityCurve".into(),
                     property: "rdf:type".into(),
                     message: format!("CurveData.xvalue ({xv}) for ReactiveCapabilityCurve is not unique."),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -1790,7 +1790,7 @@ fn check_power_transformer_end_resistance_x_value(dataset: &CimDataset) -> Vec<V
                     let xv = pte.x.unwrap_or(0.0);
                     v.push(Violation {
                         object_id: eid.clone(), rule_id: "eq452:PowerTransformerEnd.x-value".into(),
-                        name: "PowerTransformerEnd.x-value".into(), class: "PowerTransformerEnd".into(),
+                        name: "C:452:EQ:PowerTransformerEnd.x:value".into(), class: "PowerTransformerEnd".into(),
                         property: "PowerTransformerEnd.x".into(),
                         message: format!("PowerTransformerEnd.x ({xv}) for winding 1 of a two-winding transformer must be positive."),
                         severity: "sh:Violation".into(), description: String::new(),
@@ -1803,7 +1803,7 @@ fn check_power_transformer_end_resistance_x_value(dataset: &CimDataset) -> Vec<V
                 if pte.x.unwrap_or(0.0) == 0.0 {
                     v.push(Violation {
                         object_id: eid.clone(), rule_id: "eq452:PowerTransformerEnd.x-value".into(),
-                        name: "PowerTransformerEnd.x-value".into(), class: "PowerTransformerEnd".into(),
+                        name: "C:452:EQ:PowerTransformerEnd.x:value".into(), class: "PowerTransformerEnd".into(),
                         property: "PowerTransformerEnd.x".into(),
                         message: "PowerTransformerEnd.x cannot be zero for a three-winding transformer.".into(),
                         severity: "sh:Violation".into(), description: String::new(),
@@ -1837,7 +1837,7 @@ fn check_generating_unit_max_operating_p_rated_s(dataset: &CimDataset) -> Vec<Vi
             if max_p > sum_rs {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "eq452:GeneratingUnit.maxOperatingP-ratedS".into(),
-                    name: "GeneratingUnit.maxOperatingP-ratedS".into(), class: "GeneratingUnit".into(),
+                    name: "C:452:EQ:GeneratingUnit:maxOperatingP:ratedS".into(), class: "GeneratingUnit".into(),
                     property: "GeneratingUnit.maxOperatingP".into(),
                     message: format!("GeneratingUnit.maxOperatingP ({max_p}) is greater than sum of RotatingMachine.ratedS ({sum_rs})."),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -1878,7 +1878,7 @@ fn check_hydro_generating_unit_energy_conversion_capability(dataset: &CimDataset
         if let Some(msg) = msg {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "eq452:HydroGeneratingUnit.energyConversionCapability-typeConsistency".into(),
-                name: "HydroGeneratingUnit.energyConversionCapability-typeConsistency".into(), class: "HydroGeneratingUnit".into(),
+                name: "C:452:EQ:HydroGeneratingUnit.energyConversionCapability:typeConsistency".into(), class: "HydroGeneratingUnit".into(),
                 property: "HydroGeneratingUnit.energyConversionCapability".into(),
                 message: msg, severity: "sh:Violation".into(), description: String::new(),
             });
@@ -1906,7 +1906,7 @@ fn check_terminal_connection_same_node(dataset: &CimDataset) -> Vec<Violation> {
             if cn1.mrid == cn2.mrid {
                 v.push(Violation {
                     object_id: eq_id.clone(), rule_id: "eq452:Terminal-connection".into(),
-                    name: "Terminal-connection".into(), class: "ConductingEquipment".into(),
+                    name: "C:452:EQ:Terminal:connection".into(), class: "ConductingEquipment".into(),
                     property: "rdf:type".into(),
                     message: "Terminals of a two-terminal equipment connect to the same ConnectivityNode.".into(),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -1954,7 +1954,7 @@ fn check_reactive_capability_curve_reactive_count_p(dataset: &CimDataset) -> Vec
         if let Some(msg) = msg {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "eq452:ReactiveCapabilityCurve-reactiveCountP".into(),
-                name: "ReactiveCapabilityCurve-reactiveCountP".into(), class: "ReactiveCapabilityCurve".into(),
+                name: "C:452:EQ:CurveData.Curve:reactiveCountP".into(), class: "ReactiveCapabilityCurve".into(),
                 property: "rdf:type".into(),
                 message: msg, severity: "sh:Violation".into(), description: String::new(),
             });
@@ -1981,7 +1981,7 @@ fn check_reactive_capability_curve_units(dataset: &CimDataset) -> Vec<Violation>
         if !xu.ends_with('W') || !y1u.ends_with("VAr") || !y2u.ends_with("VAr") {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "eq600:ReactiveCapabilityCurve-units".into(),
-                name: "ReactiveCapabilityCurve-units".into(), class: "ReactiveCapabilityCurve".into(),
+                name: "C:600:EQ:ReactiveCapabilityCurve:units".into(), class: "ReactiveCapabilityCurve".into(),
                 property: "rdf:type".into(),
                 message: format!("Incorrect units for ReactiveCapabilityCurve (x: {xu}, y1: {y1u}, y2: {y2u}). Expected x: W, y1: VAr, y2: VAr."),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -1997,7 +1997,7 @@ fn check_substation_count(dataset: &CimDataset) -> Vec<Violation> {
     if substations == 1 || (substations > 0 && substations == voltage_levels) {
         vec![Violation {
             object_id: "global".into(), rule_id: "eq600:Substation-count".into(),
-            name: "Substation-count".into(), class: "Substation".into(),
+            name: "C:600:EQ:Substation:count".into(), class: "Substation".into(),
             property: "rdf:type".into(),
             message: format!("The model has either one Substation or a Substation per VoltageLevel. Number of Substation-s: {substations}. Number of VoltageLevel-s: {voltage_levels}."),
             severity: "sh:Warning".into(),
@@ -2017,7 +2017,7 @@ fn check_tap_changer_neutral_u_value_range(dataset: &CimDataset) -> Vec<Violatio
         if (neutral_u - rated_u).abs() > EPS {
             v.push(Violation {
                 object_id: mrid.to_string(), rule_id: "eq600:TapChanger.neutralU-valueRangePair".into(),
-                name: "TapChanger.neutralU-valueRangePair".into(), class: class.to_string(),
+                name: "C:600:EQ:TapChanger.neutralU:ValueRangePair".into(), class: class.to_string(),
                 property: "TapChanger.neutralU".into(),
                 message: format!("TapChanger.neutralU ({neutral_u}) is not equal to PowerTransformerEnd.ratedU ({rated_u})."),
                 severity: "sh:Violation".into(), description: String::new(),

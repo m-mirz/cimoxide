@@ -50,8 +50,8 @@ fn check_ac_line_segment_base_voltage(dataset: &CimDataset) -> Vec<Violation> {
         if t1.topological_node.as_ref().map(|r| r.mrid.as_str()) == t2.topological_node.as_ref().map(|r| r.mrid.as_str()) { continue; }
         if v1 != v2 {
             v.push(Violation {
-                object_id: mrid.clone(), rule_id: "eqcns.ACLineSegment-baseVoltage".into(),
-                name: "ACLineSegment-baseVoltage".into(), class: "ACLineSegment".into(),
+                object_id: mrid.clone(), rule_id: "eqn301:ACLineSegment-baseVoltage".into(),
+                name: "C:301:EQ:ACLineSegment:baseVoltage".into(), class: "ACLineSegment".into(),
                 property: "ACLineSegment.BaseVoltage".into(),
                 message: format!("The ACLineSegment has different BaseVoltage.nominalVoltage at the two ends. Voltage at end 1 is: {}. Voltage at end 2 is: {}.", v1, v2),
                 severity: "sh:Warning".into(), description: String::new(),
@@ -108,7 +108,7 @@ fn check_regulating_control_target_value_tap_changer(dataset: &CimDataset) -> Ve
             if target_pu < lower_limit || target_pu > upper_limit {
                 v.push(Violation {
                     object_id: rc_mrid.clone(), rule_id: "eqn452:RegulatingControl.targetValue-tapChanger".into(),
-                    name: "RegulatingControl.targetValue-tapChanger".into(), class: "RegulatingControl".into(),
+                    name: "C:452:EQ:RegulatingControl.targetValue:tapChanger".into(), class: "RegulatingControl".into(),
                     property: "RegulatingControl.targetValue".into(),
                     message: format!("Target value PU ({}) is outside TapChanger capability limits [{}, {}].", target_pu, lower_limit, upper_limit),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -134,7 +134,7 @@ fn check_ac_line_segment_base_voltage_diff(dataset: &CimDataset) -> Vec<Violatio
         if diff > 0.1 {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "eqn600:ACLineSegment-BaseVoltageDiff".into(),
-                name: "ACLineSegment-BaseVoltageDiff".into(), class: "ACLineSegment".into(),
+                name: "C:600:EQ:ACLineSegment:BaseVoltageDiff".into(), class: "ACLineSegment".into(),
                 property: "rdf:type".into(),
                 message: format!("More than 10% difference of BaseVoltage.nominalVoltage at the two ends (V1: {}, V2: {}).", v1, v2),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -182,7 +182,7 @@ fn check_boundary_point_bppl(dataset: &CimDataset) -> Vec<Violation> {
         if !has_eq_injection {
             v.push(Violation {
                 object_id: cn_id.clone(), rule_id: "eqn600:BoundaryPoint-bppl1Bppl2".into(),
-                name: "BoundaryPoint-bppl1Bppl2".into(), class: "ConnectivityNode".into(),
+                name: "C:600:EQ:BoundaryPoint:bppl1Bppl2".into(), class: "ConnectivityNode".into(),
                 property: "rdf:type".into(),
                 message: "Boundary Point ConnectivityNode does not have an EquivalentInjection connected.".into(),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -191,7 +191,7 @@ fn check_boundary_point_bppl(dataset: &CimDataset) -> Vec<Violation> {
         if !has_two_terminal {
             v.push(Violation {
                 object_id: cn_id.clone(), rule_id: "eqn600:BoundaryPoint-bppl3".into(),
-                name: "BoundaryPoint-bppl3".into(), class: "ConnectivityNode".into(),
+                name: "C:600:EQ:BoundaryPoint:bppl3".into(), class: "ConnectivityNode".into(),
                 property: "rdf:type".into(),
                 message: "Boundary Point ConnectivityNode does not have a two-terminal ConductingEquipment connected.".into(),
                 severity: "sh:Info".into(), description: String::new(),
@@ -234,7 +234,7 @@ fn check_equivalent_injection_regulation_capability_not_hvdc(dataset: &CimDatase
             if ei.regulation_capability.unwrap_or(false) || ei.reactive_capability_curve.is_some() {
                 v.push(Violation {
                     object_id: ei_mrid.clone(), rule_id: "eqn600:EquivalentInjection.regulationCapability-notHVDC".into(),
-                    name: "EquivalentInjection.regulationCapability-notHVDC".into(), class: "EquivalentInjection".into(),
+                    name: "C:600:EQ:EquivalentInjection.regulationCapability:notHvdc".into(), class: "EquivalentInjection".into(),
                     property: "EquivalentInjection.regulationCapability".into(),
                     message: "EquivalentInjection at non-HVDC BoundaryPoint has regulationCapability=true or a ReactiveCapabilityCurve.".into(),
                     severity: "sh:Violation".into(), description: String::new(),

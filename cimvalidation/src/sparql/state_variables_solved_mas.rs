@@ -62,8 +62,8 @@ fn check_sv_tap_step_position_range(dataset: &CimDataset) -> Vec<Violation> {
         if pos < low as f64 || pos > high as f64 {
             v.push(Violation {
                 object_id:   mrid.clone(),
-                rule_id:     "SvTapStep.position-valueRange".into(),
-                name:        "SvTapStep.position-valueRange".into(),
+                rule_id:     "svs301:SvTapStep.position-valueRange".into(),
+                name:        "C:301:SV:SvTapStep.position:valueRange".into(),
                 class:       "SvTapStep".into(),
                 property:    "SvTapStep.position".into(),
                 message:     format!("The value ({pos}) is out of range [{low},{high}]."),
@@ -95,7 +95,7 @@ fn check_sv_tap_step_position_integer(dataset: &CimDataset) -> Vec<Violation> {
             v.push(Violation {
                 object_id:   mrid.clone(),
                 rule_id:     "svs456:SvTapStep.position-value".into(),
-                name:        "SvTapStep.position-value".into(),
+                name:        "C:456:SV:SvTapStep.position:value".into(),
                 class:       "SvTapStep".into(),
                 property:    "SvTapStep.position".into(),
                 message:     format!("The value ({pos}) is not integer for an active discrete regulating control."),
@@ -159,7 +159,7 @@ fn check_sv_shunt_compensator_sections_integer(dataset: &CimDataset) -> Vec<Viol
             v.push(Violation {
                 object_id:   mrid.clone(),
                 rule_id:     "svs456:SvShuntCompensatorSections.sections-value".into(),
-                name:        "SvShuntCompensatorSections.sections-value".into(),
+                name:        "C:456:SV:SvShuntCompensatorSections.sections:value".into(),
                 class:       "SvShuntCompensatorSections".into(),
                 property:    "SvShuntCompensatorSections.sections".into(),
                 message:     format!("The value ({sections}) is not integer for an active discrete regulating control."),
@@ -195,7 +195,7 @@ fn check_sv_switch_instance(dataset: &CimDataset) -> Vec<Violation> {
                 v.push(Violation {
                     object_id:   mrid.clone(),
                     rule_id:     "svs456:SvSwitch-instance".into(),
-                    name:        "SvSwitch-instance".into(),
+                    name:        "C:456:SV:SvSwitch:instance".into(),
                     class:       (*type_name).to_string(),
                     property:    "rdf:type".into(),
                     message:     "SvSwitch not instantiated.".into(),
@@ -286,7 +286,7 @@ fn check_sv_power_flow_instance(dataset: &CimDataset) -> Vec<Violation> {
                 v.push(Violation {
                     object_id:   mrid.clone(),
                     rule_id:     "svs456:SvPowerFlow-instance".into(),
-                    name:        "SvPowerFlow-instance".into(),
+                    name:        "R:456:SV:SvPowerFlow:instance".into(),
                     class:       (*type_name).to_string(),
                     property:    "rdf:type".into(),
                     message:     "SvPowerFlow is not instantiated for energized equipment.".into(),
@@ -326,7 +326,7 @@ fn check_sv_power_flow_p_limits(dataset: &CimDataset) -> Vec<Violation> {
             v.push(Violation {
                 object_id:   mrid.clone(),
                 rule_id:     "svs456:SvPowerFlow.p-synchronousMachine".into(),
-                name:        "SvPowerFlow.p-synchronousMachine".into(),
+                name:        "C:456:SV:SvPowerFlow.p:synchronousMachine".into(),
                 class:       "SvPowerFlow".into(),
                 property:    "SvPowerFlow.p".into(),
                 message:     format!("Active power ({p}) is outside of the range [Min:{min_p}, Max:{max_p}] for SynchronousMachine {sm_id}."),
@@ -384,7 +384,7 @@ fn check_sv_power_flow_q_limits(dataset: &CimDataset) -> Vec<Violation> {
             v.push(Violation {
                 object_id:   mrid.clone(),
                 rule_id:     "svs456:SvPowerFlow.q-synchronousMachine".into(),
-                name:        "SvPowerFlow.q-synchronousMachine".into(),
+                name:        "C:456:SV:SvPowerFlow.q:synchronousMachine".into(),
                 class:       "SvPowerFlow".into(),
                 property:    "SvPowerFlow.q".into(),
                 message:     format!("Reactive power ({q}) is outside of the capability range [Min:{min_q}, Max:{max_q}] for SynchronousMachine {sm_id}."),
@@ -418,7 +418,7 @@ fn check_sv_voltage_limits(dataset: &CimDataset) -> Vec<Violation> {
             v.push(Violation {
                 object_id:   mrid.clone(),
                 rule_id:     "svs456:SvVoltage.v-absoluteLimit".into(),
-                name:        "SvVoltage.v-absoluteLimit".into(),
+                name:        "C:456:SV:SvVoltage.v:absoluteLimit".into(),
                 class:       "SvVoltage".into(),
                 property:    "SvVoltage.v".into(),
                 message:     format!("The value ({volt}) is <=0.4 pu of nominal voltage ({nom_v})."),

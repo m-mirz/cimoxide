@@ -34,8 +34,8 @@ fn check_linear_shunt_compensator_sections_range(dataset: &CimDataset) -> Vec<Vi
             let max_sections = lsc.base.maximum_sections.unwrap_or(0) as f64;
             if sections < 0.0 || sections > max_sections {
                 v.push(Violation {
-                    object_id: mrid.clone(), rule_id: "sshcns.ShuntCompensator.sections-valueLinear".into(),
-                    name: "ShuntCompensator.sections-valueLinear".into(), class: "LinearShuntCompensator".into(),
+                    object_id: mrid.clone(), rule_id: "sshn301:ShuntCompensator.sections-valueLinear".into(),
+                    name: "C:301:SSH:ShuntCompensator.sections:valueLinear".into(), class: "LinearShuntCompensator".into(),
                     property: "ShuntCompensator.sections".into(),
                     message: format!("The value ({}) is not between zero and ShuntCompensator.maximumSections ({}).", sections, max_sections as i64),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -68,8 +68,8 @@ fn check_nonlinear_shunt_compensator_sections_valid(dataset: &CimDataset) -> Vec
             let valid = is_integer && point_sections.get(mrid).map_or(false, |s| s.contains(&(section as i64)));
             if !valid {
                 v.push(Violation {
-                    object_id: mrid.clone(), rule_id: "sshcns.ShuntCompensator.sections-valueNonLinear".into(),
-                    name: "ShuntCompensator.sections-valueNonLinear".into(), class: "NonlinearShuntCompensator".into(),
+                    object_id: mrid.clone(), rule_id: "sshn301:ShuntCompensator.sections-valueNonLinear".into(),
+                    name: "C:301:SSH:ShuntCompensator.sections:valueNonLinear".into(), class: "NonlinearShuntCompensator".into(),
                     property: "ShuntCompensator.sections".into(),
                     message: format!("The value ({}) does not equal one of the NonlinearShuntCompenstorPoint.sectionNumber.", section),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -92,8 +92,8 @@ fn check_shunt_compensator_sections_integer(dataset: &CimDataset) -> Vec<Violati
         };
         if enabled && discrete && sections != sections.floor() {
             v.push(Violation {
-                object_id: mrid.to_string(), rule_id: "sshc456ns:ShuntCompensator.sections-value".into(),
-                name: "ShuntCompensator.sections-value".into(), class: class.to_string(),
+                object_id: mrid.to_string(), rule_id: "sshn456:ShuntCompensator.sections-value".into(),
+                name: "C:456:SSH:ShuntCompensator.sections:value".into(), class: class.to_string(),
                 property: "ShuntCompensator.sections".into(),
                 message: format!("The value ({}) is not integer for an active discrete regulating control.", sections),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -124,8 +124,8 @@ fn check_regulating_control_power_factor_required_attrs(dataset: &CimDataset) ->
         if mode_uri != power_factor_uri { return; }
         if min_val == 0.0 || max_val == 0.0 {
             v.push(Violation {
-                object_id: mrid.to_string(), rule_id: "sshcns.RegulatingControl-requiredAttributes".into(),
-                name: "RegulatingControl-requiredAttributes".into(), class: class.to_string(),
+                object_id: mrid.to_string(), rule_id: "sshn301:RegulatingControl-requiredAttributes".into(),
+                name: "C:301:SSH:RegulatingControl:requiredAttributes".into(), class: class.to_string(),
                 property: "RegulatingControl.mode".into(),
                 message: "Both minAllowedTargetValue and maxAllowedTargetValue are not provided for RegulatingControl in mode powerFactor.".into(),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -165,8 +165,8 @@ fn check_tap_changer_step_integer(dataset: &CimDataset) -> Vec<Violation> {
         if !tcc_discrete.get(tcc_id).copied().unwrap_or(false) { return; }
         if step != step.floor() || step.is_nan() {
             v.push(Violation {
-                object_id: mrid.to_string(), rule_id: "sshcns.TapChanger.step-valueType".into(),
-                name: "TapChanger.step-valueType".into(), class: class.to_string(),
+                object_id: mrid.to_string(), rule_id: "sshn301:TapChanger.step-valueType".into(),
+                name: "C:301:SSH:TapChanger.step:valueType".into(), class: class.to_string(),
                 property: "TapChanger.step".into(),
                 message: format!("Non-integer value ({}) for a discrete TapChangerControl.", step),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -241,10 +241,10 @@ fn check_cs_converter_target_angle_applicability(dataset: &CimDataset, for_alpha
         }
     }
     let (rule_id, rule_name, prop, msg) = if for_alpha {
-        ("sshn301.CsConverter.targetAlpha-applicability", "CsConverter.targetAlpha-applicability", "CsConverter.targetAlpha",
+        ("sshn301:CsConverter.targetAlpha-applicability", "C:301:SSH:CsConverter.targetAlpha:applicability", "CsConverter.targetAlpha",
          "CsConverter.targetAlpha is provided for an inverter or discrete tap changer control is used or RegulatingControl is not provided.")
     } else {
-        ("sshn301.CsConverter.targetGamma-applicability", "CsConverter.targetGamma-applicability", "CsConverter.targetGamma",
+        ("sshn301:CsConverter.targetGamma-applicability", "C:301:SSH:CsConverter.targetGamma:applicability", "CsConverter.targetGamma",
          "CsConverter.targetGamma is provided for a rectifier or discrete tap changer control is used or RegulatingControl is not provided.")
     };
     let mut v = Vec::new();
@@ -320,8 +320,8 @@ fn check_control_area_net_interchange_calculation(dataset: &CimDataset) -> Vec<V
             }
             if net_interchange != sum {
                 v.push(Violation {
-                    object_id: mrid.clone(), rule_id: "sshn301.ControlArea-netInterchangeCalculation".into(),
-                    name: "ControlArea-netInterchangeCalculation".into(), class: "ControlArea".into(),
+                    object_id: mrid.clone(), rule_id: "sshn301:ControlArea-netInterchangeCalculation".into(),
+                    name: "C:301:SSH:ControlArea:netInterchangeCalculation".into(), class: "ControlArea".into(),
                     property: "ControlArea.netInterchange".into(),
                     message: format!("The sum of the EquivalentInjections which are connected to the BoundaryPoint-s differs from the ControlArea.netInterchange. ControlArea.netInterchange= {}. Sum of the EquivalentInjections= {}.", net_interchange, sum),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -341,7 +341,7 @@ fn check_equivalent_injection_regulation(dataset: &CimDataset) -> Vec<Violation>
                 if !ei.regulation_status.unwrap_or(false) || ei.regulation_target.unwrap_or(0.0) == 0.0 {
                     v.push(Violation {
                         object_id: mrid.clone(), rule_id: "sshn456:EquivalentInjection-regulation".into(),
-                        name: "EquivalentInjection-regulation".into(), class: "EquivalentInjection".into(),
+                        name: "C:456:SSH:EquivalentInjection:regulation".into(), class: "EquivalentInjection".into(),
                         property: "regulationStatus".into(),
                         message: "EquivalentInjection.regulationStatus and regulationTarget are required when regulationCapability is true.".into(),
                         severity: "sh:Violation".into(), description: String::new(),
@@ -350,7 +350,7 @@ fn check_equivalent_injection_regulation(dataset: &CimDataset) -> Vec<Violation>
             } else if ei.regulation_status.unwrap_or(false) || ei.regulation_target.unwrap_or(0.0) != 0.0 {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "sshn456:EquivalentInjection-regulation".into(),
-                    name: "EquivalentInjection-regulation".into(), class: "EquivalentInjection".into(),
+                    name: "C:456:SSH:EquivalentInjection:regulation".into(), class: "EquivalentInjection".into(),
                     property: "regulationStatus".into(),
                     message: "EquivalentInjection.regulationStatus and regulationTarget should not be exchanged when regulationCapability is false.".into(),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -372,7 +372,7 @@ fn check_rotating_machine_p_limits(dataset: &CimDataset) -> Vec<Violation> {
         if neg_p < min || neg_p > max {
             v.push(Violation {
                 object_id: mrid.to_string(), rule_id: "sshn456:RotatingMachine.p-limits".into(),
-                name: "RotatingMachine.p-limits".into(), class: class.to_string(),
+                name: "C:456:SSH:RotatingMachine.p:limits".into(), class: class.to_string(),
                 property: "RotatingMachine.p".into(),
                 message: format!("Negated active power ({}) is outside of the range [Min:{}, Max:{}] of associated GeneratingUnit.", neg_p, min, max),
                 severity: "sh:Violation".into(), description: String::new(),
@@ -410,7 +410,7 @@ fn check_rotating_machine_q_limits(dataset: &CimDataset) -> Vec<Violation> {
             if neg_q < min_q || neg_q > max_q {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "sshn456:RotatingMachine.q-limits".into(),
-                    name: "RotatingMachine.q-limits".into(), class: "SynchronousMachine".into(),
+                    name: "C:456:SSH:RotatingMachine.q:limits".into(), class: "SynchronousMachine".into(),
                     property: "RotatingMachine.q".into(),
                     message: format!("Negated reactive power ({}) is outside of the range [Min:{}, Max:{}] (no ReactiveCapabilityCurve).", neg_q, min_q, max_q),
                     severity: "sh:Violation".into(), description: String::new(),

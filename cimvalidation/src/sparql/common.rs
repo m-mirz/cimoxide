@@ -29,7 +29,7 @@ fn check_mrid_uniqueness(dataset: &CimDataset) -> Vec<Violation> {
                 v.push(Violation {
                     object_id: id.clone(),
                     rule_id:   "all600:All-GENC1".into(),
-                    name:      String::new(),
+                    name:      "C:600:ALL:NA:GENC1".into(),
                     class:     block.type_name.clone(),
                     property:  "IdentifiedObject.mRID".into(),
                     message:   "Not a unique identifier.".into(),
@@ -74,7 +74,7 @@ fn check_id_uuid(dataset: &CimDataset) -> Vec<Violation> {
             v.push(Violation {
                 object_id: id.clone(),
                 rule_id:   "all600:All-GENC4".into(),
-                name:      String::new(),
+                name:      "C:600:ALL:NA:GENC4".into(),
                 class:     entry.element.type_name().to_string(),
                 property:  "rdf:ID".into(),
                 message:   "Invalid syntax of ID (rdf:ID or rdf:about). UUID expected.".into(),
@@ -101,7 +101,7 @@ fn check_id_deprecated(dataset: &CimDataset) -> Vec<Violation> {
             v.push(Violation {
                 object_id: id.clone(),
                 rule_id:   "all600:All-GENC5".into(),
-                name:      String::new(),
+                name:      "C:600:ALL:NA:GENC5".into(),
                 class:     entry.element.type_name().to_string(),
                 property:  "rdf:ID".into(),
                 message:   "The ID string is more than 60 characters or the string does not begin with underscore.".into(),
@@ -130,7 +130,7 @@ fn check_model_date_time_utc(dataset: &CimDataset) -> Vec<Violation> {
                     v.push(Violation {
                         object_id: mrid.clone(),
                         rule_id:   "all600:Model.created-HGEN4".into(),
-                        name:      String::new(),
+                        name:      "C:600:ALL:Model.created:HGEN4".into(),
                         class:     type_name.to_string(),
                         property:  "Model.created".into(),
                         message:   "File header Model.created is not a valid UTC date time (missing 'Z').".into(),
@@ -142,7 +142,7 @@ fn check_model_date_time_utc(dataset: &CimDataset) -> Vec<Violation> {
                     v.push(Violation {
                         object_id: mrid.clone(),
                         rule_id:   "all600:Model.scenarioTime-HGEN4".into(),
-                        name:      String::new(),
+                        name:      "C:600:ALL:Model.scenarioTime:HGEN4".into(),
                         class:     type_name.to_string(),
                         property:  "Model.scenarioTime".into(),
                         message:   "File header Model.scenarioTime is not a valid UTC date time (missing 'Z').".into(),
@@ -167,7 +167,7 @@ fn check_float_special_values(dataset: &CimDataset) -> Vec<Violation> {
                         v.push(Violation {
                             object_id: id.clone(),
                             rule_id:   "all600:Float-specialValues".into(),
-                            name:      String::new(),
+                            name:      "C:301:ALL:Float:specialValues".into(),
                             class:     block.type_name.clone(),
                             property:  key.clone(),
                             message:   "INF or NaN used in an attribute defined as float.".into(),
@@ -198,7 +198,7 @@ fn check_modeling_authority_set_not_empty(dataset: &CimDataset) -> Vec<Violation
                 v.push(Violation {
                     object_id: mrid.clone(),
                     rule_id:   "all600:Model.modelingAuthoritySet-marp10-12".into(),
-                    name:      String::new(),
+                    name:      "C:600:ALL:Model.modelingAuthoritySet:marp10-12".into(),
                     class:     type_name.to_string(),
                     property:  "Model.modelingAuthoritySet".into(),
                     message:   "The modelingAuthoritySet property is defined as empty.".into(),
@@ -222,8 +222,8 @@ fn check_identified_object_string_lengths(dataset: &CimDataset) -> Vec<Violation
                     "IdentifiedObject.shortName" if s.len() > 12 => {
                         v.push(Violation {
                             object_id: id.clone(),
-                            rule_id:   "iosl:IdentifiedObject.shortName-stringLength".into(),
-                            name:      String::new(),
+                            rule_id:   "io:IdentifiedObject.shortName-stringLength".into(),
+                            name:      "C:301:EQ:IdentifiedObject.shortName:stringLength|C:301:EQBD:IdentifiedObject.shortName:stringLength||C:301:TP:IdentifiedObject.shortName:stringLength".into(),
                             class:     class.clone(),
                             property:  "IdentifiedObject.shortName".into(),
                             message:   "String length is greater than 12 characters.".into(),
@@ -234,8 +234,8 @@ fn check_identified_object_string_lengths(dataset: &CimDataset) -> Vec<Violation
                     "IdentifiedObject.energyIdentCodeEic" if !s.is_empty() && s.len() != 16 => {
                         v.push(Violation {
                             object_id: id.clone(),
-                            rule_id:   "iosl:IdentifiedObject.energyIdentCodeEic-stringLength".into(),
-                            name:      String::new(),
+                            rule_id:   "io:IdentifiedObject.energyIdentCodeEic-stringLength".into(),
+                            name:      "C:301:EQ:IdentifiedObject.energyIdentCodeEic:stringLength|C:301:EQBD:IdentifiedObject.energyIdentCodeEic:stringLength|C:301:TP:IdentifiedObject.energyIdentCodeEic:stringLength".into(),
                             class:     class.clone(),
                             property:  "IdentifiedObject.energyIdentCodeEic".into(),
                             message:   "String length is not 16 characters.".into(),
@@ -246,8 +246,8 @@ fn check_identified_object_string_lengths(dataset: &CimDataset) -> Vec<Violation
                     "IdentifiedObject.name" if s.len() > 128 => {
                         v.push(Violation {
                             object_id: id.clone(),
-                            rule_id:   "iosl:IdentifiedObject.name-stringLength".into(),
-                            name:      String::new(),
+                            rule_id:   "io:IdentifiedObject.name-stringLength".into(),
+                            name:      "C:452:ALL:IdentifiedObject.name:stringLength|C:453:DL:IdentifiedObject.name:stringLength|C:456:TP:IdentifiedObject.name:stringLength|C:456:SV:IdentifiedObject.name:stringLength|C:457:DY:IdentifiedObject.name:stringLength|C:600:EQBD:IdentifiedObject.name:stringLength".into(),
                             class:     class.clone(),
                             property:  "IdentifiedObject.name".into(),
                             message:   "String length is greater than 128 characters.".into(),
@@ -258,8 +258,8 @@ fn check_identified_object_string_lengths(dataset: &CimDataset) -> Vec<Violation
                     "IdentifiedObject.description" if s.len() > 256 => {
                         v.push(Violation {
                             object_id: id.clone(),
-                            rule_id:   "iosl:IdentifiedObject.description-stringLength".into(),
-                            name:      String::new(),
+                            rule_id:   "io:IdentifiedObject.description-stringLength".into(),
+                            name:      "C:452:ALL:IdentifiedObject.description:stringLength|C:600:EQBD:IdentifiedObject.description:stringLength|C:457:DY:IdentifiedObject.description:stringLength|C:456:TP:IdentifiedObject.description:stringLength".into(),
                             class:     class.clone(),
                             property:  "IdentifiedObject.description".into(),
                             message:   "String length is greater than 256 characters.".into(),
@@ -282,7 +282,7 @@ fn check_file_header_exists(dataset: &CimDataset) -> Vec<Violation> {
     vec![Violation {
         object_id: "global".into(),
         rule_id:   "all600:All-HGEN2".into(),
-        name:      String::new(),
+        name:      "C:600:ALL:NA:HGEN2".into(),
         class:     "FullModel".into(),
         property:  "rdf:type".into(),
         message:   "File header is missing.".into(),
