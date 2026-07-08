@@ -185,18 +185,18 @@ pub fn validate_header(dataset: &cimdecoder::CimDataset, _cfg: &Config) -> Vec<V
     generated_p61970_552_header_ap_con_simple_shacl::validate_p61970_552_header_ap_con_simple_shacl(dataset)
 }
 
-/// Phase 1 — per-profile SHACL: run local (non-crossprofile) generated SHACL rules for one profile.
+/// Phase 1 — per-profile: run local (non-crossprofile) generated SHACL rules and SPARQL
+/// rules for one profile.
 ///
 /// Pass the single-file dataset for the profile and the combined config (solved/not_solved
 /// must reflect the full set of files, not just this file). If `cfg.profiles` is non-empty
-/// and does not include `profile`, returns an empty vec.
-///
-/// Call `sparql::validate_profile_local` separately if SPARQL rules are also needed.
+/// and does not include `profile`, returns an empty vec — this filter applies to both the
+/// SHACL and SPARQL checks.
 pub fn validate_profile_local(dataset: &cimdecoder::CimDataset, profile: &str, cfg: &Config) -> Vec<Violation> {
     if !cfg.profiles.is_empty() && !cfg.profiles.iter().any(|p| p == profile) {
         return Vec::new();
     }
-    match profile {
+    let mut v = match profile {
         "DL"   => validate_dl_local(dataset, cfg),
         "DY"   => validate_dy_local(dataset, cfg),
         "EQ"   => validate_eq(dataset, cfg),
@@ -208,7 +208,9 @@ pub fn validate_profile_local(dataset: &cimdecoder::CimDataset, profile: &str, c
         "SV"   => validate_sv_local(dataset, cfg),
         "TP"   => validate_tp_local(dataset, cfg),
         _      => Vec::new(),
-    }
+    };
+    v.extend(sparql::validate_profile_local(dataset, profile, cfg));
+    v
 }
 
 /// Phase 2 — crossprofile: run crossprofile SHACL + cross-profile SPARQL on the merged dataset.
@@ -270,7 +272,6 @@ pub fn validate_files(per_file: Vec<cimdecoder::CimDataset>, cfg: &Config) -> Ve
                     let file_cfg = detect_config(ds);
                     for profile in &file_cfg.profiles {
                         v.extend(validate_profile_local(ds, profile, cfg));
-                        v.extend(sparql::validate_profile_local(ds, profile, cfg));
                     }
                     v
                 })

@@ -48,9 +48,14 @@ fn shacl_eq_001() {
     let ds = common::load_dataset("../testdata/test_shacl_EQ_001.xml");
     let vs = validate_profile_local(&ds, "EQ", &cfg("EQ"));
     let by_id = common::violations_by_id(&vs);
-    assert_eq!(by_id.get("ACLineSegment.OK").map_or(0, |v| v.len()), 0,
+    // Fixture has no Terminals, so the unrelated SPARQL terminal-numbering rule also
+    // fires on both objects; filter it out to isolate the length check under test.
+    let length_violations = |id: &str| by_id.get(id).map_or(0, |vs| vs.iter()
+        .filter(|v| !v.rule_id.starts_with("equ:ACDCTerminal.sequenceNumber"))
+        .count());
+    assert_eq!(length_violations("ACLineSegment.OK"), 0,
         "ACLineSegment.OK (length=5): expected 0 violations, got: {:?}", by_id.get("ACLineSegment.OK"));
-    assert_eq!(by_id.get("ACLineSegment.BAD").map_or(0, |v| v.len()), 1,
+    assert_eq!(length_violations("ACLineSegment.BAD"), 1,
         "ACLineSegment.BAD (length=-1): expected 1 violation, got: {:?}", by_id.get("ACLineSegment.BAD"));
     assert_eq!(by_id.get("BaseVoltage.OK").map_or(0, |v| v.len()), 0,
         "BaseVoltage.OK (nominalVoltage=110): expected 0 violations, got: {:?}", by_id.get("BaseVoltage.OK"));
@@ -148,8 +153,13 @@ fn shacl_eqbd_001() {
     let ds = common::load_dataset("../testdata/test_shacl_EQBD_001.xml");
     let vs = validate_profile_local(&ds, "EQBD", &cfg("EQBD"));
     let by_id = common::violations_by_id(&vs);
-    assert_eq!(by_id.get("BoundaryPoint.OK").map_or(0, |v| v.len()), 0,
+    // Fixture has no TieFlow, so the unrelated SPARQL requiredTieFlow rule also fires
+    // on both objects; filter it out to isolate the ISO-code check under test.
+    let iso_violations = |id: &str| by_id.get(id).map_or(0, |vs| vs.iter()
+        .filter(|v| !v.rule_id.starts_with("eqbdn301:BoundaryPoint.isExcludedFromAreaInterchange"))
+        .count());
+    assert_eq!(iso_violations("BoundaryPoint.OK"), 0,
         "BoundaryPoint.OK (fromEndIsoCode=DE): expected 0 violations, got: {:?}", by_id.get("BoundaryPoint.OK"));
-    assert_eq!(by_id.get("BoundaryPoint.BAD").map_or(0, |v| v.len()), 1,
+    assert_eq!(iso_violations("BoundaryPoint.BAD"), 1,
         "BoundaryPoint.BAD (fromEndIsoCode=XX): expected 1 violation, got: {:?}", by_id.get("BoundaryPoint.BAD"));
 }

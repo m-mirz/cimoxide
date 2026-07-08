@@ -32,6 +32,7 @@ impl CimDataset {
         }
     }
 
+    /// Decode an RDF/XML string into a CimDataset, using the provided type registry.
     pub fn decode_str(content: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let mut ds = Self::new();
         let reg = registry::registry();
@@ -39,10 +40,12 @@ impl CimDataset {
         Ok(ds)
     }
 
+    /// Decode an RDF/XML file into a CimDataset, using the provided type registry.
     pub fn decode_file(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         Self::decode_str(&std::fs::read_to_string(path)?)
     }
 
+    /// Decode multiple RDF/XML files into a single CimDataset, merging entries with the same MRID.
     pub fn decode_files(paths: &[&Path]) -> Result<Self, Box<dyn std::error::Error>> {
         let mut combined = Self::new();
         for path in paths {
@@ -116,6 +119,7 @@ impl CimDataset {
 
 // --- XML streaming parser ---------------------------------------------------
 
+/// Parse an RDF/XML string into a CimDataset, using the provided type registry.
 fn parse_rdf(
     content: &str,
     reg: &HashMap<&'static str, ParseFn>,
@@ -227,11 +231,13 @@ fn parse_rdf(
 
 // --- helpers ----------------------------------------------------------------
 
+/// Extract the local name from a qualified XML name, e.g. "cim:Foo" → "Foo".
 fn local_name(raw: &[u8]) -> Result<String, Box<dyn std::error::Error>> {
     let s = std::str::from_utf8(raw)?;
     Ok(s.find(':').map(|i| &s[i + 1..]).unwrap_or(s).to_string())
 }
 
+/// Strip the fragment from a URI, e.g. "http://example.com#foo" → "foo".
 fn strip_fragment(s: &str) -> String {
     if let Some(i) = s.rfind('#') {
         s[i + 1..].to_string()
@@ -240,6 +246,7 @@ fn strip_fragment(s: &str) -> String {
     }
 }
 
+/// Extract the value of the "rdf:about" or "rdf:ID" attribute from an element.
 fn extract_about(
     attrs: quick_xml::events::attributes::Attributes<'_>,
 ) -> Result<String, Box<dyn std::error::Error>> {
@@ -252,6 +259,7 @@ fn extract_about(
     Ok(String::new())
 }
 
+/// Find the value of the "rdf:resource" attribute from an element.
 fn find_resource(
     attrs: quick_xml::events::attributes::Attributes<'_>,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
