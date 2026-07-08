@@ -3,6 +3,14 @@ mod convert;
 use std::path::PathBuf;
 use std::process;
 
+/// Unwrap a `Result`, or print `"{context}: {error}"` to stderr and exit(1).
+fn or_die<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) -> T {
+    result.unwrap_or_else(|e| {
+        eprintln!("{context}: {e}");
+        process::exit(1);
+    })
+}
+
 fn usage() -> ! {
     eprintln!("Usage:");
     eprintln!("  cimoxide-cli import [--json] <xml-files...>");
@@ -103,33 +111,21 @@ fn main() {
 
 fn cmd_to_json(xml_files: &[PathBuf], out: Option<&std::path::Path>) {
     let paths: Vec<&std::path::Path> = xml_files.iter().map(PathBuf::as_path).collect();
-    let ds = cimdecoder::CimDataset::decode_files_parallel(&paths).unwrap_or_else(|e| {
-        eprintln!("error decoding XML: {e}");
-        process::exit(1);
-    });
+    let ds = or_die(cimdecoder::CimDataset::decode_files_parallel(&paths), "error decoding XML");
     let json = convert::dataset_to_json(&ds);
-    let text = serde_json::to_string_pretty(&json).unwrap_or_else(|e| {
-        eprintln!("error serializing JSON: {e}");
-        process::exit(1);
-    });
+    let text = or_die(serde_json::to_string_pretty(&json), "error serializing JSON");
     write_output(&text, out);
 }
 
 fn cmd_to_xml(json_file: &std::path::Path, out: Option<&std::path::Path>, profiles: &[&str]) {
-    let src = std::fs::read_to_string(json_file).unwrap_or_else(|e| {
-        eprintln!("error reading {}: {e}", json_file.display());
-        process::exit(1);
-    });
-    let ds = convert::dataset_from_json(&src).unwrap_or_else(|e| {
-        eprintln!("error parsing JSON: {e}");
-        process::exit(1);
-    });
+    let src = or_die(
+        std::fs::read_to_string(json_file),
+        &format!("error reading {}", json_file.display()),
+    );
+    let ds = or_die(convert::dataset_from_json(&src), "error parsing JSON");
 
     if profiles.is_empty() {
-        let xml = convert::dataset_to_xml(&ds).unwrap_or_else(|e| {
-            eprintln!("error generating XML: {e}");
-            process::exit(1);
-        });
+        let xml = or_die(convert::dataset_to_xml(&ds), "error generating XML");
         write_output(&xml, out);
         return;
     }
@@ -140,38 +136,32 @@ fn cmd_to_xml(json_file: &std::path::Path, out: Option<&std::path::Path>, profil
             usage();
         });
         if !dir.is_dir() {
-            std::fs::create_dir_all(dir).unwrap_or_else(|e| {
-                eprintln!("error creating directory {}: {e}", dir.display());
-                process::exit(1);
-            });
+            or_die(
+                std::fs::create_dir_all(dir),
+                &format!("error creating directory {}", dir.display()),
+            );
         }
         for &code in profiles {
-            let xml = convert::dataset_to_xml_for_profile(&ds, code).unwrap_or_else(|e| {
-                eprintln!("error generating XML for profile {code}: {e}");
-                process::exit(1);
-            });
+            let xml = or_die(
+                convert::dataset_to_xml_for_profile(&ds, code),
+                &format!("error generating XML for profile {code}"),
+            );
             let path = dir.join(format!("{code}.xml"));
-            std::fs::write(&path, &xml).unwrap_or_else(|e| {
-                eprintln!("error writing {}: {e}", path.display());
-                process::exit(1);
-            });
+            or_die(std::fs::write(&path, &xml), &format!("error writing {}", path.display()));
         }
     } else {
         let code = profiles[0];
-        let xml = convert::dataset_to_xml_for_profile(&ds, code).unwrap_or_else(|e| {
-            eprintln!("error generating XML for profile {code}: {e}");
-            process::exit(1);
-        });
+        let xml = or_die(
+            convert::dataset_to_xml_for_profile(&ds, code),
+            &format!("error generating XML for profile {code}"),
+        );
         write_output(&xml, out);
     }
 }
 
 fn write_output(text: &str, out: Option<&std::path::Path>) {
     match out {
-        Some(path) => std::fs::write(path, text).unwrap_or_else(|e| {
-            eprintln!("error writing {}: {e}", path.display());
-            process::exit(1);
-        }),
+        Some(path) => or_die(std::fs::write(path, text), &format!("error writing {}", path.display())),
         None => print!("{text}"),
     }
 }
@@ -203,30 +193,18 @@ fn cmd_import(args: &[String]) {
     struct FileResult { name: String, count: usize }
 
     // Decode all files in parallel, collecting per-file counts before merging.
-    let raw: Vec<(String, cimdecoder::CimDataset)> = std::thread::scope(|s| {
-        input_files
-            .iter()
-            .map(|p| {
-                let name = p.file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| p.display().to_string());
-                s.spawn(move || {
-                    let ds = cimdecoder::CimDataset::decode_file(p).unwrap_or_else(|e| {
-                        eprintln!("error decoding {}: {e}", p.display());
-                        process::exit(1);
-                    });
-                    (name, ds)
-                })
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
-            .map(|h| h.join().expect("decode thread panicked"))
-            .collect()
-    });
+    let paths: Vec<&std::path::Path> = input_files.iter().map(PathBuf::as_path).collect();
+    let datasets = or_die(
+        cimdecoder::CimDataset::decode_files_parallel_separate(&paths),
+        "error decoding input",
+    );
 
     let mut per_file: Vec<FileResult> = Vec::new();
     let mut combined = cimdecoder::CimDataset::new();
-    for (name, ds) in raw {
+    for (path, ds) in input_files.iter().zip(datasets) {
+        let name = path.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
         per_file.push(FileResult { name, count: ds.entries.len() });
         combined.merge(ds);
     }
@@ -316,21 +294,32 @@ fn cmd_validate(args: &[String]) {
         usage();
     }
 
+    // Decode each file separately (in parallel) to enable per-profile pre-merge validation.
     let paths: Vec<&std::path::Path> = input_files.iter().map(PathBuf::as_path).collect();
-    let dataset = cimdecoder::CimDataset::decode_files_parallel(&paths).unwrap_or_else(|e| {
-        eprintln!("error decoding input: {e}");
-        process::exit(1);
-    });
+    let datasets = or_die(
+        cimdecoder::CimDataset::decode_files_parallel_separate(&paths),
+        "error decoding input",
+    );
 
-    let mut cfg = cimvalidation::detect_config(&dataset);
-    if let Some(p) = profiles_override { cfg.profiles = p; }
-    if force_solved { cfg.solved = true; cfg.not_solved = false; }
-    if force_not_solved { cfg.not_solved = true; cfg.solved = false; }
-    if enable_common { cfg.common = true; }
-    if enable_quality { cfg.quality = true; }
-    cfg.silenced_rules = silenced;
+    let solved_override = if force_solved {
+        Some(true)
+    } else if force_not_solved {
+        Some(false)
+    } else {
+        None
+    };
+    let cfg = cimvalidation::combined_config(
+        &datasets,
+        profiles_override,
+        solved_override,
+        enable_common,
+        enable_quality,
+        silenced,
+    );
 
-    let violations = cimvalidation::validate(&dataset, &cfg);
+    // Two-phase validation: per-file local checks in parallel, then crossprofile checks
+    // on the merged dataset, with rule silencing applied.
+    let violations = cimvalidation::validate_files(datasets, &cfg);
 
     if output_json {
         let arr: Vec<serde_json::Value> = violations.iter().map(|v| {

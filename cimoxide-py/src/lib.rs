@@ -48,6 +48,12 @@ pub struct PyCimDataset {
     inner: std::sync::Mutex<CimDataset>,
 }
 
+impl PyCimDataset {
+    fn lock(&self) -> PyResult<std::sync::MutexGuard<'_, CimDataset>> {
+        self.inner.lock().map_err(|e| map_err(e.to_string()))
+    }
+}
+
 #[pymethods]
 impl PyCimDataset {
     /// Parse a single CGMES RDF/XML file.
@@ -87,49 +93,30 @@ impl PyCimDataset {
     fn merge(&self, py: Python<'_>, other: Py<PyCimDataset>) -> PyResult<()> {
         let other_ds = {
             let borrowed = other.borrow(py);
-            let mut guard = borrowed
-                .inner
-                .lock()
-                .map_err(|e| map_err(e.to_string()))?;
+            let mut guard = borrowed.lock()?;
             std::mem::replace(&mut *guard, CimDataset::new())
         };
-        self.inner
-            .lock()
-            .map_err(|e| map_err(e.to_string()))?
-            .merge(other_ds);
+        self.lock()?.merge(other_ds);
         Ok(())
     }
 
     /// Release all RdfBlock memory after the final merge.
     fn drop_blocks(&self) -> PyResult<()> {
-        self.inner
-            .lock()
-            .map_err(|e| map_err(e.to_string()))?
-            .drop_blocks();
+        self.lock()?.drop_blocks();
         Ok(())
     }
 
     fn __len__(&self) -> PyResult<usize> {
-        Ok(self
-            .inner
-            .lock()
-            .map_err(|e| map_err(e.to_string()))?
-            .entries
-            .len())
+        Ok(self.lock()?.entries.len())
     }
 
     fn __contains__(&self, mrid: &str) -> PyResult<bool> {
-        Ok(self
-            .inner
-            .lock()
-            .map_err(|e| map_err(e.to_string()))?
-            .entries
-            .contains_key(mrid))
+        Ok(self.lock()?.entries.contains_key(mrid))
     }
 
     /// Return the element dict for the given MRID. Raises `KeyError` if not found.
     fn __getitem__(&self, py: Python<'_>, mrid: &str) -> PyResult<PyObject> {
-        let ds = self.inner.lock().map_err(|e| map_err(e.to_string()))?;
+        let ds = self.lock()?;
         match ds.entries.get(mrid) {
             Some(entry) => entry_to_python(py, entry),
             None => Err(PyKeyError::new_err(mrid.to_string())),
@@ -138,14 +125,7 @@ impl PyCimDataset {
 
     /// Iterate over all MRIDs in the dataset.
     fn __iter__(slf: PyRef<'_, Self>) -> PyResult<PyCimDatasetIter> {
-        let mrids: Vec<String> = slf
-            .inner
-            .lock()
-            .map_err(|e| map_err(e.to_string()))?
-            .entries
-            .keys()
-            .cloned()
-            .collect();
+        let mrids: Vec<String> = slf.lock()?.entries.keys().cloned().collect();
         Ok(PyCimDatasetIter {
             mrids: mrids.into_iter(),
         })
@@ -153,7 +133,7 @@ impl PyCimDataset {
 
     /// Return the element dict for the given MRID, or `None` if not found.
     fn get(&self, py: Python<'_>, mrid: &str) -> PyResult<Option<PyObject>> {
-        let ds = self.inner.lock().map_err(|e| map_err(e.to_string()))?;
+        let ds = self.lock()?;
         match ds.entries.get(mrid) {
             Some(entry) => Ok(Some(entry_to_python(py, entry)?)),
             None => Ok(None),
@@ -162,21 +142,14 @@ impl PyCimDataset {
 
     /// Return all MRIDs as a list.
     fn mrids(&self) -> PyResult<Vec<String>> {
-        Ok(self
-            .inner
-            .lock()
-            .map_err(|e| map_err(e.to_string()))?
-            .entries
-            .keys()
-            .cloned()
-            .collect())
+        Ok(self.lock()?.entries.keys().cloned().collect())
     }
 
     /// Return a `dict[str, list[str]]` mapping type names to lists of MRIDs.
     ///
     /// This is a fast O(1) index lookup — no element deserialization occurs.
     fn by_type(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let ds = self.inner.lock().map_err(|e| map_err(e.to_string()))?;
+        let ds = self.lock()?;
         let dict = PyDict::new(py);
         for (type_name, mrids) in &ds.by_type {
             dict.set_item(type_name, mrids)?;
@@ -188,7 +161,7 @@ impl PyCimDataset {
     ///
     /// Example: `ds.get_type("ACLineSegment")` → `[{"_type": "ACLineSegment", "r": 0.12, ...}, ...]`
     fn get_type(&self, py: Python<'_>, type_name: &str) -> PyResult<Vec<PyObject>> {
-        let ds = self.inner.lock().map_err(|e| map_err(e.to_string()))?;
+        let ds = self.lock()?;
         let mrids = ds.by_type.get(type_name).cloned().unwrap_or_default();
         let mut result = Vec::with_capacity(mrids.len());
         for mrid in &mrids {
@@ -204,7 +177,7 @@ impl PyCimDataset {
     /// This deserializes every element — prefer `get_type` or `__getitem__` for
     /// partial access.
     fn entries(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let ds = self.inner.lock().map_err(|e| map_err(e.to_string()))?;
+        let ds = self.lock()?;
         let dict = PyDict::new(py);
         for (mrid, entry) in &ds.entries {
             dict.set_item(mrid, entry_to_python(py, entry)?)?;
@@ -212,62 +185,22 @@ impl PyCimDataset {
         Ok(dict.into_any().unbind())
     }
 
-    /// Run validation checks and return a list of violations.
-    ///
-    /// Profiles and the solved/not-solved flag are auto-detected from FullModel
-    /// headers unless overridden.
-    ///
-    /// Parameters
-    /// ----------
-    /// profiles:
-    ///     Profile short names to check, e.g. ``["EQ", "SSH"]``.
-    ///     ``None`` (default) uses auto-detected profiles.
-    /// solved:
-    ///     ``True`` forces solved-case checks; ``False`` forces not-solved checks;
-    ///     ``None`` (default) auto-detects from the dataset.
-    /// common:
-    ///     Enable cross-profile common checks (default ``False``).
-    /// quality:
-    ///     Enable CIMdesk modeling quality checks (default ``False``).
-    /// silence:
-    ///     Rule IDs to suppress, e.g. ``["Rule-EQ-1", "Rule-EQ-2"]``.
-    #[pyo3(signature = (profiles=None, solved=None, common=false, quality=false, silence=None))]
-    fn validate(
-        &self,
-        profiles: Option<Vec<String>>,
-        solved: Option<bool>,
-        common: bool,
-        quality: bool,
-        silence: Option<Vec<String>>,
-    ) -> PyResult<Vec<PyViolation>> {
-        let ds = self.inner.lock().map_err(|e| map_err(e.to_string()))?;
-        let mut cfg = cimvalidation::detect_config(&ds);
-        if let Some(p) = profiles {
-            cfg.profiles = p;
-        }
-        if let Some(s) = solved {
-            cfg.solved = s;
-            cfg.not_solved = !s;
-        }
-        cfg.common = common;
-        cfg.quality = quality;
-        if let Some(s) = silence {
-            cfg.silenced_rules = s;
-        }
-        Ok(cimvalidation::validate(&ds, &cfg)
-            .into_iter()
-            .map(|v| PyViolation {
-                object_id:   v.object_id,
-                rule_id:     v.rule_id,
-                name:        v.name,
-                class:       v.class,
-                property:    v.property,
-                message:     v.message,
-                severity:    v.severity,
-                description: v.description,
-            })
-            .collect())
-    }
+}
+
+fn violations_to_py(violations: Vec<cimvalidation::Violation>) -> Vec<PyViolation> {
+    violations
+        .into_iter()
+        .map(|v| PyViolation {
+            object_id:   v.object_id,
+            rule_id:     v.rule_id,
+            name:        v.name,
+            class:       v.class,
+            property:    v.property,
+            message:     v.message,
+            severity:    v.severity,
+            description: v.description,
+        })
+        .collect()
 }
 
 /// A single SHACL or custom validation finding.
@@ -300,10 +233,62 @@ impl PyViolation {
     }
 }
 
+/// Validate a set of CGMES profile files using two-phase validation.
+///
+/// Phase 1 runs per-profile (local) SHACL and SPARQL rules against each file's
+/// individual dataset before merging. Phase 2 runs cross-profile rules on the
+/// merged dataset. This is the recommended entry point for validation.
+///
+/// Parameters
+/// ----------
+/// paths:
+///     Paths to the CGMES RDF/XML files to validate.
+/// profiles:
+///     Profile short names to check, e.g. ``["EQ", "SSH"]``.
+///     ``None`` (default) uses auto-detected profiles.
+/// solved:
+///     ``True`` forces solved-case checks; ``False`` forces not-solved checks;
+///     ``None`` (default) auto-detects from the dataset.
+/// common:
+///     Enable cross-profile common checks (default ``False``).
+/// quality:
+///     Enable CIMdesk modeling quality checks (default ``False``).
+/// silence:
+///     Rule IDs to suppress, e.g. ``["Rule-EQ-1", "Rule-EQ-2"]``.
+#[pyfunction]
+#[pyo3(signature = (paths, profiles=None, solved=None, common=false, quality=false, silence=None))]
+fn validate_files(
+    paths: Vec<String>,
+    profiles: Option<Vec<String>>,
+    solved: Option<bool>,
+    common: bool,
+    quality: bool,
+    silence: Option<Vec<String>>,
+) -> PyResult<Vec<PyViolation>> {
+    // Decode each file into its own dataset, in parallel.
+    let path_bufs: Vec<std::path::PathBuf> = paths.iter().map(std::path::PathBuf::from).collect();
+    let path_refs: Vec<&Path> = path_bufs.iter().map(|p| p.as_path()).collect();
+    let per_file: Vec<CimDataset> =
+        CimDataset::decode_files_parallel_separate(&path_refs).map_err(map_err)?;
+
+    let cfg = cimvalidation::combined_config(
+        &per_file,
+        profiles,
+        solved,
+        common,
+        quality,
+        silence.unwrap_or_default(),
+    );
+    let violations = cimvalidation::validate_files(per_file, &cfg);
+
+    Ok(violations_to_py(violations))
+}
+
 #[pymodule]
 fn cimoxide(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCimDataset>()?;
     m.add_class::<PyCimDatasetIter>()?;
     m.add_class::<PyViolation>()?;
+    m.add_function(wrap_pyfunction!(validate_files, m)?)?;
     Ok(())
 }

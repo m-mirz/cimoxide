@@ -52,11 +52,12 @@ impl CimDataset {
         Ok(combined)
     }
 
-    /// Decode files in parallel using one thread per file, then merge sequentially.
-    /// Falls back to `decode_files` for 0–1 paths to avoid thread-spawn overhead.
-    pub fn decode_files_parallel(paths: &[&Path]) -> Result<Self, Box<dyn std::error::Error>> {
+    /// Decode files in parallel using one thread per file, without merging.
+    /// Preserves input order. Falls back to sequential decoding for 0–1 paths
+    /// to avoid thread-spawn overhead.
+    pub fn decode_files_parallel_separate(paths: &[&Path]) -> Result<Vec<Self>, Box<dyn std::error::Error>> {
         if paths.len() <= 1 {
-            return Self::decode_files(paths);
+            return paths.iter().map(|p| Self::decode_file(p)).collect();
         }
         let results: Vec<Result<Self, String>> = std::thread::scope(|s| {
             paths
@@ -67,10 +68,15 @@ impl CimDataset {
                 .map(|h| h.join().expect("decode thread panicked"))
                 .collect()
         });
-        let datasets: Vec<Self> = results
+        results
             .into_iter()
             .collect::<Result<_, String>>()
-            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            .map_err(|e| e.into())
+    }
+
+    /// Decode files in parallel using one thread per file, then merge sequentially.
+    pub fn decode_files_parallel(paths: &[&Path]) -> Result<Self, Box<dyn std::error::Error>> {
+        let datasets = Self::decode_files_parallel_separate(paths)?;
         Ok(datasets
             .into_iter()
             .reduce(|mut a, b| {

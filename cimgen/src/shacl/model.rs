@@ -45,12 +45,15 @@ pub struct ConstraintInfo {
     /// sh:severity simplified (e.g. "sh:Violation", "sh:Warning").
     pub severity: String,
     pub message: String,
+    /// sh:name value — structured human-readable rule name (e.g. "C:301:EQ:ACLineSegment.r:valueRange").
     pub name: String,
     pub description: String,
     /// SHACL constraint component (e.g. "sh:RequiredConstraintComponent").
     pub component: String,
     /// Component-specific payload keyed by simplified predicate name.
     pub payload: HashMap<String, ShaclValue>,
+    /// Shape IRI used as the machine-readable rule identifier (e.g. "equ:ACLineSegment.r-valueRange").
+    pub rule_id: String,
 }
 
 /// The target of a NodeShape (what objects it applies to).

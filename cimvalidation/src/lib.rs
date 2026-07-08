@@ -64,24 +64,32 @@ pub mod generated_p61970_600_2_statevariables_ap_con_simple_shacl;
 pub mod generated_p61970_600_2_steadystatehypothesis_ap_con_simple_shacl;
 pub mod generated_p61970_600_2_topology_ap_con_simple_shacl;
 
-pub fn validate_dl(dataset: &cimdecoder::CimDataset, cfg: &Config) -> Vec<Violation> {
+// ── per-profile local rules ────────────────────────────────────────────────
+
+fn validate_dl_local(dataset: &cimdecoder::CimDataset, cfg: &Config) -> Vec<Violation> {
     let mut v = Vec::new();
     if cfg.not_solved {
         v.extend(generated_p61970_301_diagramlayout_ap_con_complex_notsolvedmas_shacl::validate_p61970_301_diagramlayout_ap_con_complex_notsolvedmas_shacl(dataset));
     }
     v.extend(generated_p61970_301_diagramlayout_ap_con_complex_shacl::validate_p61970_301_diagramlayout_ap_con_complex_shacl(dataset));
-    v.extend(generated_p61970_453_diagramlayout_ap_con_complex_implicit_crossprofile_shacl::validate_p61970_453_diagramlayout_ap_con_complex_implicit_crossprofile_shacl(dataset));
     v.extend(generated_p61970_453_diagramlayout_ap_con_complex_shacl::validate_p61970_453_diagramlayout_ap_con_complex_shacl(dataset));
     v.extend(generated_p61970_600_2_diagramlayout_ap_con_simple_shacl::validate_p61970_600_2_diagramlayout_ap_con_simple_shacl(dataset));
     v
 }
 
-pub fn validate_dy(dataset: &cimdecoder::CimDataset, _cfg: &Config) -> Vec<Violation> {
+fn validate_dl_crossprofile(dataset: &cimdecoder::CimDataset, _cfg: &Config) -> Vec<Violation> {
+    generated_p61970_453_diagramlayout_ap_con_complex_implicit_crossprofile_shacl::validate_p61970_453_diagramlayout_ap_con_complex_implicit_crossprofile_shacl(dataset)
+}
+
+fn validate_dy_local(dataset: &cimdecoder::CimDataset, _cfg: &Config) -> Vec<Violation> {
     let mut v = Vec::new();
     v.extend(generated_p61970_302_dynamics_ap_con_complex_shacl::validate_p61970_302_dynamics_ap_con_complex_shacl(dataset));
-    v.extend(generated_p61970_457_dynamics_ap_con_complex_implicit_crossprofile_shacl::validate_p61970_457_dynamics_ap_con_complex_implicit_crossprofile_shacl(dataset));
     v.extend(generated_p61970_600_2_dynamics_ap_con_simple_shacl::validate_p61970_600_2_dynamics_ap_con_simple_shacl(dataset));
     v
+}
+
+fn validate_dy_crossprofile(dataset: &cimdecoder::CimDataset, _cfg: &Config) -> Vec<Violation> {
+    generated_p61970_457_dynamics_ap_con_complex_implicit_crossprofile_shacl::validate_p61970_457_dynamics_ap_con_complex_implicit_crossprofile_shacl(dataset)
 }
 
 pub fn validate_eq(dataset: &cimdecoder::CimDataset, _cfg: &Config) -> Vec<Violation> {
@@ -101,21 +109,27 @@ pub fn validate_eqbd(dataset: &cimdecoder::CimDataset, _cfg: &Config) -> Vec<Vio
     v
 }
 
-pub fn validate_gl(dataset: &cimdecoder::CimDataset, _cfg: &Config) -> Vec<Violation> {
+fn validate_gl_local(dataset: &cimdecoder::CimDataset, _cfg: &Config) -> Vec<Violation> {
     let mut v = Vec::new();
     v.extend(generated_p61968_13_geographicallocation_ap_con_complex_shacl::validate_p61968_13_geographicallocation_ap_con_complex_shacl(dataset));
-    v.extend(generated_p61970_600_2_geographicallocation_ap_con_complex_implicit_crossprofile_shacl::validate_p61970_600_2_geographicallocation_ap_con_complex_implicit_crossprofile_shacl(dataset));
     v.extend(generated_p61970_600_2_geographicallocation_ap_con_simple_shacl::validate_p61970_600_2_geographicallocation_ap_con_simple_shacl(dataset));
     v
 }
 
-pub fn validate_op(dataset: &cimdecoder::CimDataset, _cfg: &Config) -> Vec<Violation> {
+fn validate_gl_crossprofile(dataset: &cimdecoder::CimDataset, _cfg: &Config) -> Vec<Violation> {
+    generated_p61970_600_2_geographicallocation_ap_con_complex_implicit_crossprofile_shacl::validate_p61970_600_2_geographicallocation_ap_con_complex_implicit_crossprofile_shacl(dataset)
+}
+
+fn validate_op_local(dataset: &cimdecoder::CimDataset, _cfg: &Config) -> Vec<Violation> {
     let mut v = Vec::new();
     v.extend(generated_p61970_301_operation_ap_con_complex_shacl::validate_p61970_301_operation_ap_con_complex_shacl(dataset));
     v.extend(generated_p61970_452_operation_ap_con_complex_shacl::validate_p61970_452_operation_ap_con_complex_shacl(dataset));
-    v.extend(generated_p61970_600_2_operation_ap_con_complex_implicit_crossprofile_shacl::validate_p61970_600_2_operation_ap_con_complex_implicit_crossprofile_shacl(dataset));
     v.extend(generated_p61970_600_2_operation_ap_con_simple_shacl::validate_p61970_600_2_operation_ap_con_simple_shacl(dataset));
     v
+}
+
+fn validate_op_crossprofile(dataset: &cimdecoder::CimDataset, _cfg: &Config) -> Vec<Violation> {
+    generated_p61970_600_2_operation_ap_con_complex_implicit_crossprofile_shacl::validate_p61970_600_2_operation_ap_con_complex_implicit_crossprofile_shacl(dataset)
 }
 
 pub fn validate_sc(dataset: &cimdecoder::CimDataset, _cfg: &Config) -> Vec<Violation> {
@@ -139,65 +153,143 @@ pub fn validate_ssh(dataset: &cimdecoder::CimDataset, cfg: &Config) -> Vec<Viola
     v
 }
 
-pub fn validate_sv(dataset: &cimdecoder::CimDataset, _cfg: &Config) -> Vec<Violation> {
+fn validate_sv_local(dataset: &cimdecoder::CimDataset, _cfg: &Config) -> Vec<Violation> {
     let mut v = Vec::new();
     v.extend(generated_p61970_301_statevariables_ap_con_complex_shacl::validate_p61970_301_statevariables_ap_con_complex_shacl(dataset));
-    v.extend(generated_p61970_456_statevariables_ap_con_complex_explicit_crossprofile_shacl::validate_p61970_456_statevariables_ap_con_complex_explicit_crossprofile_shacl(dataset));
-    v.extend(generated_p61970_456_statevariables_ap_con_complex_implicit_crossprofile_shacl::validate_p61970_456_statevariables_ap_con_complex_implicit_crossprofile_shacl(dataset));
     v.extend(generated_p61970_600_2_statevariables_ap_con_simple_shacl::validate_p61970_600_2_statevariables_ap_con_simple_shacl(dataset));
     v
 }
 
-pub fn validate_tp(dataset: &cimdecoder::CimDataset, _cfg: &Config) -> Vec<Violation> {
+fn validate_sv_crossprofile(dataset: &cimdecoder::CimDataset, _cfg: &Config) -> Vec<Violation> {
     let mut v = Vec::new();
-    v.extend(generated_p61970_456_topology_ap_con_complex_implicit_crossprofile_shacl::validate_p61970_456_topology_ap_con_complex_implicit_crossprofile_shacl(dataset));
+    v.extend(generated_p61970_456_statevariables_ap_con_complex_explicit_crossprofile_shacl::validate_p61970_456_statevariables_ap_con_complex_explicit_crossprofile_shacl(dataset));
+    v.extend(generated_p61970_456_statevariables_ap_con_complex_implicit_crossprofile_shacl::validate_p61970_456_statevariables_ap_con_complex_implicit_crossprofile_shacl(dataset));
+    v
+}
+
+fn validate_tp_local(dataset: &cimdecoder::CimDataset, _cfg: &Config) -> Vec<Violation> {
+    let mut v = Vec::new();
     v.extend(generated_p61970_456_topology_ap_con_complex_shacl::validate_p61970_456_topology_ap_con_complex_shacl(dataset));
     v.extend(generated_p61970_600_2_topology_ap_con_simple_shacl::validate_p61970_600_2_topology_ap_con_simple_shacl(dataset));
     v
 }
 
-pub fn validate_generated(dataset: &cimdecoder::CimDataset, cfg: &Config) -> Vec<Violation> {
+fn validate_tp_crossprofile(dataset: &cimdecoder::CimDataset, _cfg: &Config) -> Vec<Violation> {
+    generated_p61970_456_topology_ap_con_complex_implicit_crossprofile_shacl::validate_p61970_456_topology_ap_con_complex_implicit_crossprofile_shacl(dataset)
+}
+
+// ── public two-phase API ───────────────────────────────────────────────────
+
+/// Phase 1 — header: validate FullModel/DifferenceModel rules for a single file's dataset.
+pub fn validate_header(dataset: &cimdecoder::CimDataset, _cfg: &Config) -> Vec<Violation> {
+    generated_p61970_552_header_ap_con_simple_shacl::validate_p61970_552_header_ap_con_simple_shacl(dataset)
+}
+
+/// Phase 1 — per-profile SHACL: run local (non-crossprofile) generated SHACL rules for one profile.
+///
+/// Pass the single-file dataset for the profile and the combined config (solved/not_solved
+/// must reflect the full set of files, not just this file). If `cfg.profiles` is non-empty
+/// and does not include `profile`, returns an empty vec.
+///
+/// Call `sparql::validate_profile_local` separately if SPARQL rules are also needed.
+pub fn validate_profile_local(dataset: &cimdecoder::CimDataset, profile: &str, cfg: &Config) -> Vec<Violation> {
+    if !cfg.profiles.is_empty() && !cfg.profiles.iter().any(|p| p == profile) {
+        return Vec::new();
+    }
+    match profile {
+        "DL"   => validate_dl_local(dataset, cfg),
+        "DY"   => validate_dy_local(dataset, cfg),
+        "EQ"   => validate_eq(dataset, cfg),
+        "EQBD" => validate_eqbd(dataset, cfg),
+        "GL"   => validate_gl_local(dataset, cfg),
+        "OP"   => validate_op_local(dataset, cfg),
+        "SC"   => validate_sc(dataset, cfg),
+        "SSH"  => validate_ssh(dataset, cfg),
+        "SV"   => validate_sv_local(dataset, cfg),
+        "TP"   => validate_tp_local(dataset, cfg),
+        _      => Vec::new(),
+    }
+}
+
+/// Phase 2 — crossprofile: run crossprofile SHACL + cross-profile SPARQL on the merged dataset.
+pub fn validate_crossprofile(dataset: &cimdecoder::CimDataset, cfg: &Config) -> Vec<Violation> {
+    let has = |p: &str| cfg.profiles.is_empty() || cfg.profiles.iter().any(|x| x == p);
+
     let mut v = Vec::new();
-    v.extend(generated_p61970_552_header_ap_con_simple_shacl::validate_p61970_552_header_ap_con_simple_shacl(dataset));
-    if cfg.profiles.is_empty() || cfg.profiles.iter().any(|p| p == "DL") {
-        v.extend(validate_dl(dataset, cfg));
-    }
-    if cfg.profiles.is_empty() || cfg.profiles.iter().any(|p| p == "DY") {
-        v.extend(validate_dy(dataset, cfg));
-    }
-    if cfg.profiles.is_empty() || cfg.profiles.iter().any(|p| p == "EQ") {
-        v.extend(validate_eq(dataset, cfg));
-    }
-    if cfg.profiles.is_empty() || cfg.profiles.iter().any(|p| p == "EQBD") {
-        v.extend(validate_eqbd(dataset, cfg));
-    }
-    if cfg.profiles.is_empty() || cfg.profiles.iter().any(|p| p == "GL") {
-        v.extend(validate_gl(dataset, cfg));
-    }
-    if cfg.profiles.is_empty() || cfg.profiles.iter().any(|p| p == "OP") {
-        v.extend(validate_op(dataset, cfg));
-    }
-    if cfg.profiles.is_empty() || cfg.profiles.iter().any(|p| p == "SC") {
-        v.extend(validate_sc(dataset, cfg));
-    }
-    if cfg.profiles.is_empty() || cfg.profiles.iter().any(|p| p == "SSH") {
-        v.extend(validate_ssh(dataset, cfg));
-    }
-    if cfg.profiles.is_empty() || cfg.profiles.iter().any(|p| p == "SV") {
-        v.extend(validate_sv(dataset, cfg));
-    }
-    if cfg.profiles.is_empty() || cfg.profiles.iter().any(|p| p == "TP") {
-        v.extend(validate_tp(dataset, cfg));
-    }
+    if has("DL") { v.extend(validate_dl_crossprofile(dataset, cfg)); }
+    if has("DY") { v.extend(validate_dy_crossprofile(dataset, cfg)); }
+    if has("GL") { v.extend(validate_gl_crossprofile(dataset, cfg)); }
+    if has("OP") { v.extend(validate_op_crossprofile(dataset, cfg)); }
+    if has("SV") { v.extend(validate_sv_crossprofile(dataset, cfg)); }
+    if has("TP") { v.extend(validate_tp_crossprofile(dataset, cfg)); }
+
+    v.extend(sparql::validate_crossprofile(dataset, cfg));
     v
 }
 
-pub fn validate(dataset: &cimdecoder::CimDataset, cfg: &Config) -> Vec<Violation> {
-    let mut v = validate_generated(dataset, cfg);
-    v.extend(sparql::validate(dataset, cfg));
+/// Build a combined `Config` by auto-detecting profiles/solved-state across all files,
+/// then applying explicit overrides (each `None`/default leaves the detected value).
+pub fn combined_config(
+    per_file: &[cimdecoder::CimDataset],
+    profiles: Option<Vec<String>>,
+    solved: Option<bool>,
+    common: bool,
+    quality: bool,
+    silenced_rules: Vec<String>,
+) -> Config {
+    let mut cfg = Config::default();
+    for ds in per_file {
+        let c = detect_config(ds);
+        for p in c.profiles {
+            if !cfg.profiles.contains(&p) {
+                cfg.profiles.push(p);
+            }
+        }
+        cfg.solved |= c.solved;
+    }
+    cfg.not_solved = !cfg.solved;
+    if let Some(p) = profiles { cfg.profiles = p; }
+    if let Some(s) = solved { cfg.solved = s; cfg.not_solved = !s; }
+    cfg.common = common;
+    cfg.quality = quality;
+    cfg.silenced_rules = silenced_rules;
+    cfg
+}
+
+/// Run full two-phase validation: per-file local checks (header + per-profile SHACL/SPARQL)
+/// in parallel, then crossprofile checks on the merged dataset, then apply rule silencing.
+///
+/// Consumes `per_file` since it merges them into one dataset for phase 2.
+pub fn validate_files(per_file: Vec<cimdecoder::CimDataset>, cfg: &Config) -> Vec<Violation> {
+    let mut violations: Vec<Violation> = std::thread::scope(|s| {
+        per_file
+            .iter()
+            .map(|ds| {
+                s.spawn(move || {
+                    let mut v = validate_header(ds, cfg);
+                    let file_cfg = detect_config(ds);
+                    for profile in &file_cfg.profiles {
+                        v.extend(validate_profile_local(ds, profile, cfg));
+                        v.extend(sparql::validate_profile_local(ds, profile, cfg));
+                    }
+                    v
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .flat_map(|h| h.join().expect("validation thread panicked"))
+            .collect()
+    });
+
+    let mut merged = cimdecoder::CimDataset::new();
+    for ds in per_file {
+        merged.merge(ds);
+    }
+    violations.extend(validate_crossprofile(&merged, cfg));
+
     if !cfg.silenced_rules.is_empty() {
         let silenced: HashSet<&str> = cfg.silenced_rules.iter().map(String::as_str).collect();
-        v.retain(|x| !silenced.contains(x.rule_id.as_str()));
+        violations.retain(|v| !silenced.contains(v.rule_id.as_str()));
     }
-    v
+    violations
 }

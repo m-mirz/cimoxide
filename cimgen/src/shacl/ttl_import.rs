@@ -740,6 +740,7 @@ fn extract_node_compound_constraints(
                 description: description.to_string(),
                 component: component.to_string(),
                 payload,
+                rule_id: id.to_string(),
             });
         }
     }
@@ -763,6 +764,7 @@ fn extract_branch_constraints(g: &Graph, bnode_id: &str) -> Vec<ConstraintInfo> 
             description: String::new(),
             component: component.to_string(),
             payload,
+            rule_id: String::new(),
         }
     };
 
@@ -830,6 +832,7 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
                 description: description.clone(),
                 component: "sh:RequiredConstraintComponent".to_string(),
                 payload,
+                rule_id: id.to_string(),
             });
         } else {
             // Separate MinCount and MaxCount constraints
@@ -844,6 +847,7 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
                     description: description.clone(),
                     component: "sh:MinCountConstraintComponent".to_string(),
                     payload,
+                    rule_id: id.to_string(),
                 });
             }
             if let Some(m) = max {
@@ -857,6 +861,7 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
                     description: description.clone(),
                     component: "sh:MaxCountConstraintComponent".to_string(),
                     payload,
+                    rule_id: id.to_string(),
                 });
             }
         }
@@ -871,6 +876,7 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
             description: description.clone(),
             component: "sh:MaxCountConstraintComponent".to_string(),
             payload,
+            rule_id: id.to_string(),
         });
     }
 
@@ -886,6 +892,7 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
             description: description.clone(),
             component: "sh:DatatypeConstraintComponent".to_string(),
             payload,
+            rule_id: id.to_string(),
         });
     }
 
@@ -901,6 +908,7 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
             description: description.clone(),
             component: "sh:NodeKindConstraintComponent".to_string(),
             payload,
+            rule_id: id.to_string(),
         });
     }
 
@@ -917,6 +925,7 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
                 description: description.clone(),
                 component: "sh:ClassConstraintComponent".to_string(),
                 payload,
+                rule_id: id.to_string(),
             });
         }
     }
@@ -937,6 +946,7 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
             description: description.clone(),
             component: "sh:InConstraintComponent".to_string(),
             payload,
+            rule_id: id.to_string(),
         });
     }
 
@@ -954,6 +964,7 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
                 description: description.clone(),
                 component: "sh:HasValueConstraintComponent".to_string(),
                 payload,
+                rule_id: id.to_string(),
             });
         }
     }
@@ -973,6 +984,7 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
             description: description.clone(),
             component: "sh:PatternConstraintComponent".to_string(),
             payload,
+            rule_id: id.to_string(),
         });
     }
 
@@ -988,6 +1000,7 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
             description: description.clone(),
             component: "sh:MinLengthConstraintComponent".to_string(),
             payload,
+            rule_id: id.to_string(),
         });
     }
     if let Some(n) = get_one(g, id, "sh:maxLength").and_then(|v| v.as_int()) {
@@ -1001,6 +1014,7 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
             description: description.clone(),
             component: "sh:MaxLengthConstraintComponent".to_string(),
             payload,
+            rule_id: id.to_string(),
         });
     }
 
@@ -1022,6 +1036,7 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
                 description: description.clone(),
                 component: comp.to_string(),
                 payload,
+                rule_id: id.to_string(),
             });
         }
     }
@@ -1050,6 +1065,7 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
                     description: description.clone(),
                     component: "sh:OrClassConstraintComponent".to_string(),
                     payload,
+                    rule_id: id.to_string(),
                 });
             }
             // sh:or with inverse path cardinality
@@ -1074,6 +1090,7 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
                     description: description.clone(),
                     component: "sh:OrInversePathConstraintComponent".to_string(),
                     payload,
+                    rule_id: id.to_string(),
                 });
             }
         }
@@ -1091,6 +1108,7 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
             description: description.clone(),
             component: "sh:LessThanConstraintComponent".to_string(),
             payload,
+            rule_id: id.to_string(),
         });
     }
 
@@ -1106,6 +1124,7 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
             description: description.clone(),
             component: "sh:LessThanOrEqualsConstraintComponent".to_string(),
             payload,
+            rule_id: id.to_string(),
         });
     }
 
@@ -1124,6 +1143,7 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
                         description: description.clone(),
                         component: "sh:NotClassConstraintComponent".to_string(),
                         payload,
+                        rule_id: id.to_string(),
                     });
                 }
             }
@@ -1141,6 +1161,7 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
             description: description.clone(),
             component: "sh:SPARQLConstraintComponent".to_string(),
             payload: HashMap::new(),
+            rule_id: id.to_string(),
         });
     }
 

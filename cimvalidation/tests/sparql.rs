@@ -1,7 +1,16 @@
 mod common;
 
 use cimvalidation::Config;
-use cimvalidation::sparql::validate;
+use cimvalidation::Violation;
+
+fn validate(ds: &cimdecoder::CimDataset, cfg: &Config) -> Vec<Violation> {
+    let mut v = Vec::new();
+    for profile in &cfg.profiles {
+        v.extend(cimvalidation::sparql::validate_profile_local(ds, profile, cfg));
+    }
+    v.extend(cimvalidation::sparql::validate_crossprofile(ds, cfg));
+    v
+}
 
 #[test]
 fn sparql_dl_001() {

@@ -346,7 +346,8 @@ fn gen_max_count_one(
     fn esc(s: &str) -> String { s.replace('\\', "\\\\").replace('"', "\\\"") }
     let message  = esc(&c.message);
     let severity = &c.severity;
-    let name_str = esc(&c.name);
+    let name_str    = esc(&c.name);
+    let rule_id_str = esc(&c.rule_id);
     let desc_str = esc(&c.description);
     let prop = &attr.id;
 
@@ -357,7 +358,7 @@ fn gen_max_count_one(
     writeln!(s, "        if dataset.entries[mrid].block.duplicate_fields.contains(\"{attr_id}\") {{").unwrap();
     writeln!(s, "            violations.push(Violation {{").unwrap();
     writeln!(s, "                object_id:   mrid.clone(),").unwrap();
-    writeln!(s, "                rule_id:     \"{name_str}\".to_string(),").unwrap();
+    writeln!(s, "                rule_id:     \"{rule_id_str}\".to_string(),").unwrap();
     writeln!(s, "                class:       \"{class_name}\".to_string(),").unwrap();
     writeln!(s, "                property:    \"{prop}\".to_string(),").unwrap();
     writeln!(s, "                message:     \"{message}\".to_string(),").unwrap();
@@ -585,7 +586,8 @@ fn gen_less_than(
     fn esc(x: &str) -> String { x.replace('\\', "\\\\").replace('"', "\\\"") }
     let message  = esc(&c.message);
     let severity = &c.severity;
-    let name_str = esc(&c.name);
+    let name_str    = esc(&c.name);
+    let rule_id_str = esc(&c.rule_id);
     let desc_str = esc(&c.description);
     let prop = &attr.id;
 
@@ -601,7 +603,7 @@ fn gen_less_than(
     writeln!(s, "        if !(({accessor}.unwrap() as f64) < {other_accessor}.unwrap() as f64) {{").unwrap();
     writeln!(s, "            violations.push(Violation {{").unwrap();
     writeln!(s, "                object_id:   mrid.clone(),").unwrap();
-    writeln!(s, "                rule_id:     \"{name_str}\".to_string(),").unwrap();
+    writeln!(s, "                rule_id:     \"{rule_id_str}\".to_string(),").unwrap();
     writeln!(s, "                class:       \"{class_name}\".to_string(),").unwrap();
     writeln!(s, "                property:    \"{prop}\".to_string(),").unwrap();
     writeln!(s, "                message:     \"{message}\".to_string(),").unwrap();
@@ -635,7 +637,8 @@ fn gen_not_class(
     fn esc(x: &str) -> String { x.replace('\\', "\\\\").replace('"', "\\\"") }
     let message  = esc(&c.message);
     let severity = &c.severity;
-    let name_str = esc(&c.name);
+    let name_str    = esc(&c.name);
+    let rule_id_str = esc(&c.rule_id);
     let desc_str = esc(&c.description);
     let prop = &attr.id;
 
@@ -654,7 +657,7 @@ fn gen_not_class(
     writeln!(s, "            if ref_entry.element.type_name() == \"{forbidden}\" {{").unwrap();
     writeln!(s, "                violations.push(Violation {{").unwrap();
     writeln!(s, "                    object_id:   mrid.clone(),").unwrap();
-    writeln!(s, "                    rule_id:     \"{name_str}\".to_string(),").unwrap();
+    writeln!(s, "                    rule_id:     \"{rule_id_str}\".to_string(),").unwrap();
     writeln!(s, "                    class:       \"{class_name}\".to_string(),").unwrap();
     writeln!(s, "                    property:    \"{prop}\".to_string(),").unwrap();
     writeln!(s, "                    message:     \"{message}\".to_string(),").unwrap();
@@ -734,7 +737,8 @@ fn gen_ref_type_check(
     fn esc(x: &str) -> String { x.replace('\\', "\\\\").replace('"', "\\\"") }
     let message  = esc(&c.message);
     let severity = &c.severity;
-    let name_str = esc(&c.name);
+    let name_str    = esc(&c.name);
+    let rule_id_str = esc(&c.rule_id);
     let desc_str = esc(&c.description);
     let prop = &attr.id;
     let allowed_str = allowed_types.iter()
@@ -761,7 +765,7 @@ fn gen_ref_type_check(
         writeln!(s, "                if !allowed.contains(&ref_entry.element.type_name()) {{").unwrap();
         writeln!(s, "                    violations.push(Violation {{").unwrap();
         writeln!(s, "                        object_id:   mrid.clone(),").unwrap();
-        writeln!(s, "                        rule_id:     \"{name_str}\".to_string(),").unwrap();
+        writeln!(s, "                        rule_id:     \"{rule_id_str}\".to_string(),").unwrap();
         writeln!(s, "                        class:       \"{class_name}\".to_string(),").unwrap();
         writeln!(s, "                        property:    \"{prop}\".to_string(),").unwrap();
         writeln!(s, "                        message:     \"{message}\".to_string(),").unwrap();
@@ -781,7 +785,7 @@ fn gen_ref_type_check(
         writeln!(s, "            if !allowed.contains(&ref_entry.element.type_name()) {{").unwrap();
         writeln!(s, "                violations.push(Violation {{").unwrap();
         writeln!(s, "                    object_id:   mrid.clone(),").unwrap();
-        writeln!(s, "                    rule_id:     \"{name_str}\".to_string(),").unwrap();
+        writeln!(s, "                    rule_id:     \"{rule_id_str}\".to_string(),").unwrap();
         writeln!(s, "                    class:       \"{class_name}\".to_string(),").unwrap();
         writeln!(s, "                    property:    \"{prop}\".to_string(),").unwrap();
         writeln!(s, "                    message:     \"{message}\".to_string(),").unwrap();
@@ -843,7 +847,8 @@ fn gen_slice_mrid_rdf_type_check(
     fn esc(x: &str) -> String { x.replace('\\', "\\\\").replace('"', "\\\"") }
     let message  = esc(&c.message);
     let severity = &c.severity;
-    let name_str = esc(&c.name);
+    let name_str    = esc(&c.name);
+    let rule_id_str = esc(&c.rule_id);
     let desc_str = esc(&c.description);
     let prop = &attr.id;
 
@@ -864,7 +869,7 @@ fn gen_slice_mrid_rdf_type_check(
     writeln!(s, "                if !allowed.contains(&ref_entry.element.type_name()) {{").unwrap();
     writeln!(s, "                    violations.push(Violation {{").unwrap();
     writeln!(s, "                        object_id:   mrid.clone(),").unwrap();
-    writeln!(s, "                        rule_id:     \"{name_str}\".to_string(),").unwrap();
+    writeln!(s, "                        rule_id:     \"{rule_id_str}\".to_string(),").unwrap();
     writeln!(s, "                        class:       \"{class_name}\".to_string(),").unwrap();
     writeln!(s, "                        property:    \"{prop}\".to_string(),").unwrap();
     writeln!(s, "                        message:     \"{message}\".to_string(),").unwrap();
@@ -901,7 +906,8 @@ fn gen_slice_string_in(
     fn esc(x: &str) -> String { x.replace('\\', "\\\\").replace('"', "\\\"") }
     let message  = esc(&c.message);
     let severity = &c.severity;
-    let name_str = esc(&c.name);
+    let name_str    = esc(&c.name);
+    let rule_id_str = esc(&c.rule_id);
     let desc_str = esc(&c.description);
     let prop = &attr.id;
 
@@ -920,7 +926,7 @@ fn gen_slice_string_in(
     writeln!(s, "            if !allowed.contains(&val.as_str()) {{").unwrap();
     writeln!(s, "                violations.push(Violation {{").unwrap();
     writeln!(s, "                    object_id:   mrid.clone(),").unwrap();
-    writeln!(s, "                    rule_id:     \"{name_str}\".to_string(),").unwrap();
+    writeln!(s, "                    rule_id:     \"{rule_id_str}\".to_string(),").unwrap();
     writeln!(s, "                    class:       \"{class_name}\".to_string(),").unwrap();
     writeln!(s, "                    property:    \"{prop}\".to_string(),").unwrap();
     writeln!(s, "                    message:     \"{message}\".to_string(),").unwrap();
@@ -999,7 +1005,8 @@ fn build_inverse_fn(
     fn esc(x: &str) -> String { x.replace('\\', "\\\\").replace('"', "\\\"") }
     let message  = esc(&c.message);
     let severity = &c.severity;
-    let name_str = esc(&c.name);
+    let name_str    = esc(&c.name);
+    let rule_id_str = esc(&c.rule_id);
     let desc_str = esc(&c.description);
     let prop     = &c.name;
 
@@ -1017,7 +1024,7 @@ fn build_inverse_fn(
     writeln!(s, "        if count {op} {threshold} {{").unwrap();
     writeln!(s, "            violations.push(Violation {{").unwrap();
     writeln!(s, "                object_id:   mrid.clone(),").unwrap();
-    writeln!(s, "                rule_id:     \"{name_str}\".to_string(),").unwrap();
+    writeln!(s, "                rule_id:     \"{rule_id_str}\".to_string(),").unwrap();
     writeln!(s, "                class:       \"{target_class}\".to_string(),").unwrap();
     writeln!(s, "                property:    \"{prop}\".to_string(),").unwrap();
     writeln!(s, "                message:     \"{message}\".to_string(),").unwrap();
@@ -1069,7 +1076,8 @@ fn build_fn(
     fn esc(s: &str) -> String { s.replace('\\', "\\\\").replace('"', "\\\"") }
     let message = esc(&c.message);
     let severity = &c.severity;
-    let name_str = esc(&c.name);
+    let name_str    = esc(&c.name);
+    let rule_id_str = esc(&c.rule_id);
     let desc_str = esc(&c.description);
 
     writeln!(s, "pub fn {fn_name}(dataset: &CimDataset) -> Vec<Violation> {{").unwrap();
@@ -1090,7 +1098,7 @@ fn build_fn(
     writeln!(s, "        if {condition} {{").unwrap();
     writeln!(s, "            violations.push(Violation {{").unwrap();
     writeln!(s, "                object_id:   mrid.clone(),").unwrap();
-    writeln!(s, "                rule_id:     \"{name_str}\".to_string(),").unwrap();
+    writeln!(s, "                rule_id:     \"{rule_id_str}\".to_string(),").unwrap();
     writeln!(s, "                class:       \"{class_name}\".to_string(),").unwrap();
     writeln!(s, "                property:    \"{prop}\".to_string(),").unwrap();
     writeln!(s, "                message:     \"{message}\".to_string(),").unwrap();
@@ -1272,7 +1280,7 @@ fn gen_xone_check(
     }
     if field_accessors.len() < 2 { return None; }
 
-    let (message, severity, name_str, desc_str, prop) = extract_violation_fields(c);
+    let (message, severity, name_str, rule_id_str, desc_str, prop) = extract_violation_fields(c);
     let mut s = String::new();
     write_fn_header(&mut s, fn_name, class_name);
     writeln!(s, "        let mut pass_count = 0usize;").unwrap();
@@ -1280,7 +1288,7 @@ fn gen_xone_check(
         writeln!(s, "        if {acc}.is_some() {{ pass_count += 1; }}").unwrap();
     }
     writeln!(s, "        if pass_count != 1 {{").unwrap();
-    write_violation(&mut s, class_name, &prop, &message, &severity, &name_str, &desc_str, "            ");
+    write_violation(&mut s, class_name, &prop, &message, &severity, &name_str, &rule_id_str, &desc_str, "            ");
     writeln!(s, "        }}").unwrap();
     write_fn_footer(&mut s);
     Some(s)
@@ -1316,7 +1324,7 @@ fn gen_or_compound_check(
     }
     if parsed.len() < 2 { return None; }
 
-    let (message, severity, name_str, desc_str, prop) = extract_violation_fields(c);
+    let (message, severity, name_str, rule_id_str, desc_str, prop) = extract_violation_fields(c);
     let all_fail = parsed.iter().map(|b| b.fail_cond.as_str()).collect::<Vec<_>>().join(" && ");
 
     let mut s = String::new();
@@ -1325,7 +1333,7 @@ fn gen_or_compound_check(
     writeln!(s, "    let mut violations = Vec::new();").unwrap();
     writeln!(s, "    for mrid in dataset.by_type.get(\"{class_name}\").into_iter().flatten() {{").unwrap();
     writeln!(s, "        if {all_fail} {{").unwrap();
-    write_violation(&mut s, class_name, &prop, &message, &severity, &name_str, &desc_str, "            ");
+    write_violation(&mut s, class_name, &prop, &message, &severity, &name_str, &rule_id_str, &desc_str, "            ");
     writeln!(s, "        }}").unwrap();
     writeln!(s, "    }}").unwrap();
     writeln!(s, "    violations").unwrap();
@@ -1401,7 +1409,7 @@ fn gen_and_compound_check(
     if fail_conds.is_empty() { return None; }
     let any_fail = fail_conds.join(" || ");
 
-    let (message, severity, name_str, desc_str, prop) = extract_violation_fields(c);
+    let (message, severity, name_str, rule_id_str, desc_str, prop) = extract_violation_fields(c);
 
     let mut s = String::new();
     writeln!(s, "pub fn {fn_name}(dataset: &CimDataset) -> Vec<Violation> {{").unwrap();
@@ -1416,7 +1424,7 @@ fn gen_and_compound_check(
         writeln!(s, "        }};").unwrap();
     }
     writeln!(s, "        if {any_fail} {{").unwrap();
-    write_violation(&mut s, class_name, &prop, &message, &severity, &name_str, &desc_str, "            ");
+    write_violation(&mut s, class_name, &prop, &message, &severity, &name_str, &rule_id_str, &desc_str, "            ");
     writeln!(s, "        }}").unwrap();
     writeln!(s, "    }}").unwrap();
     writeln!(s, "    violations").unwrap();
@@ -1504,14 +1512,15 @@ fn field_required_cond(attr: &CimAttribute, accessor: &str) -> Option<String> {
     }
 }
 
-fn extract_violation_fields(c: &ConstraintInfo) -> (String, String, String, String, String) {
+fn extract_violation_fields(c: &ConstraintInfo) -> (String, String, String, String, String, String) {
     fn esc(x: &str) -> String { x.replace('\\', "\\\\").replace('"', "\\\"") }
-    let message  = esc(&c.message);
-    let severity = if c.severity.is_empty() { "sh:Violation".to_string() } else { c.severity.clone() };
-    let name_str = esc(&c.name);
-    let desc_str = esc(&c.description);
-    let prop     = esc(&c.name);
-    (message, severity, name_str, desc_str, prop)
+    let message     = esc(&c.message);
+    let severity    = if c.severity.is_empty() { "sh:Violation".to_string() } else { c.severity.clone() };
+    let name_str    = esc(&c.name);
+    let rule_id_str = esc(&c.rule_id);
+    let desc_str    = esc(&c.description);
+    let prop        = esc(&c.name);
+    (message, severity, name_str, rule_id_str, desc_str, prop)
 }
 
 fn write_fn_header(s: &mut String, fn_name: &str, class_name: &str) {
@@ -1531,10 +1540,10 @@ fn write_fn_footer(s: &mut String) {
     writeln!(s, "}}").unwrap();
 }
 
-fn write_violation(s: &mut String, class_name: &str, prop: &str, message: &str, severity: &str, name_str: &str, desc_str: &str, indent: &str) {
+fn write_violation(s: &mut String, class_name: &str, prop: &str, message: &str, severity: &str, name_str: &str, rule_id_str: &str, desc_str: &str, indent: &str) {
     writeln!(s, "{indent}violations.push(Violation {{").unwrap();
     writeln!(s, "{indent}    object_id:   mrid.clone(),").unwrap();
-    writeln!(s, "{indent}    rule_id:     \"{name_str}\".to_string(),").unwrap();
+    writeln!(s, "{indent}    rule_id:     \"{rule_id_str}\".to_string(),").unwrap();
     writeln!(s, "{indent}    class:       \"{class_name}\".to_string(),").unwrap();
     writeln!(s, "{indent}    property:    \"{prop}\".to_string(),").unwrap();
     writeln!(s, "{indent}    message:     \"{message}\".to_string(),").unwrap();

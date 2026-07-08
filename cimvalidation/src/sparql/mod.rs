@@ -19,11 +19,63 @@ pub mod quality;
 use cimdecoder::CimDataset;
 use crate::{Config, Violation};
 
-pub fn validate(dataset: &CimDataset, cfg: &Config) -> Vec<Violation> {
-    let profile_selected = |p: &str| -> bool {
-        cfg.profiles.is_empty() || cfg.profiles.iter().any(|s| s == p)
-    };
+/// Per-profile SPARQL checks that only need data from a single profile's file.
+pub fn validate_profile_local(dataset: &CimDataset, profile: &str, cfg: &Config) -> Vec<Violation> {
+    let mut violations: Vec<Violation> = Vec::new();
 
+    match profile {
+        "EQ" => {
+            violations.extend(equipment::validate(dataset));
+            if cfg.not_solved {
+                violations.extend(equipment_not_solved_mas::validate(dataset));
+            }
+        }
+        "SSH" => {
+            violations.extend(ssh::validate(dataset));
+            if cfg.not_solved {
+                violations.extend(ssh_not_solved_mas::validate(dataset));
+            }
+        }
+        "TP" => {
+            if cfg.not_solved {
+                violations.extend(topology_not_solved_mas::validate(dataset));
+            }
+        }
+        "DY" => {
+            violations.extend(dynamics::validate(dataset));
+        }
+        "SC" => {
+            violations.extend(shortcircuit::validate(dataset));
+            if cfg.not_solved {
+                violations.extend(shortcircuit_not_solved_mas::validate(dataset));
+            }
+        }
+        "SV" => {
+            violations.extend(state_variables::validate(dataset));
+            if cfg.solved {
+                violations.extend(state_variables_solved_mas::validate(dataset));
+            }
+        }
+        "DL" => {
+            violations.extend(diagram_layout::validate(dataset));
+        }
+        "EQBD" => {
+            violations.extend(equipment_boundary::validate(dataset));
+            if let Some(ref eqbd_bv_ids) = cfg.eqbd_base_voltage_ids {
+                violations.extend(quality::check_base_voltage_in_eqbd_impl(dataset, eqbd_bv_ids));
+            }
+        }
+        "OP" => {
+            violations.extend(operation::validate(dataset));
+        }
+        _ => {}
+    }
+
+    violations
+}
+
+/// Cross-profile SPARQL checks that require the fully merged dataset.
+pub fn validate_crossprofile(dataset: &CimDataset, cfg: &Config) -> Vec<Violation> {
     let mut violations: Vec<Violation> = Vec::new();
 
     if cfg.common {
@@ -31,59 +83,6 @@ pub fn validate(dataset: &CimDataset, cfg: &Config) -> Vec<Violation> {
         if cfg.solved {
             violations.extend(common_solved_mas::validate(dataset));
         }
-    }
-
-    if profile_selected("EQ") {
-        violations.extend(equipment::validate(dataset));
-        if cfg.not_solved {
-            violations.extend(equipment_not_solved_mas::validate(dataset));
-        }
-    }
-
-    if profile_selected("SSH") {
-        violations.extend(ssh::validate(dataset));
-        if cfg.not_solved {
-            violations.extend(ssh_not_solved_mas::validate(dataset));
-        }
-    }
-
-    if profile_selected("TP") {
-        if cfg.not_solved {
-            violations.extend(topology_not_solved_mas::validate(dataset));
-        }
-    }
-
-    if profile_selected("DY") {
-        violations.extend(dynamics::validate(dataset));
-    }
-
-    if profile_selected("SC") {
-        violations.extend(shortcircuit::validate(dataset));
-        if cfg.not_solved {
-            violations.extend(shortcircuit_not_solved_mas::validate(dataset));
-        }
-    }
-
-    if profile_selected("SV") {
-        violations.extend(state_variables::validate(dataset));
-        if cfg.solved {
-            violations.extend(state_variables_solved_mas::validate(dataset));
-        }
-    }
-
-    if profile_selected("DL") {
-        violations.extend(diagram_layout::validate(dataset));
-    }
-
-    if profile_selected("EQBD") {
-        violations.extend(equipment_boundary::validate(dataset));
-        if let Some(ref eqbd_bv_ids) = cfg.eqbd_base_voltage_ids {
-            violations.extend(quality::check_base_voltage_in_eqbd_impl(dataset, eqbd_bv_ids));
-        }
-    }
-
-    if profile_selected("OP") {
-        violations.extend(operation::validate(dataset));
     }
 
     if cfg.quality {
