@@ -52,9 +52,24 @@ fn render_file(fr: &FileResults, spec: &CimSpecification) -> (String, usize, Vec
     let mut checks_body = String::new();
     let mut used_fn_names: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut collector = skip::SkipCollector::new();
+    // Tracks (path, component, name) triples -- deliberately *not* including the target
+    // class -- so `count` below reports one entry per distinct rule pattern regardless of
+    // how many concrete classes it's generated against, matching skip::SkipCollector's
+    // existing dedup key for the Skipped side (see its doc comment) and cimgo's
+    // `uniqueCheckPatterns`. `check_names`/`checks_body` above are unaffected by this: every
+    // class still gets its own generated function and orchestrator call, since Rust's static
+    // typing requires one function per concrete class.
+    let mut unique_patterns: std::collections::HashSet<(String, String, String)> = std::collections::HashSet::new();
 
     for node_shape in &fr.shapes {
         for target in &node_shape.targets {
+            if target.kind != "targetClass" && target.kind != "targetNode" {
+                // targetSubjectsOf/targetObjectsOf/sparqlTarget carry no concrete class
+                // to generate per-class checks against (see model.rs's TargetInfo::kind
+                // doc). Record why instead of silently generating nothing.
+                push_unsupported_target_skips(node_shape, &target.kind, &mut collector);
+                continue;
+            }
             let class_name = local_name(&target.value);
             if spec.types.get(&class_name).is_none() {
                 continue; // class not in schema (e.g. md:FullModel)
@@ -73,6 +88,7 @@ fn render_file(fr: &FileResults, spec: &CimSpecification) -> (String, usize, Vec
                         check_names.push(fn_name);
                         checks_body.push_str(&patched);
                         checks_body.push('\n');
+                        unique_patterns.insert((String::new(), node_constraint.component.clone(), node_constraint.name.clone()));
                     }
                     Err(reason) => {
                         collector.push(&class_name, "", &node_constraint.component, &node_constraint.name, &reason);
@@ -107,14 +123,15 @@ fn render_file(fr: &FileResults, spec: &CimSpecification) -> (String, usize, Vec
                         check_names.push(fn_name);
                         checks_body.push_str(&patched);
                         checks_body.push('\n');
+                        unique_patterns.insert((constraint.path.join("/"), constraint.component.clone(), constraint.name.clone()));
                     }
                 }
             }
         }
     }
 
-    let count = check_names.len();
-    if count == 0 {
+    let count = unique_patterns.len();
+    if check_names.is_empty() {
         return (String::new(), 0, collector.into_entries());
     }
 
@@ -150,6 +167,30 @@ fn render_file(fr: &FileResults, spec: &CimSpecification) -> (String, usize, Vec
     (s, count, collector.into_entries())
 }
 
+/// Records why every constraint under `node_shape` isn't code-generated when the shape's
+/// target is a kind with no resolvable concrete class (targetSubjectsOf/targetObjectsOf/
+/// sparqlTarget) -- otherwise these would resolve to zero checks with no skip entry at
+/// all, an invisible gap one level down from the shape being dropped entirely at parse
+/// time (which ttl_import.rs no longer does).
+fn push_unsupported_target_skips(node_shape: &ShapeInfo, kind: &str, collector: &mut skip::SkipCollector) {
+    let label = format!("({kind})");
+    let reason = match kind {
+        "targetSubjectsOf" | "targetObjectsOf" => {
+            "sh:targetSubjectsOf/targetObjectsOf target: property-based target, no concrete class to generate checks against".to_string()
+        }
+        _ => "sh:target SPARQLTarget: needs a hand-written implementation, not a SPARQL evaluator".to_string(),
+    };
+    for node_constraint in &node_shape.constraints {
+        collector.push(&label, "", &node_constraint.component, &node_constraint.name, &reason);
+    }
+    for prop_shape in &node_shape.properties {
+        let full_path_key = prop_shape.path.join("/");
+        for constraint in &prop_shape.constraints {
+            collector.push(&label, &full_path_key, &constraint.component, &constraint.name, &reason);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Per-constraint rendering
 // ---------------------------------------------------------------------------
@@ -166,6 +207,15 @@ fn render_check(
     let path_seg = full_path[0].as_str();
     let attr_id = local_name(path_seg);
     let is_multi_seg = full_path.len() > 1;
+    // Full path, for skip-entry dedup only -- unlike path_seg (used for fn naming
+    // and multi-segment routing), this must distinguish constraints that share a
+    // sh:name and first path segment but diverge deeper in the path (e.g. two
+    // property shapes both named "...:containment", one checking
+    // Equipment.EquipmentContainer, the other Equipment.EquipmentContainer's own
+    // DCConverterUnit.Substation) -- otherwise they'd wrongly collapse into one
+    // skip entry, undercounting relative to the Generated-side dedup below (which
+    // already keys on the full constraint.path) and cimgo's equivalent PathKey.
+    let full_path_key = full_path.join("/");
 
     let comp = constraint.component.as_str();
 
@@ -188,12 +238,12 @@ fn render_check(
             return match gen_slice_mrid_rdf_type_check(&fn_name, class_name, spec, &attr_id, constraint) {
                 Ok((code, regex)) => (Some(code), regex),
                 Err(reason) => {
-                    collector.push(class_name, path_seg, comp, &constraint.name, &reason);
+                    collector.push(class_name, &full_path_key, comp, &constraint.name, &reason);
                     (None, None)
                 }
             };
         }
-        collector.push(class_name, path_seg, comp, &constraint.name, "multi-segment path not supported");
+        collector.push(class_name, &full_path_key, comp, &constraint.name, "multi-segment path not supported");
         return (None, None);
     }
 
@@ -204,7 +254,7 @@ fn render_check(
         return match gen_inverse_count(&fn_name, class_name, forward_pred, spec, constraint) {
             Ok((code, regex)) => (Some(code), regex),
             Err(reason) => {
-                collector.push(class_name, path_seg, comp, &constraint.name, &reason);
+                collector.push(class_name, &full_path_key, comp, &constraint.name, &reason);
                 (None, None)
             }
         };
@@ -212,17 +262,17 @@ fn render_check(
 
     match comp {
         "sh:NodeKindConstraintComponent" => {
-            collector.push(class_name, path_seg, comp, &constraint.name,
+            collector.push(class_name, &full_path_key, comp, &constraint.name,
                 "sh:NodeKindConstraintComponent structurally satisfied by Rust type system");
             return (None, None);
         }
         "sh:SPARQLConstraintComponent" => {
-            collector.push(class_name, path_seg, comp, &constraint.name,
-                "sh:SPARQLConstraintComponent: no SPARQL evaluator");
+            collector.push(class_name, &full_path_key, comp, &constraint.name,
+                "sh:SPARQLConstraintComponent: needs a hand-written implementation, not a SPARQL evaluator");
             return (None, None);
         }
         "sh:OrInversePathConstraintComponent" => {
-            collector.push(class_name, path_seg, comp, &constraint.name,
+            collector.push(class_name, &full_path_key, comp, &constraint.name,
                 "sh:OrInversePathConstraintComponent structurally satisfied");
             return (None, None);
         }
@@ -232,13 +282,13 @@ fn render_check(
     let (accessor_prefix, attr) = match find_attr_in_hierarchy(spec, class_name, &attr_id) {
         Some(pair) => pair,
         None => {
-            collector.push(class_name, path_seg, comp, &constraint.name,
+            collector.push(class_name, &full_path_key, comp, &constraint.name,
                 &format!("attribute {} not found in hierarchy", attr_id));
             return (None, None);
         }
     };
     if !attr.is_association_used {
-        collector.push(class_name, path_seg, comp, &constraint.name, "unused association");
+        collector.push(class_name, &full_path_key, comp, &constraint.name, "unused association");
         return (None, None);
     }
 
@@ -296,7 +346,7 @@ fn render_check(
     match result {
         Ok((code, regex)) => (Some(code), regex),
         Err(reason) => {
-            collector.push(class_name, path_seg, comp, &constraint.name, &reason);
+            collector.push(class_name, &full_path_key, comp, &constraint.name, &reason);
             (None, None)
         }
     }

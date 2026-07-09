@@ -661,6 +661,50 @@ fn build_node_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
         }
     }
 
+    // sh:targetSubjectsOf / sh:targetObjectsOf target every subject/object of a given
+    // predicate rather than a class or fixed node. Like sh:targetNode, codegen has no
+    // concrete class to generate checks against, but the shape (and its nested
+    // sh:sparql constraints) must still survive so the report/skip pipeline sees it
+    // instead of the whole shape silently vanishing (see e.g.
+    // 61970-600-2_IdentifiedObjectCommon_AP-Con-Complex-SHACL.ttl, where every shape
+    // uses sh:targetSubjectsOf).
+    for (pred, kind) in [
+        ("sh:targetSubjectsOf", "targetSubjectsOf"),
+        ("sh:targetObjectsOf", "targetObjectsOf"),
+    ] {
+        for v in get_all(g, id, pred) {
+            if let Some(iri) = v.as_iri() {
+                let key = format!("{kind}:{iri}");
+                if seen_targets.insert(key) {
+                    targets.push(TargetInfo {
+                        kind: kind.to_string(),
+                        value: iri.to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    // sh:target [ a sh:SPARQLTarget ; sh:select "..." ] — a custom target defined by a
+    // SPARQL query, given as a blank node. There's no SPARQL evaluator in this codebase
+    // (see the analogous sh:sparql *constraint* handling below) so the target set can't
+    // actually be resolved, but the shape must still survive parsing rather than being
+    // dropped outright (see e.g. 61970-301_Equipment-AP-Con-Complex-SHACL.ttl's
+    // equ:PowerTransformer-twoWinding).
+    for v in get_all(g, id, "sh:target") {
+        if let Some(bnode_id) = v.as_iri() {
+            let is_sparql_target = get_all(g, bnode_id, RDF_TYPE)
+                .iter()
+                .any(|t| t.as_iri() == Some("sh:SPARQLTarget"));
+            if is_sparql_target && seen_targets.insert(bnode_id.to_string()) {
+                targets.push(TargetInfo {
+                    kind: "sparqlTarget".to_string(),
+                    value: bnode_id.to_string(),
+                });
+            }
+        }
+    }
+
     if targets.is_empty() {
         return None; // Skip shapes with no recognised target
     }

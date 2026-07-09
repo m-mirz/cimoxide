@@ -8,7 +8,12 @@ pub fn simplify(results: &mut Vec<FileResults>) -> Vec<(String, Vec<skip::SkipEn
     for fr in results.iter_mut() {
         let mut collector = skip::SkipCollector::new();
         for shape in &mut fr.shapes {
+            // Only targetClass/targetNode carry an actual class-like name; the newer
+            // targetSubjectsOf/targetObjectsOf/sparqlTarget kinds hold a predicate IRI or
+            // blank node id (see model.rs's TargetInfo::kind doc), which would otherwise
+            // show up as a bogus "class" label on skip entries below.
             let class_names: Vec<String> = shape.targets.iter()
+                .filter(|t| t.kind == "targetClass" || t.kind == "targetNode")
                 .map(|t| local_name(&t.value))
                 .filter(|n| !n.is_empty())
                 .collect();

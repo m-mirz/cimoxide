@@ -60,9 +60,16 @@ pub struct ConstraintInfo {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct TargetInfo {
-    /// "targetClass", "targetImplicitClass", or "targetNode".
+    /// "targetClass", "targetNode", "targetSubjectsOf", "targetObjectsOf", or
+    /// "sparqlTarget". Only "targetClass"/"targetNode" resolve to a concrete class for
+    /// codegen (see codegen.rs's kind filter in render_file); the others carry no
+    /// resolvable class and are recorded so the shape survives parsing instead of being
+    /// dropped, with codegen recording an explicit skip entry for them instead.
     pub kind: String,
-    /// Simplified IRI of the target (e.g. "cim:ACLineSegment").
+    /// For "targetClass"/"targetNode": simplified IRI of the target (e.g.
+    /// "cim:ACLineSegment"). For "targetSubjectsOf"/"targetObjectsOf": the predicate
+    /// IRI. For "sparqlTarget": the blank node id of the `sh:target [a sh:SPARQLTarget;
+    /// ..]` object (not a resolvable value on its own).
     pub value: String,
 }
 

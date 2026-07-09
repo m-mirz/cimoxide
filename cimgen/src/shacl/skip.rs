@@ -164,11 +164,25 @@ static SKIP_CATEGORIES: &[SkipCategory] = &[
         section: "cannot_be_conducted",
         match_fn: |e| e.reason.starts_with("slice-mrid"),
     },
-    // SPARQL
+    // SPARQL — sh:sparql constraints and sh:target SPARQLTarget targets both require
+    // evaluating an arbitrary SPARQL query at runtime; there's no SPARQL evaluator in
+    // this codebase, so both are resolved the same way as everything under
+    // cimvalidation/src/sparql/: a hand-written Rust implementation, not a general
+    // evaluator.
     SkipCategory {
-        label: "SPARQL constraints (no evaluator)",
+        label: "SPARQL-derived constraint/target (needs a hand-written implementation, not a SPARQL evaluator)",
         section: "sparql",
-        match_fn: |e| e.reason.contains("SPARQLConstraint"),
+        match_fn: |e| e.reason.contains("needs a hand-written implementation"),
+    },
+    // Unsupported SHACL target mechanism (shape recognized, but no concrete class to
+    // generate checks against -- see ttl_import.rs's build_node_shape and
+    // codegen.rs's push_unsupported_target_skips). Unlike SPARQLTarget above, this one
+    // needs no SPARQL evaluator at all -- targetSubjectsOf/targetObjectsOf are plain
+    // graph-predicate lookups, just not yet implemented in codegen.rs's per-class model.
+    SkipCategory {
+        label: "sh:targetSubjectsOf / sh:targetObjectsOf (property-based target, not implemented)",
+        section: "unsupported_target",
+        match_fn: |e| e.reason.contains("targetSubjectsOf/targetObjectsOf target"),
     },
     // Other
     SkipCategory {
@@ -215,12 +229,20 @@ pub fn print_file_summary(file_name: &str, checks: usize, entries: &[SkipEntry])
     }
 }
 
+/// The "sparql" section's total isn't the same number as the SPARQL Check Coverage table's
+/// TTL Total, even though both are "how much SPARQL is there" counts: this one is every
+/// distinct (property, component, sh:name) skip entry, deduped per TTL file (a fresh
+/// SkipCollector per render_file call) and *not* split on "|" for compound sh:name values --
+/// so a repeated constraint pattern across profile-variant files, or a shape whose sh:name
+/// bundles several conformance rules, is undercounted relative to ttl_report.rs's
+/// sh:name-based, per-profile-group-deduped count.
 pub fn print_global_summary(counts: &HashMap<&str, usize>) {
     let sections = [
         ("Simplified (type-system guarantees)", "simplified"),
         ("Skipped", "skipped"),
         ("Cannot be conducted", "cannot_be_conducted"),
-        ("SPARQL (not in README)", "sparql"),
+        ("SPARQL (see SPARQL Check Coverage below -- not directly comparable, see print_global_summary's doc comment)", "sparql"),
+        ("Unsupported SHACL target mechanism", "unsupported_target"),
         ("Other", "other"),
     ];
     for (title, key) in &sections {

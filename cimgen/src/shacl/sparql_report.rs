@@ -1,15 +1,22 @@
-// Static call-graph analysis over `cimvalidation/src/sparql/*.rs`, counting distinct
-// `rule_id`s reachable from each profile group's `validate()` entry point(s). Used by
-// `cimgen --rule-report` to regenerate README.md's "SPARQL Check Coverage" table numbers
-// instead of hand-maintaining them.
+// Static call-graph analysis over `cimvalidation/src/sparql/*.rs`, collecting every distinct
+// `name` (sh:name, e.g. "C:452:EQ:SynchronousMachine:aggregate") reachable from each profile
+// group's `validate()` entry point(s). Used by `cimgen --rule-report`, combined in
+// ttl_report.rs with the SPARQL constraint shapes actually defined in the CGMES SHACL TTL
+// files, to regenerate README.md's "SPARQL Check Coverage" table instead of hand-maintaining
+// it.
 //
-// A plain "which functions does validate() call" count is not enough: some functions emit
-// different rule_ids per branch, some emit the same rule_id from multiple branches (one
-// check), some checks are reused across files (e.g. ssh_not_solved_mas.rs calling
-// ssh::check_*), and prof10.rs dispatches through a shared `prof10_violation(rule_id, ...)`
-// constructor rather than constructing `Violation` directly. This module resolves the call
-// graph (including qualified `module::fn` calls) and extracts rule_id string literals from
-// both direct `Violation { rule_id: "...", .. }` literals and calls to such constructors.
+// Matching is done on `Violation.name` rather than `rule_id`: sh:name is a plain string with
+// no namespace to normalize, unlike the SHACL shape IRI backing `rule_id`, whose prefix can
+// legitimately differ between the TTL file's own declaration and however the importer
+// canonicalizes it.
+//
+// A plain scan for `Violation { name: "...", .. }` literals is not enough: some functions
+// emit different names per branch, some checks are reused across files (e.g.
+// ssh_not_solved_mas.rs calling ssh::check_*), and prof10.rs dispatches through a shared
+// `prof10_violation(rule_id, name, ...)` constructor rather than constructing `Violation`
+// directly. This module resolves the call graph (including qualified `module::fn` calls) and
+// extracts name string literals from both direct `Violation { name: "...", .. }` literals and
+// calls to such constructors.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -38,16 +45,19 @@ const GROUPS: &[(&str, &[FileEntry])] = &[
         ("shortcircuit", &["validate"]),
         ("shortcircuit_not_solved_mas", &["validate"]),
     ]),
+    // C:600 conformance (prof10) is folded in here rather than given its own row: like
+    // Common/AllProfiles, it's a cross-cutting rule that doesn't belong to a single
+    // profile, and prof10.rs::validate() is already reached transitively from
+    // common.rs's call graph on the Go side, so both tools' README tables can share one
+    // "Common / AllProfiles" row without any extra call-graph surgery.
     ("Common / AllProfiles", &[
         ("common", &["validate"]),
         ("common_solved_mas", &["validate"]),
+        ("prof10", &["validate"]),
     ]),
-    ("Others (TP, DL, OP)", &[
-        ("topology_not_solved_mas", &["validate"]),
-        ("diagram_layout", &["validate"]),
-        ("operation", &["validate"]),
-    ]),
-    ("C:600 conformance", &[("prof10", &["validate"])]),
+    ("Topology (TP)", &[("topology_not_solved_mas", &["validate"])]),
+    ("DiagramLayout (DL)", &[("diagram_layout", &["validate"])]),
+    ("Operation (OP)", &[("operation", &["validate"])]),
     // Not part of the SPARQL Check Coverage table, but reported the same way since these
     // checks now carry real rule_ids too. check_base_voltage_in_eqbd_impl is invoked
     // directly from cimvalidation::sparql::validate_profile_local ("EQBD" arm), not through
@@ -58,24 +68,34 @@ const GROUPS: &[(&str, &[FileEntry])] = &[
 struct Ctx {
     known_files: HashSet<String>,
     fns: HashMap<(String, String), ItemFn>,
-    /// (file, fn) -> index of the parameter whose literal argument becomes `rule_id` when
-    /// this function is used as a shared Violation constructor (e.g. prof10.rs's
+    /// (file, fn) -> index of the parameter whose literal argument becomes `name` when this
+    /// function is used as a shared Violation constructor (e.g. prof10.rs's
     /// `prof10_violation`).
     constructors: HashMap<(String, String), usize>,
-    /// file -> rule_id literals found inside that file's `macro_rules!` definitions.
-    macro_rule_ids: HashMap<String, Vec<String>>,
+    /// file -> name literals found inside that file's `macro_rules!` definitions.
+    macro_names: HashMap<String, Vec<String>>,
 }
 
 pub struct GroupReport {
     pub label: &'static str,
-    /// Number of distinct "leaf" check functions reachable from the group's entry points —
-    /// this is the metric README's table historically counted (one row per check function,
-    /// not per rule_id: a function that emits several rule_ids from different branches is
-    /// still one check).
-    pub check_count: usize,
-    /// Every distinct rule_id string reachable from the group's entry points — informational,
-    /// for `--verbose` output and debugging, not the headline number.
-    pub rule_ids: Vec<String>,
+    /// Every distinct sh:name string reachable from the group's entry points. Combined in
+    /// ttl_report.rs with the SPARQL constraint shapes actually defined in the CGMES SHACL TTL
+    /// files to produce the Implemented/Total/Coverage figures in README's "SPARQL Check
+    /// Coverage" table.
+    pub names: Vec<String>,
+}
+
+/// Splits `s` on "|" and inserts each non-empty part into `out`. A single shape's sh:name can
+/// itself be a "|"-joined compound of several rule names when one SPARQL constraint enforces
+/// multiple named conformance rules at once (matching how ttl_report.rs splits the TTL's own
+/// compound sh:name); some hand-written checks copy such a compound name verbatim into one
+/// `Violation`.
+fn add_name(out: &mut HashSet<String>, s: &str) {
+    for part in s.split('|') {
+        if !part.is_empty() {
+            out.insert(part.to_string());
+        }
+    }
 }
 
 pub fn report(sparql_dir: &Path) -> Vec<GroupReport> {
@@ -88,134 +108,27 @@ pub fn report(sparql_dir: &Path) -> Vec<GroupReport> {
                 visited: HashSet::new(),
                 out: HashSet::new(),
                 current_file: String::new(),
+                current_locals: HashMap::new(),
             };
-            let mut leaf_visited: HashSet<(String, String)> = HashSet::new();
-            let mut leaves: HashSet<(String, String)> = HashSet::new();
             for (file_stem, entries) in *files {
                 for entry in *entries {
                     analyzer.visit_entry(file_stem, entry);
-                    collect_from_entry(&ctx, file_stem, entry, &mut leaf_visited, &mut leaves);
                 }
-                if let Some(ids) = ctx.macro_rule_ids.get(*file_stem) {
-                    analyzer.out.extend(ids.iter().cloned());
+                if let Some(ns) = ctx.macro_names.get(*file_stem) {
+                    for n in ns { add_name(&mut analyzer.out, n); }
                 }
             }
-            let mut rule_ids: Vec<String> = analyzer.out.into_iter().collect();
-            rule_ids.sort();
-            GroupReport { label, check_count: leaves.len(), rule_ids }
+            let mut names: Vec<String> = analyzer.out.into_iter().collect();
+            names.sort();
+            GroupReport { label, names }
         })
         .collect()
-}
-
-/// Distinct, resolvable call targets found anywhere in `f`'s body (one hop; does not recurse
-/// into the callees' own bodies). Constructor-helper calls are excluded — they contribute a
-/// rule_id, not a separate check. Used only for entry points (`validate`, and overrides like
-/// `check_base_voltage_in_eqbd_impl`), which can have an arbitrary shape (a sequence of
-/// `v.extend(check_x(dataset))` calls, a bare tail call, or — for a leaf entry point — no
-/// further sparql-module calls at all).
-fn direct_targets(ctx: &Ctx, file: &str, f: &ItemFn) -> Vec<(String, String)> {
-    let mut seen = HashSet::new();
-    let mut out = Vec::new();
-    scan_shallow(
-        &f.block,
-        &mut |_s| {},
-        &mut |func_expr| {
-            let Some(key) = resolve_callee(func_expr, &ctx.known_files, file) else { return };
-            if ctx.constructors.contains_key(&key) { return; }
-            if ctx.fns.contains_key(&key) && seen.insert(key.clone()) { out.push(key); }
-        },
-        &mut |_mac| {},
-    );
-    out
-}
-
-/// Entry-point variant of `collect_leaf_checks`: an entry point (`validate`, or an override
-/// like `check_base_voltage_in_eqbd_impl`) is itself the check if it has no further
-/// sparql-module call targets, otherwise it's unwound into its direct targets like any other
-/// dispatcher.
-fn collect_from_entry(
-    ctx: &Ctx,
-    file: &str,
-    fn_name: &str,
-    visited: &mut HashSet<(String, String)>,
-    leaves: &mut HashSet<(String, String)>,
-) {
-    let key = (file.to_string(), fn_name.to_string());
-    if visited.contains(&key) { return; }
-    visited.insert(key.clone());
-    let Some(f) = ctx.fns.get(&key) else { return };
-    let targets = direct_targets(ctx, file, f);
-    if targets.is_empty() {
-        leaves.insert(key);
-    } else {
-        for (tf, tn) in targets { collect_leaf_checks(ctx, &tf, &tn, visited, leaves); }
-    }
-}
-
-/// Recognize the one dispatcher shape actually used in this codebase (prof10.rs's
-/// `check_prof10_model`): a function whose *entire* body is nothing but a single match
-/// forwarding each arm to another function, with no violation-construction of its own. This is
-/// deliberately narrow — unlike an ordinary check function that happens to call a shared local
-/// helper as part of its logic (several SSH checks do this), a pure dispatcher has no other
-/// statements and no direct `Violation` evidence, so misclassifying an ordinary check as a
-/// dispatcher would require it to *coincidentally* have this exact single-statement shape too.
-/// Arms that don't resolve to a known sparql-module function (e.g. a `_ => Vec::new()`
-/// fallback) are ignored rather than disqualifying the whole function.
-fn pure_dispatcher_targets(ctx: &Ctx, file: &str, f: &ItemFn) -> Option<Vec<(String, String)>> {
-    let [Stmt::Expr(tail, None)] = f.block.stmts.as_slice() else { return None };
-    let Expr::Match(m) = unwrap_paren(tail) else { return None };
-
-    let has_struct = std::cell::Cell::new(false);
-    scan_shallow(&f.block, &mut |s| { if is_violation_struct(s) { has_struct.set(true); } }, &mut |_| {}, &mut |_| {});
-    if has_struct.get() { return None; }
-
-    let mut seen = HashSet::new();
-    let mut targets = Vec::new();
-    for arm in &m.arms {
-        if let Expr::Call(c) = unwrap_paren(&arm.body) {
-            if let Some(key) = resolve_callee(&c.func, &ctx.known_files, file) {
-                if ctx.fns.contains_key(&key) && seen.insert(key.clone()) { targets.push(key); }
-            }
-        }
-    }
-    if targets.is_empty() { None } else { Some(targets) }
-}
-
-fn unwrap_paren(e: &Expr) -> &Expr {
-    match e {
-        Expr::Paren(p) => unwrap_paren(&p.expr),
-        _ => e,
-    }
-}
-
-/// Recursively unwind pure dispatchers into the set of distinct leaf check functions they
-/// forward to, across the whole call graph reachable from `(file, fn_name)`. Every other
-/// function directly reached from a group's entry point(s) counts as one check, matching how
-/// README's table has historically been maintained (one row per check function, not per
-/// rule_id — a function emitting several rule_ids from different branches is still one check).
-fn collect_leaf_checks(
-    ctx: &Ctx,
-    file: &str,
-    fn_name: &str,
-    visited: &mut HashSet<(String, String)>,
-    leaves: &mut HashSet<(String, String)>,
-) {
-    let key = (file.to_string(), fn_name.to_string());
-    if visited.contains(&key) { return; }
-    visited.insert(key.clone());
-    let Some(f) = ctx.fns.get(&key) else { return };
-    match pure_dispatcher_targets(ctx, file, f) {
-        Some(targets) => {
-            for (tf, tn) in targets { collect_leaf_checks(ctx, &tf, &tn, visited, leaves); }
-        }
-        None => { leaves.insert(key); }
-    }
 }
 
 fn build_ctx(dir: &Path) -> Ctx {
     let mut known_files = HashSet::new();
     let mut fns: HashMap<(String, String), ItemFn> = HashMap::new();
-    let mut macro_rule_ids: HashMap<String, Vec<String>> = HashMap::new();
+    let mut macro_names: HashMap<String, Vec<String>> = HashMap::new();
 
     let entries = fs::read_dir(dir).unwrap_or_else(|e| {
         panic!("cannot read sparql directory {}: {e}", dir.display());
@@ -242,13 +155,13 @@ fn build_ctx(dir: &Path) -> Ctx {
                 // `macro_rules!` bodies contain `$`-metavariable/repetition syntax that isn't
                 // valid standalone Rust, so syn can't structurally parse (or expand) them the
                 // way we walk ordinary function bodies. Fall back to a raw token scan for the
-                // `rule_id: "literal"` pattern anywhere in the macro body (see e.g.
+                // `name: "literal"` pattern anywhere in the macro body (see e.g.
                 // dynamics.rs's `check_exc_smd_type!` and topology_not_solved_mas.rs's
                 // `check_switch_retained!`, which construct Violations this way).
                 Item::Macro(m) => {
-                    let ids = extract_rule_ids_from_macro(&m.mac);
-                    if !ids.is_empty() {
-                        macro_rule_ids.entry(stem.clone()).or_default().extend(ids);
+                    let ns = extract_names_from_macro(&m.mac);
+                    if !ns.is_empty() {
+                        macro_names.entry(stem.clone()).or_default().extend(ns);
                     }
                 }
                 _ => {}
@@ -263,13 +176,13 @@ fn build_ctx(dir: &Path) -> Ctx {
         }
     }
 
-    Ctx { known_files, fns, constructors, macro_rule_ids }
+    Ctx { known_files, fns, constructors, macro_names }
 }
 
 /// Flatten a token stream (recursing into every delimited group) into a linear sequence, then
-/// scan for the token pattern `rule_id : "literal"`. Not a macro expander — just enough to find
-/// rule_id literals hiding inside `macro_rules!` template bodies that syn can't parse as exprs.
-fn extract_rule_ids_from_macro(mac: &syn::Macro) -> Vec<String> {
+/// scan for the token pattern `name : "literal"`. Not a macro expander — just enough to find
+/// name literals hiding inside `macro_rules!` template bodies that syn can't parse as exprs.
+fn extract_names_from_macro(mac: &syn::Macro) -> Vec<String> {
     fn flatten(ts: proc_macro2::TokenStream, out: &mut Vec<proc_macro2::TokenTree>) {
         for tt in ts {
             if let proc_macro2::TokenTree::Group(g) = &tt {
@@ -284,9 +197,9 @@ fn extract_rule_ids_from_macro(mac: &syn::Macro) -> Vec<String> {
 
     let mut out = Vec::new();
     for i in 0..flat.len().saturating_sub(2) {
-        let is_rule_id = matches!(&flat[i], proc_macro2::TokenTree::Ident(id) if id == "rule_id");
+        let is_name = matches!(&flat[i], proc_macro2::TokenTree::Ident(id) if id == "name");
         let is_colon = matches!(&flat[i + 1], proc_macro2::TokenTree::Punct(p) if p.as_char() == ':');
-        if !is_rule_id || !is_colon { continue; }
+        if !is_name || !is_colon { continue; }
         if let proc_macro2::TokenTree::Literal(lit) = &flat[i + 2] {
             if let Ok(Lit::Str(s)) = syn::parse_str::<Lit>(&lit.to_string()) {
                 let v = s.value();
@@ -297,9 +210,9 @@ fn extract_rule_ids_from_macro(mac: &syn::Macro) -> Vec<String> {
     out
 }
 
-/// Detect functions like prof10.rs's `prof10_violation(id, rule_id, msg, severity)` whose
-/// body directly returns `Violation { rule_id: rule_id, .. }` — i.e. the field is populated
-/// straight from a parameter, so the literal has to be read from each call site instead.
+/// Detect functions like prof10.rs's `prof10_violation(id, rule_id, name, severity)` whose
+/// body directly returns `Violation { name: name, .. }` — i.e. the field is populated straight
+/// from a parameter, so the literal has to be read from each call site instead.
 fn detect_constructor(f: &ItemFn) -> Option<usize> {
     let params: Vec<String> = f.sig.inputs.iter().filter_map(|a| match a {
         FnArg::Typed(pt) => match pt.pat.as_ref() {
@@ -320,7 +233,7 @@ fn detect_constructor(f: &ItemFn) -> Option<usize> {
 
     for fv in &s.fields {
         if let Member::Named(ident) = &fv.member {
-            if ident == "rule_id" {
+            if ident == "name" {
                 if let Some(pname) = as_ident_ref(&fv.expr) {
                     return params.iter().position(|p| *p == pname);
                 }
@@ -361,6 +274,150 @@ fn as_ident_ref(e: &Expr) -> Option<String> {
     }
 }
 
+/// Collects every string literal ever bound to a local variable anywhere in `block`
+/// (including inside nested closures), whether via simple binding/reassignment (`let x =
+/// "lit";` / `x = "lit";`) or tuple-destructuring from an if/else-if chain of literal tuples
+/// (`let (rule_id, ..) = if cond { (lit1, ..) } else if .. { (lit2, ..) } else { .. };` — see
+/// ssh_not_solved_mas.rs's check_cs_converter_target_angle_applicability and ssh.rs's
+/// check_vs_converter_p_pcc_control). Used as a fallback in `Analyzer::handle_struct` when a
+/// `Violation { rule_id: x, .. }` field's value is a plain local variable rather than a
+/// literal or a known constructor call. Doesn't attempt real control-flow analysis: every
+/// literal ever bound to a name, from any branch, is recorded as a candidate.
+fn local_var_literals(block: &syn::Block) -> HashMap<String, Vec<String>> {
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    walk_block_for_locals(block, &mut out);
+    out
+}
+
+fn walk_block_for_locals(block: &syn::Block, out: &mut HashMap<String, Vec<String>>) {
+    for stmt in &block.stmts {
+        match stmt {
+            Stmt::Local(local) => {
+                if let Some(init) = &local.init {
+                    // `let x: T = ..;` / `let (a, b): (T1, T2) = ..;` wrap the real pattern in
+                    // Pat::Type; unwrap it so Ident/Tuple handling below doesn't need to know
+                    // about type annotations.
+                    let pat = match &local.pat {
+                        Pat::Type(pt) => pt.pat.as_ref(),
+                        p => p,
+                    };
+                    match pat {
+                        Pat::Ident(pi) => {
+                            if let Some(lit) = as_str_literal(&init.expr) {
+                                out.entry(pi.ident.to_string()).or_default().push(lit);
+                            }
+                        }
+                        Pat::Tuple(_) => record_tuple_literals(pat, &init.expr, out),
+                        _ => {}
+                    }
+                    walk_expr_for_locals(&init.expr, out);
+                }
+            }
+            Stmt::Expr(e, _) => walk_expr_for_locals(e, out),
+            _ => {}
+        }
+    }
+}
+
+fn record_tuple_literals(pat: &Pat, init: &Expr, out: &mut HashMap<String, Vec<String>>) {
+    let Pat::Tuple(pt) = pat else { return };
+    let mut tuples: Vec<Vec<Option<String>>> = Vec::new();
+    collect_literal_tuples(init, &mut tuples);
+    for tuple in &tuples {
+        for (p, lit) in pt.elems.iter().zip(tuple.iter()) {
+            if let (Pat::Ident(pi), Some(l)) = (p, lit) {
+                out.entry(pi.ident.to_string()).or_default().push(l.clone());
+            }
+        }
+    }
+}
+
+/// Resolves `init` down to every literal tuple it can evaluate to, recursing through
+/// (possibly chained) if/else branches and block tail expressions -- but not through anything
+/// that isn't a direct tuple-or-branch shape (e.g. a diverging `else { continue; }` branch
+/// contributes nothing, rather than erroring).
+fn collect_literal_tuples(e: &Expr, out: &mut Vec<Vec<Option<String>>>) {
+    match e {
+        Expr::Tuple(t) => out.push(t.elems.iter().map(as_str_literal).collect()),
+        Expr::If(i) => {
+            if let Some(tail) = block_tail_expr(&i.then_branch) { collect_literal_tuples(tail, out); }
+            if let Some((_, else_e)) = &i.else_branch { collect_literal_tuples(else_e, out); }
+        }
+        Expr::Block(b) => { if let Some(tail) = block_tail_expr(&b.block) { collect_literal_tuples(tail, out); } }
+        Expr::Paren(p) => collect_literal_tuples(&p.expr, out),
+        _ => {}
+    }
+}
+
+fn block_tail_expr(b: &syn::Block) -> Option<&Expr> {
+    match b.stmts.last()? {
+        Stmt::Expr(e, None) => Some(e),
+        _ => None,
+    }
+}
+
+/// Handles `for (val, prop, rule_id, name) in [(..), (..), ..] { .. }` (see dynamics.rs's
+/// check_gov_hydro4_gain_points): a tuple pattern destructured from a literal array of
+/// tuples. Every element position that lines up with a literal string in every array entry is
+/// recorded under that position's identifier -- same "every literal, not just the one taken"
+/// approach as `collect_literal_tuples`.
+fn record_for_loop_literals(pat: &Pat, iter_expr: &Expr, out: &mut HashMap<String, Vec<String>>) {
+    let Pat::Tuple(pt) = pat else { return };
+    let arr = match iter_expr {
+        Expr::Array(a) => a,
+        Expr::Reference(r) => match r.expr.as_ref() { Expr::Array(a) => a, _ => return },
+        Expr::Paren(p) => return record_for_loop_literals(pat, &p.expr, out),
+        _ => return,
+    };
+    for elem in &arr.elems {
+        let Expr::Tuple(t) = elem else { continue };
+        let lits: Vec<Option<String>> = t.elems.iter().map(as_str_literal).collect();
+        for (p, lit) in pt.elems.iter().zip(lits.iter()) {
+            if let (Pat::Ident(pi), Some(l)) = (p, lit) {
+                out.entry(pi.ident.to_string()).or_default().push(l.clone());
+            }
+        }
+    }
+}
+
+fn walk_expr_for_locals(e: &Expr, out: &mut HashMap<String, Vec<String>>) {
+    match e {
+        Expr::Assign(a) => {
+            if let Some(name) = as_ident_ref(&a.left) {
+                if let Some(lit) = as_str_literal(&a.right) {
+                    out.entry(name).or_default().push(lit);
+                }
+            }
+            walk_expr_for_locals(&a.right, out);
+        }
+        Expr::Closure(c) => walk_expr_for_locals(&c.body, out),
+        Expr::Block(b) => walk_block_for_locals(&b.block, out),
+        Expr::If(i) => {
+            walk_block_for_locals(&i.then_branch, out);
+            if let Some((_, e2)) = &i.else_branch { walk_expr_for_locals(e2, out); }
+        }
+        Expr::Match(m) => { for arm in &m.arms { walk_expr_for_locals(&arm.body, out); } }
+        Expr::ForLoop(fl) => {
+            record_for_loop_literals(&fl.pat, &fl.expr, out);
+            walk_block_for_locals(&fl.body, out);
+        }
+        Expr::While(w) => walk_block_for_locals(&w.body, out),
+        Expr::Loop(lp) => walk_block_for_locals(&lp.body, out),
+        Expr::Call(c) => { for a in &c.args { walk_expr_for_locals(a, out); } }
+        Expr::MethodCall(mc) => {
+            walk_expr_for_locals(&mc.receiver, out);
+            for a in &mc.args { walk_expr_for_locals(a, out); }
+        }
+        Expr::Paren(p) => walk_expr_for_locals(&p.expr, out),
+        Expr::Reference(r) => walk_expr_for_locals(&r.expr, out),
+        Expr::Unary(u) => walk_expr_for_locals(&u.expr, out),
+        Expr::Try(t) => walk_expr_for_locals(&t.expr, out),
+        Expr::Cast(c) => walk_expr_for_locals(&c.expr, out),
+        Expr::Return(r) => { if let Some(e) = &r.expr { walk_expr_for_locals(e, out); } }
+        _ => {}
+    }
+}
+
 fn resolve_callee(func: &Expr, known_files: &HashSet<String>, current_file: &str) -> Option<(String, String)> {
     let Expr::Path(p) = func else { return None };
     let segs: Vec<String> = p.path.segments.iter().map(|s| s.ident.to_string()).collect();
@@ -373,8 +430,8 @@ fn resolve_callee(func: &Expr, known_files: &HashSet<String>, current_file: &str
 
 /// Recursively find every `Expr::Struct` literal, call-callee expression, and macro invocation
 /// in a function body, without following resolved calls into their callees' own bodies (that's
-/// what the full `Analyzer` walk below is for). Shared by the constructor-detection pre-pass,
-/// `shallow_produces`, and `direct_targets`.
+/// what the full `Analyzer` walk below is for). Used by the constructor-detection pre-pass
+/// (`detect_constructor`).
 fn scan_shallow(
     block: &syn::Block,
     on_struct: &mut dyn FnMut(&ExprStruct),
@@ -449,6 +506,10 @@ struct Analyzer<'a> {
     visited: HashSet<(String, String)>,
     out: HashSet<String>,
     current_file: String,
+    /// Local variable -> every literal ever bound to it, for the top-level function currently
+    /// being visited (see `local_var_literals`). Recomputed and saved/restored around each
+    /// `visit_entry` call, since the binding is only valid within that one function's body.
+    current_locals: HashMap<String, Vec<String>>,
 }
 
 impl<'a> Analyzer<'a> {
@@ -457,10 +518,12 @@ impl<'a> Analyzer<'a> {
         if self.visited.contains(&key) { return; }
         self.visited.insert(key.clone());
         if let Some(f) = self.ctx.fns.get(&key) {
-            let prev = std::mem::replace(&mut self.current_file, file.to_string());
+            let prev_file = std::mem::replace(&mut self.current_file, file.to_string());
+            let prev_locals = std::mem::replace(&mut self.current_locals, local_var_literals(&f.block));
             let block = f.block.clone();
             self.walk_block(&block);
-            self.current_file = prev;
+            self.current_file = prev_file;
+            self.current_locals = prev_locals;
         }
     }
 
@@ -520,6 +583,11 @@ impl<'a> Analyzer<'a> {
                     }
                 }
             }
+            // A local closure (e.g. sparql_ssh_notsolvedmas.go's Go analogue,
+            // check_tap_changer_step_integer's `report` closure here) is just as reachable as
+            // any inline block -- it has its own body but is invoked from within the same
+            // function, so its Violation literals belong to this function's rule_ids too.
+            Expr::Closure(c) => self.walk_expr(&c.body),
             _ => {}
         }
     }
@@ -528,9 +596,19 @@ impl<'a> Analyzer<'a> {
         if !is_violation_struct(s) { return; }
         for fv in &s.fields {
             if let Member::Named(ident) = &fv.member {
-                if ident == "rule_id" {
+                if ident == "name" {
                     if let Some(lit) = as_str_literal(&fv.expr) {
-                        if !lit.is_empty() { self.out.insert(lit); }
+                        if !lit.is_empty() { add_name(&mut self.out, &lit); }
+                    } else if let Some(name) = as_ident_ref(&fv.expr) {
+                        // Not a literal -- the field's value is a plain local variable (e.g.
+                        // check_cs_converter_target_angle_applicability's `rule_name`, bound via
+                        // `let (rule_id, rule_name, ..) = if for_alpha { (...) } else { (...) };`).
+                        // Every literal ever bound to that name anywhere in the enclosing
+                        // top-level function is a candidate, since we don't track which branch
+                        // runs.
+                        if let Some(lits) = self.current_locals.get(&name) {
+                            for l in lits.clone() { add_name(&mut self.out, &l); }
+                        }
                     }
                 }
             }
@@ -542,7 +620,16 @@ impl<'a> Analyzer<'a> {
         if let Some(&idx) = self.ctx.constructors.get(&(target_file.clone(), fn_name.clone())) {
             if let Some(arg) = c.args.iter().nth(idx) {
                 if let Some(lit) = as_str_literal(arg) {
-                    if !lit.is_empty() { self.out.insert(lit); }
+                    if !lit.is_empty() { add_name(&mut self.out, &lit); }
+                } else if let Some(name) = as_ident_ref(arg) {
+                    // Constructor called with a local variable rather than a literal (e.g.
+                    // dynamics.rs's check_gov_hydro4_gain_points calling `dyn_viol(mrid,
+                    // rule_id, name, ..)` where `name` comes from destructuring a `for (..,
+                    // name) in [(..), ..]` array-of-tuples loop) -- same current_locals
+                    // fallback as handle_struct.
+                    if let Some(lits) = self.current_locals.get(&name) {
+                        for l in lits.clone() { add_name(&mut self.out, &l); }
+                    }
                 }
             }
             return;

@@ -173,10 +173,14 @@ fn run_shacl(
     }
 
     let total_skipped: usize = file_skips.iter().map(|f| f.skips.len()).sum();
-    eprintln!(
-        "shacl codegen: {} files, {} checks, {} skipped → {out_dir}",
-        results.len(), total_checks, total_skipped
-    );
+    if !rule_report {
+        // Under --rule-report, this exact total (and more, broken down by profile) is
+        // already in the "Generated SHACL Rules by Profile" table below.
+        eprintln!(
+            "shacl codegen: {} files, {} checks, {} skipped → {out_dir}",
+            results.len(), total_checks, total_skipped
+        );
+    }
 
     if skip_report {
         // Per-file totals line for every file (checks + skips), parseable for comparison.
@@ -207,21 +211,97 @@ fn run_shacl(
         eprintln!("\n########## README rule-count report ##########");
         shacl::skip::print_global_summary(&global_counts);
 
-        // B2 — SPARQL Check Coverage counts (hand-written side): distinct rule_ids reachable
-        // per profile group, from a call-graph analysis of cimvalidation/src/sparql/*.rs.
+        // B1.5 — Generated SHACL rule counts (checks + skips), grouped by profile the same
+        // way as the SPARQL Check Coverage table below, using the already-computed
+        // per-file check_count/skips from file_skips.
+        let mut group_checks: std::collections::HashMap<&'static str, usize> = std::collections::HashMap::new();
+        let mut group_skipped: std::collections::HashMap<&'static str, usize> = std::collections::HashMap::new();
+        for fi in &file_skips {
+            let group = shacl::ttl_report::ttl_group_label(&fi.file_name);
+            *group_checks.entry(group).or_insert(0) += fi.check_count;
+            *group_skipped.entry(group).or_insert(0) += fi.skips.len();
+        }
+        eprintln!("\n=== Generated SHACL Rules by Profile ===");
+        eprintln!("  {:32}  {:>9}  {:>7}  {:>6}", "Profile Group", "Generated", "Skipped", "Total");
+        let (mut gen_total, mut skip_total) = (0usize, 0usize);
+        for g in shacl::ttl_report::TTL_GROUP_LABEL_ORDER {
+            let checks = group_checks.get(g).copied().unwrap_or(0);
+            let skipped = group_skipped.get(g).copied().unwrap_or(0);
+            gen_total += checks;
+            skip_total += skipped;
+            eprintln!("  {:32}  {:9}  {:7}  {:6}", g, checks, skipped, checks + skipped);
+        }
+        eprintln!("  -----");
+        eprintln!("  {:32}  {:9}  {:7}  {:6}", "Total", gen_total, skip_total, gen_total + skip_total);
+
+        // Per-file breakdown, for diffing directly against cimgo's -rule-report output (same
+        // PERFILE\t<name>\t<checks>\t<skipped>\t<total> line format on both sides): `grep
+        // PERFILE cimoxide.log | sort > a; grep PERFILE cimgo.log | sort > b; diff a b` finds
+        // every field-level difference, or to compare just the per-file Total (the meaningful
+        // cross-tool check -- Generated vs Skipped legitimately differs by codegen capability
+        // even when Total agrees): `awk -F'\t' '{print $2, $5}' a | diff - <(awk -F'\t' '{print
+        // $2, $5}' b)`. No external script needed either way.
+        eprintln!("\n=== Per-File Rule Counts (grep PERFILE to diff against cimgo) ===");
+        let mut per_file: Vec<&shacl::skip::FileSkipInfo> = file_skips.iter().collect();
+        per_file.sort_by(|a, b| a.file_name.cmp(&b.file_name));
+        for fi in &per_file {
+            eprintln!(
+                "PERFILE\t{}\t{}\t{}\t{}",
+                fi.file_name,
+                fi.check_count,
+                fi.skips.len(),
+                fi.check_count + fi.skips.len()
+            );
+        }
+
+        // B2 — SPARQL Check Coverage (hand-written side): distinct sh:names reachable per
+        // profile group, from a call-graph analysis of cimvalidation/src/sparql/*.rs, matched
+        // against the SPARQL constraint shapes actually defined in the CGMES SHACL TTL files
+        // (already parsed into `results` above) to produce a real Implemented/Total/Coverage
+        // figure instead of counting hand-written check functions.
         let groups = shacl::sparql_report::report(std::path::Path::new(DEFAULT_SPARQL_DIR));
-        eprintln!("\n=== SPARQL Check Coverage (cimvalidation/src/sparql) ===");
-        let mut total = 0usize;
-        for g in &groups {
-            eprintln!("  {:5}  {}  ({} rule_ids)", g.check_count, g.label, g.rule_ids.len());
-            total += g.check_count;
-            if verbose {
-                for id in &g.rule_ids {
-                    eprintln!("           {id}");
+        let ttl = shacl::ttl_report::ttl_sparql_names(&results);
+        let rows = shacl::ttl_report::combine_coverage(&groups, &ttl);
+
+        eprintln!("\n=== SPARQL Check Coverage (cimvalidation/src/sparql vs {glob}) ===");
+        eprintln!("  {:32}  {:>11}  {:>9}  {:>8}", "Profile Group", "Implemented", "TTL Total", "Coverage");
+        let (mut total_impl, mut total_ttl) = (0usize, 0usize);
+        for r in &rows {
+            match r.ttl_total {
+                Some(ttl_total) => {
+                    total_impl += r.implemented;
+                    total_ttl += ttl_total;
+                    let coverage = 100.0 * r.implemented as f64 / ttl_total as f64;
+                    eprintln!("  {:32}  {:11}  {:9}  {:7.1}%", r.label, r.implemented, ttl_total, coverage);
+                }
+                None => {
+                    eprintln!("  {:32}  {:11}  {:>9}  {:>8}", r.label, r.implemented, "n/a", "n/a");
                 }
             }
         }
-        eprintln!("  -----\n  {:5}  total", total);
+        eprintln!("  -----");
+        if total_ttl > 0 {
+            let coverage = 100.0 * total_impl as f64 / total_ttl as f64;
+            eprintln!("  {:32}  {:11}  {:9}  {:7.1}%", "Total", total_impl, total_ttl, coverage);
+        }
+
+        for r in &rows {
+            if r.missing.is_empty() { continue; }
+            eprintln!("\n  Not yet implemented in {}:", r.label);
+            for m in &r.missing {
+                eprintln!("    {m}");
+            }
+        }
+
+        if verbose {
+            eprintln!("\n=== Implemented names (cimvalidation/src/sparql) ===");
+            for g in &groups {
+                eprintln!("  {} ({} names)", g.label, g.names.len());
+                for n in &g.names {
+                    eprintln!("    {n}");
+                }
+            }
+        }
     }
 }
 
