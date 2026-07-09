@@ -1,4 +1,4 @@
-"""Tests for the validate() method on CimDataset."""
+"""Tests for validate_files()."""
 
 import os
 import cimoxide
@@ -11,14 +11,12 @@ def td(name: str) -> str:
 
 
 def test_validate_returns_list():
-    ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
-    result = ds.validate()
+    result = cimoxide.validate_files([td("test_shacl_EQ_001.xml")])
     assert isinstance(result, list)
 
 
 def test_validate_violations_have_expected_fields():
-    ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
-    violations = ds.validate()
+    violations = cimoxide.validate_files([td("test_shacl_EQ_001.xml")])
     for v in violations:
         assert isinstance(v.object_id, str)
         assert isinstance(v.rule_id, str)
@@ -31,8 +29,7 @@ def test_validate_violations_have_expected_fields():
 
 
 def test_validate_repr():
-    ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
-    violations = ds.validate()
+    violations = cimoxide.validate_files([td("test_shacl_EQ_001.xml")])
     if violations:
         r = repr(violations[0])
         assert isinstance(r, str)
@@ -40,37 +37,34 @@ def test_validate_repr():
 
 
 def test_validate_violation_type():
-    ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
-    violations = ds.validate()
+    violations = cimoxide.validate_files([td("test_shacl_EQ_001.xml")])
     for v in violations:
         assert isinstance(v, cimoxide.Violation)
 
 
 def test_validate_profile_filter():
-    ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
-    all_v = ds.validate()
-    eq_v = ds.validate(profiles=["EQ"])
+    path = td("test_shacl_EQ_001.xml")
+    all_v = cimoxide.validate_files([path])
+    eq_v = cimoxide.validate_files([path], profiles=["EQ"])
     # Filtering to EQ only should not produce more violations
     assert len(eq_v) <= len(all_v) + len(all_v)  # sanity: both are finite
 
 
 def test_validate_silence_removes_rule():
-    ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
-    violations = ds.validate()
+    path = td("test_shacl_EQ_001.xml")
+    violations = cimoxide.validate_files([path])
     if not violations:
         return  # nothing to silence
     rule_to_silence = violations[0].rule_id
-    silenced = ds.validate(silence=[rule_to_silence])
+    silenced = cimoxide.validate_files([path], silence=[rule_to_silence])
     assert all(v.rule_id != rule_to_silence for v in silenced)
 
 
 def test_validate_quality_flag():
-    ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
-    result = ds.validate(quality=True)
+    result = cimoxide.validate_files([td("test_shacl_EQ_001.xml")], quality=True)
     assert isinstance(result, list)
 
 
 def test_validate_common_flag():
-    ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
-    result = ds.validate(common=True)
+    result = cimoxide.validate_files([td("test_shacl_EQ_001.xml")], common=True)
     assert isinstance(result, list)

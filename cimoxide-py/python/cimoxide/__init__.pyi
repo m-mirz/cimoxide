@@ -103,37 +103,41 @@ class CimDataset:
         """
         ...
 
-    def validate(
-        self,
-        profiles: list[str] | None = None,
-        solved: bool | None = None,
-        common: bool = False,
-        quality: bool = False,
-        silence: list[str] | None = None,
-    ) -> list[Violation]:
-        """Run validation checks and return a list of violations.
-
-        Profiles and the solved/not-solved flag are auto-detected from
-        FullModel headers unless overridden.
-
-        Parameters
-        ----------
-        profiles:
-            Profile short names to check, e.g. ``["EQ", "SSH"]``.
-            ``None`` (default) uses auto-detected profiles.
-        solved:
-            ``True`` forces solved-case checks; ``False`` forces
-            not-solved checks; ``None`` (default) auto-detects.
-        common:
-            Enable cross-profile common checks (default ``False``).
-        quality:
-            Enable CIMdesk modeling quality checks (default ``False``).
-        silence:
-            Rule IDs to suppress, e.g. ``["Rule-EQ-1"]``.
-        """
-        ...
-
 
 def decode_file(path: str) -> CimDataset: ...
 def decode_files(paths: list[str]) -> CimDataset: ...
 def decode_str(content: str) -> CimDataset: ...
+
+def validate_files(
+    paths: list[str],
+    profiles: list[str] | None = None,
+    solved: bool | None = None,
+    common: bool = False,
+    quality: bool = False,
+    silence: list[str] | None = None,
+) -> list[Violation]:
+    """Validate a set of CGMES profile files using two-phase validation.
+
+    Phase 1 runs per-profile (local) SHACL and SPARQL rules against each
+    file's individual dataset before merging. Phase 2 runs cross-profile
+    rules on the merged dataset. This is the recommended entry point for
+    validation.
+
+    Parameters
+    ----------
+    paths:
+        Paths to the CGMES RDF/XML files to validate.
+    profiles:
+        Profile short names to check, e.g. ``["EQ", "SSH"]``.
+        ``None`` (default) uses auto-detected profiles.
+    solved:
+        ``True`` forces solved-case checks; ``False`` forces
+        not-solved checks; ``None`` (default) auto-detects.
+    common:
+        Enable cross-profile common checks (default ``False``).
+    quality:
+        Enable CIMdesk modeling quality checks (default ``False``).
+    silence:
+        Rule IDs to suppress, e.g. ``["Rule-EQ-1"]``.
+    """
+    ...

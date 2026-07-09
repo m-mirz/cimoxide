@@ -1,6 +1,18 @@
-from .cimoxide import PyCimDataset as CimDataset, PyCimDatasetIter, PyViolation as Violation
+from .cimoxide import (
+    PyCimDataset as CimDataset,
+    PyCimDatasetIter,
+    PyViolation as Violation,
+    validate_files,
+)
 
-__all__ = ["CimDataset", "Violation", "decode_file", "decode_files", "decode_str"]
+__all__ = [
+    "CimDataset",
+    "Violation",
+    "decode_file",
+    "decode_files",
+    "decode_str",
+    "validate_files",
+]
 
 
 def decode_file(path: str) -> CimDataset:
