@@ -97,8 +97,10 @@ name = "cimgen"
 version = "0.0.4"
 dependencies = [
  "glob",
+ "proc-macro2",
  "quick-xml",
  "sha2",
+ "syn",
 ]
 
 [[package]]

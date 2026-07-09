@@ -51,8 +51,8 @@ fn check_no_tap_changer_controls(dataset: &CimDataset) -> Vec<Violation> {
     }
     vec![Violation {
         object_id: "global".into(),
-        rule_id:   String::new(),
-        name:      String::new(),
+        rule_id:   "quality:PowerTransformer.noTapChangerControl".into(),
+        name:      "No TapChangerControls found".into(),
         class:     "PowerTransformer".into(),
         property:  "RegulatingControl".into(),
         message:   "No TapChangerControls are found. None of the PowerTransformers are used for voltage regulation.".into(),
@@ -68,8 +68,8 @@ fn check_no_regulating_controls(dataset: &CimDataset) -> Vec<Violation> {
     if has_rc || !has_equip { return Vec::new(); }
     vec![Violation {
         object_id: "global".into(),
-        rule_id:   String::new(),
-        name:      String::new(),
+        rule_id:   "quality:RegulatingControl.noRegulatingControl".into(),
+        name:      "No RegulatingControls found".into(),
         class:     "RegulatingControl".into(),
         property:  "rdf:type".into(),
         message:   "No RegulatingControls are found. None of the RegulatingCondEqs (SynchronousMachine, ShuntCompensator, StaticVarCompensator) are used for voltage regulation.".into(),
@@ -87,8 +87,8 @@ fn check_no_shunt_compensators(dataset: &CimDataset) -> Vec<Violation> {
     }
     vec![Violation {
         object_id: "global".into(),
-        rule_id:   String::new(),
-        name:      String::new(),
+        rule_id:   "quality:ShuntCompensator.notFound".into(),
+        name:      "No ShuntCompensator objects found".into(),
         class:     "ShuntCompensator".into(),
         property:  "rdf:type".into(),
         message:   "No ShuntCompensator objects (LinearShuntCompensator, NonlinearShuntCompensator) are found; at least one is expected.".into(),
@@ -121,8 +121,8 @@ fn check_substation_has_no_voltage_levels(dataset: &CimDataset) -> Vec<Violation
         if has_vl.contains(mrid) || has_cn.contains(mrid) { continue; }
         v.push(Violation {
             object_id: mrid.clone(),
-            rule_id:   String::new(),
-            name:      String::new(),
+            rule_id:   "quality:Substation.noVoltageLevel".into(),
+            name:      "Substation has no VoltageLevels".into(),
             class:     "Substation".into(),
             property:  "VoltageLevel".into(),
             message:   "The Substation has no child VoltageLevels and is not referenced by any instance.".into(),
@@ -157,8 +157,8 @@ fn check_control_area_has_no_children(dataset: &CimDataset) -> Vec<Violation> {
         if has_cagu.contains(mrid) || has_tf.contains(mrid) { continue; }
         v.push(Violation {
             object_id: mrid.clone(),
-            rule_id:   String::new(),
-            name:      String::new(),
+            rule_id:   "quality:ControlArea.noChildren".into(),
+            name:      "ControlArea has no children".into(),
             class:     "ControlArea".into(),
             property:  "ControlAreaGeneratingUnit".into(),
             message:   "The ControlArea has no child instances (no ControlAreaGeneratingUnits and no TieFlows reference it).".into(),
@@ -185,8 +185,8 @@ fn check_no_locations_for_conductors(dataset: &CimDataset) -> Vec<Violation> {
         if !covered.contains(mrid) {
             v.push(Violation {
                 object_id: mrid.clone(),
-                rule_id:   String::new(),
-                name:      String::new(),
+                rule_id:   "quality:Conductor.noLocation".into(),
+                name:      "No Location for ACLineSegment".into(),
                 class:     "ACLineSegment".into(),
                 property:  "Location".into(),
                 message:   "No Location is associated with this ACLineSegment.".into(),
@@ -199,8 +199,8 @@ fn check_no_locations_for_conductors(dataset: &CimDataset) -> Vec<Violation> {
         if !covered.contains(mrid) {
             v.push(Violation {
                 object_id: mrid.clone(),
-                rule_id:   String::new(),
-                name:      String::new(),
+                rule_id:   "quality:Conductor.noLocation".into(),
+                name:      "No Location for DCLineSegment".into(),
                 class:     "DCLineSegment".into(),
                 property:  "Location".into(),
                 message:   "No Location is associated with this DCLineSegment.".into(),
@@ -225,8 +225,8 @@ fn check_ac_line_segment_xr_ratio(dataset: &CimDataset) -> Vec<Violation> {
             if ratio > THRESHOLD {
                 v.push(Violation {
                     object_id: mrid.clone(),
-                    rule_id:   String::new(),
-                    name:      String::new(),
+                    rule_id:   "quality:ACLineSegment.xrRatioTooLarge".into(),
+                    name:      "ACLineSegment x/r ratio too large".into(),
                     class:     "ACLineSegment".into(),
                     property:  "ACLineSegment.x".into(),
                     message:   format!("ACLineSegment.x/ACLineSegment.r ratio ({:.4}) exceeds the threshold of {}.", ratio, THRESHOLD),
@@ -256,8 +256,8 @@ fn check_base_voltage_duplicate_nominal_voltage(dataset: &CimDataset) -> Vec<Vio
         for id in ids {
             v.push(Violation {
                 object_id: id.clone(),
-                rule_id:   String::new(),
-                name:      String::new(),
+                rule_id:   "quality:BaseVoltage.duplicateNominalVoltage".into(),
+                name:      "Duplicate BaseVoltage nominalVoltage".into(),
                 class:     "BaseVoltage".into(),
                 property:  "BaseVoltage.nominalVoltage".into(),
                 message:   format!("BaseVoltage.nominalVoltage ({:.4} kV) is shared by {} BaseVoltage instances.", voltage, ids.len()),
@@ -288,8 +288,8 @@ fn check_power_transformer_ends_same_nominal_voltage(dataset: &CimDataset) -> Ve
         if rated_us.iter().all(|&u| u == ref0) {
             v.push(Violation {
                 object_id: pt_id.clone(),
-                rule_id:   String::new(),
-                name:      String::new(),
+                rule_id:   "quality:PowerTransformer.endsSameNominalVoltage".into(),
+                name:      "PowerTransformer ends share nominalVoltage".into(),
                 class:     "PowerTransformer".into(),
                 property:  "PowerTransformerEnd.ratedU".into(),
                 message:   format!("All PowerTransformerEnds have the same ratedU ({:.4} kV); no voltage transformation occurs.", ref0),
@@ -317,8 +317,8 @@ fn check_connectivity_node_open_ended(dataset: &CimDataset) -> Vec<Violation> {
         if count.get(mrid).copied().unwrap_or(0) == 1 {
             v.push(Violation {
                 object_id: mrid.clone(),
-                rule_id:   String::new(),
-                name:      String::new(),
+                rule_id:   "quality:ConnectivityNode.openEnded".into(),
+                name:      "ConnectivityNode is open-ended".into(),
                 class:     "ConnectivityNode".into(),
                 property:  "Terminal".into(),
                 message:   "The ConnectivityNode is open-ended: only one Terminal is connected to it.".into(),
@@ -373,8 +373,8 @@ fn check_disconnector_cross_voltage_level(dataset: &CimDataset) -> Vec<Violation
         if vl_ids.len() > 1 {
             v.push(Violation {
                 object_id: mrid.clone(),
-                rule_id:   String::new(),
-                name:      String::new(),
+                rule_id:   "quality:Disconnector.crossVoltageLevel".into(),
+                name:      "Disconnector spans VoltageLevels".into(),
                 class:     "Disconnector".into(),
                 property:  "Terminal.ConnectivityNode".into(),
                 message:   "The two ConnectivityNodes the Disconnector connects are in different VoltageLevels.".into(),
@@ -438,8 +438,8 @@ fn check_conform_load_cross_container(dataset: &CimDataset) -> Vec<Violation> {
         if flagged {
             v.push(Violation {
                 object_id: mrid.clone(),
-                rule_id:   String::new(),
-                name:      String::new(),
+                rule_id:   "quality:ConformLoad.crossContainer".into(),
+                name:      "ConformLoad crosses EquipmentContainer".into(),
                 class:     "ConformLoad".into(),
                 property:  "EquipmentContainer".into(),
                 message:   "The ConformLoad and its connected TopologicalNodes are not contained by the same EquipmentContainer.".into(),
@@ -508,8 +508,8 @@ fn check_regulating_control_target_voltage_mismatch(dataset: &CimDataset) -> Vec
         if deviation < DEV_WARN { continue; }
         v.push(Violation {
             object_id: mrid.clone(),
-            rule_id:   String::new(),
-            name:      String::new(),
+            rule_id:   "quality:RegulatingControl.targetVoltageMismatch".into(),
+            name:      "RegulatingControl target voltage mismatch".into(),
             class:     "RegulatingControl".into(),
             property:  "RegulatingControl.targetValue".into(),
             message:   format!("RegulatingControl target voltage ({:.4} kV) deviates {:.1}% from the nominal voltage ({:.4} kV) of the regulated node.",

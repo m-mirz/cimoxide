@@ -10,6 +10,7 @@ const DEFAULT_OUTPUT: &str = "cimstructs/src";
 const DEFAULT_SHACL: &str =
     "application-profiles-library/CGMES/CurrentRelease/SHACL/*.ttl";
 const DEFAULT_SHACL_OUTPUT: &str = "cimvalidation/src";
+const DEFAULT_SPARQL_DIR: &str = "cimvalidation/src/sparql";
 const DEFAULT_PYTHON_STUBS_OUTPUT: &str = "cimoxide-py/python/cimoxide";
 
 fn main() {
@@ -21,6 +22,7 @@ fn main() {
     let mut python_stubs_output: Option<String> = Some(DEFAULT_PYTHON_STUBS_OUTPUT.to_string());
     let mut verbose = false;
     let mut skip_report = false;
+    let mut rule_report = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -47,6 +49,7 @@ fn main() {
             }
             "--verbose" | "-v" => verbose = true,
             "--skip-report" => skip_report = true,
+            "--rule-report" => rule_report = true,
             other => {
                 eprintln!("unknown argument: {other}");
                 std::process::exit(1);
@@ -89,7 +92,7 @@ fn main() {
     );
 
     if let (Some(glob), Some(out_dir)) = (shacl_glob, shacl_output) {
-        run_shacl(&spec, &glob, &out_dir, verbose, skip_report);
+        run_shacl(&spec, &glob, &out_dir, verbose, skip_report, rule_report);
     }
 
     if let Some(out_dir) = python_stubs_output {
@@ -109,6 +112,7 @@ fn run_shacl(
     out_dir: &str,
     verbose: bool,
     skip_report: bool,
+    rule_report: bool,
 ) {
     let pattern = glob::Pattern::new(glob).unwrap_or_else(|e| {
         eprintln!("invalid shacl glob pattern: {e}");
@@ -190,6 +194,34 @@ fn run_shacl(
             shacl::skip::accumulate_counts(&mut global_counts, &fi.skips);
         }
         shacl::skip::print_global_summary(&global_counts);
+    }
+
+    if rule_report {
+        // B1 — Skipped-constraints counts (generated SHACL side): same category totals as
+        // --skip-report, exposed without needing the verbose per-entry dump too.
+        let mut global_counts: std::collections::HashMap<&'static str, usize> =
+            std::collections::HashMap::new();
+        for fi in &file_skips {
+            shacl::skip::accumulate_counts(&mut global_counts, &fi.skips);
+        }
+        eprintln!("\n########## README rule-count report ##########");
+        shacl::skip::print_global_summary(&global_counts);
+
+        // B2 — SPARQL Check Coverage counts (hand-written side): distinct rule_ids reachable
+        // per profile group, from a call-graph analysis of cimvalidation/src/sparql/*.rs.
+        let groups = shacl::sparql_report::report(std::path::Path::new(DEFAULT_SPARQL_DIR));
+        eprintln!("\n=== SPARQL Check Coverage (cimvalidation/src/sparql) ===");
+        let mut total = 0usize;
+        for g in &groups {
+            eprintln!("  {:5}  {}  ({} rule_ids)", g.check_count, g.label, g.rule_ids.len());
+            total += g.check_count;
+            if verbose {
+                for id in &g.rule_ids {
+                    eprintln!("           {id}");
+                }
+            }
+        }
+        eprintln!("  -----\n  {:5}  total", total);
     }
 }
 
