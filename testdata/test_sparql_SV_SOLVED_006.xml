@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<rdf:RDF xmlns:cim="http://iec.ch/TC57/CIM100#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <!-- SvVoltage.v:limits, C:456 -->
+
+  <!-- OK: SvVoltage.v within [90, 110] -->
+  <cim:TopologicalNode rdf:ID="TN.OK"/>
+  <cim:Terminal rdf:ID="TERM.OK">
+    <cim:Terminal.TopologicalNode rdf:resource="#TN.OK" />
+  </cim:Terminal>
+  <cim:OperationalLimitSet rdf:ID="OLS.OK">
+    <cim:OperationalLimitSet.Terminal rdf:resource="#TERM.OK" />
+  </cim:OperationalLimitSet>
+  <cim:OperationalLimitType rdf:ID="OLT.OK.HIGH">
+    <cim:OperationalLimitType.direction rdf:resource="http://iec.ch/TC57/CIM100#OperationalLimitDirectionKind.high" />
+  </cim:OperationalLimitType>
+  <cim:OperationalLimitType rdf:ID="OLT.OK.LOW">
+    <cim:OperationalLimitType.direction rdf:resource="http://iec.ch/TC57/CIM100#OperationalLimitDirectionKind.low" />
+  </cim:OperationalLimitType>
+  <cim:VoltageLimit rdf:ID="VL.OK.HIGH">
+    <cim:OperationalLimit.OperationalLimitSet rdf:resource="#OLS.OK" />
+    <cim:OperationalLimit.OperationalLimitType rdf:resource="#OLT.OK.HIGH" />
+    <cim:VoltageLimit.value>110.0</cim:VoltageLimit.value>
+  </cim:VoltageLimit>
+  <cim:VoltageLimit rdf:ID="VL.OK.LOW">
+    <cim:OperationalLimit.OperationalLimitSet rdf:resource="#OLS.OK" />
+    <cim:OperationalLimit.OperationalLimitType rdf:resource="#OLT.OK.LOW" />
+    <cim:VoltageLimit.value>90.0</cim:VoltageLimit.value>
+  </cim:VoltageLimit>
+  <cim:SvVoltage rdf:ID="SVV.OK">
+    <cim:SvVoltage.TopologicalNode rdf:resource="#TN.OK" />
+    <cim:SvVoltage.v>100.0</cim:SvVoltage.v>
+  </cim:SvVoltage>
+
+  <!-- BAD: SvVoltage.v (120) exceeds the high limit (110) -->
+  <cim:TopologicalNode rdf:ID="TN.BAD"/>
+  <cim:Terminal rdf:ID="TERM.BAD">
+    <cim:Terminal.TopologicalNode rdf:resource="#TN.BAD" />
+  </cim:Terminal>
+  <cim:OperationalLimitSet rdf:ID="OLS.BAD">
+    <cim:OperationalLimitSet.Terminal rdf:resource="#TERM.BAD" />
+  </cim:OperationalLimitSet>
+  <cim:OperationalLimitType rdf:ID="OLT.BAD.HIGH">
+    <cim:OperationalLimitType.direction rdf:resource="http://iec.ch/TC57/CIM100#OperationalLimitDirectionKind.high" />
+  </cim:OperationalLimitType>
+  <cim:OperationalLimitType rdf:ID="OLT.BAD.LOW">
+    <cim:OperationalLimitType.direction rdf:resource="http://iec.ch/TC57/CIM100#OperationalLimitDirectionKind.low" />
+  </cim:OperationalLimitType>
+  <cim:VoltageLimit rdf:ID="VL.BAD.HIGH">
+    <cim:OperationalLimit.OperationalLimitSet rdf:resource="#OLS.BAD" />
+    <cim:OperationalLimit.OperationalLimitType rdf:resource="#OLT.BAD.HIGH" />
+    <cim:VoltageLimit.value>110.0</cim:VoltageLimit.value>
+  </cim:VoltageLimit>
+  <cim:VoltageLimit rdf:ID="VL.BAD.LOW">
+    <cim:OperationalLimit.OperationalLimitSet rdf:resource="#OLS.BAD" />
+    <cim:OperationalLimit.OperationalLimitType rdf:resource="#OLT.BAD.LOW" />
+    <cim:VoltageLimit.value>90.0</cim:VoltageLimit.value>
+  </cim:VoltageLimit>
+  <cim:SvVoltage rdf:ID="SVV.BAD">
+    <cim:SvVoltage.TopologicalNode rdf:resource="#TN.BAD" />
+    <cim:SvVoltage.v>120.0</cim:SvVoltage.v>
+  </cim:SvVoltage>
+</rdf:RDF>

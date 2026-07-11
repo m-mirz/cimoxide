@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<rdf:RDF xmlns:cim="http://iec.ch/TC57/CIM100#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <!-- quality:RegulatingControl.targetVoltageMismatch -->
+  <cim:BaseVoltage rdf:ID="BV.1">
+    <cim:BaseVoltage.nominalVoltage>110.0</cim:BaseVoltage.nominalVoltage>
+  </cim:BaseVoltage>
+  <cim:VoltageLevel rdf:ID="VL.1">
+    <cim:VoltageLevel.BaseVoltage rdf:resource="#BV.1" />
+  </cim:VoltageLevel>
+  <cim:ConnectivityNode rdf:ID="CN.1">
+    <cim:ConnectivityNode.ConnectivityNodeContainer rdf:resource="#VL.1" />
+  </cim:ConnectivityNode>
+  <cim:Terminal rdf:ID="TERM.1">
+    <cim:Terminal.ConnectivityNode rdf:resource="#CN.1" />
+  </cim:Terminal>
+  <cim:RegulatingControl rdf:ID="RC.V.BAD">
+    <cim:RegulatingControl.mode rdf:resource="http://iec.ch/TC57/CIM100#RegulatingControlModeKind.voltage" />
+    <cim:RegulatingControl.enabled>true</cim:RegulatingControl.enabled>
+    <cim:RegulatingControl.Terminal rdf:resource="#TERM.1" />
+    <cim:RegulatingControl.targetValue>130.0</cim:RegulatingControl.targetValue> <!-- 18% off 110 kV nominal -->
+  </cim:RegulatingControl>
+  <cim:RegulatingControl rdf:ID="RC.V.OK">
+    <cim:RegulatingControl.mode rdf:resource="http://iec.ch/TC57/CIM100#RegulatingControlModeKind.voltage" />
+    <cim:RegulatingControl.enabled>true</cim:RegulatingControl.enabled>
+    <cim:RegulatingControl.Terminal rdf:resource="#TERM.1" />
+    <cim:RegulatingControl.targetValue>111.0</cim:RegulatingControl.targetValue> <!-- within 10% -->
+  </cim:RegulatingControl>
+</rdf:RDF>

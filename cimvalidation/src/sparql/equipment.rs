@@ -493,35 +493,52 @@ fn check_tap_changer_ltc_flag_control(dataset: &CimDataset) -> Vec<Violation> {
 }
 
 fn check_load_response_characteristic_exponent_model(dataset: &CimDataset) -> Vec<Violation> {
+    const RULE_ID: &str = "equ:LoadResponseCharacteristic.exponentModel-exponentCoefficient";
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("LoadResponseCharacteristic").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         let lrc = match entry.element.as_any().downcast_ref::<cimstructs::LoadResponseCharacteristic>() { Some(l) => l, None => continue };
-        let exp = lrc.exponent_model.unwrap_or(false);
-        let p_cc = lrc.p_constant_current.unwrap_or(0.0);
-        let p_ci = lrc.p_constant_impedance.unwrap_or(0.0);
-        let p_cp = lrc.p_constant_power.unwrap_or(0.0);
-        let q_cc = lrc.q_constant_current.unwrap_or(0.0);
-        let q_ci = lrc.q_constant_impedance.unwrap_or(0.0);
-        let q_cp = lrc.q_constant_power.unwrap_or(0.0);
+        let exp = match lrc.exponent_model { Some(e) => e, None => continue };
+
+        let exponent_bound = [
+            lrc.p_frequency_exponent.is_some(), lrc.p_voltage_exponent.is_some(),
+            lrc.q_frequency_exponent.is_some(), lrc.q_voltage_exponent.is_some(),
+        ];
+        let coeff_vals = [
+            lrc.p_constant_current, lrc.p_constant_impedance, lrc.p_constant_power,
+            lrc.q_constant_current, lrc.q_constant_impedance, lrc.q_constant_power,
+        ];
+        let any_exponent_bound = exponent_bound.iter().any(|b| *b);
+        let all_exponent_bound = exponent_bound.iter().all(|b| *b);
+        let any_coeff_bound = coeff_vals.iter().any(|c| c.is_some());
+        let all_coeff_bound = coeff_vals.iter().all(|c| c.is_some());
+
         if exp {
-            if p_cc != 0.0 || p_ci != 0.0 || p_cp != 0.0 || q_cc != 0.0 || q_ci != 0.0 || q_cp != 0.0 {
+            if !all_exponent_bound || any_coeff_bound {
                 v.push(Violation {
-                    object_id: mrid.clone(), rule_id: "equ:LoadResponseCharacteristic.exponentModel-exponentCoefficient".into(),
+                    object_id: mrid.clone(), rule_id: RULE_ID.into(),
                     name: "C:301:EQ:LoadResponseCharacteristic.exponentModel:exponent".into(), class: "LoadResponseCharacteristic".into(),
                     property: "LoadResponseCharacteristic.exponentModel".into(),
-                    message: "Mixture of exponential and coefficient model attributes when exponentModel is true.".into(),
+                    message: "Missing required properties (attributes) for the exponential voltage dependency model, or there is a mixture with coefficient model attributes.".into(),
                     severity: "sh:Violation".into(), description: String::new(),
                 });
             }
+        } else if any_exponent_bound || !all_coeff_bound {
+            v.push(Violation {
+                object_id: mrid.clone(), rule_id: RULE_ID.into(),
+                name: "C:301:EQ:LoadResponseCharacteristic.exponentModel:coefficient".into(), class: "LoadResponseCharacteristic".into(),
+                property: "LoadResponseCharacteristic.exponentModel".into(),
+                message: "Missing required properties (attributes) for the coefficient model, or there is a mixture with exponential model attributes.".into(),
+                severity: "sh:Violation".into(), description: String::new(),
+            });
         } else {
-            let p_sum = p_cc + p_ci + p_cp;
-            let q_sum = q_cc + q_ci + q_cp;
+            let p_sum = coeff_vals[0].unwrap() + coeff_vals[1].unwrap() + coeff_vals[2].unwrap();
+            let q_sum = coeff_vals[3].unwrap() + coeff_vals[4].unwrap() + coeff_vals[5].unwrap();
             let eps = 1e-6;
-            if (p_sum < 1.0 - eps || p_sum > 1.0 + eps) || (q_sum < 1.0 - eps || q_sum > 1.0 + eps) {
+            if (p_sum - 1.0).abs() > eps || (q_sum - 1.0).abs() > eps {
                 v.push(Violation {
-                    object_id: mrid.clone(), rule_id: "equ:LoadResponseCharacteristic.exponentModel-exponentCoefficient".into(),
-                    name: "C:301:EQ:LoadResponseCharacteristic.exponentModel:exponent".into(), class: "LoadResponseCharacteristic".into(),
+                    object_id: mrid.clone(), rule_id: RULE_ID.into(),
+                    name: "C:301:EQ:LoadResponseCharacteristic.exponentModel:coefficientSum".into(), class: "LoadResponseCharacteristic".into(),
                     property: "LoadResponseCharacteristic.exponentModel".into(),
                     message: format!("The sum of coefficients does not equal 1 (P sum: {p_sum}, Q sum: {q_sum})."),
                     severity: "sh:Violation".into(), description: String::new(),

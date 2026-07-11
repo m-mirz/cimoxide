@@ -329,6 +329,12 @@ fn check_gov_hydro4_gain_points(dataset: &CimDataset) -> Vec<Violation> {
         if m == SIMPLE {
             for (val, prop, rule_id, name) in [
                 (f(obj.bmax),  "bmax",  "dyu:GovHydro4.bmax-valueRange",  "C:302:DY:GovHydro4.bmax:valueRange"),
+                (f(obj.bgv0),  "bgv0",  "dyu:GovHydro4.bgv0-valueRange",  "C:302:DY:GovHydro4.bgv0:valueRange"),
+                (f(obj.bgv1),  "bgv1",  "dyu:GovHydro4.bgv1-valueRange",  "C:302:DY:GovHydro4.bgv1:valueRange"),
+                (f(obj.bgv2),  "bgv2",  "dyu:GovHydro4.bgv2-valueRange",  "C:302:DY:GovHydro4.bgv2:valueRange"),
+                (f(obj.bgv3),  "bgv3",  "dyu:GovHydro4.bgv3-valueRange",  "C:302:DY:GovHydro4.bgv3:valueRange"),
+                (f(obj.bgv4),  "bgv4",  "dyu:GovHydro4.bgv4-valueRange",  "C:302:DY:GovHydro4.bgv4:valueRange"),
+                (f(obj.bgv5),  "bgv5",  "dyu:GovHydro4.bgv5-valueRange",  "C:302:DY:GovHydro4.bgv5:valueRange"),
                 (f(obj.gv0),   "gv0",   "dyu:GovHydro4.gv0-valueRange",   "C:302:DY:GovHydro4.gv0:valueRange"),
                 (f(obj.gv1),   "gv1",   "dyu:GovHydro4.gv1-valueRange",   "C:302:DY:GovHydro4.gv1:valueRange"),
                 (f(obj.gv2),   "gv2",   "dyu:GovHydro4.gv2-valueRange",   "C:302:DY:GovHydro4.gv2:valueRange"),
@@ -352,6 +358,21 @@ fn check_gov_hydro4_gain_points(dataset: &CimDataset) -> Vec<Violation> {
                 v.push(dyn_viol(mrid, "dyu:GovHydro4.bmax-valueRange", "C:302:DY:GovHydro4.bmax:valueRange",
                     "GovHydro4", "GovHydro4.bmax",
                     "The value is not 0 when GovHydro4.model is francisPelton."));
+            }
+            if m == FRANCIS_PELTON {
+                for (val, prop, rule_id, name) in [
+                    (f(obj.bgv0), "bgv0", "dyu:GovHydro4.bgv0-valueRange", "C:302:DY:GovHydro4.bgv0:valueRange"),
+                    (f(obj.bgv1), "bgv1", "dyu:GovHydro4.bgv1-valueRange", "C:302:DY:GovHydro4.bgv1:valueRange"),
+                    (f(obj.bgv2), "bgv2", "dyu:GovHydro4.bgv2-valueRange", "C:302:DY:GovHydro4.bgv2:valueRange"),
+                    (f(obj.bgv3), "bgv3", "dyu:GovHydro4.bgv3-valueRange", "C:302:DY:GovHydro4.bgv3:valueRange"),
+                    (f(obj.bgv4), "bgv4", "dyu:GovHydro4.bgv4-valueRange", "C:302:DY:GovHydro4.bgv4:valueRange"),
+                    (f(obj.bgv5), "bgv5", "dyu:GovHydro4.bgv5-valueRange", "C:302:DY:GovHydro4.bgv5:valueRange"),
+                ] {
+                    if val != 0.0 {
+                        v.push(dyn_viol(mrid, rule_id, name, "GovHydro4", &format!("GovHydro4.{prop}"),
+                            &format!("The value is not 0 when GovHydro4.model is francisPelton.")));
+                    }
+                }
             }
             for (val, prev, prop, rule_id, name) in [
                 (f(obj.gv1), f(obj.gv0), "gv1", "dyu:GovHydro4.gv1-valueRange", "C:302:DY:GovHydro4.gv1:valueRange"),

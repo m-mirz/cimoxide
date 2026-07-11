@@ -12,6 +12,7 @@ pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
     v.extend(check_sv_power_flow_p_limits(dataset));
     v.extend(check_sv_power_flow_q_limits(dataset));
     v.extend(check_sv_voltage_limits(dataset));
+    v.extend(check_sv_voltage_operational_limits(dataset));
     v
 }
 
@@ -422,6 +423,98 @@ fn check_sv_voltage_limits(dataset: &CimDataset) -> Vec<Violation> {
                 class:       "SvVoltage".into(),
                 property:    "SvVoltage.v".into(),
                 message:     format!("The value ({volt}) is <=0.4 pu of nominal voltage ({nom_v})."),
+                severity:    "sh:Violation".into(),
+                description: String::new(),
+            });
+        }
+    }
+    v
+}
+
+fn check_sv_voltage_operational_limits(dataset: &CimDataset) -> Vec<Violation> {
+    const HIGH: &str = "OperationalLimitDirectionKind.high";
+    const LOW:  &str = "OperationalLimitDirectionKind.low";
+
+    // TopologicalNode -> terminals connected to it (via Terminal.TopologicalNode directly,
+    // same convention as check_sv_power_flow_instance above).
+    let mut tn_terminals: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
+        let entry = &dataset.entries[mrid];
+        if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
+            if let Some(tn_ref) = term.topological_node.as_ref() {
+                tn_terminals.entry(tn_ref.mrid.trim_start_matches('#').to_string())
+                    .or_default().push(mrid.clone());
+            }
+        }
+    }
+
+    // OperationalLimitSet -> terminal.
+    let mut ols_terminal: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for mrid in dataset.by_type.get("OperationalLimitSet").into_iter().flatten() {
+        let entry = &dataset.entries[mrid];
+        if let Some(ols) = entry.element.as_any().downcast_ref::<cimstructs::OperationalLimitSet>() {
+            if let Some(term_ref) = ols.terminal.as_ref() {
+                ols_terminal.insert(mrid.clone(), term_ref.mrid.trim_start_matches('#').to_string());
+            }
+        }
+    }
+
+    // OperationalLimitType -> direction.
+    let mut olt_direction: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for mrid in dataset.by_type.get("OperationalLimitType").into_iter().flatten() {
+        let entry = &dataset.entries[mrid];
+        if let Some(olt) = entry.element.as_any().downcast_ref::<cimstructs::OperationalLimitType>() {
+            if let Some(dir) = olt.direction.as_ref() {
+                olt_direction.insert(mrid.clone(), dir.uri.clone());
+            }
+        }
+    }
+
+    // terminal_id -> (max high VoltageLimit.value, min low VoltageLimit.value)
+    let mut terminal_vhigh: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    let mut terminal_vlow: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    for mrid in dataset.by_type.get("VoltageLimit").into_iter().flatten() {
+        let entry = &dataset.entries[mrid];
+        let vl = match entry.element.as_any().downcast_ref::<cimstructs::VoltageLimit>() { Some(o) => o, None => continue };
+        let value = match vl.value { Some(v) => v, None => continue };
+        let ols_id = match vl.base.operational_limit_set.as_ref() { Some(r) => r.mrid.trim_start_matches('#'), None => continue };
+        let term_id = match ols_terminal.get(ols_id) { Some(t) => t, None => continue };
+        let olt_id = match vl.base.operational_limit_type.as_ref() { Some(r) => r.mrid.trim_start_matches('#'), None => continue };
+        let direction = match olt_direction.get(olt_id) { Some(d) => d.as_str(), None => continue };
+
+        if direction == HIGH {
+            terminal_vhigh.entry(term_id.clone())
+                .and_modify(|v| *v = v.max(value))
+                .or_insert(value);
+        } else if direction == LOW {
+            terminal_vlow.entry(term_id.clone())
+                .and_modify(|v| *v = v.min(value))
+                .or_insert(value);
+        }
+    }
+
+    let mut v = Vec::new();
+    for mrid in dataset.by_type.get("SvVoltage").into_iter().flatten() {
+        let entry = &dataset.entries[mrid];
+        let svv = match entry.element.as_any().downcast_ref::<cimstructs::SvVoltage>() { Some(o) => o, None => continue };
+        let volt = match svv.v { Some(v) => v, None => continue };
+        let tn_id = match svv.topological_node.as_ref() { Some(r) => r.mrid.trim_start_matches('#'), None => continue };
+        let terms = match tn_terminals.get(tn_id) { Some(t) => t, None => continue };
+
+        let out_of_range = terms.iter().any(|term_id| {
+            match (terminal_vhigh.get(term_id), terminal_vlow.get(term_id)) {
+                (Some(&vhigh), Some(&vlow)) => volt > vhigh || volt < vlow,
+                _ => false,
+            }
+        });
+        if out_of_range {
+            v.push(Violation {
+                object_id:   mrid.clone(),
+                rule_id:     "svs456:SvVoltage.v-limits".into(),
+                name:        "C:456:SV:SvVoltage.v:limits".into(),
+                class:       "SvVoltage".into(),
+                property:    "SvVoltage.v".into(),
+                message:     format!("The value ({volt}) is outside the defined OperationalLimit (VoltageLimit) bounds."),
                 severity:    "sh:Violation".into(),
                 description: String::new(),
             });

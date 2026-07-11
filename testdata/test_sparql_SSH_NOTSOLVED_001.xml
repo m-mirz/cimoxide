@@ -51,4 +51,14 @@
     <cim:TapChanger.TapChangerControl rdf:resource="#TCC.DISCRETE" />
     <cim:TapChanger.step>1.5</cim:TapChanger.step>
   </cim:RatioTapChanger>
+
+  <!-- 6. TapChanger step integer, C:456 (discrete AND enabled) -->
+  <cim:TapChangerControl rdf:ID="TCC.DISCRETE.ENABLED">
+    <cim:RegulatingControl.discrete>true</cim:RegulatingControl.discrete>
+    <cim:RegulatingControl.enabled>true</cim:RegulatingControl.enabled>
+  </cim:TapChangerControl>
+  <cim:RatioTapChanger rdf:ID="RTC.BAD.STEP.ENABLED">
+    <cim:TapChanger.TapChangerControl rdf:resource="#TCC.DISCRETE.ENABLED" />
+    <cim:TapChanger.step>1.5</cim:TapChanger.step>
+  </cim:RatioTapChanger>
 </rdf:RDF>

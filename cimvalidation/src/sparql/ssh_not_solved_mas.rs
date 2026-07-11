@@ -152,17 +152,18 @@ fn check_regulating_control_power_factor_required_attrs(dataset: &CimDataset) ->
 }
 
 fn check_tap_changer_step_integer(dataset: &CimDataset) -> Vec<Violation> {
-    let mut tcc_discrete: HashMap<String, bool> = HashMap::new();
+    let mut tcc_discrete_enabled: HashMap<String, (bool, bool)> = HashMap::new();
     for mrid in dataset.by_type.get("TapChangerControl").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(tcc) = entry.element.as_any().downcast_ref::<cimstructs::TapChangerControl>() {
-            tcc_discrete.insert(mrid.clone(), tcc.base.discrete.unwrap_or(false));
+            tcc_discrete_enabled.insert(mrid.clone(), (tcc.base.discrete.unwrap_or(false), tcc.base.enabled.unwrap_or(false)));
         }
     }
     let mut v = Vec::new();
     let report = |mrid: &str, class: &str, step: f64, tcc_mrid: Option<&str>, v: &mut Vec<Violation>| {
         let tcc_id = match tcc_mrid { Some(id) => id, None => return };
-        if !tcc_discrete.get(tcc_id).copied().unwrap_or(false) { return; }
+        let (discrete, enabled) = tcc_discrete_enabled.get(tcc_id).copied().unwrap_or((false, false));
+        if !discrete { return; }
         if step != step.floor() || step.is_nan() {
             v.push(Violation {
                 object_id: mrid.to_string(), rule_id: "sshn301:TapChanger.step-valueType".into(),
@@ -171,6 +172,15 @@ fn check_tap_changer_step_integer(dataset: &CimDataset) -> Vec<Violation> {
                 message: format!("Non-integer value ({}) for a discrete TapChangerControl.", step),
                 severity: "sh:Violation".into(), description: String::new(),
             });
+            if enabled {
+                v.push(Violation {
+                    object_id: mrid.to_string(), rule_id: "sshn456:TapChanger.step-value".into(),
+                    name: "C:456:SSH:TapChanger.step:value".into(), class: class.to_string(),
+                    property: "TapChanger.step".into(),
+                    message: format!("Non-integer value ({}) for an active (enabled) discrete TapChangerControl.", step),
+                    severity: "sh:Violation".into(), description: String::new(),
+                });
+            }
         }
     };
     for mrid in dataset.by_type.get("RatioTapChanger").into_iter().flatten() {

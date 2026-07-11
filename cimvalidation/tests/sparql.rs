@@ -219,6 +219,14 @@ fn sparql_ssh_notsolved_001() {
         assert!(by_id.get(*id).map_or(0, |v| v.len()) >= 1,
             "{}: expected violation, got none", id);
     }
+    // C:456:SSH:TapChanger.step:value (discrete AND enabled) is a distinct, stricter rule
+    // than C:301's discrete-only check above — assert its name shows up specifically.
+    let step_enabled = by_id.get("RTC.BAD.STEP.ENABLED").map_or(0, |vs| vs.iter()
+        .filter(|v| v.name == "C:456:SSH:TapChanger.step:value")
+        .count());
+    assert_eq!(step_enabled, 1,
+        "RTC.BAD.STEP.ENABLED: expected 1 C:456:SSH:TapChanger.step:value violation, got: {:?}",
+        by_id.get("RTC.BAD.STEP.ENABLED"));
 }
 
 #[test]
@@ -319,6 +327,7 @@ fn sparql_dy_003_302() {
         "PSS.2ST.BAD",
         "GOV.H4.SIMPLE.BAD",
         "GOV.H4.KAPLAN.BAD",
+        "GOV.H4.BGV.BAD",
         "LOAD.STATIC.Z.BAD",
         "SM.SAT.BAD",
         "SMS.BAD",
@@ -395,6 +404,66 @@ fn sparql_eq_002_6002() {
         "RCC1: expected 1 violation for units, got: {:?}", by_id.get("RCC1"));
     assert_eq!(by_id.get("RTC1").map_or(0, |v| v.len()), 1,
         "RTC1: expected 1 violation for neutralU sync, got: {:?}", by_id.get("RTC1"));
+}
+
+#[test]
+fn quality_001_rc_target_voltage_mismatch() {
+    // quality:RegulatingControl.targetVoltageMismatch — regression test for a bug where the
+    // mode comparison used a full CIM100 namespace URI constant, but cimdecoder strips every
+    // rdf:resource down to its bare local name, so the check never fired.
+    let ds = common::load_dataset("../testdata/test_quality_001.xml");
+    let cfg = Config { quality: true, ..Default::default() };
+    let vs = validate(&ds, &cfg);
+    let by_id = common::violations_by_id(&vs);
+    assert_eq!(by_id.get("RC.V.OK").map_or(0, |v| v.len()), 0,
+        "RC.V.OK: expected 0 violations, got: {:?}", by_id.get("RC.V.OK"));
+    let bad = by_id.get("RC.V.BAD").map_or(0, |vs| vs.iter()
+        .filter(|v| v.rule_id == "quality:RegulatingControl.targetVoltageMismatch")
+        .count());
+    assert_eq!(bad, 1,
+        "RC.V.BAD: expected 1 targetVoltageMismatch violation, got: {:?}", by_id.get("RC.V.BAD"));
+}
+
+#[test]
+fn sparql_eq_003_lrc() {
+    // LoadResponseCharacteristic.exponentModel: exponent/coefficient/coefficientSum.
+    let ds = common::load_dataset("../testdata/test_sparql_EQ_003.xml");
+    let cfg = Config { profiles: vec!["EQ".into()], ..Default::default() };
+    let vs = validate(&ds, &cfg);
+    let by_id = common::violations_by_id(&vs);
+
+    let name_of = |id: &str| -> Vec<String> {
+        by_id.get(id).map_or(Vec::new(), |vs| vs.iter().map(|v| v.name.clone()).collect())
+    };
+
+    assert_eq!(by_id.get("LRC.EXP.OK").map_or(0, |v| v.len()), 0,
+        "LRC.EXP.OK: expected 0 violations, got: {:?}", by_id.get("LRC.EXP.OK"));
+    assert_eq!(by_id.get("LRC.COEF.OK").map_or(0, |v| v.len()), 0,
+        "LRC.COEF.OK: expected 0 violations, got: {:?}", by_id.get("LRC.COEF.OK"));
+
+    assert!(name_of("LRC.EXP.BAD").iter().any(|n| n == "C:301:EQ:LoadResponseCharacteristic.exponentModel:exponent"),
+        "LRC.EXP.BAD: expected an :exponent violation, got: {:?}", by_id.get("LRC.EXP.BAD"));
+    assert!(name_of("LRC.COEF.BAD").iter().any(|n| n == "C:301:EQ:LoadResponseCharacteristic.exponentModel:coefficient"),
+        "LRC.COEF.BAD: expected a :coefficient violation, got: {:?}", by_id.get("LRC.COEF.BAD"));
+    assert!(name_of("LRC.SUM.BAD").iter().any(|n| n == "C:301:EQ:LoadResponseCharacteristic.exponentModel:coefficientSum"),
+        "LRC.SUM.BAD: expected a :coefficientSum violation, got: {:?}", by_id.get("LRC.SUM.BAD"));
+}
+
+#[test]
+fn sparql_sv_solved_006_operational_limits() {
+    // SvVoltage.v:limits, C:456 — value must be within [VoltageLimit(low), VoltageLimit(high)]
+    // for OperationalLimitSets on terminals connected to the SvVoltage's TopologicalNode.
+    let ds = common::load_dataset("../testdata/test_sparql_SV_SOLVED_006.xml");
+    let cfg = Config { profiles: vec!["SV".into()], solved: true, ..Default::default() };
+    let vs = validate(&ds, &cfg);
+    let by_id = common::violations_by_id(&vs);
+    assert_eq!(by_id.get("SVV.OK").map_or(0, |v| v.len()), 0,
+        "SVV.OK: expected 0 violations, got: {:?}", by_id.get("SVV.OK"));
+    let bad_limits = by_id.get("SVV.BAD").map_or(0, |vs| vs.iter()
+        .filter(|v| v.name == "C:456:SV:SvVoltage.v:limits")
+        .count());
+    assert_eq!(bad_limits, 1,
+        "SVV.BAD: expected 1 C:456:SV:SvVoltage.v:limits violation, got: {:?}", by_id.get("SVV.BAD"));
 }
 
 #[test]

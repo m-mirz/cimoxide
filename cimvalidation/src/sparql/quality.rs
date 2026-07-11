@@ -467,7 +467,10 @@ fn apply_unit_multiplier(value: f64, mult: Option<&cimstructs::base::UriRef>) ->
 }
 
 fn check_regulating_control_target_voltage_mismatch(dataset: &CimDataset) -> Vec<Violation> {
-    const VOLTAGE_URI: &str = "http://iec.ch/TC57/CIM100#RegulatingControlModeKind.voltage";
+    // cimdecoder's strip_fragment strips every rdf:resource down to its local name (the part
+    // after the last '#'), so enum refs are compared against the bare local name, not the
+    // full CIM100 namespace URI.
+    const VOLTAGE_URI: &str = "RegulatingControlModeKind.voltage";
     const DEV_WARN: f64 = 0.10;
 
     // CN → nominal voltage: CN → VoltageLevel → BaseVoltage
