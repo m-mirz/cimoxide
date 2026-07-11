@@ -864,8 +864,8 @@ fn gen_slice_mrid_rdf_type_check(
         Some(p) => p,
         None => return Err(format!("slice-mrid: attribute {} not found in hierarchy", attr_id)),
     };
-    if !attr.is_list || attr.is_primitive || attr.is_cim_datatype || attr.is_enum_value || !attr.is_association_used {
-        return Err("slice-mrid: field is not a usable list of associations".to_string());
+    if attr.is_primitive || attr.is_cim_datatype || attr.is_enum_value || !attr.is_association_used {
+        return Err("slice-mrid: field is not a usable association".to_string());
     }
     let field_name = sanitize_field(to_snake_case(&attr.label));
     let accessor = format!("{accessor_prefix}.{field_name}");
@@ -889,51 +889,7 @@ fn gen_slice_mrid_rdf_type_check(
     if allowed_types.is_empty() {
         return Err("slice-mrid: empty allowed types list".to_string());
     }
-    let allowed_str = allowed_types.iter()
-        .map(|t| format!("\"{t}\""))
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    fn esc(x: &str) -> String { x.replace('\\', "\\\\").replace('"', "\\\"") }
-    let message  = esc(&c.message);
-    let severity = &c.severity;
-    let name_str    = esc(&c.name);
-    let rule_id_str = esc(&c.rule_id);
-    let desc_str = esc(&c.description);
-    let prop = &attr.id;
-
-    let mut s = String::new();
-    writeln!(s, "pub fn {fn_name}(dataset: &CimDataset) -> Vec<Violation> {{").unwrap();
-    writeln!(s, "    let mut violations = Vec::new();").unwrap();
-    writeln!(s, "    for mrid in dataset.by_type.get(\"{class_name}\").into_iter().flatten() {{").unwrap();
-    writeln!(s, "        let entry = &dataset.entries[mrid];").unwrap();
-    writeln!(s, "        let obj = match entry.element.as_any()").unwrap();
-    writeln!(s, "            .downcast_ref::<cimstructs::{class_name}>() {{").unwrap();
-    writeln!(s, "            Some(o) => o, None => continue,").unwrap();
-    writeln!(s, "        }};").unwrap();
-    writeln!(s, "        for r in &{accessor} {{").unwrap();
-    writeln!(s, "            let ref_id = r.mrid.trim_start_matches('#');").unwrap();
-    writeln!(s, "            if ref_id.is_empty() {{ continue; }}").unwrap();
-    writeln!(s, "            if let Some(ref_entry) = dataset.entries.get(ref_id) {{").unwrap();
-    writeln!(s, "                let allowed: &[&str] = &[{allowed_str}];").unwrap();
-    writeln!(s, "                if !allowed.contains(&ref_entry.element.type_name()) {{").unwrap();
-    writeln!(s, "                    violations.push(Violation {{").unwrap();
-    writeln!(s, "                        object_id:   mrid.clone(),").unwrap();
-    writeln!(s, "                        rule_id:     \"{rule_id_str}\".to_string(),").unwrap();
-    writeln!(s, "                        class:       \"{class_name}\".to_string(),").unwrap();
-    writeln!(s, "                        property:    \"{prop}\".to_string(),").unwrap();
-    writeln!(s, "                        message:     \"{message}\".to_string(),").unwrap();
-    writeln!(s, "                        severity:    \"{severity}\".to_string(),").unwrap();
-    writeln!(s, "                        name:        \"{name_str}\".to_string(),").unwrap();
-    writeln!(s, "                        description: \"{desc_str}\".to_string(),").unwrap();
-    writeln!(s, "                    }});").unwrap();
-    writeln!(s, "                }}").unwrap();
-    writeln!(s, "            }}").unwrap();
-    writeln!(s, "        }}").unwrap();
-    writeln!(s, "    }}").unwrap();
-    writeln!(s, "    violations").unwrap();
-    writeln!(s, "}}").unwrap();
-    Ok((s, None))
+    gen_ref_type_check(fn_name, class_name, &accessor, &attr, c, &allowed_types)
 }
 
 fn gen_slice_string_in(

@@ -192,7 +192,6 @@ by CGMES profile group there).
 |------:|---------|--------|
 | 3472 | `sh:nodeKind` simplified | Structurally satisfied by `MridRef` / `UriRef` types (Rule 1 & 2 above). |
 | 3126 | `sh:datatype` simplified | Structurally satisfied by native Rust scalar types (Rule 7 above). |
-| 260 | `sh:hasValue` on `[field, rdf:type]` slice paths | The path targets a slice of MRID references; per-element type checking on slice fields is not yet implemented. |
 | 182 | SPARQL-derived constraint/target | `sh:sparql` constraints and `sh:target SPARQLTarget` targets both require evaluating an arbitrary SPARQL query at runtime; there's no SPARQL evaluator in this codebase, so both need a hand-written implementation instead (see "SPARQL Check Coverage" below). Note: this 182 is *not* the same count as the 205 in "SPARQL Check Coverage" — this one is every distinct `(property, component, sh:name)` skip entry, deduped per TTL file and not split on `sh:name`'s `|`-joined compound values, so it undercounts relative to the coverage table's per-rule-name count. |
 | 134 | Attribute not found in class hierarchy | The property referenced in the constraint is not present in any class in the hierarchy — typically a typo or version mismatch in the upstream SHACL TTL. |
 | 75 | Multi-segment path | The constraint spans more than one hop; multi-segment path evaluation is not yet supported. |
@@ -201,7 +200,10 @@ by CGMES profile group there).
 | 4 | Compound check branch structure | Constraints with branching sub-paths that `cimgen` cannot reduce to a single code path. |
 | 2 | Type mismatch | The constraint type does not match the target field type (e.g. a numeric constraint on a non-numeric field). |
 | 1 | `sh:class` / `sh:or-class` vacuously true | The inverse-index type assertion already guarantees the class constraint before the check is reached. |
-| **7277** | **Total** | |
+| 1 | Empty list or missing payload | `sh:in ()` with an empty allow-list (see "Upstream SHACL TTL defects" below). |
+| **7018** | **Total** | |
+
+`sh:hasValue`/`sh:in` on `[field, rdf:type]` slice paths (e.g. `sh:path (cim:MutualCoupling.First_Terminal rdf:type)`) are code-generated like any single-segment association/type check — via `gen_ref_type_check`, which handles both `Vec<MridRef>` and `Option<MridRef>` accessors.
 
 ### Upstream SHACL TTL defects
 
@@ -288,16 +290,16 @@ cimgo.log | sort > b; awk -F'\t' '{print $2, $5}' a | diff - <(awk -F'\t' '{prin
 
 | Profile Group | Generated | Skipped | Total |
 |---------------|----------:|--------:|------:|
-| Equipment (EQ) | 424 | 777 | 1201 |
+| Equipment (EQ) | 541 | 660 | 1201 |
 | Steady State Hypothesis (SSH) | 101 | 163 | 264 |
-| Dynamics (DY) | 4141 | 5674 | 9815 |
-| State Variables (SV) | 51 | 91 | 142 |
-| Short Circuit (SC) | 118 | 215 | 333 |
-| Common / AllProfiles | 30 | 154 | 184 |
-| Topology (TP) | 17 | 31 | 48 |
-| DiagramLayout (DL) | 32 | 56 | 88 |
-| Operation (OP) | 79 | 116 | 195 |
-| **Total** | **4993** | **7277** | **12270** |
+| Dynamics (DY) | 4236 | 5579 | 9815 |
+| State Variables (SV) | 60 | 82 | 142 |
+| Short Circuit (SC) | 120 | 213 | 333 |
+| Common / AllProfiles | 34 | 150 | 184 |
+| Topology (TP) | 24 | 24 | 48 |
+| DiagramLayout (DL) | 39 | 49 | 88 |
+| Operation (OP) | 97 | 98 | 195 |
+| **Total** | **5252** | **7018** | **12270** |
 
 ### SPARQL Check Coverage
 
