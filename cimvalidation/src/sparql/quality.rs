@@ -331,6 +331,10 @@ fn check_connectivity_node_open_ended(dataset: &CimDataset) -> Vec<Violation> {
 }
 
 fn check_disconnector_cross_voltage_level(dataset: &CimDataset) -> Vec<Violation> {
+    // VoltageLevel MRIDs, as a set for O(1) membership checks below instead of a linear
+    // scan per ConnectivityNode.
+    let voltage_level_ids: HashSet<&str> = dataset.by_type.get("VoltageLevel").into_iter().flatten().map(|s| s.as_str()).collect();
+
     // CN → VoltageLevel MRID (only CNs whose container is a VoltageLevel)
     let mut cn_vl: HashMap<String, String> = HashMap::new();
     for mrid in dataset.by_type.get("ConnectivityNode").into_iter().flatten() {
@@ -338,7 +342,7 @@ fn check_disconnector_cross_voltage_level(dataset: &CimDataset) -> Vec<Violation
         if let Some(cn) = entry.element.as_any().downcast_ref::<cimstructs::ConnectivityNode>() {
             if let Some(r) = &cn.connectivity_node_container {
                 let cont_id = r.mrid.trim_start_matches('#');
-                if dataset.by_type.get("VoltageLevel").into_iter().flatten().any(|m| m == cont_id) {
+                if voltage_level_ids.contains(cont_id) {
                     cn_vl.insert(mrid.clone(), cont_id.to_string());
                 }
             }

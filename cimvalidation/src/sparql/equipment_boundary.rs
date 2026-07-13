@@ -17,6 +17,20 @@ fn check_boundary_point_tie_flow(dataset: &CimDataset) -> Vec<Violation> {
         }
     }
 
+    // Build index: connectivity node MRID → true if any terminal at that CN has a TieFlow.
+    // Built once over all Terminals instead of rescanning them per BoundaryPoint below.
+    let mut cn_has_tie_flow: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for t_mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
+        if !terminal_has_tf.contains(t_mrid) {
+            continue;
+        }
+        if let Some(term) = dataset.entries.get(t_mrid).and_then(|e| e.element.as_any().downcast_ref::<cimstructs::Terminal>()) {
+            if let Some(cn_ref) = term.connectivity_node.as_ref() {
+                cn_has_tie_flow.insert(cn_ref.mrid.trim_start_matches('#').to_string());
+            }
+        }
+    }
+
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("BoundaryPoint").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
@@ -27,14 +41,7 @@ fn check_boundary_point_tie_flow(dataset: &CimDataset) -> Vec<Violation> {
             Some(r) => r.mrid.trim_start_matches('#').to_string(), None => continue,
         };
 
-        // Find if any terminal at this CN has a TieFlow
-        let has_tie_flow = dataset.by_type.get("Terminal").into_iter().flatten().any(|t_mrid| {
-            dataset.entries.get(t_mrid)
-                .and_then(|e| e.element.as_any().downcast_ref::<cimstructs::Terminal>())
-                .and_then(|t| t.connectivity_node.as_ref())
-                .map_or(false, |cn_ref| cn_ref.mrid.trim_start_matches('#') == cn_id)
-                && terminal_has_tf.contains(t_mrid)
-        });
+        let has_tie_flow = cn_has_tie_flow.contains(&cn_id);
 
         let excluded = bp.is_excluded_from_area_interchange.unwrap_or(false);
         if excluded && has_tie_flow {

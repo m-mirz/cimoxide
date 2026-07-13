@@ -606,6 +606,52 @@ fn check_regulating_control_same_island(dataset: &CimDataset) -> Vec<Violation> 
         }
     }
 
+    // RegulatingControl MRID → SynchronousMachines referencing it. Built once instead of
+    // rescanning all SynchronousMachine per RegulatingControl below.
+    let mut rc_to_sm: HashMap<String, Vec<String>> = HashMap::new();
+    for sm_mrid in dataset.by_type.get("SynchronousMachine").into_iter().flatten() {
+        let sm_entry = &dataset.entries[sm_mrid];
+        if let Some(sm) = sm_entry.element.as_any().downcast_ref::<cimstructs::SynchronousMachine>() {
+            if let Some(rc_ref) = sm.base.base.regulating_control.as_ref() {
+                let rc_id = rc_ref.mrid.trim_start_matches('#').to_string();
+                rc_to_sm.entry(rc_id).or_default().push(sm_mrid.clone());
+            }
+        }
+    }
+
+    // TapChangerControl (RegulatingControl) MRID → (tap changer MRID, type name, transformer
+    // end MRID). Built once instead of rescanning all 5 TapChanger types per RegulatingControl
+    // below.
+    let tc_types = ["RatioTapChanger", "PhaseTapChangerLinear", "PhaseTapChangerSymmetrical",
+                    "PhaseTapChangerAsymmetrical", "PhaseTapChangerTabular"];
+    let mut tcc_to_tc: HashMap<String, Vec<(String, &'static str, Option<String>)>> = HashMap::new();
+    for tc_type in &tc_types {
+        for tc_mrid in dataset.by_type.get(*tc_type).into_iter().flatten() {
+            let tc_entry = &dataset.entries[tc_mrid];
+            let (tcc_ref, te_id) = if let Some(tc) = tc_entry.element.as_any().downcast_ref::<cimstructs::RatioTapChanger>() {
+                (tc.base.tap_changer_control.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()),
+                 tc.transformer_end.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()))
+            } else if let Some(tc) = tc_entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerLinear>() {
+                (tc.base.base.tap_changer_control.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()),
+                 tc.base.transformer_end.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()))
+            } else if let Some(tc) = tc_entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerSymmetrical>() {
+                (tc.base.base.base.tap_changer_control.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()),
+                 tc.base.base.transformer_end.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()))
+            } else if let Some(tc) = tc_entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerAsymmetrical>() {
+                (tc.base.base.base.tap_changer_control.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()),
+                 tc.base.base.transformer_end.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()))
+            } else if let Some(tc) = tc_entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerTabular>() {
+                (tc.base.base.tap_changer_control.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()),
+                 tc.base.transformer_end.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()))
+            } else {
+                continue
+            };
+            if let Some(tcc_id) = tcc_ref {
+                tcc_to_tc.entry(tcc_id).or_default().push((tc_mrid.clone(), *tc_type, te_id));
+            }
+        }
+    }
+
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("RegulatingControl").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
@@ -615,76 +661,47 @@ fn check_regulating_control_same_island(dataset: &CimDataset) -> Vec<Violation> 
         let rc_island = match term_to_island.get(rc_term_id) { Some(i) => i.clone(), None => continue };
 
         // Check SynchronousMachines referencing this RC
-        for sm_mrid in dataset.by_type.get("SynchronousMachine").into_iter().flatten() {
-            let sm_entry = &dataset.entries[sm_mrid];
-            if let Some(sm) = sm_entry.element.as_any().downcast_ref::<cimstructs::SynchronousMachine>() {
-                let sm_rc = sm.base.base.regulating_control.as_ref().map(|r| r.mrid.trim_start_matches('#'));
-                if sm_rc != Some(mrid.as_str()) { continue; }
-                for term_id in equip_terms.get(sm_mrid).into_iter().flatten() {
-                    if let Some(sm_island) = term_to_island.get(term_id) {
-                        if sm_island != &rc_island {
-                            v.push(Violation {
-                                object_id:   mrid.clone(),
-                                rule_id:     "sm6002:RegulatingControl-point".into(),
-                                name:        "C:600:EQ:RegulatingControl:point".into(),
-                                class:       "RegulatingControl".into(),
-                                property:    "rdf:type".into(),
-                                message:     format!("The controlled point and the controlling equipment (SynchronousMachine {}) are not located in the same TopologicalIsland.", sm_mrid),
-                                severity:    "sh:Violation".into(),
-                                description: String::new(),
-                            });
-                            break;
-                        }
+        for sm_mrid in rc_to_sm.get(mrid).into_iter().flatten() {
+            for term_id in equip_terms.get(sm_mrid).into_iter().flatten() {
+                if let Some(sm_island) = term_to_island.get(term_id) {
+                    if sm_island != &rc_island {
+                        v.push(Violation {
+                            object_id:   mrid.clone(),
+                            rule_id:     "sm6002:RegulatingControl-point".into(),
+                            name:        "C:600:EQ:RegulatingControl:point".into(),
+                            class:       "RegulatingControl".into(),
+                            property:    "rdf:type".into(),
+                            message:     format!("The controlled point and the controlling equipment (SynchronousMachine {}) are not located in the same TopologicalIsland.", sm_mrid),
+                            severity:    "sh:Violation".into(),
+                            description: String::new(),
+                        });
+                        break;
                     }
                 }
             }
         }
 
         // Check TapChangers referencing this RC
-        let tc_types = ["RatioTapChanger", "PhaseTapChangerLinear", "PhaseTapChangerSymmetrical",
-                        "PhaseTapChangerAsymmetrical", "PhaseTapChangerTabular"];
-        for tc_type in &tc_types {
-            for tc_mrid in dataset.by_type.get(*tc_type).into_iter().flatten() {
-                let tc_entry = &dataset.entries[tc_mrid];
-                let (tcc_ref, te_id) = if let Some(tc) = tc_entry.element.as_any().downcast_ref::<cimstructs::RatioTapChanger>() {
-                    (tc.base.tap_changer_control.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()),
-                     tc.transformer_end.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()))
-                } else if let Some(tc) = tc_entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerLinear>() {
-                    (tc.base.base.tap_changer_control.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()),
-                     tc.base.transformer_end.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()))
-                } else if let Some(tc) = tc_entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerSymmetrical>() {
-                    (tc.base.base.base.tap_changer_control.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()),
-                     tc.base.base.transformer_end.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()))
-                } else if let Some(tc) = tc_entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerAsymmetrical>() {
-                    (tc.base.base.base.tap_changer_control.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()),
-                     tc.base.base.transformer_end.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()))
-                } else if let Some(tc) = tc_entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerTabular>() {
-                    (tc.base.base.tap_changer_control.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()),
-                     tc.base.transformer_end.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()))
-                } else {
-                    continue
-                };
-                if tcc_ref.as_deref() != Some(mrid.as_str()) { continue; }
-                let te_entry = match te_id.as_deref().and_then(|id| dataset.entries.get(id)) { Some(e) => e, None => continue };
-                let term_id = if let Some(pte) = te_entry.element.as_any().downcast_ref::<cimstructs::PowerTransformerEnd>() {
-                    pte.base.terminal.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string())
-                } else {
-                    None
-                };
-                if let Some(t_id) = term_id {
-                    if let Some(tc_island) = term_to_island.get(&t_id) {
-                        if tc_island != &rc_island {
-                            v.push(Violation {
-                                object_id:   mrid.clone(),
-                                rule_id:     "sm6002:RegulatingControl-point".into(),
-                                name:        "C:600:EQ:RegulatingControl:point".into(),
-                                class:       "RegulatingControl".into(),
-                                property:    "rdf:type".into(),
-                                message:     format!("The controlled point and the controlling equipment ({} {}) are not located in the same TopologicalIsland.", tc_type, tc_mrid),
-                                severity:    "sh:Violation".into(),
-                                description: String::new(),
-                            });
-                        }
+        for (tc_mrid, tc_type, te_id) in tcc_to_tc.get(mrid).into_iter().flatten() {
+            let te_entry = match te_id.as_deref().and_then(|id| dataset.entries.get(id)) { Some(e) => e, None => continue };
+            let term_id = if let Some(pte) = te_entry.element.as_any().downcast_ref::<cimstructs::PowerTransformerEnd>() {
+                pte.base.terminal.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string())
+            } else {
+                None
+            };
+            if let Some(t_id) = term_id {
+                if let Some(tc_island) = term_to_island.get(&t_id) {
+                    if tc_island != &rc_island {
+                        v.push(Violation {
+                            object_id:   mrid.clone(),
+                            rule_id:     "sm6002:RegulatingControl-point".into(),
+                            name:        "C:600:EQ:RegulatingControl:point".into(),
+                            class:       "RegulatingControl".into(),
+                            property:    "rdf:type".into(),
+                            message:     format!("The controlled point and the controlling equipment ({} {}) are not located in the same TopologicalIsland.", tc_type, tc_mrid),
+                            severity:    "sh:Violation".into(),
+                            description: String::new(),
+                        });
                     }
                 }
             }

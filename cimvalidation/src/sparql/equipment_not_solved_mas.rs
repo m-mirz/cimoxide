@@ -64,6 +64,20 @@ fn check_ac_line_segment_base_voltage(dataset: &CimDataset) -> Vec<Violation> {
 fn check_regulating_control_target_value_tap_changer(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     let voltage_suffix = "voltage";
+
+    // TapChangerControl MRID → RatioTapChangers referencing it. Built once instead of
+    // rescanning all RatioTapChanger per RegulatingControl/TapChangerControl below.
+    let mut rtc_by_tcc: HashMap<String, Vec<String>> = HashMap::new();
+    for rtc_mrid in dataset.by_type.get("RatioTapChanger").into_iter().flatten() {
+        let rtc_entry = &dataset.entries[rtc_mrid];
+        if let Some(rtc) = rtc_entry.element.as_any().downcast_ref::<cimstructs::RatioTapChanger>() {
+            if let Some(r) = &rtc.base.tap_changer_control {
+                let tcc_id = r.mrid.trim_start_matches('#').to_string();
+                rtc_by_tcc.entry(tcc_id).or_default().push(rtc_mrid.clone());
+            }
+        }
+    }
+
     // Collect all RCs with voltage mode enabled
     for rc_mrid in dataset.by_type.get("RegulatingControl").into_iter().chain(dataset.by_type.get("TapChangerControl").into_iter()).flatten() {
         let rc_entry = &dataset.entries[rc_mrid];
@@ -79,11 +93,10 @@ fn check_regulating_control_target_value_tap_changer(dataset: &CimDataset) -> Ve
         let term_id = match terminal_ref { Some(r) => r.mrid.trim_start_matches('#'), None => continue };
 
         // Find associated RatioTapChanger referencing this RC
-        for rtc_mrid in dataset.by_type.get("RatioTapChanger").into_iter().flatten() {
+        for rtc_mrid in rtc_by_tcc.get(rc_mrid).into_iter().flatten() {
             let rtc_entry = &dataset.entries[rtc_mrid];
             let rtc = match rtc_entry.element.as_any().downcast_ref::<cimstructs::RatioTapChanger>() { Some(r) => r, None => continue };
-            let rtc_tcc_id = match &rtc.base.tap_changer_control { Some(r) => r.mrid.trim_start_matches('#'), None => continue };
-            if rtc_tcc_id != rc_mrid.as_str() || !rtc.base.control_enabled.unwrap_or(false) { continue; }
+            if !rtc.base.control_enabled.unwrap_or(false) { continue; }
 
             // Get nominal voltage via RC terminal → CN → VoltageLevel → BaseVoltage
             let nominal_u = (|| -> Option<f64> {
@@ -212,24 +225,28 @@ fn check_equivalent_injection_regulation_capability_not_hvdc(dataset: &CimDatase
             }
         }
     }
-    // Terminal → CN for EI terminals
+    // Equipment MRID → true if it has at least one terminal connected to a non-HVDC
+    // BoundaryPoint CN. Built once over all Terminals instead of rescanning them per
+    // EquivalentInjection below.
+    let mut equip_non_hvdc_bp: HashMap<String, bool> = HashMap::new();
+    for term_mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
+        let term = match dataset.entries.get(term_mrid).and_then(|e| e.element.as_any().downcast_ref::<cimstructs::Terminal>()) { Some(t) => t, None => continue };
+        let eq_id = match &term.conducting_equipment { Some(r) => r.mrid.trim_start_matches('#').to_string(), None => continue };
+        if let Some(cn) = &term.connectivity_node {
+            let cn_id = cn.mrid.trim_start_matches('#');
+            if let Some(&is_dc) = cn_is_dc.get(cn_id) {
+                if !is_dc {
+                    equip_non_hvdc_bp.insert(eq_id, true);
+                }
+            }
+        }
+    }
+
     let mut v = Vec::new();
     for ei_mrid in dataset.by_type.get("EquivalentInjection").into_iter().flatten() {
         let ei_entry = &dataset.entries[ei_mrid];
         let ei = match ei_entry.element.as_any().downcast_ref::<cimstructs::EquivalentInjection>() { Some(e) => e, None => continue };
-        // Find if it's connected to a non-HVDC BoundaryPoint
-        let mut is_non_hvdc_bp = false;
-        for term_mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
-            let term = match dataset.entries.get(term_mrid).and_then(|e| e.element.as_any().downcast_ref::<cimstructs::Terminal>()) { Some(t) => t, None => continue };
-            let eq_ref = match &term.conducting_equipment { Some(r) => r.mrid.trim_start_matches('#'), None => continue };
-            if eq_ref != ei_mrid.as_str() { continue; }
-            if let Some(cn) = &term.connectivity_node {
-                let cn_id = cn.mrid.trim_start_matches('#');
-                if let Some(&is_dc) = cn_is_dc.get(cn_id) {
-                    if !is_dc { is_non_hvdc_bp = true; break; }
-                }
-            }
-        }
+        let is_non_hvdc_bp = equip_non_hvdc_bp.contains_key(ei_mrid.as_str());
         if is_non_hvdc_bp {
             if ei.regulation_capability.unwrap_or(false) || ei.reactive_capability_curve.is_some() {
                 v.push(Violation {

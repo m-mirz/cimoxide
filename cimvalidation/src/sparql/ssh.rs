@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use cimdecoder::CimDataset;
 use crate::Violation;
 
@@ -420,6 +421,21 @@ pub(super) fn check_equivalent_injection_limits(dataset: &CimDataset) -> Vec<Vio
 }
 
 pub(super) fn check_rotating_machine_curve_limits(dataset: &CimDataset) -> Vec<Violation> {
+    // Curve MRID → (x, y1, y2) points. Built once instead of rescanning all CurveData per
+    // SynchronousMachine below.
+    let mut curve_points: HashMap<String, Vec<(f64, f64, f64)>> = HashMap::new();
+    for cd_mrid in dataset.by_type.get("CurveData").into_iter().flatten() {
+        let cd_entry = &dataset.entries[cd_mrid];
+        if let Some(cd) = cd_entry.element.as_any().downcast_ref::<cimstructs::CurveData>() {
+            if let Some(r) = &cd.curve {
+                let curve_id = r.mrid.trim_start_matches('#').to_string();
+                curve_points.entry(curve_id).or_default().push((
+                    cd.xvalue.unwrap_or(0.0), cd.y1value.unwrap_or(0.0), cd.y2value.unwrap_or(0.0),
+                ));
+            }
+        }
+    }
+
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SynchronousMachine").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
@@ -429,18 +445,14 @@ pub(super) fn check_rotating_machine_curve_limits(dataset: &CimDataset) -> Vec<V
                 Some(r) => r.mrid.trim_start_matches('#').to_string(),
                 None => continue,
             };
+            let points = match curve_points.get(&rcc_id) { Some(p) => p, None => continue };
             let mut xvals: Vec<f64> = Vec::new();
             let mut y1vals: Vec<f64> = Vec::new();
             let mut y2vals: Vec<f64> = Vec::new();
-            for cd_mrid in dataset.by_type.get("CurveData").into_iter().flatten() {
-                let cd_entry = &dataset.entries[cd_mrid];
-                if let Some(cd) = cd_entry.element.as_any().downcast_ref::<cimstructs::CurveData>() {
-                    if cd.curve.as_ref().map_or(false, |r| r.mrid.trim_start_matches('#') == rcc_id) {
-                        xvals.push(cd.xvalue.unwrap_or(0.0));
-                        y1vals.push(cd.y1value.unwrap_or(0.0));
-                        y2vals.push(cd.y2value.unwrap_or(0.0));
-                    }
-                }
+            for &(x, y1, y2) in points {
+                xvals.push(x);
+                y1vals.push(y1);
+                y2vals.push(y2);
             }
             if xvals.is_empty() { continue; }
             let min_x = xvals.iter().cloned().fold(f64::INFINITY, f64::min);
