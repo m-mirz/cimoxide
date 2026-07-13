@@ -36,3 +36,34 @@ fn decode_merge_two_files() {
     let ds = CimDataset::decode_files(&[eq, tp]).expect("decode_files failed");
     assert!(!ds.entries.is_empty(), "expected objects after merge");
 }
+
+#[test]
+fn repeated_text_field_keeps_all_values() {
+    // A combined EQ+SC header declares md:Model.profile twice; the decoder must
+    // keep both (regression: repeated Text fields used to overwrite each other,
+    // so profile detection only ever saw the last profile of a file).
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#"
+         xmlns:cim="http://iec.ch/TC57/CIM100#">
+  <md:FullModel rdf:about="urn:uuid:11111111-1111-1111-1111-111111111111">
+    <md:Model.profile>http://iec.ch/TC57/ns/CIM/CoreEquipment-EU/3.0</md:Model.profile>
+    <md:Model.profile>http://iec.ch/TC57/ns/CIM/ShortCircuit-EU/3.0</md:Model.profile>
+  </md:FullModel>
+</rdf:RDF>"#;
+    let ds = CimDataset::decode_str(xml).expect("decode failed");
+    let fm_mrid = &ds.by_type["FullModel"][0];
+    let fm = ds.entries[fm_mrid]
+        .element
+        .as_any()
+        .downcast_ref::<cimstructs::FullModel>()
+        .expect("FullModel downcast");
+    assert_eq!(
+        fm.base.profile,
+        vec![
+            "http://iec.ch/TC57/ns/CIM/CoreEquipment-EU/3.0".to_string(),
+            "http://iec.ch/TC57/ns/CIM/ShortCircuit-EU/3.0".to_string(),
+        ],
+        "both md:Model.profile values must survive decoding"
+    );
+}

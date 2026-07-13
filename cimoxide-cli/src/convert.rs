@@ -73,6 +73,15 @@ pub fn dataset_to_xml(ds: &CimDataset) -> Result<String, Box<dyn Error>> {
                         escape_text(s)
                     )?;
                 }
+                FieldValue::TextList(ss) => {
+                    for s in ss {
+                        write!(
+                            children,
+                            "\n    <cim:{key}>{}</cim:{key}>",
+                            escape_text(s)
+                        )?;
+                    }
+                }
                 FieldValue::Resource(r) => {
                     write!(
                         children,
@@ -171,6 +180,11 @@ pub fn dataset_to_xml_for_profile(
             match val {
                 FieldValue::Text(s) => {
                     write!(children, "\n    <cim:{key}>{}</cim:{key}>", escape_text(s))?;
+                }
+                FieldValue::TextList(ss) => {
+                    for s in ss {
+                        write!(children, "\n    <cim:{key}>{}</cim:{key}>", escape_text(s))?;
+                    }
                 }
                 FieldValue::Resource(r) => {
                     write!(

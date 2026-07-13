@@ -183,25 +183,47 @@ are specific to this tool.*
 ### Skipped constraints
 
 Some constraints cannot be checked at runtime. The table below summarises the categories
-and counts as reported by `cargo run -p cimgen -- --skip-report`. Its total matches the
-"Generated SHACL Rules by Profile" table's `Skipped` column below exactly, since both sum
+and counts as reported by `cargo run -p cimgen -- --skip-report`. Its total (6843) matches
+the "Generated SHACL Rules by Profile" table's `Skipped` column below exactly, since both sum
 the same `skip::SkipCollector`-deduped entries — just grouped differently (by reason here,
-by CGMES profile group there).
+by CGMES profile group there). Every category is either handled by an alternative method
+(hand-written functions), structurally guaranteed by the Rust type system so a generated
+check could never fire (the simplification rules above), or a defect in the upstream ENTSO-E
+TTL files that only ENTSO-E can fix.
 
 | Count | Category | Reason |
 |------:|---------|--------|
 | 3472 | `sh:nodeKind` simplified | Structurally satisfied by `MridRef` / `UriRef` types (Rule 1 & 2 above). |
 | 3126 | `sh:datatype` simplified | Structurally satisfied by native Rust scalar types (Rule 7 above). |
-| 182 | SPARQL-derived constraint/target | `sh:sparql` constraints and `sh:target SPARQLTarget` targets both require evaluating an arbitrary SPARQL query at runtime; there's no SPARQL evaluator in this codebase, so both need a hand-written implementation instead (see "SPARQL Check Coverage" below). Note: this 182 is *not* the same count as the 205 in "SPARQL Check Coverage" — this one is every distinct `(property, component, sh:name)` skip entry, deduped per TTL file and not split on `sh:name`'s `|`-joined compound values, so it undercounts relative to the coverage table's per-rule-name count. |
-| 134 | Attribute not found in class hierarchy | The property referenced in the constraint is not present in any class in the hierarchy — typically a typo or version mismatch in the upstream SHACL TTL. |
-| 75 | Multi-segment path | The constraint spans more than one hop; multi-segment path evaluation is not yet supported. |
-| 16 | Unknown SHACL component | Constraint component type not recognised by `cimgen`. |
-| 5 | `sh:targetSubjectsOf` / `sh:targetObjectsOf` | Property-based target mechanism; the shape is recognised but there's no concrete class to generate per-class checks against. |
-| 4 | Compound check branch structure | Constraints with branching sub-paths that `cimgen` cannot reduce to a single code path. |
-| 2 | Type mismatch | The constraint type does not match the target field type (e.g. a numeric constraint on a non-numeric field). |
-| 1 | `sh:class` / `sh:or-class` vacuously true | The inverse-index type assertion already guarantees the class constraint before the check is reached. |
+| 182 | SPARQL-derived constraints | `sh:sparql` constraints and `sh:target SPARQLTarget` targets both require evaluating an arbitrary SPARQL query at runtime; there's no SPARQL evaluator in this codebase, so both need a hand-written implementation instead (see "SPARQL Check Coverage" below). Note: this 182 is *not* the same count as the 205 in "SPARQL Check Coverage" — this one is every distinct `(property, component, sh:name)` skip entry, deduped per TTL file and not split on `sh:name`'s `|`-joined compound values, so it undercounts relative to the coverage table's per-rule-name count. Cross-tool: matches cimgo's "SPARQL-derived constraints" row (182) exactly, including the same 181 distinct `sh:name`s — see ["Comparing skip categories with cimgo"](#comparing-skip-categories-with-cimgo) below. |
+| 13 | Attribute not found in class hierarchy | The property referenced in the constraint is not present in any class in the hierarchy. All 13 remaining entries are genuine upstream SHACL TTL defects or schema mismatches: the four `sh:lessThan` field-name typos, the `Dyanmics` class typo, the four wrong inverse-path field names, the stale `AccumulatorValue.value` reference (all documented under "Upstream SHACL TTL defects" below), plus the three sibling-subtype `sh:lessThan` operands (`xpp`, `xDirectSubtrans`, `xQuadSubtrans`) that cimgo classifies separately as "Cross-class `sh:lessThan` on sibling subtypes". Cross-tool: overlaps cimgo's "Upstream SHACL TTL defects" (13) and "Cross-class `sh:lessThan`" (3) rows, with slightly different boundaries. |
+| 28 | `sh:maxCount 1` on multi-hop paths | Every hop in a forward CIM reference chain is a 0..1 field, so the value count can never exceed 1. Cross-tool: matches cimgo's identically-named row (28) exactly. |
+| 7 | `sh:nodeKind` on multi-segment paths | The decoded Rust type fixes the value kind of every path step (all 7 end in `rdf:type`). Cross-tool: cimgo classifies its 7 equivalents across its "`sh:nodeKind` on `rdf:type` paths" row. |
+| 6 | `sh:class` vacuously true (inverse-index already type-asserts) | The inverse-index type assertion already guarantees the class constraint before the check is reached — the inverse-count prelude downcasts every scanned referrer to the source class, so a generated check could never fire. Cross-tool: same reason as cimgo's identically-named row (5) — the count differs only by dedup granularity. |
+| 5 | `sh:targetSubjectsOf` / `sh:targetObjectsOf` | Property-based target mechanism; the shape is recognised but there's no concrete class for `cimgen` to generate a per-class check against. All 5 are `sh:SPARQLConstraintComponent` shapes too (`C:600:ALL:NA:FBOD4` and four `IdentifiedObject.*:stringLength` rules), and all 5 already have hand-written coverage in `cimvalidation/src/sparql/common.rs` / `common_solved_mas.rs` under those exact `sh:name`s — confirmed by the "SPARQL Check Coverage" table below reporting 100% coverage inclusive of these. So despite the "unsupported target" skip reason, nothing here is actually unchecked. Cross-tool: matches cimgo's identically-named row (5) exactly, including the same 18 distinct `sh:name`s — see ["Comparing skip categories with cimgo"](#comparing-skip-categories-with-cimgo) below. |
+| 3 | `rdf:Statement` member paths | Difference-model header paths into `rdf:Statement` members: `subject`/`predicate`/`object` are mandated by the RDF specification for every `rdf:Statement`, and `rdf:Statement` resources are not decoded — the constraint can neither fire nor be violated. Cross-tool: matches cimgo's "Multi-segment `sh:required` on `rdf:Statements`" row (3). |
 | 1 | Empty list or missing payload | `sh:in ()` with an empty allow-list (see "Upstream SHACL TTL defects" below). |
-| **7018** | **Total** | |
+| **6843** | **Total** | |
+
+#### Comparing skip categories with cimgo
+
+cimoxide's and cimgo's skip-category tables cover the same 74 TTL files and the same 12,270
+non-SPARQL constraints. Rows describing the identical underlying SHACL feature are given
+matching wording and cross-referenced inline above:
+
+- `sh:class` vacuously true (6 here vs. 5 in cimgo — dedup differs: cimoxide dedups per
+  shape, cimgo per concrete target class).
+- "`sh:maxCount 1` on multi-hop paths" (28) and the `rdf:Statement` rows (3) match cimgo's
+  identically-named rows exactly; cimgo's "Cross-class `sh:lessThan` on sibling subtypes" (3)
+  equivalents live in this table's "Attribute not found" row instead.
+- The SPARQL-derived-constraints row (182) and `sh:targetSubjectsOf`/`sh:targetObjectsOf` (5)
+  match cimgo's identically-named rows exactly, including the same underlying `sh:name` sets
+  (181/18 distinct names).
+- cimgo has rows with no cimoxide equivalent — `sh:required` on `float`/`bool` fields and
+  `sh:maxCount 1` on scalar/pointer fields — because this crate's generated fields are
+  `Option<f64>`/`Option<bool>` and its decoder tracks per-field duplicate XML occurrences,
+  both of which let it generate real checks instead of skipping them. There is no
+  cimoxide-only row with no cimgo equivalent.
 
 `sh:hasValue`/`sh:in` on `[field, rdf:type]` slice paths (e.g. `sh:path (cim:MutualCoupling.First_Terminal rdf:type)`) are code-generated like any single-segment association/type check — via `gen_ref_type_check`, which handles both `Vec<MridRef>` and `Option<MridRef>` accessors.
 
@@ -254,8 +276,8 @@ by CGMES profile group there).
 
 ### Generated SHACL Rules by Profile
 
-The "Simplified"/"Skipped"/"Cannot be conducted" counts above are global totals across all
-74 TTL files. `cargo run -p cimgen -- --rule-report` also breaks the generated-vs-skipped
+The skipped-constraint counts above are global totals across all 74 TTL files.
+`cargo run -p cimgen -- --rule-report` also breaks the generated-vs-skipped
 split down by CGMES profile group, using the same file-to-group classification as the SPARQL
 Check Coverage table below (`ttl_group_label` in `cimgen/src/shacl/ttl_report.rs`).
 "Generated" counts distinct `(path, component, name)` rule patterns actually code-generated
@@ -279,7 +301,7 @@ twice.
 
 This per-group `Total` (though not the `Generated`/`Skipped` split — see below) matches cimgo's
 equivalent table exactly on every row, which is a useful independent cross-check that both
-tools' importers now agree on how many distinct constraints the schema actually defines per
+tools' importers agree on how many distinct constraints the schema actually defines per
 profile.
 
 `--rule-report` also prints a per-file breakdown ("=== Per-File Rule Counts ===", one
@@ -290,16 +312,16 @@ cimgo.log | sort > b; awk -F'\t' '{print $2, $5}' a | diff - <(awk -F'\t' '{prin
 
 | Profile Group | Generated | Skipped | Total |
 |---------------|----------:|--------:|------:|
-| Equipment (EQ) | 541 | 660 | 1201 |
-| Steady State Hypothesis (SSH) | 101 | 163 | 264 |
-| Dynamics (DY) | 4236 | 5579 | 9815 |
-| State Variables (SV) | 60 | 82 | 142 |
+| Equipment (EQ) | 618 | 583 | 1201 |
+| Steady State Hypothesis (SSH) | 104 | 160 | 264 |
+| Dynamics (DY) | 4305 | 5510 | 9815 |
+| State Variables (SV) | 70 | 72 | 142 |
 | Short Circuit (SC) | 120 | 213 | 333 |
-| Common / AllProfiles | 34 | 150 | 184 |
-| Topology (TP) | 24 | 24 | 48 |
-| DiagramLayout (DL) | 39 | 49 | 88 |
-| Operation (OP) | 97 | 98 | 195 |
-| **Total** | **5252** | **7018** | **12270** |
+| Common / AllProfiles | 42 | 142 | 184 |
+| Topology (TP) | 25 | 23 | 48 |
+| DiagramLayout (DL) | 40 | 48 | 88 |
+| Operation (OP) | 103 | 92 | 195 |
+| **Total** | **5427** | **6843** | **12270** |
 
 ### SPARQL Check Coverage
 
@@ -324,10 +346,10 @@ is a plain string with no namespace prefix to normalize, and it's copied verbati
 distinct `sh:sparql` shapes.** A single shape's `sh:name` can itself be a `|`-joined compound
 of several rule names when one `sh:sparql` query enforces multiple documented conformance
 rules at once — both sides are split on `|` before matching, so one shape contributes one
-entry to the totals per rule name it names, not one entry per shape. This means a shape can be
-partially covered: if the hand-written check only tags its `Violation.name` with one of
-several rule names a shape's `sh:sparql` query is documented to enforce, the others show up as
-"not yet implemented" below even though the shape itself has *a* check.
+entry to the totals per rule name it names, not one entry per shape. A shape can be partially
+covered: if the hand-written check only tags its `Violation.name` with some of the rule names
+a shape's `sh:sparql` query is documented to enforce, the rest count as not implemented even
+though the shape itself has *a* check.
 
 This table uses the same `ttl_group_label` grouping as "Generated SHACL Rules by Profile"
 above, so their rows line up 1:1 (`C:600 conformance` (`prof10.rs`) has no row of its own: like
@@ -354,8 +376,7 @@ row showing `n/a` for TTL Total/Coverage.
 | CIMdesk quality | 15 | n/a | n/a |
 | **Total** | **205** | **205** | **100.0%** |
 
-Every SPARQL constraint defined in the CGMES SHACL TTL files now has a matching hand-written
-check — there is currently no "not yet implemented" list to print.
+Every SPARQL constraint defined in the CGMES SHACL TTL files has a matching hand-written check.
 
 ### CIMdesk quality checks (`--quality`)
 

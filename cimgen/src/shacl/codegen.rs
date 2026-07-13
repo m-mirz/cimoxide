@@ -228,11 +228,16 @@ fn render_check(
     );
     let fn_name = safe_fn_name(&raw_name);
 
-    // Multi-segment paths: handle [slice_field, rdf:type] for sh:In / sh:HasValue;
-    // everything else is skipped.
+    // Multi-segment paths: chains of 0..1 reference hops, resolved against the
+    // dataset one link at a time (mirroring cimgo's chain-walker semantics: any
+    // missing/unresolvable link means the path yields no value and the object is
+    // skipped, except sh:Required which collapses onto the first link's presence).
     if is_multi_seg {
-        if full_path.len() == 2 && full_path[1] == "rdf:type"
-            && !path_seg.starts_with('~')
+        let is_inverse_head = path_seg.starts_with('^');
+        let ends_rdf_type = full_path.last().map(|s| s == "rdf:type").unwrap_or(false);
+
+        // [field, rdf:type] sh:In / sh:HasValue — single-hop reference type check.
+        if full_path.len() == 2 && ends_rdf_type && !is_inverse_head
             && matches!(comp, "sh:InConstraintComponent" | "sh:HasValueConstraintComponent")
         {
             return match gen_slice_mrid_rdf_type_check(&fn_name, class_name, spec, &attr_id, constraint) {
@@ -243,14 +248,102 @@ fn render_check(
                 }
             };
         }
-        collector.push(class_name, &full_path_key, comp, &constraint.name, "multi-segment path not supported");
-        return (None, None);
+
+        // Difference-model header paths into rdf:Statement members: subject/
+        // predicate/object are mandated by the RDF specification for every
+        // rdf:Statement, and rdf:Statement resources are not decoded into the
+        // dataset — the constraint can neither fire nor be violated.
+        if full_path.iter().any(|s| s.starts_with("rdf:Statements.")) {
+            collector.push(class_name, &full_path_key, comp, &constraint.name,
+                "multi-segment path into rdf:Statement members: guaranteed by the RDF specification, rdf:Statement resources are not decoded");
+            return (None, None);
+        }
+
+        // Every hop in a forward CIM reference chain is a 0..1 field, so the
+        // value count can never exceed 1 — sh:maxCount 1 is structurally satisfied.
+        if comp == "sh:MaxCountConstraintComponent" {
+            collector.push(class_name, &full_path_key, comp, &constraint.name,
+                "multi-segment MaxCount=1 structurally satisfied: every hop is a 0..1 field");
+            return (None, None);
+        }
+        // The decoded Rust type fixes the value kind of every path step.
+        if comp == "sh:NodeKindConstraintComponent" {
+            collector.push(class_name, &full_path_key, comp, &constraint.name,
+                "multi-segment NodeKind structurally satisfied: value kind is fixed by the decoded Rust type");
+            return (None, None);
+        }
+
+        let result = if !is_inverse_head {
+            match comp {
+                // sh:Required over a chain ending in rdf:type collapses onto the
+                // first link's presence (cimgo parity): later links that don't
+                // resolve are indistinguishable from data split across files.
+                "sh:RequiredConstraintComponent" | "sh:MinCountConstraintComponent" if ends_rdf_type => {
+                    Some(gen_chain_required_first_link(&fn_name, class_name, spec, &attr_id, constraint))
+                }
+                // sh:HasValue with an rdf:type tail: walk the chain, the final
+                // entry's class must be the hasValue class (or a subclass).
+                "sh:HasValueConstraintComponent" if ends_rdf_type => {
+                    let allowed = match constraint.payload.get("hasValue").and_then(|v| v.as_str()) {
+                        Some(v) => class_and_subclasses(spec, &local_name(v)),
+                        None => Vec::new(),
+                    };
+                    if allowed.is_empty() {
+                        Some(Err("chain sh:HasValue: value class not decodable".to_string()))
+                    } else {
+                        Some(gen_forward_chain_type_check(&fn_name, class_name, spec,
+                            &full_path[..full_path.len() - 1], &allowed, constraint))
+                    }
+                }
+                // sh:or of sh:class alternatives on an association tail: walk the
+                // chain, the final referenced entry's class must be in the allow-list.
+                "sh:OrClassConstraintComponent" if !ends_rdf_type => {
+                    let raw: Vec<String> = constraint.payload.get("classes").and_then(|v| v.as_list())
+                        .map(|v| v.iter().map(|s| local_name(s)).collect())
+                        .unwrap_or_default();
+                    let mut set = std::collections::BTreeSet::new();
+                    for cls in &raw {
+                        for t in class_and_subclasses(spec, cls) { set.insert(t); }
+                    }
+                    let allowed: Vec<String> = set.into_iter().collect();
+                    if allowed.is_empty() || allowed.len() >= spec.types.len() {
+                        Some(Err("chain sh:OrClass: empty or vacuous class list".to_string()))
+                    } else {
+                        Some(gen_forward_chain_type_check(&fn_name, class_name, spec,
+                            full_path, &allowed, constraint))
+                    }
+                }
+                // sh:datatype on a primitive leaf at the end of a chain.
+                "sh:DatatypeConstraintComponent" if !ends_rdf_type => {
+                    Some(gen_forward_chain_datatype_check(&fn_name, class_name, spec, full_path, constraint))
+                }
+                _ => None,
+            }
+        } else if full_path.len() == 2 && comp == "sh:HasValueConstraintComponent" {
+            // [^forward-ref, attr] sh:HasValue: at least one referrer must carry
+            // the expected attribute value.
+            Some(gen_inverse_chain_has_value(&fn_name, class_name, spec, path_seg, &full_path[1], constraint))
+        } else {
+            None
+        };
+
+        return match result {
+            Some(Ok((code, regex))) => (Some(code), regex),
+            Some(Err(reason)) => {
+                collector.push(class_name, &full_path_key, comp, &constraint.name, &reason);
+                (None, None)
+            }
+            None => {
+                collector.push(class_name, &full_path_key, comp, &constraint.name, "multi-segment path not supported");
+                (None, None)
+            }
+        };
     }
 
-    // Inverse path (encoded as "~<forward-iri>" by the parser) — route to dedicated generator
+    // Inverse path (encoded as "^<forward-iri>" by the parser) — route to dedicated generator
     // before the component skip list so MaxCount is not dropped for inverse shapes.
-    if path_seg.starts_with('~') {
-        let forward_pred = &path_seg[1..]; // strip "~"
+    if path_seg.starts_with('^') {
+        let forward_pred = &path_seg[1..]; // strip "^"
         return match gen_inverse_count(&fn_name, class_name, forward_pred, spec, constraint) {
             Ok((code, regex)) => (Some(code), regex),
             Err(reason) => {
@@ -331,6 +424,9 @@ fn render_check(
         }
         "sh:LessThanConstraintComponent" => {
             gen_less_than(&fn_name, class_name, spec, &full_accessor, &attr, constraint)
+        }
+        "sh:LessThanOrEqualsConstraintComponent" => {
+            gen_less_than_or_equals(&fn_name, class_name, spec, &full_accessor, &attr, constraint)
         }
         "sh:ClassConstraintComponent" => {
             gen_class(&fn_name, class_name, spec, &full_accessor, &attr, constraint)
@@ -438,6 +534,18 @@ fn gen_exact_count(
     Ok((build_fn(fn_name, class_name, None, None, &condition, c, attr), None))
 }
 
+/// Literal form an enum value takes after decoding: the decoder strips enum
+/// resource URIs to their fragment (`http://...#PhaseCode.ABC` → `PhaseCode.ABC`),
+/// so comparison values from the TTL (prefix-simplified, e.g. `cim:PhaseCode.ABC`)
+/// must be reduced the same way or the check can never match.
+fn enum_literal(v: &str) -> String {
+    if let Some(i) = v.rfind('#') {
+        v[i + 1..].to_string()
+    } else {
+        local_name(v)
+    }
+}
+
 fn gen_in(
     fn_name: &str,
     class_name: &str,
@@ -446,7 +554,7 @@ fn gen_in(
     c: &ConstraintInfo,
 ) -> Result<(String, Option<String>), String> {
     if attr.is_list {
-        if (attr.is_primitive || attr.is_cim_datatype) && attr.lang_type == "String" {
+        if (attr.is_primitive || attr.is_cim_datatype) && attr.lang_type == "Vec<String>" {
             return gen_slice_string_in(fn_name, class_name, accessor, attr, c);
         }
         return Err("sh:In on non-string list field".to_string());
@@ -459,9 +567,15 @@ fn gen_in(
         _ => return Err("sh:In: empty payload".to_string()),
     };
 
+    // Enum URIs and MridRef resources are both fragment-stripped by the decoder;
+    // only plain string literals are stored verbatim.
+    let is_string_literal = (attr.is_primitive || attr.is_cim_datatype) && attr.lang_type == "String";
     let allowed_items: Vec<String> = values
         .iter()
-        .map(|v| format!("\"{}\"", v.replace('"', "\\\"")))
+        .map(|v| {
+            let lit = if is_string_literal { v.clone() } else { enum_literal(v) };
+            format!("\"{}\"", lit.replace('"', "\\\""))
+        })
         .collect();
     let allowed_str = allowed_items.join(", ");
 
@@ -490,12 +604,15 @@ fn gen_has_value(
     let esc = expected.replace('"', "\\\"");
 
     let (condition, guard) = if attr.is_enum_value {
-        (format!("{accessor}.as_ref().map_or(true, |u| u.uri != \"{esc}\")"), None)
+        let lit = enum_literal(&expected).replace('"', "\\\"");
+        (format!("{accessor}.as_ref().map_or(true, |u| u.uri != \"{lit}\")"), None)
     } else if attr.is_primitive || attr.is_cim_datatype {
         (format!("{accessor} != \"{esc}\""),
          Some(format!("if {accessor}.is_empty() {{ continue; }}")))
     } else {
-        (format!("{accessor}.as_ref().map_or(true, |r| r.mrid != \"{esc}\")"), None)
+        // MridRef resources are fragment-stripped by the decoder, like enum URIs.
+        let lit = enum_literal(&expected).replace('"', "\\\"");
+        (format!("{accessor}.as_ref().map_or(true, |r| r.mrid != \"{lit}\")"), None)
     };
 
     Ok((build_fn(fn_name, class_name, guard.as_deref(), None, &condition, c, attr), None))
@@ -508,7 +625,7 @@ fn gen_datatype(
     attr: &CimAttribute,
     c: &ConstraintInfo,
 ) -> Result<(String, Option<String>), String> {
-    if attr.lang_type != "String" {
+    if attr.lang_type != "String" && attr.lang_type != "Vec<String>" {
         return Err(format!("sh:Datatype on non-string field ({})", attr.lang_type));
     }
     let dt = c.payload.get("datatype").and_then(|v| v.as_str()).unwrap_or("");
@@ -519,9 +636,60 @@ fn gen_datatype(
         "xsd:anyURI" | "<http://www.w3.org/2001/XMLSchema#anyURI>" => "is_xsd_anyuri",
         _ => return Err(format!("sh:Datatype: unsupported datatype {:?}", dt)),
     };
+    if attr.lang_type == "Vec<String>" {
+        return Ok((gen_slice_string_datatype(fn_name, class_name, accessor, attr, c, check_fn), None));
+    }
     let guard = format!("if {accessor}.is_empty() {{ continue; }}");
     let condition = format!("!{check_fn}(&{accessor})");
     Ok((build_fn(fn_name, class_name, Some(&guard), None, &condition, c, attr), None))
+}
+
+/// sh:Datatype format check applied per-element to a `Vec<String>` field
+/// (e.g. md:Model.profile, one xsd:anyURI value per declared profile).
+fn gen_slice_string_datatype(
+    fn_name: &str,
+    class_name: &str,
+    accessor: &str,
+    attr: &CimAttribute,
+    c: &ConstraintInfo,
+    check_fn: &str,
+) -> String {
+    fn esc(x: &str) -> String { x.replace('\\', "\\\\").replace('"', "\\\"") }
+    let message  = esc(&c.message);
+    let severity = &c.severity;
+    let name_str    = esc(&c.name);
+    let rule_id_str = esc(&c.rule_id);
+    let desc_str = esc(&c.description);
+    let prop = &attr.id;
+
+    let mut s = String::new();
+    writeln!(s, "pub fn {fn_name}(dataset: &CimDataset) -> Vec<Violation> {{").unwrap();
+    writeln!(s, "    let mut violations = Vec::new();").unwrap();
+    writeln!(s, "    for mrid in dataset.by_type.get(\"{class_name}\").into_iter().flatten() {{").unwrap();
+    writeln!(s, "        let entry = &dataset.entries[mrid];").unwrap();
+    writeln!(s, "        let obj = match entry.element.as_any()").unwrap();
+    writeln!(s, "            .downcast_ref::<cimstructs::{class_name}>() {{").unwrap();
+    writeln!(s, "            Some(o) => o, None => continue,").unwrap();
+    writeln!(s, "        }};").unwrap();
+    writeln!(s, "        for val in &{accessor} {{").unwrap();
+    writeln!(s, "            if val.is_empty() {{ continue; }}").unwrap();
+    writeln!(s, "            if !{check_fn}(val) {{").unwrap();
+    writeln!(s, "                violations.push(Violation {{").unwrap();
+    writeln!(s, "                    object_id:   mrid.clone(),").unwrap();
+    writeln!(s, "                    rule_id:     \"{rule_id_str}\".to_string(),").unwrap();
+    writeln!(s, "                    class:       \"{class_name}\".to_string(),").unwrap();
+    writeln!(s, "                    property:    \"{prop}\".to_string(),").unwrap();
+    writeln!(s, "                    message:     \"{message}\".to_string(),").unwrap();
+    writeln!(s, "                    severity:    \"{severity}\".to_string(),").unwrap();
+    writeln!(s, "                    name:        \"{name_str}\".to_string(),").unwrap();
+    writeln!(s, "                    description: \"{desc_str}\".to_string(),").unwrap();
+    writeln!(s, "                }});").unwrap();
+    writeln!(s, "            }}").unwrap();
+    writeln!(s, "        }}").unwrap();
+    writeln!(s, "    }}").unwrap();
+    writeln!(s, "    violations").unwrap();
+    writeln!(s, "}}").unwrap();
+    s
 }
 
 fn gen_pattern(
@@ -614,20 +782,48 @@ fn gen_less_than(
     attr: &CimAttribute,
     c: &ConstraintInfo,
 ) -> Result<(String, Option<String>), String> {
+    gen_less_than_cmp(fn_name, class_name, spec, accessor, attr, c, "lessThan", "sh:LessThan", "<")
+}
+
+fn gen_less_than_or_equals(
+    fn_name: &str,
+    class_name: &str,
+    spec: &CimSpecification,
+    accessor: &str,
+    attr: &CimAttribute,
+    c: &ConstraintInfo,
+) -> Result<(String, Option<String>), String> {
+    gen_less_than_cmp(fn_name, class_name, spec, accessor, attr, c, "lessThanOrEquals", "sh:LessThanOrEquals", "<=")
+}
+
+/// Shared generator for sh:LessThan / sh:LessThanOrEquals: both compare two
+/// numeric fields on the same decoded object, differing only in the payload
+/// key and the comparison operator.
+fn gen_less_than_cmp(
+    fn_name: &str,
+    class_name: &str,
+    spec: &CimSpecification,
+    accessor: &str,
+    attr: &CimAttribute,
+    c: &ConstraintInfo,
+    payload_key: &str,
+    label: &str,
+    op: &str,
+) -> Result<(String, Option<String>), String> {
     if !matches!(attr.lang_type.as_str(), "f64" | "i64") {
-        return Err(format!("sh:LessThan on non-numeric field ({})", attr.lang_type));
+        return Err(format!("{label} on non-numeric field ({})", attr.lang_type));
     }
-    let other_iri = match c.payload.get("lessThan").and_then(|v| v.as_str()) {
+    let other_iri = match c.payload.get(payload_key).and_then(|v| v.as_str()) {
         Some(v) => v.to_string(),
-        None => return Err("sh:LessThan: missing lessThan payload".to_string()),
+        None => return Err(format!("{label}: missing {payload_key} payload")),
     };
     let other_attr_id = local_name(&other_iri);
     let (other_prefix, other_attr) = match find_attr_in_hierarchy(spec, class_name, &other_attr_id) {
         Some(p) => p,
-        None => return Err(format!("sh:LessThan: other attribute {} not found in hierarchy", other_attr_id)),
+        None => return Err(format!("{label}: other attribute {} not found in hierarchy", other_attr_id)),
     };
     if !matches!(other_attr.lang_type.as_str(), "f64" | "i64") {
-        return Err(format!("sh:LessThan: other attribute {} is non-numeric ({})", other_attr_id, other_attr.lang_type));
+        return Err(format!("{label}: other attribute {} is non-numeric ({})", other_attr_id, other_attr.lang_type));
     }
     let other_field = sanitize_field(to_snake_case(&other_attr.label));
     let other_accessor = format!("{other_prefix}.{other_field}");
@@ -650,7 +846,7 @@ fn gen_less_than(
     writeln!(s, "            Some(o) => o, None => continue,").unwrap();
     writeln!(s, "        }};").unwrap();
     writeln!(s, "        if {accessor}.is_none() || {other_accessor}.is_none() {{ continue; }}").unwrap();
-    writeln!(s, "        if !(({accessor}.unwrap() as f64) < {other_accessor}.unwrap() as f64) {{").unwrap();
+    writeln!(s, "        if !(({accessor}.unwrap() as f64) {op} {other_accessor}.unwrap() as f64) {{").unwrap();
     writeln!(s, "            violations.push(Violation {{").unwrap();
     writeln!(s, "                object_id:   mrid.clone(),").unwrap();
     writeln!(s, "                rule_id:     \"{rule_id_str}\".to_string(),").unwrap();
@@ -952,6 +1148,53 @@ fn gen_slice_string_in(
 // Inverse path generator
 // ---------------------------------------------------------------------------
 
+/// sh:targetNode <cim:Class> with sh:path [ sh:inversePath rdf:type ] and
+/// sh:minCount/sh:maxCount: a single dataset-wide check on how many instances
+/// of `target_class` exist (e.g. "at least one TopologicalIsland", "at most
+/// one GeographicalRegion"), not a per-instance check. Emits at most one
+/// violation, matching cimgo's generated form (empty object_id).
+fn gen_instance_count(
+    fn_name: &str,
+    target_class: &str,
+    c: &ConstraintInfo,
+) -> Result<(String, Option<String>), String> {
+    let (op, threshold) = match c.component.as_str() {
+        "sh:MinCountConstraintComponent" | "sh:RequiredConstraintComponent" =>
+            ("<", c.payload.get("minCount").and_then(|v| v.as_int()).unwrap_or(1)),
+        "sh:MaxCountConstraintComponent" =>
+            (">", c.payload.get("maxCount").and_then(|v| v.as_int()).unwrap_or(1)),
+        _ => return Err(format!("inverse rdf:type count: component {} not supported", c.component)),
+    };
+
+    fn esc(x: &str) -> String { x.replace('\\', "\\\\").replace('"', "\\\"") }
+    let message  = esc(&c.message);
+    let severity = &c.severity;
+    let name_str    = esc(&c.name);
+    let rule_id_str = esc(&c.rule_id);
+    let desc_str = esc(&c.description);
+    let prop = &c.name;
+
+    let mut s = String::new();
+    writeln!(s, "pub fn {fn_name}(dataset: &CimDataset) -> Vec<Violation> {{").unwrap();
+    writeln!(s, "    let count = dataset.by_type.get(\"{target_class}\").map_or(0, |v| v.len());").unwrap();
+    writeln!(s, "    let mut violations = Vec::new();").unwrap();
+    writeln!(s, "    if count {op} {threshold} {{").unwrap();
+    writeln!(s, "        violations.push(Violation {{").unwrap();
+    writeln!(s, "            object_id:   String::new(),").unwrap();
+    writeln!(s, "            rule_id:     \"{rule_id_str}\".to_string(),").unwrap();
+    writeln!(s, "            class:       \"{target_class}\".to_string(),").unwrap();
+    writeln!(s, "            property:    \"{prop}\".to_string(),").unwrap();
+    writeln!(s, "            message:     \"{message}\".to_string(),").unwrap();
+    writeln!(s, "            severity:    \"{severity}\".to_string(),").unwrap();
+    writeln!(s, "            name:        \"{name_str}\".to_string(),").unwrap();
+    writeln!(s, "            description: \"{desc_str}\".to_string(),").unwrap();
+    writeln!(s, "        }});").unwrap();
+    writeln!(s, "    }}").unwrap();
+    writeln!(s, "    violations").unwrap();
+    writeln!(s, "}}").unwrap();
+    Ok((s, None))
+}
+
 fn gen_inverse_count(
     fn_name: &str,
     target_class: &str,
@@ -959,13 +1202,20 @@ fn gen_inverse_count(
     spec: &CimSpecification,
     c: &ConstraintInfo,
 ) -> Result<(String, Option<String>), String> {
+    // sh:targetNode <cim:Class> with sh:path [ sh:inversePath rdf:type ]: the
+    // inverse of rdf:type from the class node reaches every instance of that
+    // class, so min/maxCount here means "N instances of Class must exist" —
+    // a single dataset-wide check, not one CIM association per instance.
+    if local_name(forward_pred) == "type" {
+        return gen_instance_count(fn_name, target_class, c);
+    }
     let local = local_name(forward_pred);
     let (src_class, src_prop) = match local.split_once('.') {
         Some(p) => p,
         None => return Err("inverse path has no class.prop shape".to_string()),
     };
 
-    let (obj_prefix, attr) = match find_attr_in_hierarchy(spec, src_class, &local) {
+    let (_, attr) = match find_attr_in_hierarchy(spec, src_class, &local) {
         Some(p) => p,
         None => return Err(format!("inverse attribute {} not found in hierarchy", local)),
     };
@@ -977,32 +1227,53 @@ fn gen_inverse_count(
         return Err("inverse path on non-association field".to_string());
     }
 
+    // The referrer class can be abstract (e.g. RegulatingCondEq) — dataset.by_type
+    // only holds concrete type names, so the index must scan every subclass that
+    // can carry the forward field, or the count is always 0 and every target is
+    // falsely flagged.
     let field_name = sanitize_field(to_snake_case(src_prop));
-    let src_prefix = obj_prefix.replacen("obj", "src", 1);
-    let src_field  = format!("{src_prefix}.{field_name}");
+    let mut scan_classes: Vec<(String, String)> = Vec::new();
+    for cls in class_and_subclasses(spec, src_class) {
+        if let Some((prefix, _)) = find_attr_in_hierarchy(spec, &cls, &local) {
+            let src_prefix = prefix.replacen("obj", "src", 1);
+            scan_classes.push((cls, format!("{src_prefix}.{field_name}")));
+        }
+    }
+    if scan_classes.is_empty() {
+        return Err(format!("inverse attribute {} has no concrete referrer class", local));
+    }
 
-    let index_snippet = if attr.is_list {
-        format!("for r in &{src_field} {{ *ref_counts.entry(r.mrid.as_str()).or_insert(0) += 1; }}")
-    } else {
-        format!("if let Some(r) = &{src_field} {{ *ref_counts.entry(r.mrid.as_str()).or_insert(0) += 1; }}")
-    };
+    let index_snippets: Vec<(String, String)> = scan_classes
+        .into_iter()
+        .map(|(cls, src_field)| {
+            let snippet = if attr.is_list {
+                format!("for r in &{src_field} {{ *ref_counts.entry(r.mrid.as_str()).or_insert(0) += 1; }}")
+            } else {
+                format!("if let Some(r) = &{src_field} {{ *ref_counts.entry(r.mrid.as_str()).or_insert(0) += 1; }}")
+            };
+            (cls, snippet)
+        })
+        .collect();
 
     let (op, threshold) = match c.component.as_str() {
         "sh:MinCountConstraintComponent" | "sh:RequiredConstraintComponent" =>
             ("<", c.payload.get("minCount").and_then(|v| v.as_int()).unwrap_or(1)),
         "sh:MaxCountConstraintComponent" =>
             (">", c.payload.get("maxCount").and_then(|v| v.as_int()).unwrap_or(1)),
+        // The prelude's downcast_ref::<src_class> already type-asserts every scanned
+        // referrer, so an sh:class constraint on the inverse path can never fire.
+        "sh:ClassConstraintComponent" =>
+            return Err("sh:Class vacuously true: inverse index already type-asserts the referrer class".to_string()),
         _ => return Err(format!("inverse path: component {} not supported", c.component)),
     };
 
-    Ok((build_inverse_fn(fn_name, target_class, src_class, &index_snippet, threshold, op, c), None))
+    Ok((build_inverse_fn(fn_name, target_class, &index_snippets, threshold, op, c), None))
 }
 
 fn build_inverse_fn(
     fn_name: &str,
     target_class: &str,
-    src_class: &str,
-    index_snippet: &str,
+    index_snippets: &[(String, String)],
     threshold: i64,
     op: &str,
     c: &ConstraintInfo,
@@ -1018,12 +1289,14 @@ fn build_inverse_fn(
 
     writeln!(s, "pub fn {fn_name}(dataset: &CimDataset) -> Vec<Violation> {{").unwrap();
     writeln!(s, "    let mut ref_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();").unwrap();
-    writeln!(s, "    for src_mrid in dataset.by_type.get(\"{src_class}\").into_iter().flatten() {{").unwrap();
-    writeln!(s, "        if let Some(src) = dataset.entries.get(src_mrid)").unwrap();
-    writeln!(s, "            .and_then(|e| e.element.as_any().downcast_ref::<cimstructs::{src_class}>()) {{").unwrap();
-    writeln!(s, "            {index_snippet}").unwrap();
-    writeln!(s, "        }}").unwrap();
-    writeln!(s, "    }}").unwrap();
+    for (src_class, index_snippet) in index_snippets {
+        writeln!(s, "    for src_mrid in dataset.by_type.get(\"{src_class}\").into_iter().flatten() {{").unwrap();
+        writeln!(s, "        if let Some(src) = dataset.entries.get(src_mrid)").unwrap();
+        writeln!(s, "            .and_then(|e| e.element.as_any().downcast_ref::<cimstructs::{src_class}>()) {{").unwrap();
+        writeln!(s, "            {index_snippet}").unwrap();
+        writeln!(s, "        }}").unwrap();
+        writeln!(s, "    }}").unwrap();
+    }
     writeln!(s, "    let mut violations = Vec::new();").unwrap();
     writeln!(s, "    for mrid in dataset.by_type.get(\"{target_class}\").into_iter().flatten() {{").unwrap();
     writeln!(s, "        let count = ref_counts.get(mrid.as_str()).copied().unwrap_or(0);").unwrap();
@@ -1043,6 +1316,248 @@ fn build_inverse_fn(
     writeln!(s, "    violations").unwrap();
     writeln!(s, "}}").unwrap();
     s
+}
+
+// ---------------------------------------------------------------------------
+// Forward chain generators (multi-segment paths)
+// ---------------------------------------------------------------------------
+
+/// Splits a path segment like "cim:StreetAddress.status" into ("StreetAddress",
+/// full local name "StreetAddress.status").
+fn seg_class_and_local(seg: &str) -> Result<(String, String), String> {
+    let local = local_name(seg);
+    match local.split_once('.') {
+        Some((class, _)) => Ok((class.to_string(), local.clone())),
+        None => Err(format!("chain segment {} has no Class.prop shape", seg)),
+    }
+}
+
+/// Resolves a chain hop attribute and enforces that it decodes to a single
+/// 0..1 `MridRef` field. Returns (accessor relative to `var`, attr).
+fn chain_hop_accessor(
+    spec: &CimSpecification,
+    owner_class: &str,
+    attr_local: &str,
+    var: &str,
+) -> Result<(String, CimAttribute), String> {
+    let (prefix, attr) = find_attr_in_hierarchy(spec, owner_class, attr_local)
+        .ok_or_else(|| format!("chain attribute {} not found in hierarchy", attr_local))?;
+    if attr.is_primitive || attr.is_cim_datatype || attr.is_enum_value {
+        return Err(format!("chain hop {} is not a reference field", attr_local));
+    }
+    if attr.is_list {
+        return Err(format!("chain hop {} is a list field (not supported)", attr_local));
+    }
+    let field = sanitize_field(to_snake_case(&attr.label));
+    Ok((format!("{}.{field}", prefix.replacen("obj", var, 1)), attr))
+}
+
+/// Emits the reference walk for the association segments `segs` into `s` (inside
+/// the per-object loop opened by `write_fn_header`, i.e. with `obj` in scope).
+/// Any missing or unresolvable link `continue`s — the path yields no value there,
+/// matching cimgo's chain-walker. Returns the variable naming the final entry.
+fn emit_forward_chain_walk(
+    s: &mut String,
+    class_name: &str,
+    spec: &CimSpecification,
+    segs: &[String],
+) -> Result<String, String> {
+    let (acc0, _) = chain_hop_accessor(spec, class_name, &local_name(&segs[0]), "obj")?;
+    writeln!(s, "        let ref0 = match {acc0}.as_ref() {{").unwrap();
+    writeln!(s, "            Some(r) => r.mrid.trim_start_matches('#'), None => continue,").unwrap();
+    writeln!(s, "        }};").unwrap();
+    writeln!(s, "        let entry0 = match dataset.entries.get(ref0) {{").unwrap();
+    writeln!(s, "            Some(e) => e, None => continue,").unwrap();
+    writeln!(s, "        }};").unwrap();
+
+    for (i, seg) in segs.iter().enumerate().skip(1) {
+        let (hop_class, attr_local) = seg_class_and_local(seg)?;
+        if !spec.types.contains_key(&hop_class) {
+            return Err(format!("chain hop class {} not in schema", hop_class));
+        }
+        let hop_var = format!("hop{i}");
+        let (acc, _) = chain_hop_accessor(spec, &hop_class, &attr_local, &hop_var)?;
+        let prev = i - 1;
+        writeln!(s, "        let {hop_var} = match entry{prev}.element.as_any()").unwrap();
+        writeln!(s, "            .downcast_ref::<cimstructs::{hop_class}>() {{").unwrap();
+        writeln!(s, "            Some(o) => o, None => continue,").unwrap();
+        writeln!(s, "        }};").unwrap();
+        writeln!(s, "        let ref{i} = match {acc}.as_ref() {{").unwrap();
+        writeln!(s, "            Some(r) => r.mrid.trim_start_matches('#'), None => continue,").unwrap();
+        writeln!(s, "        }};").unwrap();
+        writeln!(s, "        let entry{i} = match dataset.entries.get(ref{i}) {{").unwrap();
+        writeln!(s, "            Some(e) => e, None => continue,").unwrap();
+        writeln!(s, "        }};").unwrap();
+    }
+    Ok(format!("entry{}", segs.len() - 1))
+}
+
+/// sh:Required over a multi-segment forward chain: the presence requirement
+/// collapses onto the first link (cimgo parity — a later link that doesn't
+/// resolve is indistinguishable from data legitimately split across files).
+fn gen_chain_required_first_link(
+    fn_name: &str,
+    class_name: &str,
+    spec: &CimSpecification,
+    attr_local: &str,
+    c: &ConstraintInfo,
+) -> Result<(String, Option<String>), String> {
+    let (prefix, attr) = find_attr_in_hierarchy(spec, class_name, attr_local)
+        .ok_or_else(|| format!("chain attribute {} not found in hierarchy", attr_local))?;
+    if attr.is_primitive || attr.is_cim_datatype || attr.is_enum_value {
+        return Err(format!("chain Required first link {} is not a reference field", attr_local));
+    }
+    let field = sanitize_field(to_snake_case(&attr.label));
+    let accessor = format!("{prefix}.{field}");
+    gen_required(fn_name, class_name, &accessor, &attr, c)
+}
+
+/// Walks the association segments and requires the final resolved entry's class
+/// to be in `allowed` (already subclass-expanded). Backs sh:HasValue with an
+/// rdf:type tail and multi-hop sh:or-of-sh:class.
+fn gen_forward_chain_type_check(
+    fn_name: &str,
+    class_name: &str,
+    spec: &CimSpecification,
+    segs: &[String],
+    allowed: &[String],
+    c: &ConstraintInfo,
+) -> Result<(String, Option<String>), String> {
+    let mut walk = String::new();
+    let final_entry = emit_forward_chain_walk(&mut walk, class_name, spec, segs)?;
+    let (message, severity, name_str, rule_id_str, desc_str, _) = extract_violation_fields(c);
+    let prop = local_name(&segs[0]);
+    let allowed_str = allowed.iter().map(|t| format!("\"{t}\"")).collect::<Vec<_>>().join(", ");
+
+    let mut s = String::new();
+    write_fn_header(&mut s, fn_name, class_name);
+    s.push_str(&walk);
+    writeln!(s, "        let allowed: &[&str] = &[{allowed_str}];").unwrap();
+    writeln!(s, "        if !allowed.contains(&{final_entry}.element.type_name()) {{").unwrap();
+    write_violation(&mut s, class_name, &prop, &message, &severity, &name_str, &rule_id_str, &desc_str, "            ");
+    writeln!(s, "        }}").unwrap();
+    write_fn_footer(&mut s);
+    Ok((s, None))
+}
+
+/// Walks the association segments up to the last one, then applies an
+/// sh:datatype format check to the primitive leaf field named by the final segment.
+fn gen_forward_chain_datatype_check(
+    fn_name: &str,
+    class_name: &str,
+    spec: &CimSpecification,
+    segs: &[String],
+    c: &ConstraintInfo,
+) -> Result<(String, Option<String>), String> {
+    let (mid, leaf_seg) = segs.split_at(segs.len() - 1);
+    if mid.is_empty() {
+        return Err("chain datatype: no hop segments".to_string());
+    }
+    let (leaf_class, leaf_local) = seg_class_and_local(&leaf_seg[0])?;
+    if !spec.types.contains_key(&leaf_class) {
+        return Err(format!("chain leaf class {} not in schema", leaf_class));
+    }
+    let (leaf_prefix, leaf_attr) = find_attr_in_hierarchy(spec, &leaf_class, &leaf_local)
+        .ok_or_else(|| format!("chain attribute {} not found in hierarchy", leaf_local))?;
+    if leaf_attr.lang_type != "String" || leaf_attr.is_list {
+        return Err(format!("chain sh:Datatype on non-string leaf {}", leaf_local));
+    }
+    let dt = c.payload.get("datatype").and_then(|v| v.as_str()).unwrap_or("");
+    let check_fn = match dt {
+        "xsd:dateTime" | "<http://www.w3.org/2001/XMLSchema#dateTime>" => "is_xsd_datetime",
+        "xsd:date" | "<http://www.w3.org/2001/XMLSchema#date>" => "is_xsd_date",
+        "xsd:gMonthDay" | "<http://www.w3.org/2001/XMLSchema#gMonthDay>" => "is_xsd_gmonthday",
+        "xsd:anyURI" | "<http://www.w3.org/2001/XMLSchema#anyURI>" => "is_xsd_anyuri",
+        _ => return Err(format!("chain sh:Datatype: unsupported datatype {:?}", dt)),
+    };
+
+    let mut walk = String::new();
+    let final_entry = emit_forward_chain_walk(&mut walk, class_name, spec, mid)?;
+    let (message, severity, name_str, rule_id_str, desc_str, _) = extract_violation_fields(c);
+    let prop = local_name(&segs[0]);
+    let leaf_field = sanitize_field(to_snake_case(&leaf_attr.label));
+    let leaf_acc = format!("{}.{leaf_field}", leaf_prefix.replacen("obj", "leaf", 1));
+
+    let mut s = String::new();
+    write_fn_header(&mut s, fn_name, class_name);
+    s.push_str(&walk);
+    writeln!(s, "        let leaf = match {final_entry}.element.as_any()").unwrap();
+    writeln!(s, "            .downcast_ref::<cimstructs::{leaf_class}>() {{").unwrap();
+    writeln!(s, "            Some(o) => o, None => continue,").unwrap();
+    writeln!(s, "        }};").unwrap();
+    writeln!(s, "        if {leaf_acc}.is_empty() {{ continue; }}").unwrap();
+    writeln!(s, "        if !{check_fn}(&{leaf_acc}) {{").unwrap();
+    write_violation(&mut s, class_name, &prop, &message, &severity, &name_str, &rule_id_str, &desc_str, "            ");
+    writeln!(s, "        }}").unwrap();
+    write_fn_footer(&mut s);
+    Ok((s, None))
+}
+
+/// [^forward-ref, enum-attr] sh:HasValue: the target object must be referenced by
+/// at least one source object whose enum attribute carries the expected value
+/// (e.g. every Ground needs a Terminal with Terminal.phases = PhaseCode.N).
+fn gen_inverse_chain_has_value(
+    fn_name: &str,
+    target_class: &str,
+    spec: &CimSpecification,
+    inv_seg: &str,
+    value_seg: &str,
+    c: &ConstraintInfo,
+) -> Result<(String, Option<String>), String> {
+    let forward = &inv_seg[1..];
+    let (src_class, ref_local) = seg_class_and_local(forward)?;
+    if !spec.types.contains_key(&src_class) {
+        return Err(format!("inverse chain source class {} not in schema", src_class));
+    }
+    let (ref_prefix, ref_attr) = find_attr_in_hierarchy(spec, &src_class, &ref_local)
+        .ok_or_else(|| format!("chain attribute {} not found in hierarchy", ref_local))?;
+    if ref_attr.is_primitive || ref_attr.is_cim_datatype || ref_attr.is_enum_value {
+        return Err(format!("inverse chain link {} is not a reference field", ref_local));
+    }
+    let value_local = local_name(value_seg);
+    let (val_prefix, val_attr) = find_attr_in_hierarchy(spec, &src_class, &value_local)
+        .ok_or_else(|| format!("chain attribute {} not found in hierarchy", value_local))?;
+    if !val_attr.is_enum_value {
+        return Err(format!("inverse chain sh:HasValue on non-enum attribute {}", value_local));
+    }
+    let expected = enum_literal(
+        c.payload.get("hasValue").and_then(|v| v.as_str())
+            .ok_or_else(|| "inverse chain sh:HasValue: missing payload".to_string())?,
+    )
+    .replace('"', "\\\"");
+
+    let ref_field = sanitize_field(to_snake_case(&ref_attr.label));
+    let ref_acc = format!("{}.{ref_field}", ref_prefix.replacen("obj", "src", 1));
+    let val_field = sanitize_field(to_snake_case(&val_attr.label));
+    let val_acc = format!("{}.{val_field}", val_prefix.replacen("obj", "src", 1));
+
+    let (message, severity, name_str, rule_id_str, desc_str, _) = extract_violation_fields(c);
+    let prop = ref_local;
+
+    let mut s = String::new();
+    writeln!(s, "pub fn {fn_name}(dataset: &CimDataset) -> Vec<Violation> {{").unwrap();
+    writeln!(s, "    let mut has_value: std::collections::HashSet<&str> = std::collections::HashSet::new();").unwrap();
+    writeln!(s, "    for src_mrid in dataset.by_type.get(\"{src_class}\").into_iter().flatten() {{").unwrap();
+    writeln!(s, "        let src = match dataset.entries.get(src_mrid)").unwrap();
+    writeln!(s, "            .and_then(|e| e.element.as_any().downcast_ref::<cimstructs::{src_class}>()) {{").unwrap();
+    writeln!(s, "            Some(o) => o, None => continue,").unwrap();
+    writeln!(s, "        }};").unwrap();
+    writeln!(s, "        if {val_acc}.as_ref().map_or(true, |u| u.uri != \"{expected}\") {{ continue; }}").unwrap();
+    if ref_attr.is_list {
+        writeln!(s, "        for r in &{ref_acc} {{ has_value.insert(r.mrid.trim_start_matches('#')); }}").unwrap();
+    } else {
+        writeln!(s, "        if let Some(r) = {ref_acc}.as_ref() {{ has_value.insert(r.mrid.trim_start_matches('#')); }}").unwrap();
+    }
+    writeln!(s, "    }}").unwrap();
+    writeln!(s, "    let mut violations = Vec::new();").unwrap();
+    writeln!(s, "    for mrid in dataset.by_type.get(\"{target_class}\").into_iter().flatten() {{").unwrap();
+    writeln!(s, "        if !has_value.contains(mrid.as_str()) {{").unwrap();
+    write_violation(&mut s, target_class, &prop, &message, &severity, &name_str, &rule_id_str, &desc_str, "            ");
+    writeln!(s, "        }}").unwrap();
+    writeln!(s, "    }}").unwrap();
+    writeln!(s, "    violations").unwrap();
+    writeln!(s, "}}").unwrap();
+    Ok((s, None))
 }
 
 // ---------------------------------------------------------------------------
@@ -1186,6 +1701,7 @@ fn component_suffix(component: &str) -> &str {
         "sh:OrClassConstraintComponent" => "or_class",
         "sh:NotClassConstraintComponent" => "not_class",
         "sh:LessThanConstraintComponent" => "less_than",
+        "sh:LessThanOrEqualsConstraintComponent" => "less_than_or_equals",
         "sh:PatternConstraintComponent" => "pattern",
         "sh:MinLengthConstraintComponent" => "min_length",
         "sh:MaxLengthConstraintComponent" => "max_length",
@@ -1277,7 +1793,7 @@ fn gen_xone_check(
         let min1 = branch.iter().find(|ci|
             ci.component == "sh:MinCountConstraintComponent"
             && ci.payload.get("minCount").and_then(|v| v.as_int()) == Some(1)
-            && ci.path.len() == 1 && !ci.path[0].starts_with('~'))?;
+            && ci.path.len() == 1 && !ci.path[0].starts_with('^'))?;
         let attr_id = local_name(&min1.path[0]);
         let (acc_prefix, attr) = find_attr_in_hierarchy(spec, class_name, &attr_id)?;
         if !attr.is_association_used || attr.is_list { return None; }
@@ -1315,7 +1831,7 @@ fn gen_or_compound_check(
     for (i, branch) in branches.iter().enumerate() {
         // Must have at least one constraint with inverse path
         let inv = branch.iter().find(|ci|
-            !ci.path.is_empty() && ci.path[0].starts_with('~'))?;
+            !ci.path.is_empty() && ci.path[0].starts_with('^'))?;
         if inv.path.len() != 1 { return None; } // multi-segment: skip
 
         let prelude = build_inverse_count_prelude(spec, &inv.path[0], i)?;
@@ -1370,12 +1886,17 @@ fn gen_and_compound_check(
         let any_path = branch.iter().find(|ci| !ci.path.is_empty()).map(|ci| &ci.path[0]);
         let path0 = any_path?;
 
-        if path0.starts_with('~') {
-            // Inverse path branch
-            if branch.iter().any(|ci| ci.path.len() > 1) { return None; } // multi-seg: skip
+        if path0.starts_with('^') {
+            // Inverse path branch, single-segment (^Class.field) or two-segment
+            // (^Class.field / Class.otherField): the latter counts, per outer
+            // object, how many referrers ALSO have the second field set (e.g.
+            // "how many referring Terminals also have a ConnectivityNode").
             let inv_ci = branch.iter().find(|ci| !ci.path.is_empty())?;
-            if inv_ci.path.len() != 1 { return None; }
-            let prelude = build_inverse_count_prelude(spec, &inv_ci.path[0], inv_idx)?;
+            let prelude = match inv_ci.path.len() {
+                1 => build_inverse_count_prelude(spec, &inv_ci.path[0], inv_idx)?,
+                2 => build_inverse_forward_count_prelude(spec, &inv_ci.path, inv_idx)?,
+                _ => return None, // longer chains: skip
+            };
             let min = branch.iter().find(|ci| ci.component == "sh:MinCountConstraintComponent")
                 .and_then(|ci| ci.payload.get("minCount").and_then(|v| v.as_int()))
                 .unwrap_or(0);
@@ -1443,33 +1964,92 @@ fn gen_and_compound_check(
 // ---------------------------------------------------------------------------
 
 /// Build the prelude code that counts inverse references for one branch.
-/// `path0` is the raw inverse path segment like "~cim:Terminal.ConductingEquipment".
+/// `path0` is the raw inverse path segment like "^cim:Terminal.ConductingEquipment".
 fn build_inverse_count_prelude(spec: &CimSpecification, path0: &str, idx: usize) -> Option<String> {
-    let forward_pred = &path0[1..]; // strip leading '~'
+    let forward_pred = &path0[1..]; // strip leading '^'
     let local = local_name(forward_pred);
     let (src_class, _) = local.split_once('.')?;
-    let (acc_prefix, attr) = find_attr_in_hierarchy(spec, src_class, &local)?;
+    let (_, attr) = find_attr_in_hierarchy(spec, src_class, &local)?;
     if !attr.is_association_used { return None; }
     let field = sanitize_field(to_snake_case(&attr.label));
-    let src_prefix = acc_prefix.replacen("obj", "src", 1);
-    let src_field = format!("{src_prefix}.{field}");
 
     let mut s = String::new();
     writeln!(s, "    let mut counts{idx}: std::collections::HashMap<String, usize> = std::collections::HashMap::new();").unwrap();
-    writeln!(s, "    for src_mrid in dataset.by_type.get(\"{src_class}\").into_iter().flatten() {{").unwrap();
-    writeln!(s, "        if let Some(src) = dataset.entries.get(src_mrid)").unwrap();
-    writeln!(s, "            .and_then(|e| e.element.as_any().downcast_ref::<cimstructs::{src_class}>()) {{").unwrap();
-    if attr.is_list {
-        writeln!(s, "            for r in &{src_field} {{").unwrap();
-        writeln!(s, "                *counts{idx}.entry(r.mrid.trim_start_matches('#').to_string()).or_insert(0) += 1;").unwrap();
-        writeln!(s, "            }}").unwrap();
-    } else {
-        writeln!(s, "            if let Some(r) = &{src_field} {{").unwrap();
-        writeln!(s, "                *counts{idx}.entry(r.mrid.trim_start_matches('#').to_string()).or_insert(0) += 1;").unwrap();
-        writeln!(s, "            }}").unwrap();
+    // The referrer class can be abstract — scan every concrete subclass that
+    // carries the forward field (dataset.by_type only holds concrete type names).
+    let mut emitted = false;
+    for cls in class_and_subclasses(spec, src_class) {
+        let Some((acc_prefix, _)) = find_attr_in_hierarchy(spec, &cls, &local) else { continue };
+        let src_prefix = acc_prefix.replacen("obj", "src", 1);
+        let src_field = format!("{src_prefix}.{field}");
+        emitted = true;
+        writeln!(s, "    for src_mrid in dataset.by_type.get(\"{cls}\").into_iter().flatten() {{").unwrap();
+        writeln!(s, "        if let Some(src) = dataset.entries.get(src_mrid)").unwrap();
+        writeln!(s, "            .and_then(|e| e.element.as_any().downcast_ref::<cimstructs::{cls}>()) {{").unwrap();
+        if attr.is_list {
+            writeln!(s, "            for r in &{src_field} {{").unwrap();
+            writeln!(s, "                *counts{idx}.entry(r.mrid.trim_start_matches('#').to_string()).or_insert(0) += 1;").unwrap();
+            writeln!(s, "            }}").unwrap();
+        } else {
+            writeln!(s, "            if let Some(r) = &{src_field} {{").unwrap();
+            writeln!(s, "                *counts{idx}.entry(r.mrid.trim_start_matches('#').to_string()).or_insert(0) += 1;").unwrap();
+            writeln!(s, "            }}").unwrap();
+        }
+        writeln!(s, "        }}").unwrap();
+        writeln!(s, "    }}").unwrap();
     }
-    writeln!(s, "        }}").unwrap();
-    writeln!(s, "    }}").unwrap();
+    if !emitted { return None; }
+    Some(s)
+}
+
+/// Build the prelude for a two-segment inverse-then-forward branch:
+/// `[^Class.field, Class.otherField]` (e.g. "how many Terminals refer to this
+/// Clamp via Terminal.ConductingEquipment AND also have Terminal.ConnectivityNode
+/// set" — used by C:452:EQ:Clamp:numberOfTerminals's sh:and). Counts, per outer
+/// object, referrers for which the SECOND field also resolves — a referrer
+/// missing the second field doesn't count.
+fn build_inverse_forward_count_prelude(spec: &CimSpecification, path: &[String], idx: usize) -> Option<String> {
+    if path.len() != 2 { return None; }
+    let inv_local = local_name(&path[0][1..]); // strip leading '^'
+    let (src_class, _) = inv_local.split_once('.')?;
+    let fwd_local = local_name(&path[1]);
+    if !fwd_local.contains('.') { return None; }
+
+    let mut s = String::new();
+    writeln!(s, "    let mut counts{idx}: std::collections::HashMap<String, usize> = std::collections::HashMap::new();").unwrap();
+    let mut emitted = false;
+    for cls in class_and_subclasses(spec, src_class) {
+        let Some((inv_prefix, inv_attr)) = find_attr_in_hierarchy(spec, &cls, &inv_local) else { continue };
+        let Some((fwd_prefix, fwd_attr)) = find_attr_in_hierarchy(spec, &cls, &fwd_local) else { continue };
+        if !inv_attr.is_association_used || !fwd_attr.is_association_used { continue; }
+        let inv_field = sanitize_field(to_snake_case(&inv_attr.label));
+        let inv_src_field = format!("{}.{inv_field}", inv_prefix.replacen("obj", "src", 1));
+        let fwd_field = sanitize_field(to_snake_case(&fwd_attr.label));
+        let fwd_src_field = format!("{}.{fwd_field}", fwd_prefix.replacen("obj", "src", 1));
+        let fwd_present = if fwd_attr.is_list {
+            format!("!{fwd_src_field}.is_empty()")
+        } else {
+            format!("{fwd_src_field}.is_some()")
+        };
+        emitted = true;
+        writeln!(s, "    for src_mrid in dataset.by_type.get(\"{cls}\").into_iter().flatten() {{").unwrap();
+        writeln!(s, "        if let Some(src) = dataset.entries.get(src_mrid)").unwrap();
+        writeln!(s, "            .and_then(|e| e.element.as_any().downcast_ref::<cimstructs::{cls}>()) {{").unwrap();
+        writeln!(s, "            if {fwd_present} {{").unwrap();
+        if inv_attr.is_list {
+            writeln!(s, "                for r in &{inv_src_field} {{").unwrap();
+            writeln!(s, "                    *counts{idx}.entry(r.mrid.trim_start_matches('#').to_string()).or_insert(0) += 1;").unwrap();
+            writeln!(s, "                }}").unwrap();
+        } else {
+            writeln!(s, "                if let Some(r) = &{inv_src_field} {{").unwrap();
+            writeln!(s, "                    *counts{idx}.entry(r.mrid.trim_start_matches('#').to_string()).or_insert(0) += 1;").unwrap();
+            writeln!(s, "                }}").unwrap();
+        }
+        writeln!(s, "            }}").unwrap();
+        writeln!(s, "        }}").unwrap();
+        writeln!(s, "    }}").unwrap();
+    }
+    if !emitted { return None; }
     Some(s)
 }
 

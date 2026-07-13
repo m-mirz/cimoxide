@@ -111,9 +111,26 @@ static SKIP_CATEGORIES: &[SkipCategory] = &[
         match_fn: |e| e.reason.contains("OrInversePath") && e.reason.contains("structurally satisfied"),
     },
     SkipCategory {
-        label: "`sh:class` / `sh:or-class` vacuously true",
+        label: "`sh:class` vacuously true (inverse-index already type-asserts)",
         section: "skipped",
         match_fn: |e| e.reason.contains("vacuously true"),
+    },
+    // Multi-segment structural guarantees — must precede the generic
+    // "multi-segment path not supported" fallback below.
+    SkipCategory {
+        label: "`sh:maxCount 1` on multi-hop paths",
+        section: "skipped",
+        match_fn: |e| e.reason.contains("multi-segment MaxCount=1 structurally satisfied"),
+    },
+    SkipCategory {
+        label: "`sh:nodeKind` on multi-segment paths",
+        section: "skipped",
+        match_fn: |e| e.reason.contains("multi-segment NodeKind structurally satisfied"),
+    },
+    SkipCategory {
+        label: "`rdf:Statement` member paths (guaranteed by RDF specification)",
+        section: "skipped",
+        match_fn: |e| e.reason.contains("rdf:Statement members"),
     },
     // Cannot be conducted
     SkipCategory {
@@ -122,7 +139,7 @@ static SKIP_CATEGORIES: &[SkipCategory] = &[
         match_fn: |e| e.reason.contains("multi-segment"),
     },
     SkipCategory {
-        label: "inverse path component not supported",
+        label: "inverse path over `rdf:type` (instance-count) not supported",
         section: "cannot_be_conducted",
         match_fn: |e| e.reason.contains("inverse") && (e.reason.contains("not supported") || e.reason.contains("no class.prop")),
     },
@@ -170,7 +187,7 @@ static SKIP_CATEGORIES: &[SkipCategory] = &[
     // cimvalidation/src/sparql/: a hand-written Rust implementation, not a general
     // evaluator.
     SkipCategory {
-        label: "SPARQL-derived constraint/target (needs a hand-written implementation, not a SPARQL evaluator)",
+        label: "SPARQL-derived constraints (needs a hand-written implementation, not a SPARQL evaluator)",
         section: "sparql",
         match_fn: |e| e.reason.contains("needs a hand-written implementation"),
     },

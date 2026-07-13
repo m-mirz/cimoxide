@@ -11,6 +11,9 @@ pub trait CimElement: Send + Sync {
 #[derive(Debug, Clone)]
 pub enum FieldValue {
     Text(String),
+    /// Repeated text element within one parsed element (e.g. the multiple
+    /// `md:Model.profile` entries of a combined EQ+SC file header).
+    TextList(Vec<String>),
     Resource(String),
     ResourceList(Vec<String>),
 }

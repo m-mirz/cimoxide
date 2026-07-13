@@ -414,31 +414,35 @@ fn emit_attr_arm(s: &mut String, prefix: &str, attr: &CimAttribute) {
 
     if attr.is_primitive || attr.is_cim_datatype {
         if attr.is_list {
-            writeln!(s, "                    if let crate::base::FieldValue::Text(sv) = val {{").unwrap();
-            if attr.lang_type == "Vec<String>" || attr.lang_type == "String" {
-                writeln!(s, "                        {prefix}.{fname}.push(sv.trim().to_string());").unwrap();
+            // Repeated text elements arrive as one TextList; a single element as Text.
+            let push = if attr.lang_type == "Vec<String>" || attr.lang_type == "String" {
+                format!("{prefix}.{fname}.push(sv.trim().to_string());")
             } else {
-                writeln!(s, "                        if let Ok(v) = sv.trim().parse() {{ {prefix}.{fname}.push(v); }}").unwrap();
-            }
+                format!("if let Ok(v) = sv.trim().parse() {{ {prefix}.{fname}.push(v); }}")
+            };
+            writeln!(s, "                    match val {{").unwrap();
+            writeln!(s, "                        crate::base::FieldValue::Text(sv) => {{ {push} }}").unwrap();
+            writeln!(s, "                        crate::base::FieldValue::TextList(svs) => {{").unwrap();
+            writeln!(s, "                            for sv in svs {{ {push} }}").unwrap();
+            writeln!(s, "                        }}").unwrap();
+            writeln!(s, "                        _ => {{}}").unwrap();
             writeln!(s, "                    }}").unwrap();
         } else {
-            match attr.lang_type.as_str() {
-                "String" => {
-                    writeln!(s, "                    if let crate::base::FieldValue::Text(sv) = val {{").unwrap();
-                    writeln!(s, "                        {prefix}.{fname}.clone_from(sv);").unwrap();
-                    writeln!(s, "                    }}").unwrap();
-                }
-                "bool" => {
-                    writeln!(s, "                    if let crate::base::FieldValue::Text(sv) = val {{").unwrap();
-                    writeln!(s, "                        {prefix}.{fname} = Some(sv.trim() == \"true\");").unwrap();
-                    writeln!(s, "                    }}").unwrap();
-                }
-                _ => {
-                    writeln!(s, "                    if let crate::base::FieldValue::Text(sv) = val {{").unwrap();
-                    writeln!(s, "                        if let Ok(v) = sv.trim().parse() {{ {prefix}.{fname} = Some(v); }}").unwrap();
-                    writeln!(s, "                    }}").unwrap();
-                }
-            }
+            // Scalar text field: a TextList means duplicate XML elements — keep
+            // the last value (decoder overwrite semantics; the duplicate itself
+            // is reported via RdfBlock.duplicate_fields).
+            let assign = match attr.lang_type.as_str() {
+                "String" => format!("{prefix}.{fname} = sv.clone();"),
+                "bool" => format!("{prefix}.{fname} = Some(sv.trim() == \"true\");"),
+                _ => format!("if let Ok(v) = sv.trim().parse() {{ {prefix}.{fname} = Some(v); }}"),
+            };
+            writeln!(s, "                    match val {{").unwrap();
+            writeln!(s, "                        crate::base::FieldValue::Text(sv) => {{ {assign} }}").unwrap();
+            writeln!(s, "                        crate::base::FieldValue::TextList(svs) => {{").unwrap();
+            writeln!(s, "                            if let Some(sv) = svs.last() {{ {assign} }}").unwrap();
+            writeln!(s, "                        }}").unwrap();
+            writeln!(s, "                        _ => {{}}").unwrap();
+            writeln!(s, "                    }}").unwrap();
         }
     } else if attr.is_enum_value {
         writeln!(s, "                    if let crate::base::FieldValue::Resource(sv) = val {{").unwrap();
@@ -465,8 +469,10 @@ fn emit_to_block_field(s: &mut String, attr: &CimAttribute) {
     let fname = sanitize_field(to_snake_case(&attr.label));
     if attr.is_primitive || attr.is_cim_datatype {
         if attr.is_list {
-            writeln!(s, "        for v in &self.{fname} {{").unwrap();
-            writeln!(s, "            block.fields.insert(\"{}\".into(), crate::base::FieldValue::Text(v.to_string()));", attr.id).unwrap();
+            // A single TextList keeps every value; per-item Text inserts would
+            // overwrite each other in the fields HashMap.
+            writeln!(s, "        if !self.{fname}.is_empty() {{").unwrap();
+            writeln!(s, "            block.fields.insert(\"{}\".into(), crate::base::FieldValue::TextList(self.{fname}.iter().map(|v| v.to_string()).collect()));", attr.id).unwrap();
             writeln!(s, "        }}").unwrap();
         } else {
             match attr.lang_type.as_str() {

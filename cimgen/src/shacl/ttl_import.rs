@@ -1225,7 +1225,10 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
 }
 
 /// Extract the path from sh:path on a shape — returns simplified IRI segments.
-/// Inverse paths are encoded as "~<forward-iri>" (e.g. "~cim:Terminal.TopologicalNode").
+/// Inverse paths are encoded as "^<forward-iri>" (e.g. "^cim:Terminal.TopologicalNode").
+/// Keep this prefix in sync with codegen.rs's `starts_with('^')` inverse-path routing —
+/// a mismatch silently degrades every inverse constraint into an
+/// "attribute not found in hierarchy" skip (this happened once already).
 fn extract_path(g: &Graph, id: &str) -> Vec<String> {
     let val = match get_one(g, id, "sh:path") {
         Some(v) => v,

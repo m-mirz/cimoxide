@@ -5,7 +5,7 @@
     <cim:IdentifiedObject.mRID>BatteryUnit.OK</cim:IdentifiedObject.mRID>
     <cim:IdentifiedObject.name>Battery-OK</cim:IdentifiedObject.name>
     <cim:Equipment.inService>true</cim:Equipment.inService>
-    <cim:BatteryUnit.batteryState rdf:resource="cim:BatteryStateKind.discharging"/>
+    <cim:BatteryUnit.batteryState rdf:resource="http://iec.ch/TC57/CIM100#BatteryStateKind.discharging"/>
     <cim:BatteryUnit.storedE>50.0</cim:BatteryUnit.storedE>
     <cim:BatteryUnit.ratedE>100.0</cim:BatteryUnit.ratedE>
   </cim:BatteryUnit>
@@ -14,7 +14,7 @@
     <cim:IdentifiedObject.mRID>BatteryUnit.BAD</cim:IdentifiedObject.mRID>
     <cim:IdentifiedObject.name>Battery-BAD</cim:IdentifiedObject.name>
     <cim:Equipment.inService>true</cim:Equipment.inService>
-    <cim:BatteryUnit.batteryState rdf:resource="cim:BatteryStateKind.discharging"/>
+    <cim:BatteryUnit.batteryState rdf:resource="http://iec.ch/TC57/CIM100#BatteryStateKind.discharging"/>
     <cim:BatteryUnit.storedE>150.0</cim:BatteryUnit.storedE>
     <cim:BatteryUnit.ratedE>100.0</cim:BatteryUnit.ratedE>
   </cim:BatteryUnit>

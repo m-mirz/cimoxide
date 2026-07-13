@@ -272,11 +272,13 @@ fn find_resource(
     Ok(None)
 }
 
-/// Insert a field value, upgrading Resource → ResourceList on repeated keys.
-/// Records duplicate Text assignments in `block.duplicate_fields`.
+/// Insert a field value, upgrading Resource → ResourceList and Text → TextList
+/// on repeated keys (e.g. the multiple md:Model.profile entries in a combined
+/// EQ+SC file header). Every repeated assignment is also recorded in
+/// `block.duplicate_fields` (the generated MaxCount=1 checks read that set).
 fn add_field(block: &mut RdfBlock, key: &str, val: FieldValue) {
-    if let FieldValue::Resource(ref new_ref) = val {
-        match block.fields.get_mut(key) {
+    match &val {
+        FieldValue::Resource(new_ref) => match block.fields.get_mut(key) {
             Some(FieldValue::ResourceList(list)) => {
                 list.push(new_ref.clone());
                 block.duplicate_fields.insert(key.to_string());
@@ -292,10 +294,29 @@ fn add_field(block: &mut RdfBlock, key: &str, val: FieldValue) {
                 return;
             }
             _ => {}
+        },
+        FieldValue::Text(new_text) => match block.fields.get_mut(key) {
+            Some(FieldValue::TextList(list)) => {
+                list.push(new_text.clone());
+                block.duplicate_fields.insert(key.to_string());
+                return;
+            }
+            Some(existing @ FieldValue::Text(_)) => {
+                let old = match existing {
+                    FieldValue::Text(s) => s.clone(),
+                    _ => unreachable!(),
+                };
+                *existing = FieldValue::TextList(vec![old, new_text.clone()]);
+                block.duplicate_fields.insert(key.to_string());
+                return;
+            }
+            _ => {}
+        },
+        _ => {
+            if block.fields.contains_key(key) {
+                block.duplicate_fields.insert(key.to_string());
+            }
         }
-    } else if block.fields.contains_key(key) {
-        // Text field assigned more than once in the same element.
-        block.duplicate_fields.insert(key.to_string());
     }
     block.fields.insert(key.to_string(), val);
 }
