@@ -1,0 +1,129 @@
+# cimoxide
+
+Python bindings for [cimoxide](https://github.com/m-mirz/cimoxide), a Rust toolkit for
+ENTSO-E CGMES (Common Grid Model Exchange Standard) power system data. This package wraps
+the Rust decoder and SHACL/SPARQL validator (via [PyO3](https://pyo3.rs)) to give you fast
+RDF/XML parsing and CGMES conformance validation from Python, with no Rust toolchain
+required at install time.
+
+## Install
+
+```bash
+pip install cimoxide
+```
+
+Prebuilt wheels are published for common platforms; if none match your environment, `pip`
+will need a Rust toolchain and [`maturin`](https://www.maturin.rs) to build from source.
+
+## Quick start
+
+```python
+import cimoxide
+
+# Parse one or more CGMES RDF/XML files into a single merged dataset.
+ds = cimoxide.decode_files([
+    "RealGrid_EQ.xml",
+    "RealGrid_SSH.xml",
+    "RealGrid_TP.xml",
+    "RealGrid_SV.xml",
+])
+
+len(ds)                       # total number of elements
+ds.by_type()                  # {"ACLineSegment": [mrid, ...], ...} — no deserialization
+ds.get_type("ACLineSegment")  # [{"_type": "ACLineSegment", "r": 0.12, ...}, ...]
+
+for mrid in ds:
+    obj = ds[mrid]             # dict, e.g. {"_type": "BusbarSection", "name": "...", ...}
+```
+
+Each element is a plain Python `dict` with a `"_type"` key (the CIM class name) plus one
+key per populated attribute, snake_case, matching the JSON serialization of the underlying
+Rust structs. Reference fields (MRID associations) are plain MRID strings.
+
+### Validation
+
+```python
+violations = cimoxide.validate_files(
+    ["RealGrid_EQ.xml", "RealGrid_SSH.xml"],
+    profiles=["EQ", "SSH"],   # optional; auto-detected if omitted
+)
+
+for v in violations:
+    print(v.severity, v.rule_id, v.message, v.object_id)
+```
+
+`validate_files` runs two-phase validation: per-profile SHACL/SPARQL checks against each
+file individually, then cross-profile checks on the merged dataset. See the
+[`validate_files` docstring](python/cimoxide/types.pyi) for the full parameter list
+(`solved`, `common`, `quality`, `silence`).
+
+## API surface
+
+| Function / method | Description |
+|---|---|
+| `cimoxide.decode_file(path)` | Parse a single RDF/XML file. |
+| `cimoxide.decode_files(paths)` | Parse and merge multiple RDF/XML files. |
+| `cimoxide.decode_str(content)` | Parse RDF/XML from a string. |
+| `cimoxide.validate_files(paths, ...)` | Two-phase SHACL/SPARQL validation, returns `list[Violation]`. |
+| `CimDataset.merge(other)` | Merge another dataset into this one (`other` becomes empty). |
+| `CimDataset.drop_blocks()` | Free internal parse buffers after the final merge. |
+| `CimDataset[mrid]` / `.get(mrid)` | Fetch one element as a dict (`KeyError` / `None` if missing). |
+| `CimDataset.mrids()` / `iter(ds)` / `len(ds)` | Enumerate or count MRIDs. |
+| `CimDataset.by_type()` | `dict[str, list[mrid]]` type index, no deserialization. |
+| `CimDataset.get_type(name)` | All element dicts for one CIM class. |
+| `CimDataset.entries()` | All entries as `dict[mrid, dict]` (deserializes everything). |
+
+Full type stubs with per-method docstrings are in
+[`python/cimoxide/__init__.pyi`](python/cimoxide/__init__.pyi) and
+[`python/cimoxide/types.pyi`](python/cimoxide/types.pyi) (generated `TypedDict` per CIM
+class, for editor autocomplete on the returned dicts).
+
+## Examples
+
+[`examples/example_counts.py`](examples/example_counts.py) decodes the RealGrid test
+configuration and prints an element count per CIM type:
+
+```bash
+python examples/example_counts.py
+```
+
+(Requires the `CGMES-Test-Configurations` submodule checked out at the repo root — see
+"Development" below.)
+
+## Tests
+
+The test suite decodes and validates the CGMES fixture files checked into the parent
+repository's `testdata/` directory:
+
+```bash
+pip install pytest
+pytest tests/
+```
+
+- `tests/test_decode.py` — round-trip decode tests (`decode_file`/`decode_str`/`decode_files`,
+  indexing, iteration).
+- `tests/test_api.py` — dataset API contract tests (`merge`, `drop_blocks`, error handling).
+- `tests/test_validate.py` — `validate_files` behavior (profile filtering, `silence`,
+  `quality`/`common` flags, `Violation` fields).
+
+## Development
+
+This package is built from the [`cimoxide`](https://github.com/m-mirz/cimoxide) monorepo,
+where `cimoxide-py` lives alongside the Rust crates it binds (`cimdecoder`, `cimstructs`,
+`cimvalidation`). To build it from source:
+
+```bash
+git clone --recurse-submodules https://github.com/m-mirz/cimoxide.git
+cd cimoxide
+pip install maturin
+cd cimoxide-py
+maturin develop --release   # editable install into the active virtualenv
+pytest tests/
+```
+
+See the [repository README](https://github.com/m-mirz/cimoxide#readme) for the full
+project layout, the code generator, and the Rust CLI.
+
+## License
+
+Apache-2.0
