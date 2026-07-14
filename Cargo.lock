@@ -85,7 +85,7 @@ dependencies = [
 
 [[package]]
 name = "cimdecoder"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "cimstructs",
  "criterion",
@@ -94,7 +94,7 @@ dependencies = [
 
 [[package]]
 name = "cimgen"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "glob",
  "proc-macro2",
@@ -105,7 +105,7 @@ dependencies = [
 
 [[package]]
 name = "cimoxide-cli"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "cimdecoder",
  "cimstructs",
@@ -116,7 +116,7 @@ dependencies = [
 
 [[package]]
 name = "cimstructs"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "serde",
  "serde_json",
@@ -124,7 +124,7 @@ dependencies = [
 
 [[package]]
 name = "cimvalidation"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "cimdecoder",
  "cimstructs",
