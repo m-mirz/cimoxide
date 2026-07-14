@@ -1,5 +1,3 @@
-mod convert;
-
 use std::path::PathBuf;
 use std::process;
 
@@ -112,7 +110,7 @@ fn main() {
 fn cmd_to_json(xml_files: &[PathBuf], out: Option<&std::path::Path>) {
     let paths: Vec<&std::path::Path> = xml_files.iter().map(PathBuf::as_path).collect();
     let ds = or_die(cimdecoder::CimDataset::decode_files_parallel(&paths), "error decoding XML");
-    let json = convert::dataset_to_json(&ds);
+    let json = cimconvert::dataset_to_json(&ds);
     let text = or_die(serde_json::to_string_pretty(&json), "error serializing JSON");
     write_output(&text, out);
 }
@@ -122,10 +120,10 @@ fn cmd_to_xml(json_file: &std::path::Path, out: Option<&std::path::Path>, profil
         std::fs::read_to_string(json_file),
         &format!("error reading {}", json_file.display()),
     );
-    let ds = or_die(convert::dataset_from_json(&src), "error parsing JSON");
+    let ds = or_die(cimconvert::dataset_from_json(&src), "error parsing JSON");
 
     if profiles.is_empty() {
-        let xml = or_die(convert::dataset_to_xml(&ds), "error generating XML");
+        let xml = or_die(cimconvert::dataset_to_xml(&ds), "error generating XML");
         write_output(&xml, out);
         return;
     }
@@ -143,7 +141,7 @@ fn cmd_to_xml(json_file: &std::path::Path, out: Option<&std::path::Path>, profil
         }
         for &code in profiles {
             let xml = or_die(
-                convert::dataset_to_xml_for_profile(&ds, code),
+                cimconvert::dataset_to_xml_for_profile(&ds, code),
                 &format!("error generating XML for profile {code}"),
             );
             let path = dir.join(format!("{code}.xml"));
@@ -152,7 +150,7 @@ fn cmd_to_xml(json_file: &std::path::Path, out: Option<&std::path::Path>, profil
     } else {
         let code = profiles[0];
         let xml = or_die(
-            convert::dataset_to_xml_for_profile(&ds, code),
+            cimconvert::dataset_to_xml_for_profile(&ds, code),
             &format!("error generating XML for profile {code}"),
         );
         write_output(&xml, out);

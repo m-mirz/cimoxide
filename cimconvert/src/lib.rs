@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::Write as FmtWrite;
 
-use cimdecoder::{CimDataset, CimEntry};
-use cimstructs::base::FieldValue;
+use cimdecoder::CimDataset;
+use cimstructs::base::{FieldValue, RdfBlock};
 use cimstructs::constants::CIM_NAMESPACES;
 use cimstructs::profile_meta::{ATTR_ORIGINS, PROFILE_URIS, TYPE_ORIGINS};
 use cimstructs::registry::json_registry;
@@ -31,12 +31,7 @@ pub fn dataset_from_json(json: &str) -> Result<CimDataset, Box<dyn Error>> {
         let type_name = val["_type"].as_str().unwrap_or("").to_string();
         if let Some(f) = reg.get(type_name.as_str()) {
             let element = f(val)?;
-            let block = element.to_block();
-            ds.by_type
-                .entry(type_name)
-                .or_default()
-                .push(mrid.clone());
-            ds.entries.insert(mrid, CimEntry { element, block });
+            ds.set(mrid, element);
         }
     }
     Ok(ds)
@@ -56,7 +51,7 @@ pub fn dataset_to_xml(ds: &CimDataset) -> Result<String, Box<dyn Error>> {
 
     for mrid in mrids {
         let entry = &ds.entries[mrid];
-        let block = entry.element.to_block();
+        let block = &entry.block;
         write!(out, "  <cim:{} rdf:about=\"#{}\">", block.type_name, escape_attr(mrid))?;
 
         // Emit fields sorted for deterministic output
@@ -65,40 +60,7 @@ pub fn dataset_to_xml(ds: &CimDataset) -> Result<String, Box<dyn Error>> {
 
         let mut children = String::new();
         for (key, val) in fields {
-            match val {
-                FieldValue::Text(s) => {
-                    write!(
-                        children,
-                        "\n    <cim:{key}>{}</cim:{key}>",
-                        escape_text(s)
-                    )?;
-                }
-                FieldValue::TextList(ss) => {
-                    for s in ss {
-                        write!(
-                            children,
-                            "\n    <cim:{key}>{}</cim:{key}>",
-                            escape_text(s)
-                        )?;
-                    }
-                }
-                FieldValue::Resource(r) => {
-                    write!(
-                        children,
-                        "\n    <cim:{key} rdf:resource=\"#{}\"/>",
-                        escape_attr(r)
-                    )?;
-                }
-                FieldValue::ResourceList(rs) => {
-                    for r in rs {
-                        write!(
-                            children,
-                            "\n    <cim:{key} rdf:resource=\"#{}\"/>",
-                            escape_attr(r)
-                        )?;
-                    }
-                }
-            }
+            write_field(&mut children, "cim", key, val, "#")?;
         }
 
         if children.is_empty() {
@@ -127,14 +89,35 @@ pub fn dataset_to_xml_for_profile(
     }
     out.push_str(">\n");
 
-    // FullModel header — declares the profile this file belongs to
+    // FullModel header — declares the profile this file belongs to. Reuse a real
+    // decoded FullModel entry for this profile if the dataset has one (preserves
+    // scenarioTime/modelingAuthoritySet/DependentOn/version/etc.), else fall back
+    // to a minimal synthetic header.
     if let Some(&(_, uri)) = PROFILE_URIS.iter().find(|(k, _)| *k == profile_code) {
-        writeln!(
-            out,
-            "  <md:FullModel rdf:about=\"urn:uuid:cimoxide-{profile_code}\">"
-        )?;
-        writeln!(out, "    <md:Model.profile>{uri}</md:Model.profile>")?;
-        writeln!(out, "  </md:FullModel>")?;
+        if let Some((mrid, block)) = find_full_model_header(ds, uri) {
+            write!(out, "  <md:FullModel rdf:about=\"{}\">", escape_attr(mrid))?;
+
+            let mut fields: Vec<(&String, &FieldValue)> = block.fields.iter().collect();
+            fields.sort_by_key(|(k, _)| k.as_str());
+
+            let mut children = String::new();
+            for (key, val) in fields {
+                write_field(&mut children, "md", key, val, "")?;
+            }
+
+            if children.is_empty() {
+                write!(out, "/>\n")?;
+            } else {
+                write!(out, "{children}\n  </md:FullModel>\n")?;
+            }
+        } else {
+            writeln!(
+                out,
+                "  <md:FullModel rdf:about=\"urn:uuid:cimoxide-{profile_code}\">"
+            )?;
+            writeln!(out, "    <md:Model.profile>{uri}</md:Model.profile>")?;
+            writeln!(out, "  </md:FullModel>")?;
+        }
     }
 
     let mut mrids: Vec<&str> = ds.entries.keys().map(String::as_str).collect();
@@ -150,7 +133,7 @@ pub fn dataset_to_xml_for_profile(
         }
 
         let is_primary = type_origins.first().map_or(false, |&o| o == profile_code);
-        let block = entry.element.to_block();
+        let block = &entry.block;
 
         let include_field = |key: &str| -> bool {
             let origins = attr_map.get(key).copied().unwrap_or(&[]);
@@ -177,32 +160,7 @@ pub fn dataset_to_xml_for_profile(
         fields.sort_by_key(|(k, _)| k.as_str());
         let mut children = String::new();
         for (key, val) in fields {
-            match val {
-                FieldValue::Text(s) => {
-                    write!(children, "\n    <cim:{key}>{}</cim:{key}>", escape_text(s))?;
-                }
-                FieldValue::TextList(ss) => {
-                    for s in ss {
-                        write!(children, "\n    <cim:{key}>{}</cim:{key}>", escape_text(s))?;
-                    }
-                }
-                FieldValue::Resource(r) => {
-                    write!(
-                        children,
-                        "\n    <cim:{key} rdf:resource=\"#{}\"/>",
-                        escape_attr(r)
-                    )?;
-                }
-                FieldValue::ResourceList(rs) => {
-                    for r in rs {
-                        write!(
-                            children,
-                            "\n    <cim:{key} rdf:resource=\"#{}\"/>",
-                            escape_attr(r)
-                        )?;
-                    }
-                }
-            }
+            write_field(&mut children, "cim", key, val, "#")?;
         }
 
         if children.is_empty() {
@@ -214,6 +172,70 @@ pub fn dataset_to_xml_for_profile(
 
     out.push_str("</rdf:RDF>\n");
     Ok(out)
+}
+
+/// Find the decoded `FullModel` entry (if any) whose `Model.profile` field names
+/// `profile_uri`. If more than one matches, the lexicographically smallest MRID
+/// wins, for deterministic output.
+fn find_full_model_header<'a>(ds: &'a CimDataset, profile_uri: &str) -> Option<(&'a str, &'a RdfBlock)> {
+    let mut best: Option<(&str, &RdfBlock)> = None;
+    for (mrid, entry) in &ds.entries {
+        if entry.element.type_name() != "FullModel" {
+            continue;
+        }
+        let matches = match entry.block.fields.get("Model.profile") {
+            Some(FieldValue::Text(s)) => s == profile_uri,
+            Some(FieldValue::TextList(list)) => list.iter().any(|s| s == profile_uri),
+            _ => false,
+        };
+        if !matches {
+            continue;
+        }
+        if best.is_none_or(|(m, _)| mrid.as_str() < m) {
+            best = Some((mrid.as_str(), &entry.block));
+        }
+    }
+    best
+}
+
+/// `resource_prefix` is `"#"` for ordinary `cim:` fields (local fragment references)
+/// and `""` for `md:` FullModel header fields (`Model.DependentOn`/`Model.Supersedes`
+/// reference another FullModel's full URN, not a local fragment) — matches how the
+/// decoder strips at most one leading `#` from `rdf:resource` values on the way in.
+fn write_field(
+    children: &mut String,
+    ns: &str,
+    key: &str,
+    val: &FieldValue,
+    resource_prefix: &str,
+) -> Result<(), Box<dyn Error>> {
+    match val {
+        FieldValue::Text(s) => {
+            write!(children, "\n    <{ns}:{key}>{}</{ns}:{key}>", escape_text(s))?;
+        }
+        FieldValue::TextList(ss) => {
+            for s in ss {
+                write!(children, "\n    <{ns}:{key}>{}</{ns}:{key}>", escape_text(s))?;
+            }
+        }
+        FieldValue::Resource(r) => {
+            write!(
+                children,
+                "\n    <{ns}:{key} rdf:resource=\"{resource_prefix}{}\"/>",
+                escape_attr(r)
+            )?;
+        }
+        FieldValue::ResourceList(rs) => {
+            for r in rs {
+                write!(
+                    children,
+                    "\n    <{ns}:{key} rdf:resource=\"{resource_prefix}{}\"/>",
+                    escape_attr(r)
+                )?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn escape_text(s: &str) -> String {

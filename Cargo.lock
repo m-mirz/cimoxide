@@ -84,6 +84,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cimconvert"
+version = "0.0.5"
+dependencies = [
+ "cimdecoder",
+ "cimstructs",
+ "serde_json",
+]
+
+[[package]]
 name = "cimdecoder"
 version = "0.0.5"
 dependencies = [
@@ -107,6 +116,7 @@ dependencies = [
 name = "cimoxide-cli"
 version = "0.0.5"
 dependencies = [
+ "cimconvert",
  "cimdecoder",
  "cimstructs",
  "cimvalidation",

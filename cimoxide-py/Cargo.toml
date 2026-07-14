@@ -12,5 +12,7 @@ crate-type = ["cdylib"]
 cimdecoder    = { path = "../cimdecoder" }
 cimstructs    = { path = "../cimstructs" }
 cimvalidation = { path = "../cimvalidation" }
+cimconvert    = { path = "../cimconvert" }
 pyo3          = { version = "0.25", features = ["extension-module", "abi3-py39"] }
 pythonize     = "0.25"
+serde_json    = "1"

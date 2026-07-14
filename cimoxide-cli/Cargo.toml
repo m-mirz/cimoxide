@@ -11,6 +11,7 @@ path = "src/main.rs"
 cimdecoder     = { path = "../cimdecoder" }
 cimstructs     = { path = "../cimstructs" }
 cimvalidation  = { path = "../cimvalidation" }
+cimconvert     = { path = "../cimconvert" }
 serde_json     = "1"
 quick-xml      = { version = "0.37", features = ["encoding"] }
 

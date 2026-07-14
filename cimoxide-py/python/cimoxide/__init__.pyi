@@ -73,6 +73,20 @@ class CimDataset:
     def __getitem__(self, mrid: str) -> CimObject: ...
     def __iter__(self) -> PyCimDatasetIter: ...
 
+    def __setitem__(self, mrid: str, value: CimObject) -> None:
+        """Insert or replace the element at ``mrid``.
+
+        ``value`` must be a dict shaped like the ones returned by
+        ``__getitem__`` (a ``"_type"`` key naming a known CIM class, plus
+        attribute keys). Raises ``ValueError`` if ``"_type"`` is missing or
+        not a recognized CIM type.
+        """
+        ...
+
+    def __delitem__(self, mrid: str) -> None:
+        """Remove the element at ``mrid``. Raises ``KeyError`` if not found."""
+        ...
+
     def get(self, mrid: str) -> CimObject | None:
         """Return the element dict for the given MRID, or None if not found."""
         ...
@@ -100,6 +114,25 @@ class CimDataset:
 
         Deserializes every element — prefer ``get_type`` or ``__getitem__`` for
         partial access on large datasets.
+        """
+        ...
+
+    def to_xml_for_profile(self, profile: str) -> str:
+        """Encode this dataset as a single CGMES profile's RDF/XML text.
+
+        Only elements/fields whose CIM schema origin includes ``profile``
+        (e.g. ``"EQ"``, ``"SSH"``) are emitted. If the dataset contains a
+        decoded ``FullModel`` header for this profile, it is reused verbatim;
+        otherwise a minimal synthetic header is generated.
+        """
+        ...
+
+    def write_xml_files(self, dir: str, profiles: list[str]) -> None:
+        """Encode and write one RDF/XML file per profile into ``dir``.
+
+        Creates ``dir`` (and parents) if it doesn't exist, then writes
+        ``dir/{profile}.xml`` for each entry in ``profiles``, e.g.
+        ``["EQ", "SSH"]`` -> ``dir/EQ.xml``, ``dir/SSH.xml``.
         """
         ...
 

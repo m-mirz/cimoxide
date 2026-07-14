@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use pyo3::exceptions::{PyKeyError, PyRuntimeError};
+use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -123,6 +123,36 @@ impl PyCimDataset {
         }
     }
 
+    /// Insert or replace the element at `mrid`.
+    ///
+    /// `value` must be a dict shaped like the ones returned by `__getitem__`: a
+    /// `"_type"` key naming a known CIM class, plus attribute keys. Raises
+    /// `ValueError` if `"_type"` is missing or not a recognized CIM type.
+    fn __setitem__(&self, py: Python<'_>, mrid: String, value: Py<PyAny>) -> PyResult<()> {
+        let json_val: serde_json::Value =
+            pythonize::depythonize(value.bind(py)).map_err(map_err)?;
+        let type_name = json_val
+            .get("_type")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| PyValueError::new_err("element dict missing \"_type\" key"))?
+            .to_string();
+        let reg = cimstructs::registry::json_registry();
+        let ctor = reg
+            .get(type_name.as_str())
+            .ok_or_else(|| PyValueError::new_err(format!("unknown CIM type \"{type_name}\"")))?;
+        let element = ctor(json_val).map_err(map_err)?;
+        self.lock()?.set(mrid, element);
+        Ok(())
+    }
+
+    /// Remove the element at `mrid`. Raises `KeyError` if not found.
+    fn __delitem__(&self, mrid: &str) -> PyResult<()> {
+        match self.lock()?.remove(mrid) {
+            Some(_) => Ok(()),
+            None => Err(PyKeyError::new_err(mrid.to_string())),
+        }
+    }
+
     /// Iterate over all MRIDs in the dataset.
     fn __iter__(slf: PyRef<'_, Self>) -> PyResult<PyCimDatasetIter> {
         let mrids: Vec<String> = slf.lock()?.entries.keys().cloned().collect();
@@ -185,6 +215,33 @@ impl PyCimDataset {
         Ok(dict.into_any().unbind())
     }
 
+    /// Encode this dataset as a single CGMES profile's RDF/XML text.
+    ///
+    /// Only elements/fields whose CIM schema origin includes `profile` (e.g.
+    /// `"EQ"`, `"SSH"`) are emitted. If the dataset contains a decoded `FullModel`
+    /// header for this profile, it is reused verbatim; otherwise a minimal
+    /// synthetic header is generated.
+    fn to_xml_for_profile(&self, profile: &str) -> PyResult<String> {
+        let ds = self.lock()?;
+        cimconvert::dataset_to_xml_for_profile(&ds, profile).map_err(map_err)
+    }
+
+    /// Encode and write one RDF/XML file per profile into `dir`.
+    ///
+    /// Creates `dir` (and parents) if it doesn't exist, then writes
+    /// `dir/{profile}.xml` for each entry in `profiles`, e.g. `["EQ", "SSH"]` ->
+    /// `dir/EQ.xml`, `dir/SSH.xml`.
+    fn write_xml_files(&self, dir: &str, profiles: Vec<String>) -> PyResult<()> {
+        let ds = self.lock()?;
+        let dir_path = Path::new(dir);
+        std::fs::create_dir_all(dir_path).map_err(map_err)?;
+        for profile in &profiles {
+            let xml = cimconvert::dataset_to_xml_for_profile(&ds, profile).map_err(map_err)?;
+            let path = dir_path.join(format!("{profile}.xml"));
+            std::fs::write(&path, &xml).map_err(map_err)?;
+        }
+        Ok(())
+    }
 }
 
 fn violations_to_py(violations: Vec<cimvalidation::Violation>) -> Vec<PyViolation> {

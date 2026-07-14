@@ -1,12 +1,7 @@
 use std::path::Path;
 
 use cimdecoder::CimDataset;
-use cimoxide_cli_convert::{dataset_from_json, dataset_to_json, dataset_to_xml, dataset_to_xml_for_profile};
-
-// Re-export convert module for tests
-mod cimoxide_cli_convert {
-    include!("../src/convert.rs");
-}
+use cimconvert::{dataset_from_json, dataset_to_json, dataset_to_xml, dataset_to_xml_for_profile};
 
 fn test_xml_path() -> &'static Path {
     Path::new("../testdata/test_003.xml")
@@ -204,5 +199,65 @@ fn profile_unknown_yields_empty_rdf() {
     assert!(
         !xml.contains("<cim:"),
         "unknown profile must yield empty RDF, got:\n{xml}"
+    );
+}
+
+// ── FullModel header preservation ────────────────────────────────────────────
+//
+// PST_Type3_EQ.xml (from CGMES-Test-Configurations) has a real <md:FullModel> header
+// with rdf:about="urn:uuid:7b5b1bad-bc28-644c-8416-bc3125789aa3" and a full set of
+// Model.* fields, whose Model.profile matches PROFILE_URIS["EQ"] exactly.
+
+fn pst_eq_path() -> &'static Path {
+    Path::new("../CGMES-Test-Configurations/v3.0/PST/PST_PhaseTapChangerTable_Type3/PST_Type3_EQ.xml")
+}
+
+#[test]
+fn full_model_header_preserved_when_present() {
+    if !pst_eq_path().exists() {
+        return; // skip if submodule not initialized
+    }
+    let ds = CimDataset::decode_file(pst_eq_path()).expect("decode failed");
+    let json = serde_json::to_string(&dataset_to_json(&ds)).expect("serialize");
+    let ds2 = dataset_from_json(&json).expect("from_json");
+    let xml = dataset_to_xml_for_profile(&ds2, "EQ").expect("to_xml_for_profile failed");
+
+    assert!(
+        xml.contains("rdf:about=\"urn:uuid:7b5b1bad-bc28-644c-8416-bc3125789aa3\""),
+        "must reuse the original FullModel rdf:about, got:\n{xml}"
+    );
+    assert!(
+        xml.contains("<md:Model.scenarioTime>2021-05-03T05:00:00Z</md:Model.scenarioTime>"),
+        "must reuse the original Model.scenarioTime, got:\n{xml}"
+    );
+    assert!(
+        xml.contains("<md:Model.version>1</md:Model.version>"),
+        "must reuse the original Model.version, got:\n{xml}"
+    );
+    assert!(
+        !xml.contains("urn:uuid:cimoxide-EQ"),
+        "must not fall back to the synthetic header when a real one is present, got:\n{xml}"
+    );
+}
+
+#[test]
+fn full_model_header_synthesized_when_absent() {
+    if !pst_eq_path().exists() {
+        return; // skip if submodule not initialized
+    }
+    // This dataset only has an EQ-profile FullModel entry, so requesting SSH must
+    // fall back to the synthetic header rather than reusing the EQ one.
+    let ds = CimDataset::decode_file(pst_eq_path()).expect("decode failed");
+    let json = serde_json::to_string(&dataset_to_json(&ds)).expect("serialize");
+    let ds2 = dataset_from_json(&json).expect("from_json");
+    let xml = dataset_to_xml_for_profile(&ds2, "SSH").expect("to_xml_for_profile failed");
+
+    assert!(
+        xml.contains("urn:uuid:cimoxide-SSH"),
+        "must fall back to the synthetic header, got:\n{xml}"
+    );
+    assert!(
+        !xml.contains("7b5b1bad-bc28-644c-8416-bc3125789aa3"),
+        "must not leak the EQ FullModel's mrid into the SSH header, got:\n{xml}"
     );
 }

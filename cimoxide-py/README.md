@@ -40,6 +40,36 @@ Each element is a plain Python `dict` with a `"_type"` key (the CIM class name) 
 key per populated attribute, snake_case, matching the JSON serialization of the underlying
 Rust structs. Reference fields (MRID associations) are plain MRID strings.
 
+### Modify and re-encode
+
+`CimDataset` supports dict-style assignment and deletion, so you can edit elements in place
+and write the result back out as CGMES profile XML:
+
+```python
+# Edit an existing element (read, mutate the dict, assign it back).
+line = ds["ACLineSegment.1"]
+line["r"] = 0.15
+ds["ACLineSegment.1"] = line
+
+# Add a brand-new element the same way — the "_type" key selects the CIM class.
+ds["BaseVoltage.NEW"] = {"_type": "BaseVoltage", "id": "BaseVoltage.NEW", "nominal_voltage": 110.0}
+
+# Remove one.
+del ds["ACLineSegment.2"]
+
+# Encode a single profile as an RDF/XML string.
+eq_xml = ds.to_xml_for_profile("EQ")
+
+# Or write a full profile set straight to a directory: dir/EQ.xml, dir/SSH.xml, ...
+ds.write_xml_files("out/", ["EQ", "SSH", "TP", "SV"])
+```
+
+`to_xml_for_profile`/`write_xml_files` only emit elements and fields whose CIM schema
+origin includes the requested profile. If the dataset still has the decoded `FullModel`
+header for that profile (from the original source file), it's reused verbatim
+(`scenarioTime`, `modelingAuthoritySet`, `version`, `DependentOn`, ...); otherwise a minimal
+header is synthesized.
+
 ### Validation
 
 ```python
@@ -68,10 +98,14 @@ file individually, then cross-profile checks on the merged dataset. See the
 | `CimDataset.merge(other)` | Merge another dataset into this one (`other` becomes empty). |
 | `CimDataset.drop_blocks()` | Free internal parse buffers after the final merge. |
 | `CimDataset[mrid]` / `.get(mrid)` | Fetch one element as a dict (`KeyError` / `None` if missing). |
+| `CimDataset[mrid] = {...}` | Insert or replace the element at `mrid`. |
+| `del CimDataset[mrid]` | Remove the element at `mrid` (`KeyError` if missing). |
 | `CimDataset.mrids()` / `iter(ds)` / `len(ds)` | Enumerate or count MRIDs. |
 | `CimDataset.by_type()` | `dict[str, list[mrid]]` type index, no deserialization. |
 | `CimDataset.get_type(name)` | All element dicts for one CIM class. |
 | `CimDataset.entries()` | All entries as `dict[mrid, dict]` (deserializes everything). |
+| `CimDataset.to_xml_for_profile(profile)` | Encode one CGMES profile (e.g. `"EQ"`) as an RDF/XML string. |
+| `CimDataset.write_xml_files(dir, profiles)` | Write one RDF/XML file per profile into `dir`. |
 
 Full type stubs with per-method docstrings are in
 [`python/cimoxide/__init__.pyi`](python/cimoxide/__init__.pyi) and
@@ -102,7 +136,10 @@ pytest tests/
 
 - `tests/test_decode.py` — round-trip decode tests (`decode_file`/`decode_str`/`decode_files`,
   indexing, iteration).
-- `tests/test_api.py` — dataset API contract tests (`merge`, `drop_blocks`, error handling).
+- `tests/test_api.py` — dataset API contract tests (`merge`, `drop_blocks`, mutation via
+  `__setitem__`/`__delitem__`, error handling).
+- `tests/test_encode.py` — `to_xml_for_profile`/`write_xml_files` behavior, including
+  `FullModel` header reuse against a real CGMES fixture.
 - `tests/test_validate.py` — `validate_files` behavior (profile filtering, `silence`,
   `quality`/`common` flags, `Violation` fields).
 
@@ -110,7 +147,7 @@ pytest tests/
 
 This package is built from the [`cimoxide`](https://github.com/m-mirz/cimoxide) monorepo,
 where `cimoxide-py` lives alongside the Rust crates it binds (`cimdecoder`, `cimstructs`,
-`cimvalidation`). To build it from source:
+`cimvalidation`, `cimconvert`). To build it from source:
 
 ```bash
 git clone --recurse-submodules https://github.com/m-mirz/cimoxide.git

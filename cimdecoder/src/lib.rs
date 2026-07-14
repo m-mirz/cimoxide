@@ -115,6 +115,39 @@ impl CimDataset {
             entry.block = RdfBlock::default();
         }
     }
+
+    /// Insert or replace the element at `mrid`, keeping `by_type` consistent
+    /// (including the case where `mrid` already exists under a different type).
+    pub fn set(&mut self, mrid: String, element: Box<dyn CimElement>) {
+        let new_type = element.type_name().to_string();
+        if let Some(old) = self.entries.get(&mrid) {
+            let old_type = old.element.type_name();
+            if old_type != new_type {
+                if let Some(v) = self.by_type.get_mut(old_type) {
+                    v.retain(|m| m != &mrid);
+                }
+            }
+        }
+        let already_indexed = self
+            .by_type
+            .get(&new_type)
+            .is_some_and(|v| v.contains(&mrid));
+        if !already_indexed {
+            self.by_type.entry(new_type).or_default().push(mrid.clone());
+        }
+        let block = element.to_block();
+        self.entries.insert(mrid, CimEntry { element, block });
+    }
+
+    /// Remove the element at `mrid`, pruning it from `by_type`. Returns the
+    /// removed entry, or `None` if `mrid` was not present.
+    pub fn remove(&mut self, mrid: &str) -> Option<CimEntry> {
+        let removed = self.entries.remove(mrid)?;
+        if let Some(v) = self.by_type.get_mut(removed.element.type_name()) {
+            v.retain(|m| m != mrid);
+        }
+        Some(removed)
+    }
 }
 
 // --- XML streaming parser ---------------------------------------------------

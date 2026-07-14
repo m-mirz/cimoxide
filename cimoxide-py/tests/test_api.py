@@ -65,3 +65,62 @@ def test_decode_str_bad_xml_raises():
 def test_decode_file_missing_raises():
     with pytest.raises(Exception):
         cimoxide.decode_file("/nonexistent/path/to/file.xml")
+
+
+# ── Mutation: __setitem__ / __delitem__ ──────────────────────────────────────
+
+
+def test_setitem_updates_existing_field():
+    ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
+    obj = ds["ACLineSegment.OK"]
+    obj["r"] = 999.5
+    ds["ACLineSegment.OK"] = obj
+    assert ds["ACLineSegment.OK"]["r"] == 999.5
+
+
+def test_setitem_new_mrid_adds_entry():
+    ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
+    before = len(ds)
+    obj = dict(ds["ACLineSegment.OK"])
+    obj["id"] = "ACLineSegment.NEW"
+    obj["m_rid"] = "ACLineSegment.NEW"
+    ds["ACLineSegment.NEW"] = obj
+    assert len(ds) == before + 1
+    assert "ACLineSegment.NEW" in ds.by_type()["ACLineSegment"]
+
+
+def test_delitem_removes_entry():
+    ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
+    before = len(ds)
+    del ds["ACLineSegment.OK"]
+    assert len(ds) == before - 1
+    assert "ACLineSegment.OK" not in ds.by_type()["ACLineSegment"]
+    with pytest.raises(KeyError):
+        _ = ds["ACLineSegment.OK"]
+
+
+def test_delitem_missing_raises_key_error():
+    ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
+    with pytest.raises(KeyError):
+        del ds["nonexistent-mrid"]
+
+
+def test_setitem_missing_type_raises_value_error():
+    ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
+    with pytest.raises(ValueError):
+        ds["ACLineSegment.OK"] = {}
+
+
+def test_setitem_unknown_type_raises_value_error():
+    ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
+    with pytest.raises(ValueError):
+        ds["ACLineSegment.OK"] = {"_type": "NoSuchCimType"}
+
+
+def test_setitem_then_encode_reflects_change():
+    ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
+    obj = ds["ACLineSegment.OK"]
+    obj["r"] = 12345.5
+    ds["ACLineSegment.OK"] = obj
+    xml = ds.to_xml_for_profile("EQ")
+    assert "12345.5" in xml
