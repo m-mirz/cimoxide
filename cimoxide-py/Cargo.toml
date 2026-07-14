@@ -1,6 +1,6 @@
 [package]
 name = "cimoxide-py"
-version = "0.0.5"
+version = "0.1.1"
 edition = "2024"
 include = ["src/**/*.rs", "python/**/*", "Cargo.toml"]
 
