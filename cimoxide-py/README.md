@@ -121,8 +121,28 @@ configuration and prints an element count per CIM type:
 python examples/example_counts.py
 ```
 
-(Requires the `CGMES-Test-Configurations` submodule checked out at the repo root — see
-"Development" below.)
+[`examples/example_encode.py`](examples/example_encode.py) decodes RealGrid, encodes it
+back to `EQ`/`SSH`/`TP`/`SV` profile files (in a temp directory by default, or the directory
+given as an argument), then re-decodes the output to confirm the round-trip is lossless:
+
+```bash
+python examples/example_encode.py [output-dir]
+```
+
+Both require the `CGMES-Test-Configurations` submodule checked out at the repo root — see
+"Development" below.
+
+## Benchmark
+
+[`examples/benchmark_realgrid.py`](examples/benchmark_realgrid.py) times `decode_files`,
+`write_xml_files`, and `validate_files` against the full RealGrid dataset and reports
+best/mean wall time plus MB/s throughput for each:
+
+```bash
+python examples/benchmark_realgrid.py [iterations]   # default: 3
+```
+
+Also requires the `CGMES-Test-Configurations` submodule.
 
 ## Tests
 
@@ -150,11 +170,15 @@ where `cimoxide-py` lives alongside the Rust crates it binds (`cimdecoder`, `cim
 `cimvalidation`, `cimconvert`). To build it from source:
 
 ```bash
+# for ubuntu
 git clone --recurse-submodules https://github.com/m-mirz/cimoxide.git
 cd cimoxide
-pip install maturin
+python3 -m venv .venv
+source .venv/bin/activate
+pip3 install maturin
 cd cimoxide-py
 maturin develop --release   # editable install into the active virtualenv
+pip3 install pytest
 pytest tests/
 ```
 
