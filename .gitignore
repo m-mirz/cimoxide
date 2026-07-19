@@ -1,5 +1,16 @@
 target
 
+# On most branches, cimstructs/src/*.rs and cimvalidation/src/generated* are
+# produced locally by `make generate` (cargo run -p cimgen) and gitignored.
+#
+# The `vendor/gridoxide` branch is an exception: it exists specifically to
+# let gridoxide (https://github.com/m-mirz/gridoxide) consume cimdecoder/
+# cimstructs as a pinned git dependency, since neither crate is published to
+# crates.io. That requires the generated sources to actually be committed on
+# this branch, so the ignore rules below are relaxed here via `git add -f`
+# rather than by rewriting the patterns themselves (keeping this file
+# identical to `main` except for this comment, so a future merge/rebase from
+# `main` doesn't fight the ignore rules).
 cimstructs/src/*.rs
 !cimstructs/src/base.rs
 cimvalidation/src/generated*
