@@ -52,6 +52,18 @@ cimoxide-cli validate [--profiles EQ,SSH,...] [--solved] [--not-solved]
 `generated_*.rs` files are generated; everything else (`src/sparql/`, `helpers.rs`,
 `violation.rs`, `detect.rs`, `lib.rs`) is hand-written.
 
+### Consuming `cimstructs`/`cimdecoder` as a git dependency
+
+Neither crate is published to crates.io, and their generated sources are gitignored on
+`main` (see above), so a plain `{ git = "..." }` dependency on `main` won't build. The
+`vendor/gridoxide` branch exists specifically to work around this: it's `main` plus one
+extra commit with `cimstructs/src/*.rs` and `cimvalidation/src/generated_*.rs` force-added,
+so a git dependency pinned to that branch (or a tag on it, e.g. `v0.1.2`) resolves and
+builds standalone. It was created for
+[gridoxide](https://github.com/m-mirz/gridoxide)'s CGMES input support; nothing else about
+the crate is meant to change there. To refresh it after a schema/generator change: branch
+again from `main`, re-run `make generate`, re-commit the generated output, cut a new tag.
+
 ## Setup
 
 Clone with submodules (the ENTSO-E RDF schema and SHACL files are required):
