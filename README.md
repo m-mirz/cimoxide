@@ -58,7 +58,7 @@ Neither crate is published to crates.io, and their generated sources are gitigno
 `main` (see above), so a plain `{ git = "..." }` dependency on `main` won't build. The
 `vendor/gridoxide` branch exists specifically to work around this: it's `main` plus one
 extra commit with `cimstructs/src/*.rs` and `cimvalidation/src/generated_*.rs` force-added,
-so a git dependency pinned to that branch (or a tag on it, e.g. `v0.1.2`) resolves and
+so a git dependency pinned to that branch (or a tag on it, e.g. `v0.1.1-gridoxide.1`) resolves and
 builds standalone. It was created for
 [gridoxide](https://github.com/m-mirz/gridoxide)'s CGMES input support; nothing else about
 the crate is meant to change there. To refresh it after a schema/generator change: branch
