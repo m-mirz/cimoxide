@@ -20,7 +20,9 @@ fn hash_dir(dir: &Path) -> String {
         h.update(b"\0");
         h.update(content);
     }
-    format!("{:x}", h.finalize())
+    // sha2 0.11's `finalize()` returns an `Array` with no `LowerHex` impl; the byte string
+    // is identical to what `format!("{:x}", ..)` produced on 0.10, so stored hashes still match.
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn collect(base: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) {
@@ -51,7 +53,7 @@ fn cimstructs_codegen_stable() {
     assert!(status.success(), "cimgen exited with failure");
 
     let hash = hash_dir(&out);
-    assert_eq!(hash, "edbdf9e9b7d3f72da920a42b7d6b81fe6b74dc67d55eaec55d20859c5e9a9fb8", "cimstructs output drifted — rerun to update hash");
+    assert_eq!(hash, "80a586bc86e29df3e8b845f893774674bd4b9a2ba67ff8c6b976aadd3c35a67f", "cimstructs output drifted — rerun to update hash");
 }
 
 #[test]

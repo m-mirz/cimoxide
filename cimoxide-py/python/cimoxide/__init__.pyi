@@ -117,6 +117,20 @@ class CimDataset:
         """
         ...
 
+    def query(self, sparql: str) -> list[dict[str, str]] | bool | list[tuple[str, str, str]]:
+        """Run a SPARQL 1.1 query over this dataset.
+
+        The dataset is materialised into an in-memory RDF graph on every call,
+        so hold on to the results rather than querying in a tight loop. The
+        CGMES namespaces (``cim:``, ``eu:``, ``md:``, ``dm:``, ``rdf:``) and
+        ``xsd:`` are pre-bound, so no prologue is needed.
+
+        Returns a list of dicts for ``SELECT``, a bool for ``ASK``, and a list
+        of ``(subject, predicate, object)`` string triples for ``CONSTRUCT`` and
+        ``DESCRIBE``.
+        """
+        ...
+
     def to_xml_for_profile(self, profile: str) -> str:
         """Encode this dataset as a single CGMES profile's RDF/XML text.
 

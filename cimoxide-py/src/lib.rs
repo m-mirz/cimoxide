@@ -2,7 +2,7 @@ use std::path::Path;
 
 use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyList};
 
 use cimdecoder::{CimDataset, CimEntry};
 
@@ -226,6 +226,53 @@ impl PyCimDataset {
         cimconvert::dataset_to_xml_for_profile(&ds, profile).map_err(map_err)
     }
 
+    /// Run a SPARQL 1.1 query over this dataset.
+    ///
+    /// The dataset is materialised into an in-memory RDF graph on every call, so hold on
+    /// to the results rather than querying in a tight loop. The CGMES namespaces
+    /// (`cim:`, `eu:`, `md:`, `dm:`, `rdf:`) and `xsd:` are pre-bound.
+    ///
+    /// Returns a list of dicts for SELECT, a bool for ASK, and a list of
+    /// `(subject, predicate, object)` string triples for CONSTRUCT/DESCRIBE.
+    #[cfg(feature = "sparql")]
+    fn query(&self, py: Python<'_>, sparql: &str) -> PyResult<PyObject> {
+        use cimsparql::QueryResults;
+
+        let ds = self.lock()?;
+        let store = cimsparql::CimStore::from_dataset(&ds).map_err(map_err)?;
+        match store.query(sparql).map_err(map_err)? {
+            QueryResults::Boolean(b) => Ok(b.into_pyobject(py)?.to_owned().unbind().into()),
+            QueryResults::Solutions(solutions) => {
+                let variables: Vec<String> =
+                    solutions.variables().iter().map(|v| v.as_str().to_string()).collect();
+                let rows = PyList::empty(py);
+                for solution in solutions {
+                    let solution = solution.map_err(map_err)?;
+                    let row = PyDict::new(py);
+                    for name in &variables {
+                        if let Some(term) = solution.get(name.as_str()) {
+                            row.set_item(name, term_to_string(term))?;
+                        }
+                    }
+                    rows.append(row)?;
+                }
+                Ok(rows.into())
+            }
+            QueryResults::Graph(triples) => {
+                let rows = PyList::empty(py);
+                for triple in triples {
+                    let t = triple.map_err(map_err)?;
+                    rows.append((
+                        node_to_string(&t.subject),
+                        t.predicate.as_str().to_string(),
+                        term_to_string(&t.object),
+                    ))?;
+                }
+                Ok(rows.into())
+            }
+        }
+    }
+
     /// Encode and write one RDF/XML file per profile into `dir`.
     ///
     /// Creates `dir` (and parents) if it doesn't exist, then writes
@@ -241,6 +288,25 @@ impl PyCimDataset {
             std::fs::write(&path, &xml).map_err(map_err)?;
         }
         Ok(())
+    }
+}
+
+/// Lexical value of a term: IRIs and literal values as plain strings, so Python callers get
+/// `"urn:uuid:..."` and `"2.2"` rather than N-Triples decoration.
+#[cfg(feature = "sparql")]
+fn term_to_string(term: &cimsparql::Term) -> String {
+    match term {
+        cimsparql::Term::NamedNode(n) => n.as_str().to_string(),
+        cimsparql::Term::BlankNode(b) => format!("_:{}", b.as_str()),
+        cimsparql::Term::Literal(l) => l.value().to_string(),
+    }
+}
+
+#[cfg(feature = "sparql")]
+fn node_to_string(node: &cimsparql::NamedOrBlankNode) -> String {
+    match node {
+        cimsparql::NamedOrBlankNode::NamedNode(n) => n.as_str().to_string(),
+        cimsparql::NamedOrBlankNode::BlankNode(b) => format!("_:{}", b.as_str()),
     }
 }
 
