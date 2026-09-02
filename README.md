@@ -224,8 +224,8 @@ generated into `cimstructs/src/profile_meta.rs` put that back:
 
 This is what keeps `eu:` attributes out of the `cim:` namespace — a single `eu:BoundaryPoint`
 carries both `eu:BoundaryPoint.toEndName` and `cim:IdentifiedObject.description`, and they
-must land in different namespaces. (`cimconvert`'s XML writer still hardcodes the `cim:`
-prefix on the way out; that defect is unaffected by this change.)
+must land in different namespaces. `cimconvert`'s XML writer reads the same two tables on the
+way out (see ["RDF/XML export"](#rdfxml-export) below).
 
 Other mapping rules:
 
@@ -276,6 +276,65 @@ here, both consistent with the `into_store` figure above.
 Two levers if that matters: `GraphOptions::with_types([...])` restricts materialisation to
 the classes a query touches, and calling `CimDataset::drop_blocks()` first frees the raw
 field maps at the cost of the predicates the typed structs do not model.
+
+## RDF/XML export
+
+`cimconvert` writes CGMES RDF/XML, either as a flat dump (`dataset_to_xml`) or split per
+profile (`dataset_to_xml_for_profile`, `cimcli convert --to xml --profile EQ,SSH`).
+
+### Namespaces
+
+Element and field prefixes both come from the generated `TYPE_NS` / `ATTR_RDF` tables (see
+["How decoded data becomes RDF"](#how-decoded-data-becomes-rdf) above), never from a
+hardcoded prefix. The prefix is decided **per field**, never inherited from the owning class,
+because CGMES freely mixes them on one element:
+
+```xml
+<eu:BoundaryPoint rdf:ID="_0c26dd2f-…">
+  <eu:BoundaryPoint.toEndName>Maribor</eu:BoundaryPoint.toEndName>
+  <cim:IdentifiedObject.description>RG CE; 400 kV; OHL (2)</cim:IdentifiedObject.description>
+  <eu:IdentifiedObject.energyIdentCodeEic>10T-AT-SI-00001T</eu:IdentifiedObject.energyIdentCodeEic>
+  <cim:IdentifiedObject.mRID>0c26dd2f-…</cim:IdentifiedObject.mRID>
+</eu:BoundaryPoint>
+```
+
+Two `IdentifiedObject.*` fields on the same element, in two different namespaces. Enum values
+are written as absolute IRIs (`rdf:resource="http://iec.ch/TC57/CIM100#UnitSymbol.W"`), as
+real CGMES files do, while MRID references stay local fragments (`rdf:resource="#…"`).
+
+Re-encoding `FullGrid_EQ.xml` reproduces the source file's prefix distribution exactly — 732
+`cim:` / 2 `eu:` / 1 `md:` elements, 5303 `cim:` / 1401 `eu:` / 7 `md:` fields, and all 247
+absolute enum references.
+
+### Which elements and fields go in which profile
+
+Purely from the schema, so an attribute set on an object *after* import is routed exactly
+like a decoded one:
+
+- an element is written to profile P iff `TYPE_ORIGINS` lists P for its class;
+- it is a definition (`rdf:ID`) if P is its class's dominant origin, otherwise a reference
+  (`rdf:about="#…"`) carrying only the fields P itself owns.
+
+That second rule needs a profile to be the dominant origin of *something*. **EQBD is the
+dominant origin of no type and no attribute** — the RDFS declares its classes and attributes
+identically in the Equipment profile, so EQ always outranks it — which made the rule select
+nothing and exported every boundary file as a bare header. A profile in that position is
+treated as self-defining and falls back to plain profile membership, which is all the schema
+actually asserts. The condition is computed from `ATTR_ORIGINS`, not hardcoded:
+
+| profile | dominant for #attrs | behaviour |
+|---|---:|---|
+| DY, EQ, SC, OP, GL, SV, DL, FH | 2783 … 14 | definitions and references as above |
+| SSH, TP | 64, 8 | dominant for no *type* — emit references, as the real files do |
+| EQBD | 0 | self-defining: `rdf:ID` plus every member field |
+
+This matches what ENTSO-E ships: `FullGrid_EQBD.xml` is 27 `rdf:ID` elements and no
+`rdf:about`, each carrying its name and mRID.
+
+Known limitation: exporting a *merged* dataset to EQBD emits every boundary-class instance it
+holds, not just those a boundary file would carry. The EQ/EQBD split is per-instance —
+`BaseVoltage`, `ConnectivityNode` and `Line` all appear legitimately in both real files — and
+no class-level table can express that. Round-tripping a single EQBD file is exact.
 
 ## SHACL Validation
 
