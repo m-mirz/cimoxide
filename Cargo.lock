@@ -91,7 +91,7 @@ dependencies = [
 
 [[package]]
 name = "cimconvert"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "cimdecoder",
  "cimstructs",
@@ -100,7 +100,7 @@ dependencies = [
 
 [[package]]
 name = "cimdecoder"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "cimstructs",
  "criterion",
@@ -109,7 +109,7 @@ dependencies = [
 
 [[package]]
 name = "cimgen"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "glob",
  "proc-macro2",
@@ -120,7 +120,7 @@ dependencies = [
 
 [[package]]
 name = "cimoxide-cli"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "cimconvert",
  "cimdecoder",
@@ -133,7 +133,7 @@ dependencies = [
 
 [[package]]
 name = "cimsparql"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "cimdecoder",
  "cimstructs",
@@ -144,7 +144,7 @@ dependencies = [
 
 [[package]]
 name = "cimstructs"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -152,7 +152,7 @@ dependencies = [
 
 [[package]]
 name = "cimvalidation"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "cimdecoder",
  "cimstructs",
