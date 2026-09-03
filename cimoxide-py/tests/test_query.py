@@ -70,3 +70,70 @@ def test_literals_are_numerically_typed(eq):
 def test_invalid_query_raises(eq):
     with pytest.raises(Exception):
         eq.query("SELECT ?s WHERE {")
+
+
+# ── Store caching: the graph is built once and dropped on mutation ───────────
+
+TESTDATA = os.path.join(os.path.dirname(__file__), "../../testdata")
+
+
+def td(name: str) -> str:
+    return os.path.join(TESTDATA, name)
+
+
+LINES = "SELECT ?s WHERE { ?s a cim:ACLineSegment }"
+
+
+def line_count(ds) -> int:
+    return len(ds.query(LINES))
+
+
+def test_repeated_query_is_stable():
+    """Second query hits the cache and must agree with the first."""
+    ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
+    assert ds.query(LINES) == ds.query(LINES)
+
+
+def test_query_cache_sees_setitem():
+    ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
+    before = line_count(ds)  # populates the cache
+    obj = dict(ds["ACLineSegment.OK"])
+    obj["id"] = obj["m_rid"] = "ACLineSegment.NEW"
+    ds["ACLineSegment.NEW"] = obj
+    assert line_count(ds) == before + 1
+
+
+def test_query_cache_sees_delitem():
+    ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
+    before = line_count(ds)
+    del ds["ACLineSegment.OK"]
+    assert line_count(ds) == before - 1
+
+
+def test_query_cache_sees_merge():
+    """TopologicalNode exists only in the TP profile, so it must appear in the
+    EQ dataset's results only after the merge -- i.e. the cache was dropped."""
+    ds1 = cimoxide.decode_file(td("test_009_EQ.xml"))
+    ds2 = cimoxide.decode_file(td("test_009_TP.xml"))
+    assert ds1.query("ASK { ?s a cim:TopologicalNode }") is False  # populates cache
+    ds1.merge(ds2)
+    assert ds1.query("ASK { ?s a cim:TopologicalNode }") is True
+
+
+def test_merge_invalidates_source():
+    """merge() empties `other`, so its cached graph must go too."""
+    ds1 = cimoxide.decode_file(td("test_009_EQ.xml"))
+    ds2 = cimoxide.decode_file(td("test_009_TP.xml"))
+    assert ds2.query("ASK { ?s ?p ?o }") is True  # populates ds2's cache
+    ds1.merge(ds2)
+    assert len(ds2) == 0
+    assert ds2.query("ASK { ?s ?p ?o }") is False
+
+
+def test_drop_sparql_store_then_query():
+    ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
+    first = ds.query(LINES)
+    ds.drop_sparql_store()
+    assert ds.query(LINES) == first
+    ds.drop_sparql_store()  # idempotent
+    ds.drop_sparql_store()

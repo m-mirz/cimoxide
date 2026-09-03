@@ -106,8 +106,17 @@ file individually, then cross-profile checks on the merged dataset. See the
 | `CimDataset.count_type(name)` | Number of elements of one CIM class. O(1), copies nothing. |
 | `CimDataset.get_type(name)` | All element dicts for one CIM class. |
 | `CimDataset.entries()` | All entries as `dict[mrid, dict]` (deserializes everything). |
+| `CimDataset.query(sparql)` | Run SPARQL 1.1 over the dataset. Builds an RDF graph on first call, then caches it. |
+| `CimDataset.drop_sparql_store()` | Release that cached graph (it roughly doubles resident memory). |
 | `CimDataset.to_xml_for_profile(profile)` | Encode one CGMES profile (e.g. `"EQ"`) as an RDF/XML string. |
 | `CimDataset.write_xml_files(dir, profiles)` | Write one RDF/XML file per profile into `dir`. |
+
+`query()` materialises the dataset into an in-memory RDF graph the first time it
+is called and reuses it afterwards, so the first query costs far more than the
+rest — on a ~150k-element dataset, roughly 1.1 s then ~4 ms. The cache is dropped
+automatically whenever the dataset is mutated, and `drop_sparql_store()` releases
+it explicitly. Call `query()` before `drop_blocks()` if you need both: freeing the
+parse buffers first forces a lossy fallback when the graph is built.
 
 Full type stubs with per-method docstrings are in
 [`python/cimoxide/__init__.pyi`](python/cimoxide/__init__.pyi) and

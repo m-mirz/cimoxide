@@ -65,7 +65,21 @@ class CimDataset:
         ...
 
     def drop_blocks(self) -> None:
-        """Release internal RdfBlock memory after the final merge."""
+        """Release internal RdfBlock memory after the final merge.
+
+        Does not invalidate a graph already built by ``query()``. Building one
+        after this call falls back to a lossy reconstruction, so run ``query()``
+        first if you need both.
+        """
+        ...
+
+    def drop_sparql_store(self) -> None:
+        """Release the RDF graph cached by ``query()``.
+
+        The graph roughly doubles the dataset's resident memory and is otherwise
+        held until the dataset is dropped. The next ``query()`` rebuilds it.
+        A no-op if no query has run.
+        """
         ...
 
     def __len__(self) -> int: ...
@@ -133,9 +147,14 @@ class CimDataset:
     def query(self, sparql: str) -> list[dict[str, str]] | bool | list[tuple[str, str, str]]:
         """Run a SPARQL 1.1 query over this dataset.
 
-        The dataset is materialised into an in-memory RDF graph on every call,
-        so hold on to the results rather than querying in a tight loop. The
-        CGMES namespaces (``cim:``, ``eu:``, ``md:``, ``dm:``, ``rdf:``) and
+        The first call materialises the dataset into an in-memory RDF graph and
+        caches it; later calls reuse it, so the first query is much slower than
+        the rest (~1.1 s vs ~4 ms on a 150k-element dataset). The cache is
+        dropped on any mutation (``__setitem__``, ``__delitem__``, ``merge``)
+        and can be released with ``drop_sparql_store()`` — it roughly doubles
+        resident memory.
+
+        The CGMES namespaces (``cim:``, ``eu:``, ``md:``, ``dm:``, ``rdf:``) and
         ``xsd:`` are pre-bound, so no prologue is needed.
 
         Returns a list of dicts for ``SELECT``, a bool for ``ASK``, and a list
