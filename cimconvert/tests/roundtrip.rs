@@ -261,3 +261,136 @@ fn full_model_header_synthesized_when_absent() {
         "must not leak the EQ FullModel's mrid into the SSH header, got:\n{xml}"
     );
 }
+
+// ── Namespace prefixes and the EQBD profile ──────────────────────────────────
+//
+// These use the FullGrid boundary file from the CGMES-Test-Configurations submodule, which
+// is the only fixture carrying eu:-namespaced classes and attributes. The decoder is
+// namespace-blind (`local_name()` maps eu:X and cim:X to the same key), so no round-trip
+// assertion can catch a wrong prefix — these check the emitted text directly.
+
+fn eqbd_path() -> &'static Path {
+    Path::new("../CGMES-Test-Configurations/v3.0/FullGrid/FullGrid-Merged/FullGrid_EQBD.xml")
+}
+
+fn decode_eqbd() -> CimDataset {
+    let path = eqbd_path();
+    assert!(
+        path.exists(),
+        "missing {} — run `git submodule update --init`",
+        path.display()
+    );
+    CimDataset::decode_file(path).expect("decode failed")
+}
+
+/// `eu:` classes and attributes must keep their own namespace, and a `cim:` attribute on the
+/// very same element must keep its own. The prefix is per field, never inherited.
+#[test]
+fn eu_namespace_is_preserved() {
+    let ds = decode_eqbd();
+    let xml = dataset_to_xml_for_profile(&ds, "EQBD").expect("to_xml_for_profile failed");
+
+    assert!(xml.contains("<eu:BoundaryPoint "), "eu: class prefix lost:\n{xml}");
+    assert!(!xml.contains("<cim:BoundaryPoint "), "eu: class written as cim:");
+
+    assert!(
+        xml.contains("<eu:BoundaryPoint.toEndName>"),
+        "eu: attribute prefix lost"
+    );
+    assert!(
+        !xml.contains("<cim:BoundaryPoint.toEndName>"),
+        "eu: attribute leaked into the cim: namespace"
+    );
+    assert!(
+        xml.contains("<eu:IdentifiedObject.shortName>"),
+        "eu: attribute on a cim: class lost its prefix"
+    );
+
+    // ...while cim: attributes on those same eu: elements stay cim:.
+    assert!(
+        xml.contains("<cim:IdentifiedObject.description>"),
+        "cim: attribute wrongly moved out of the cim: namespace"
+    );
+}
+
+/// Real CGMES writes enum values as absolute IRIs, not local fragments.
+#[test]
+fn enum_values_are_absolute_iris() {
+    let ds = CimDataset::decode_file(Path::new(
+        "../CGMES-Test-Configurations/v3.0/FullGrid/FullGrid-Merged/FullGrid_EQ.xml",
+    ))
+    .expect("decode failed");
+    let xml = dataset_to_xml_for_profile(&ds, "EQ").expect("to_xml_for_profile failed");
+
+    assert!(
+        xml.contains("rdf:resource=\"http://iec.ch/TC57/CIM100#UnitSymbol."),
+        "enum value should be an absolute IRI"
+    );
+    assert!(
+        !xml.contains("rdf:resource=\"#UnitSymbol."),
+        "enum value still written as a local fragment"
+    );
+    // Ordinary MRID references keep the local fragment form.
+    assert!(xml.contains("rdf:resource=\"#"), "MRID references should stay local");
+}
+
+/// EQBD is the dominant origin of no attribute, so the secondary-element rule selected
+/// nothing and the whole profile exported as a bare header.
+#[test]
+fn eqbd_exports_its_elements() {
+    let ds = decode_eqbd();
+    let xml = dataset_to_xml_for_profile(&ds, "EQBD").expect("to_xml_for_profile failed");
+    let ds2 = cimdecoder::CimDataset::decode_str(&xml).expect("re-decode failed");
+
+    assert_eq!(
+        ds2.entries.len(),
+        ds.entries.len(),
+        "EQBD round-trip lost entries: {} -> {}",
+        ds.entries.len(),
+        ds2.entries.len()
+    );
+    assert_eq!(
+        ds2.by_type.get("BoundaryPoint").map_or(0, Vec::len),
+        ds.by_type.get("BoundaryPoint").map_or(0, Vec::len),
+    );
+    // Real boundary files define their objects outright — all rdf:ID, no rdf:about.
+    assert!(xml.contains("rdf:ID="), "EQBD elements should be definitions");
+    assert!(!xml.contains("rdf:about=\"#"), "EQBD should not emit references");
+}
+
+/// The EQBD fallback must stay inert for every other profile: they are each the dominant
+/// origin of at least one attribute, so their existing behaviour is untouched.
+#[test]
+fn every_profile_round_trips_its_own_file() {
+    let base = Path::new("../CGMES-Test-Configurations/v3.0/FullGrid/FullGrid-Merged");
+    if !base.exists() {
+        panic!("missing {} — run `git submodule update --init`", base.display());
+    }
+    for profile in ["EQ", "SSH", "TP", "SV", "OP", "SC", "EQBD"] {
+        let path = base.join(format!("FullGrid_{profile}.xml"));
+        let ds = CimDataset::decode_file(&path).expect("decode failed");
+        let xml = dataset_to_xml_for_profile(&ds, profile).expect("encode failed");
+        let ds2 = cimdecoder::CimDataset::decode_str(&xml).expect("re-decode failed");
+        assert_eq!(
+            ds2.entries.len(),
+            ds.entries.len(),
+            "{profile}: {} entries in, {} out",
+            ds.entries.len(),
+            ds2.entries.len()
+        );
+    }
+}
+
+/// Elements inserted after decoding carry no history, so routing has to come from the
+/// schema. The JSON hop rebuilds every field through `to_block()`, exercising that path.
+#[test]
+fn json_hop_exports_identically() {
+    let ds = decode_eqbd();
+    let direct = dataset_to_xml_for_profile(&ds, "EQBD").expect("encode failed");
+
+    let json = serde_json::to_string(&dataset_to_json(&ds)).expect("serialize");
+    let ds2 = dataset_from_json(&json).expect("from_json");
+    let via_json = dataset_to_xml_for_profile(&ds2, "EQBD").expect("encode failed");
+
+    assert_eq!(direct, via_json, "JSON round-trip changed the EQBD export");
+}

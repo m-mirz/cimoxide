@@ -2,7 +2,7 @@ use std::path::Path;
 
 use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyList};
 
 use cimdecoder::{CimDataset, CimEntry};
 
@@ -45,11 +45,55 @@ impl PyCimDatasetIter {
 /// JSON serialization of the Rust structs).
 #[pyclass]
 pub struct PyCimDataset {
-    inner: std::sync::Mutex<CimDataset>,
+    inner: std::sync::Mutex<Inner>,
+}
+
+/// The dataset plus its lazily built SPARQL view.
+///
+/// Both live under one mutex: a second lock for the store would let `query()`
+/// and the mutators acquire the two in opposite orders.
+struct Inner {
+    ds: CimDataset,
+    /// Built on the first `query()`, cleared by anything that mutates `ds`.
+    #[cfg(feature = "sparql")]
+    store: Option<cimsparql::CimStore>,
+}
+
+impl Inner {
+    fn new(ds: CimDataset) -> Self {
+        Self {
+            ds,
+            #[cfg(feature = "sparql")]
+            store: None,
+        }
+    }
+
+    /// Drop the cached SPARQL view. Every mutator must call this.
+    fn invalidate(&mut self) {
+        #[cfg(feature = "sparql")]
+        {
+            self.store = None;
+        }
+    }
+}
+
+/// Read-only access to the dataset, so the many `self.lock()?.entries` style
+/// call sites need no change.
+///
+/// `DerefMut` is deliberately *not* implemented: every mutating call site must
+/// name `guard.ds` explicitly, which forces it to also decide what happens to
+/// `guard.store`. Forgetting to invalidate is then a compile error rather than
+/// stale query results.
+impl std::ops::Deref for Inner {
+    type Target = CimDataset;
+
+    fn deref(&self) -> &CimDataset {
+        &self.ds
+    }
 }
 
 impl PyCimDataset {
-    fn lock(&self) -> PyResult<std::sync::MutexGuard<'_, CimDataset>> {
+    fn lock(&self) -> PyResult<std::sync::MutexGuard<'_, Inner>> {
         self.inner.lock().map_err(|e| map_err(e.to_string()))
     }
 }
@@ -61,7 +105,7 @@ impl PyCimDataset {
     fn decode_file(path: &str) -> PyResult<Self> {
         let ds = CimDataset::decode_file(Path::new(path)).map_err(map_err)?;
         Ok(Self {
-            inner: std::sync::Mutex::new(ds),
+            inner: std::sync::Mutex::new(Inner::new(ds)),
         })
     }
 
@@ -73,7 +117,7 @@ impl PyCimDataset {
         let path_refs: Vec<&Path> = path_bufs.iter().map(|p| p.as_path()).collect();
         let ds = CimDataset::decode_files(&path_refs).map_err(map_err)?;
         Ok(Self {
-            inner: std::sync::Mutex::new(ds),
+            inner: std::sync::Mutex::new(Inner::new(ds)),
         })
     }
 
@@ -82,7 +126,7 @@ impl PyCimDataset {
     fn decode_str(content: &str) -> PyResult<Self> {
         let ds = CimDataset::decode_str(content).map_err(map_err)?;
         Ok(Self {
-            inner: std::sync::Mutex::new(ds),
+            inner: std::sync::Mutex::new(Inner::new(ds)),
         })
     }
 
@@ -94,15 +138,38 @@ impl PyCimDataset {
         let other_ds = {
             let borrowed = other.borrow(py);
             let mut guard = borrowed.lock()?;
-            std::mem::replace(&mut *guard, CimDataset::new())
+            // `other` is emptied, so its SPARQL view is stale too.
+            guard.invalidate();
+            std::mem::replace(&mut guard.ds, CimDataset::new())
         };
-        self.lock()?.merge(other_ds);
+        let mut guard = self.lock()?;
+        guard.ds.merge(other_ds);
+        guard.invalidate();
         Ok(())
     }
 
     /// Release all RdfBlock memory after the final merge.
+    ///
+    /// This deliberately does *not* invalidate an already-built SPARQL store.
+    /// Materialisation reads `entry.block` when it is populated and falls back
+    /// to the lossy `CimElement::to_block()` once blocks are gone, so a store
+    /// built before this call is strictly better than one built after. Order
+    /// therefore matters: `query()` then `drop_blocks()` gives lossless
+    /// triples, the reverse gives rebuilt ones.
     fn drop_blocks(&self) -> PyResult<()> {
-        self.lock()?.drop_blocks();
+        let mut guard = self.lock()?;
+        guard.ds.drop_blocks();
+        Ok(())
+    }
+
+    /// Release the cached SPARQL store built by `query()`.
+    ///
+    /// The store roughly doubles a dataset's resident memory and is otherwise
+    /// held until the dataset itself is dropped. The next `query()` rebuilds
+    /// it. A no-op if no query has run.
+    #[cfg(feature = "sparql")]
+    fn drop_sparql_store(&self) -> PyResult<()> {
+        self.lock()?.invalidate();
         Ok(())
     }
 
@@ -141,14 +208,20 @@ impl PyCimDataset {
             .get(type_name.as_str())
             .ok_or_else(|| PyValueError::new_err(format!("unknown CIM type \"{type_name}\"")))?;
         let element = ctor(json_val).map_err(map_err)?;
-        self.lock()?.set(mrid, element);
+        let mut guard = self.lock()?;
+        guard.ds.set(mrid, element);
+        guard.invalidate();
         Ok(())
     }
 
     /// Remove the element at `mrid`. Raises `KeyError` if not found.
     fn __delitem__(&self, mrid: &str) -> PyResult<()> {
-        match self.lock()?.remove(mrid) {
-            Some(_) => Ok(()),
+        let mut guard = self.lock()?;
+        match guard.ds.remove(mrid) {
+            Some(_) => {
+                guard.invalidate();
+                Ok(())
+            }
             None => Err(PyKeyError::new_err(mrid.to_string())),
         }
     }
@@ -177,7 +250,9 @@ impl PyCimDataset {
 
     /// Return a `dict[str, list[str]]` mapping type names to lists of MRIDs.
     ///
-    /// This is a fast O(1) index lookup — no element deserialization occurs.
+    /// No elements are deserialized, but the whole index is copied out: one
+    /// Python `str` per MRID in the dataset, across every type. To count a
+    /// single type, use `count_type` instead — it copies nothing.
     fn by_type(&self, py: Python<'_>) -> PyResult<PyObject> {
         let ds = self.lock()?;
         let dict = PyDict::new(py);
@@ -185,6 +260,15 @@ impl PyCimDataset {
             dict.set_item(type_name, mrids)?;
         }
         Ok(dict.into_any().unbind())
+    }
+
+    /// Return the number of elements of the given CIM type (0 if unknown).
+    ///
+    /// An O(1) index lookup that copies nothing into Python — use this instead
+    /// of `len(ds.by_type()[name])`, which materialises the entire index.
+    fn count_type(&self, type_name: &str) -> PyResult<usize> {
+        let ds = self.lock()?;
+        Ok(ds.by_type.get(type_name).map_or(0, |mrids| mrids.len()))
     }
 
     /// Return a list of element dicts for all objects of the given CIM type name.
@@ -226,6 +310,71 @@ impl PyCimDataset {
         cimconvert::dataset_to_xml_for_profile(&ds, profile).map_err(map_err)
     }
 
+    /// Run a SPARQL 1.1 query over this dataset.
+    ///
+    /// The first call materialises the dataset into an in-memory RDF graph and
+    /// caches it; later calls reuse that graph, so the first query is far more
+    /// expensive than the rest. The cache is dropped whenever the dataset is
+    /// mutated (`__setitem__`, `__delitem__`, `merge`) and can be released
+    /// explicitly with `drop_sparql_store()` - it roughly doubles the dataset's
+    /// resident memory. See `drop_blocks()` for how the two interact.
+    ///
+    /// The CGMES namespaces (`cim:`, `eu:`, `md:`, `dm:`, `rdf:`) and `xsd:`
+    /// are pre-bound.
+    ///
+    /// Returns a list of dicts for SELECT, a bool for ASK, and a list of
+    /// `(subject, predicate, object)` string triples for CONSTRUCT/DESCRIBE.
+    #[cfg(feature = "sparql")]
+    fn query(&self, py: Python<'_>, sparql: &str) -> PyResult<PyObject> {
+        use cimsparql::QueryResults;
+
+        let mut guard = self.lock()?;
+        if guard.store.is_none() {
+            // Materialisation is the expensive part and needs no interpreter,
+            // so let other Python threads run while it happens.
+            let ds = &guard.ds;
+            let store = py
+                .allow_threads(|| cimsparql::CimStore::from_dataset(ds))
+                .map_err(map_err)?;
+            guard.store = Some(store);
+        }
+        let store = guard
+            .store
+            .as_ref()
+            .expect("store was just populated above");
+        match store.query(sparql).map_err(map_err)? {
+            QueryResults::Boolean(b) => Ok(b.into_pyobject(py)?.to_owned().unbind().into()),
+            QueryResults::Solutions(solutions) => {
+                let variables: Vec<String> =
+                    solutions.variables().iter().map(|v| v.as_str().to_string()).collect();
+                let rows = PyList::empty(py);
+                for solution in solutions {
+                    let solution = solution.map_err(map_err)?;
+                    let row = PyDict::new(py);
+                    for name in &variables {
+                        if let Some(term) = solution.get(name.as_str()) {
+                            row.set_item(name, term_to_string(term))?;
+                        }
+                    }
+                    rows.append(row)?;
+                }
+                Ok(rows.into())
+            }
+            QueryResults::Graph(triples) => {
+                let rows = PyList::empty(py);
+                for triple in triples {
+                    let t = triple.map_err(map_err)?;
+                    rows.append((
+                        node_to_string(&t.subject),
+                        t.predicate.as_str().to_string(),
+                        term_to_string(&t.object),
+                    ))?;
+                }
+                Ok(rows.into())
+            }
+        }
+    }
+
     /// Encode and write one RDF/XML file per profile into `dir`.
     ///
     /// Creates `dir` (and parents) if it doesn't exist, then writes
@@ -241,6 +390,25 @@ impl PyCimDataset {
             std::fs::write(&path, &xml).map_err(map_err)?;
         }
         Ok(())
+    }
+}
+
+/// Lexical value of a term: IRIs and literal values as plain strings, so Python callers get
+/// `"urn:uuid:..."` and `"2.2"` rather than N-Triples decoration.
+#[cfg(feature = "sparql")]
+fn term_to_string(term: &cimsparql::Term) -> String {
+    match term {
+        cimsparql::Term::NamedNode(n) => n.as_str().to_string(),
+        cimsparql::Term::BlankNode(b) => format!("_:{}", b.as_str()),
+        cimsparql::Term::Literal(l) => l.value().to_string(),
+    }
+}
+
+#[cfg(feature = "sparql")]
+fn node_to_string(node: &cimsparql::NamedOrBlankNode) -> String {
+    match node {
+        cimsparql::NamedOrBlankNode::NamedNode(n) => n.as_str().to_string(),
+        cimsparql::NamedOrBlankNode::BlankNode(b) => format!("_:{}", b.as_str()),
     }
 }
 

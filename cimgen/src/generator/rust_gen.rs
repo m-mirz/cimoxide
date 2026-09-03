@@ -312,7 +312,115 @@ fn render_profile_meta(spec: &CimSpecification) -> String {
         writeln!(s, "    (\"{keyword}\", \"{}\"),", ont.owl_version_iri).unwrap();
     }
     writeln!(s, "];").unwrap();
+    writeln!(s).unwrap();
+
+    // TYPE_NS: RDF namespace IRI per CIM class. The decoder drops the XML prefix
+    // (`local_name()`), so this is the only way back to a class IRI at runtime.
+    writeln!(
+        s,
+        "/// `(type_name, namespace)` — RDF namespace IRI of each CIM class, trailing `#` included."
+    )
+    .unwrap();
+    writeln!(s, "pub static TYPE_NS: &[(&str, &str)] = &[").unwrap();
+    let mut ns_type_ids: Vec<&String> = spec.types.keys().collect();
+    ns_type_ids.sort();
+    for id in ns_type_ids {
+        let t = &spec.types[id];
+        if t.namespace.is_empty() {
+            continue;
+        }
+        writeln!(s, "    (\"{id}\", \"{}\"),", t.namespace).unwrap();
+    }
+    writeln!(s, "];").unwrap();
+    writeln!(s).unwrap();
+
+    // ATTR_RDF: (attr_id, namespace, range, kind) for every attribute of every type.
+    // Deduped by attr_id like ATTR_ORIGINS above — the same id recurs across inheriting
+    // types. Unlike ATTR_ORIGINS this is *not* filtered on `is_association_used`:
+    // `RdfBlock.fields` can hold keys the typed struct dropped, and a predicate IRI is
+    // wanted for those too.
+    let mut rdf_map: BTreeMap<String, (String, String, u8)> = BTreeMap::new();
+    let mut type_ids3: Vec<&String> = spec.types.keys().collect();
+    type_ids3.sort();
+    for id in type_ids3 {
+        for attr in &spec.types[id].attributes {
+            if attr.namespace.is_empty() || rdf_map.contains_key(&attr.id) {
+                continue;
+            }
+            // Test the enum registry directly rather than trusting `is_enum_value`:
+            // `eu:OperationalLimitType.kind` ranges over the `eu:LimitKind` enumeration but
+            // is classified as a plain class reference upstream, so it would otherwise get an
+            // MRID-shaped object IRI instead of the enum value IRI.
+            let (range, kind) = if let Some(e) = spec.enums.get(&attr.rdf_range) {
+                // The decoder strips the fragment off enum values, so the enum's own
+                // namespace is what rebuilds `<ns>WindingConnection.D` from `WindingConnection.D`.
+                (e.namespace.clone(), 2u8)
+            } else if attr.is_enum_value || attr.is_primitive || attr.is_cim_datatype {
+                (xsd_iri(attr), 0u8)
+            } else {
+                (String::new(), 1u8)
+            };
+            rdf_map.insert(attr.id.clone(), (attr.namespace.clone(), range, kind));
+        }
+    }
+    writeln!(
+        s,
+        "/// `(attr_id, namespace, range, kind)` — `attr_id` matches the key in `RdfBlock.fields`."
+    )
+    .unwrap();
+    writeln!(
+        s,
+        "/// `kind`: 0 = literal, 1 = association (IRI), 2 = enum value (IRI)."
+    )
+    .unwrap();
+    writeln!(
+        s,
+        "/// `range`: for kind 0 the XSD datatype IRI, for kind 2 the enum's namespace IRI,"
+    )
+    .unwrap();
+    writeln!(s, "/// empty for kind 1.").unwrap();
+    writeln!(s, "pub static ATTR_RDF: &[(&str, &str, &str, u8)] = &[").unwrap();
+    for (attr_id, (ns, range, kind)) in rdf_map {
+        writeln!(s, "    (\"{attr_id}\", \"{ns}\", \"{range}\", {kind}),").unwrap();
+    }
+    writeln!(s, "];").unwrap();
     s
+}
+
+/// XSD datatype IRI for a literal-valued attribute, falling back on the generated Rust
+/// type when the CIM datatype is unset.
+///
+/// CGMES `Float` maps to `xsd:double`, not `xsd:float`: the decoder parses into `f64`, and
+/// claiming single precision would make `FILTER(?r > 0.1)` disagree with the value that was
+/// actually decoded.
+fn xsd_iri(attr: &CimAttribute) -> String {
+    const XSD: &str = "http://www.w3.org/2001/XMLSchema#";
+    let name = match attr.data_type.as_str() {
+        DATA_TYPE_STRING => "string",
+        DATA_TYPE_INTEGER => "integer",
+        DATA_TYPE_BOOLEAN => "boolean",
+        DATA_TYPE_FLOAT => "double",
+        DATA_TYPE_DECIMAL => "decimal",
+        DATA_TYPE_DATE => "date",
+        DATA_TYPE_DATE_TIME => "dateTime",
+        DATA_TYPE_MONTH_DAY => "gMonthDay",
+        // `md:Model.profile` and friends declare `eu:URI`, and the SHACL files type their
+        // values `^^xsd:anyURI`.
+        "URI" => "anyURI",
+        // List-valued literals carry a `Vec<..>` lang type; the element type is what matters.
+        _ => match attr
+            .lang_type
+            .trim_start_matches("Vec<")
+            .trim_end_matches('>')
+        {
+            "f64" => "double",
+            "i64" => "integer",
+            "bool" => "boolean",
+            "String" => "string",
+            _ => return String::new(),
+        },
+    };
+    format!("{XSD}{name}")
 }
 
 fn render_lib(ids: &[String]) -> String {

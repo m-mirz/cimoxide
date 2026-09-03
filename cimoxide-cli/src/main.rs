@@ -18,6 +18,11 @@ fn usage() -> ! {
     eprintln!("  cimoxide-cli validate [--profiles EQ,SSH,...] [--solved] [--not-solved]");
     eprintln!("                        [--common] [--quality] [--silence rule1,rule2]");
     eprintln!("                        [--format json|text] <xml-files...>");
+    #[cfg(feature = "sparql")]
+    {
+        eprintln!("  cimoxide-cli query  --query \"SELECT ...\" | --file <query.rq>");
+        eprintln!("                      [--format text|json|csv|tsv] <xml-files...>");
+    }
     process::exit(1);
 }
 
@@ -33,6 +38,19 @@ fn main() {
     if args[0] == "validate" {
         cmd_validate(&args[1..]);
         return;
+    }
+    if args[0] == "query" {
+        #[cfg(feature = "sparql")]
+        {
+            cmd_query(&args[1..]);
+            return;
+        }
+        #[cfg(not(feature = "sparql"))]
+        {
+            eprintln!("error: this build has no SPARQL support");
+            eprintln!("hint: rebuild with `cargo build -p cimoxide-cli --features sparql`");
+            process::exit(1);
+        }
     }
     if args[0] != "convert" {
         usage();
@@ -341,4 +359,87 @@ fn cmd_validate(args: &[String]) {
         eprintln!("{} violation(s) found.", violations.len());
         process::exit(2);
     }
+}
+
+/// `cimoxide-cli query` — run a SPARQL query over the merged input files.
+#[cfg(feature = "sparql")]
+fn cmd_query(args: &[String]) {
+    use cimsparql::format::Format;
+
+    let mut query: Option<String> = None;
+    let mut query_file: Option<PathBuf> = None;
+    let mut format = Format::Text;
+    let mut input_files: Vec<PathBuf> = Vec::new();
+
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--query" | "-q" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("error: --query requires an argument");
+                    usage();
+                }
+                query = Some(args[i].clone());
+            }
+            "--file" | "-f" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("error: --file requires an argument");
+                    usage();
+                }
+                query_file = Some(PathBuf::from(&args[i]));
+            }
+            "--format" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("error: --format requires an argument");
+                    usage();
+                }
+                format = match Format::parse(&args[i]) {
+                    Some(f) => f,
+                    None => {
+                        eprintln!("error: unknown format: {} (want text|json|csv|tsv)", args[i]);
+                        process::exit(1);
+                    }
+                };
+            }
+            arg if !arg.starts_with('-') => input_files.push(PathBuf::from(arg)),
+            unknown => {
+                eprintln!("error: unknown flag: {unknown}");
+                usage();
+            }
+        }
+        i += 1;
+    }
+
+    let sparql = match (query, query_file) {
+        (Some(_), Some(_)) => {
+            eprintln!("error: pass either --query or --file, not both");
+            process::exit(1);
+        }
+        (Some(q), None) => q,
+        (None, Some(path)) => or_die(std::fs::read_to_string(&path), "error reading query file"),
+        (None, None) => {
+            eprintln!("error: a query is required (--query or --file)");
+            usage();
+        }
+    };
+
+    if input_files.is_empty() {
+        eprintln!("error: at least one input file is required");
+        usage();
+    }
+
+    let paths: Vec<&std::path::Path> = input_files.iter().map(PathBuf::as_path).collect();
+    let dataset = or_die(
+        cimdecoder::CimDataset::decode_files_parallel(&paths),
+        "error decoding input",
+    );
+    let store = or_die(cimsparql::CimStore::from_dataset(&dataset), "error building RDF graph");
+    let results = or_die(store.query(&sparql), "query failed");
+
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    or_die(cimsparql::format::write(results, format, &mut out), "error writing results");
 }

@@ -65,7 +65,21 @@ class CimDataset:
         ...
 
     def drop_blocks(self) -> None:
-        """Release internal RdfBlock memory after the final merge."""
+        """Release internal RdfBlock memory after the final merge.
+
+        Does not invalidate a graph already built by ``query()``. Building one
+        after this call falls back to a lossy reconstruction, so run ``query()``
+        first if you need both.
+        """
+        ...
+
+    def drop_sparql_store(self) -> None:
+        """Release the RDF graph cached by ``query()``.
+
+        The graph roughly doubles the dataset's resident memory and is otherwise
+        held until the dataset is dropped. The next ``query()`` rebuilds it.
+        A no-op if no query has run.
+        """
         ...
 
     def __len__(self) -> int: ...
@@ -96,7 +110,20 @@ class CimDataset:
         ...
 
     def by_type(self) -> dict[str, list[str]]:
-        """Return a type-name → MRID-list index (no deserialization)."""
+        """Return a type-name → MRID-list index (no deserialization).
+
+        Nothing is deserialized, but the whole index is copied out: one ``str``
+        per MRID in the dataset, across every type. To count a single type, use
+        ``count_type`` instead — it copies nothing.
+        """
+        ...
+
+    def count_type(self, type_name: str) -> int:
+        """Return the number of elements of the given CIM type (0 if unknown).
+
+        An O(1) index lookup that copies nothing — prefer this over
+        ``len(ds.by_type()[name])``, which materialises the entire index.
+        """
         ...
 
     def get_type(self, type_name: str) -> list[CimObject]:
@@ -114,6 +141,25 @@ class CimDataset:
 
         Deserializes every element — prefer ``get_type`` or ``__getitem__`` for
         partial access on large datasets.
+        """
+        ...
+
+    def query(self, sparql: str) -> list[dict[str, str]] | bool | list[tuple[str, str, str]]:
+        """Run a SPARQL 1.1 query over this dataset.
+
+        The first call materialises the dataset into an in-memory RDF graph and
+        caches it; later calls reuse it, so the first query is much slower than
+        the rest (~1.1 s vs ~4 ms on a 150k-element dataset). The cache is
+        dropped on any mutation (``__setitem__``, ``__delitem__``, ``merge``)
+        and can be released with ``drop_sparql_store()`` — it roughly doubles
+        resident memory.
+
+        The CGMES namespaces (``cim:``, ``eu:``, ``md:``, ``dm:``, ``rdf:``) and
+        ``xsd:`` are pre-bound, so no prologue is needed.
+
+        Returns a list of dicts for ``SELECT``, a bool for ``ASK``, and a list
+        of ``(subject, predicate, object)`` string triples for ``CONSTRUCT`` and
+        ``DESCRIBE``.
         """
         ...
 

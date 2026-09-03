@@ -57,6 +57,24 @@ def test_get_type_unknown_returns_empty():
     assert ds.get_type("NoSuchCimType") == []
 
 
+def test_count_type_matches_by_type():
+    ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
+    for type_name, mrids in ds.by_type().items():
+        assert ds.count_type(type_name) == len(mrids)
+
+
+def test_count_type_unknown_returns_zero():
+    ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
+    assert ds.count_type("NoSuchCimType") == 0
+
+
+def test_count_type_tracks_mutation():
+    ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
+    before = ds.count_type("ACLineSegment")
+    del ds["ACLineSegment.OK"]
+    assert ds.count_type("ACLineSegment") == before - 1
+
+
 def test_decode_str_bad_xml_raises():
     with pytest.raises(Exception):
         cimoxide.decode_str("not xml at all <<<")

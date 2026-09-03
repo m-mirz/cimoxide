@@ -12,8 +12,15 @@ cimdecoder     = { path = "../cimdecoder" }
 cimstructs     = { path = "../cimstructs" }
 cimvalidation  = { path = "../cimvalidation" }
 cimconvert     = { path = "../cimconvert" }
+cimsparql      = { path = "../cimsparql", optional = true }
 serde_json     = "1"
 quick-xml      = { version = "0.37", features = ["encoding"] }
+
+[features]
+# On by default: the CLI is an end-user artifact. The library crates stay feature-free, so
+# nothing gridoxide consumes gains an optional-dependency edge.
+default = ["sparql"]
+sparql = ["dep:cimsparql"]
 
 [dev-dependencies]
 cimdecoder  = { path = "../cimdecoder" }
