@@ -177,7 +177,9 @@ impl PyCimDataset {
 
     /// Return a `dict[str, list[str]]` mapping type names to lists of MRIDs.
     ///
-    /// This is a fast O(1) index lookup — no element deserialization occurs.
+    /// No elements are deserialized, but the whole index is copied out: one
+    /// Python `str` per MRID in the dataset, across every type. To count a
+    /// single type, use `count_type` instead — it copies nothing.
     fn by_type(&self, py: Python<'_>) -> PyResult<PyObject> {
         let ds = self.lock()?;
         let dict = PyDict::new(py);
@@ -185,6 +187,15 @@ impl PyCimDataset {
             dict.set_item(type_name, mrids)?;
         }
         Ok(dict.into_any().unbind())
+    }
+
+    /// Return the number of elements of the given CIM type (0 if unknown).
+    ///
+    /// An O(1) index lookup that copies nothing into Python — use this instead
+    /// of `len(ds.by_type()[name])`, which materialises the entire index.
+    fn count_type(&self, type_name: &str) -> PyResult<usize> {
+        let ds = self.lock()?;
+        Ok(ds.by_type.get(type_name).map_or(0, |mrids| mrids.len()))
     }
 
     /// Return a list of element dicts for all objects of the given CIM type name.

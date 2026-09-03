@@ -29,7 +29,8 @@ ds = cimoxide.decode_files([
 ])
 
 len(ds)                       # total number of elements
-ds.by_type()                  # {"ACLineSegment": [mrid, ...], ...} — no deserialization
+ds.by_type()                  # {"ACLineSegment": [mrid, ...], ...} — copies the whole index
+ds.count_type("ACLineSegment")  # 7561 — O(1), copies nothing
 ds.get_type("ACLineSegment")  # [{"_type": "ACLineSegment", "r": 0.12, ...}, ...]
 
 for mrid in ds:
@@ -101,7 +102,8 @@ file individually, then cross-profile checks on the merged dataset. See the
 | `CimDataset[mrid] = {...}` | Insert or replace the element at `mrid`. |
 | `del CimDataset[mrid]` | Remove the element at `mrid` (`KeyError` if missing). |
 | `CimDataset.mrids()` / `iter(ds)` / `len(ds)` | Enumerate or count MRIDs. |
-| `CimDataset.by_type()` | `dict[str, list[mrid]]` type index, no deserialization. |
+| `CimDataset.by_type()` | `dict[str, list[mrid]]` type index; copies one `str` per MRID. |
+| `CimDataset.count_type(name)` | Number of elements of one CIM class. O(1), copies nothing. |
 | `CimDataset.get_type(name)` | All element dicts for one CIM class. |
 | `CimDataset.entries()` | All entries as `dict[mrid, dict]` (deserializes everything). |
 | `CimDataset.to_xml_for_profile(profile)` | Encode one CGMES profile (e.g. `"EQ"`) as an RDF/XML string. |

@@ -96,7 +96,20 @@ class CimDataset:
         ...
 
     def by_type(self) -> dict[str, list[str]]:
-        """Return a type-name → MRID-list index (no deserialization)."""
+        """Return a type-name → MRID-list index (no deserialization).
+
+        Nothing is deserialized, but the whole index is copied out: one ``str``
+        per MRID in the dataset, across every type. To count a single type, use
+        ``count_type`` instead — it copies nothing.
+        """
+        ...
+
+    def count_type(self, type_name: str) -> int:
+        """Return the number of elements of the given CIM type (0 if unknown).
+
+        An O(1) index lookup that copies nothing — prefer this over
+        ``len(ds.by_type()[name])``, which materialises the entire index.
+        """
         ...
 
     def get_type(self, type_name: str) -> list[CimObject]:
