@@ -111,6 +111,11 @@ static SKIP_CATEGORIES: &[SkipCategory] = &[
         match_fn: |e| e.reason.contains("OrInversePath") && e.reason.contains("structurally satisfied"),
     },
     SkipCategory {
+        label: "`sh:minLength<=1` unreachable (empty and absent strings are indistinguishable)",
+        section: "skipped",
+        match_fn: |e| e.reason.contains("sh:MinLength<=1"),
+    },
+    SkipCategory {
         label: "`sh:class` vacuously true (inverse-index already type-asserts)",
         section: "skipped",
         match_fn: |e| e.reason.contains("vacuously true"),

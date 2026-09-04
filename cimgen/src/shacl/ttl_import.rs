@@ -1032,6 +1032,23 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
         });
     }
 
+    // sh:length — exact string length; CGMES uses it for fixed-width codes (e.g. the
+    // 16-character energyIdentCodeEic), which earlier releases expressed as sh:sparql.
+    if let Some(n) = get_one(g, id, "sh:length").and_then(|v| v.as_int()) {
+        let mut payload = HashMap::new();
+        payload.insert("length".to_string(), ShaclValue::Int(n));
+        constraints.push(ConstraintInfo {
+            path: path.clone(),
+            severity: severity.clone(),
+            message: message.clone(),
+            name: name.clone(),
+            description: description.clone(),
+            component: "sh:LengthConstraintComponent".to_string(),
+            payload,
+            rule_id: id.to_string(),
+        });
+    }
+
     // sh:minLength / sh:maxLength
     if let Some(n) = get_one(g, id, "sh:minLength").and_then(|v| v.as_int()) {
         let mut payload = HashMap::new();

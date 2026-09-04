@@ -410,11 +410,10 @@ fn render_check(
         "sh:PatternConstraintComponent" => {
             gen_pattern(&fn_name, class_name, &full_accessor, &attr, constraint, regex_counter)
         }
-        "sh:MinLengthConstraintComponent" => {
-            gen_length(&fn_name, class_name, &full_accessor, &attr, constraint, true)
-        }
-        "sh:MaxLengthConstraintComponent" => {
-            gen_length(&fn_name, class_name, &full_accessor, &attr, constraint, false)
+        "sh:MinLengthConstraintComponent"
+        | "sh:MaxLengthConstraintComponent"
+        | "sh:LengthConstraintComponent" => {
+            gen_length(&fn_name, class_name, &full_accessor, &attr, constraint)
         }
         "sh:MinExclusiveConstraintComponent"
         | "sh:MaxExclusiveConstraintComponent"
@@ -725,17 +724,29 @@ fn gen_length(
     accessor: &str,
     attr: &CimAttribute,
     c: &ConstraintInfo,
-    is_min: bool,
 ) -> Result<(String, Option<String>), String> {
     if attr.lang_type != "String" {
         return Err(format!("sh:Length on non-string field ({})", attr.lang_type));
     }
-    let key = if is_min { "minLength" } else { "maxLength" };
+    let comp = c.component.as_str();
+    let (key, op) = match comp {
+        "sh:MinLengthConstraintComponent" => ("minLength", "<"),
+        "sh:MaxLengthConstraintComponent" => ("maxLength", ">"),
+        "sh:LengthConstraintComponent" => ("length", "!="),
+        _ => return Err(format!("unknown length component: {comp}")),
+    };
     let n = match c.payload.get(key).and_then(|v| v.as_int()) {
         Some(n) => n,
         None => return Err("sh:Length: missing payload".to_string()),
     };
-    let op = if is_min { "<" } else { ">" };
+    // A missing string and a present-but-empty one both decode to "", so the empty guard
+    // below already swallows every value a `sh:minLength 1` could reject. Emitting the check
+    // anyway would produce a function that can never fire while claiming coverage of the
+    // rule -- CGMES has such a shape on Model.modelingAuthoritySet, handled in
+    // cimvalidation/src/sparql/common.rs where the empty case is actually reachable.
+    if key == "minLength" && n <= 1 {
+        return Err("sh:MinLength<=1 unreachable behind the empty-string guard".to_string());
+    }
     let guard = format!("if {accessor}.is_empty() {{ continue; }}");
     let condition = format!("{accessor}.chars().count() {op} {n}");
     Ok((build_fn(fn_name, class_name, Some(&guard), None, &condition, c, attr), None))
@@ -1705,6 +1716,7 @@ fn component_suffix(component: &str) -> &str {
         "sh:PatternConstraintComponent" => "pattern",
         "sh:MinLengthConstraintComponent" => "min_length",
         "sh:MaxLengthConstraintComponent" => "max_length",
+        "sh:LengthConstraintComponent" => "length",
         "sh:MinExclusiveConstraintComponent" => "min_excl",
         "sh:MaxExclusiveConstraintComponent" => "max_excl",
         "sh:MinInclusiveConstraintComponent" => "min_incl",
