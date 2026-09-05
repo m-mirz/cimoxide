@@ -91,7 +91,7 @@ dependencies = [
 
 [[package]]
 name = "cimoxide"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "cimoxide-convert",
  "cimoxide-decoder",
@@ -102,7 +102,7 @@ dependencies = [
 
 [[package]]
 name = "cimoxide-cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "cimoxide-convert",
  "cimoxide-decoder",
@@ -115,7 +115,7 @@ dependencies = [
 
 [[package]]
 name = "cimoxide-convert"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "cimoxide-decoder",
  "cimoxide-structs",
@@ -124,7 +124,7 @@ dependencies = [
 
 [[package]]
 name = "cimoxide-decoder"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "cimoxide-structs",
  "criterion",
@@ -133,7 +133,7 @@ dependencies = [
 
 [[package]]
 name = "cimoxide-gen"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "glob",
  "proc-macro2",
@@ -144,7 +144,7 @@ dependencies = [
 
 [[package]]
 name = "cimoxide-sparql"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "cimoxide-decoder",
  "cimoxide-structs",
@@ -155,7 +155,7 @@ dependencies = [
 
 [[package]]
 name = "cimoxide-structs"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -163,7 +163,7 @@ dependencies = [
 
 [[package]]
 name = "cimoxide-validation"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "cimoxide-decoder",
  "cimoxide-structs",

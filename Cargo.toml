@@ -6,7 +6,7 @@ resolver = "2"
 # Publish metadata shared by every crate. Bumping `version` here bumps the whole
 # workspace, including the internal dependency requirements below.
 [workspace.package]
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/m-mirz/cimoxide"
@@ -17,8 +17,8 @@ categories = ["science", "parsing"]
 # Internal crates carry both a path (used inside the workspace) and a version
 # (used by crates.io once published) — a path-only dependency cannot be published.
 [workspace.dependencies]
-cimoxide-structs = { path = "cimstructs", version = "0.3.0" }
-cimoxide-decoder = { path = "cimdecoder", version = "0.3.0" }
-cimoxide-validation = { path = "cimvalidation", version = "0.3.0" }
-cimoxide-convert = { path = "cimconvert", version = "0.3.0" }
-cimoxide-sparql = { path = "cimsparql", version = "0.3.0" }
+cimoxide-structs = { path = "cimstructs", version = "0.3.1" }
+cimoxide-decoder = { path = "cimdecoder", version = "0.3.1" }
+cimoxide-validation = { path = "cimvalidation", version = "0.3.1" }
+cimoxide-convert = { path = "cimconvert", version = "0.3.1" }
+cimoxide-sparql = { path = "cimsparql", version = "0.3.1" }
