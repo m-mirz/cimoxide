@@ -1,11 +1,20 @@
 [package]
+name = "cimoxide-sparql"
+description = "SPARQL 1.1 querying over decoded CGMES datasets via an in-memory oxigraph store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories = ["science", "database"]
+
+[lib]
 name = "cimsparql"
-version = "0.2.0"
-edition = "2024"
 
 [dependencies]
-cimstructs = { path = "../cimstructs" }
-cimdecoder = { path = "../cimdecoder" }
+cimoxide-structs = { workspace = true }
+cimoxide-decoder = { workspace = true }
 # `default-features = false` is load-bearing: oxigraph's default feature is `rocksdb`,
 # which pulls in oxrocksdb-sys and a C++ toolchain. Disabled, oxigraph is pure Rust and
 # `Store::new()` is the in-memory store.

@@ -1,18 +1,24 @@
 [package]
 name = "cimoxide-cli"
-version = "0.2.0"
-edition = "2024"
+description = "cimcli: command-line tool to decode, validate, convert and query ENTSO-E CGMES data"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories = ["command-line-utilities", "science"]
 
 [[bin]]
 name = "cimcli"
 path = "src/main.rs"
 
 [dependencies]
-cimdecoder     = { path = "../cimdecoder" }
-cimstructs     = { path = "../cimstructs" }
-cimvalidation  = { path = "../cimvalidation" }
-cimconvert     = { path = "../cimconvert" }
-cimsparql      = { path = "../cimsparql", optional = true }
+cimoxide-decoder    = { workspace = true }
+cimoxide-structs    = { workspace = true }
+cimoxide-validation = { workspace = true }
+cimoxide-convert    = { workspace = true }
+cimoxide-sparql     = { workspace = true, optional = true }
 serde_json     = "1"
 quick-xml      = { version = "0.37", features = ["encoding"] }
 
@@ -20,8 +26,8 @@ quick-xml      = { version = "0.37", features = ["encoding"] }
 # On by default: the CLI is an end-user artifact. The library crates stay feature-free, so
 # nothing gridoxide consumes gains an optional-dependency edge.
 default = ["sparql"]
-sparql = ["dep:cimsparql"]
+sparql = ["dep:cimoxide-sparql"]
 
 [dev-dependencies]
-cimdecoder  = { path = "../cimdecoder" }
-cimstructs  = { path = "../cimstructs" }
+cimoxide-decoder = { workspace = true }
+cimoxide-structs = { workspace = true }

@@ -1,7 +1,17 @@
 [package]
+name = "cimoxide-gen"
+description = "Code generator turning ENTSO-E CGMES RDF/SHACL schemas into typed Rust structs and SHACL validators"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories = ["development-tools", "science"]
+
+[[bin]]
 name = "cimgen"
-version = "0.2.0"
-edition = "2024"
+path = "src/main.rs"
 
 [dependencies]
 quick-xml = { version = "0.37", features = ["encoding"] }

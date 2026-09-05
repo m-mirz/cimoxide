@@ -90,25 +90,49 @@ dependencies = [
 ]
 
 [[package]]
-name = "cimconvert"
+name = "cimoxide"
 version = "0.2.0"
 dependencies = [
- "cimdecoder",
- "cimstructs",
+ "cimoxide-convert",
+ "cimoxide-decoder",
+ "cimoxide-sparql",
+ "cimoxide-structs",
+ "cimoxide-validation",
+]
+
+[[package]]
+name = "cimoxide-cli"
+version = "0.2.0"
+dependencies = [
+ "cimoxide-convert",
+ "cimoxide-decoder",
+ "cimoxide-sparql",
+ "cimoxide-structs",
+ "cimoxide-validation",
+ "quick-xml",
  "serde_json",
 ]
 
 [[package]]
-name = "cimdecoder"
+name = "cimoxide-convert"
 version = "0.2.0"
 dependencies = [
- "cimstructs",
+ "cimoxide-decoder",
+ "cimoxide-structs",
+ "serde_json",
+]
+
+[[package]]
+name = "cimoxide-decoder"
+version = "0.2.0"
+dependencies = [
+ "cimoxide-structs",
  "criterion",
  "quick-xml",
 ]
 
 [[package]]
-name = "cimgen"
+name = "cimoxide-gen"
 version = "0.2.0"
 dependencies = [
  "glob",
@@ -119,31 +143,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "cimoxide-cli"
+name = "cimoxide-sparql"
 version = "0.2.0"
 dependencies = [
- "cimconvert",
- "cimdecoder",
- "cimsparql",
- "cimstructs",
- "cimvalidation",
- "quick-xml",
- "serde_json",
-]
-
-[[package]]
-name = "cimsparql"
-version = "0.2.0"
-dependencies = [
- "cimdecoder",
- "cimstructs",
+ "cimoxide-decoder",
+ "cimoxide-structs",
  "criterion",
  "oxigraph",
  "serde_json",
 ]
 
 [[package]]
-name = "cimstructs"
+name = "cimoxide-structs"
 version = "0.2.0"
 dependencies = [
  "serde",
@@ -151,11 +162,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "cimvalidation"
+name = "cimoxide-validation"
 version = "0.2.0"
 dependencies = [
- "cimdecoder",
- "cimstructs",
+ "cimoxide-decoder",
+ "cimoxide-structs",
  "regex",
 ]
 

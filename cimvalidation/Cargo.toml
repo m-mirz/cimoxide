@@ -1,10 +1,19 @@
 [package]
-name = "cimvalidation"
-version = "0.2.0"
-edition = "2024"
+name = "cimoxide-validation"
+description = "SHACL validation of CGMES datasets against the ENTSO-E profile constraints"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 include = ["src/**/*.rs", "Cargo.toml"]
 
+[lib]
+name = "cimvalidation"
+
 [dependencies]
-cimstructs = { path = "../cimstructs" }
-cimdecoder  = { path = "../cimdecoder" }
+cimoxide-structs = { workspace = true }
+cimoxide-decoder = { workspace = true }
 regex       = "1"

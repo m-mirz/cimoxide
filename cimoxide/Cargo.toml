@@ -1,0 +1,23 @@
+[package]
+name = "cimoxide"
+description = "Rust toolkit for ENTSO-E CGMES data: RDF/XML decoding, SHACL validation, JSON conversion and SPARQL querying"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+cimoxide-structs    = { workspace = true }
+cimoxide-decoder    = { workspace = true }
+cimoxide-validation = { workspace = true }
+cimoxide-convert    = { workspace = true }
+cimoxide-sparql     = { workspace = true, optional = true }
+
+[features]
+# Mirrors cimoxide-cli: the facade is a convenience entry point, so SPARQL is on by
+# default. Depend on the individual crates instead to keep the dependency graph minimal.
+default = ["sparql"]
+sparql = ["dep:cimoxide-sparql"]

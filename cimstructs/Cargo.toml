@@ -1,8 +1,17 @@
 [package]
-name = "cimstructs"
-version = "0.2.0"
-edition = "2024"
+name = "cimoxide-structs"
+description = "Generated Rust structs for the IEC 61970/61968 Common Information Model as profiled by ENTSO-E CGMES"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 include = ["src/**/*.rs", "Cargo.toml"]
+
+[lib]
+name = "cimstructs"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

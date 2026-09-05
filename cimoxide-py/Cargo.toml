@@ -9,11 +9,11 @@ name = "cimoxide"
 crate-type = ["cdylib"]
 
 [dependencies]
-cimdecoder    = { path = "../cimdecoder" }
-cimstructs    = { path = "../cimstructs" }
-cimvalidation = { path = "../cimvalidation" }
-cimconvert    = { path = "../cimconvert" }
-cimsparql     = { path = "../cimsparql", optional = true }
+cimoxide-decoder    = { path = "../cimdecoder" }
+cimoxide-structs    = { path = "../cimstructs" }
+cimoxide-validation = { path = "../cimvalidation" }
+cimoxide-convert    = { path = "../cimconvert" }
+cimoxide-sparql     = { path = "../cimsparql", optional = true }
 pyo3          = { version = "0.25", features = ["extension-module", "abi3-py39"] }
 pythonize     = "0.25"
 serde_json    = "1"
@@ -21,4 +21,4 @@ serde_json    = "1"
 [features]
 # On by default: the wheel is an end-user artifact.
 default = ["sparql"]
-sparql = ["dep:cimsparql"]
+sparql = ["dep:cimoxide-sparql"]

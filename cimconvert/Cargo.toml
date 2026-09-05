@@ -1,13 +1,22 @@
 [package]
-name = "cimconvert"
-version = "0.2.0"
-edition = "2024"
+name = "cimoxide-convert"
+description = "Conversion of CGMES datasets between RDF/XML and JSON"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories = ["science", "encoding"]
 include = ["src/**/*.rs", "Cargo.toml"]
 
+[lib]
+name = "cimconvert"
+
 [dependencies]
-cimdecoder  = { path = "../cimdecoder" }
-cimstructs  = { path = "../cimstructs" }
+cimoxide-decoder = { workspace = true }
+cimoxide-structs = { workspace = true }
 serde_json  = "1"
 
 [dev-dependencies]
-cimdecoder  = { path = "../cimdecoder" }
+cimoxide-decoder = { workspace = true }

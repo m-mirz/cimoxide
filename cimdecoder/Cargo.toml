@@ -1,10 +1,19 @@
 [package]
+name = "cimoxide-decoder"
+description = "Streaming RDF/XML decoder producing typed CGMES datasets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
 name = "cimdecoder"
-version = "0.2.0"
-edition = "2024"
 
 [dependencies]
-cimstructs = { path = "../cimstructs" }
+cimoxide-structs = { workspace = true }
 quick-xml  = { version = "0.37", features = ["encoding"] }
 
 [dev-dependencies]
