@@ -17,6 +17,7 @@ name = "cimconvert"
 cimoxide-decoder = { workspace = true }
 cimoxide-structs = { workspace = true }
 serde_json  = "1"
+sha1        = "0.11"   # deterministic (v5) UUIDs for synthesized FullModel headers
 
 [dev-dependencies]
 cimoxide-decoder = { workspace = true }

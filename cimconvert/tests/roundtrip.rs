@@ -240,26 +240,84 @@ fn full_model_header_preserved_when_present() {
     );
 }
 
+/// Every property the Header profile makes mandatory (IEC 61970-552, 1..1 or 1..n).
+const MANDATORY_HEADER_FIELDS: [&str; 6] =
+    ["created", "description", "modelingAuthoritySet", "profile", "scenarioTime", "version"];
+
+fn header_of(xml: &str) -> &str {
+    let start = xml.find("<md:FullModel").expect("no FullModel header");
+    let end = xml[start..].find("</md:FullModel>").expect("unterminated header") + start;
+    &xml[start..end]
+}
+
+fn assert_valid_header(xml: &str) {
+    let header = header_of(xml);
+    for field in MANDATORY_HEADER_FIELDS {
+        assert!(
+            header.contains(&format!("<md:Model.{field}>")),
+            "header must carry mandatory Model.{field}, got:\n{header}"
+        );
+    }
+    let urn = header.split("rdf:about=\"").nth(1).and_then(|s| s.split('"').next()).unwrap();
+    let uuid = urn.strip_prefix("urn:uuid:").expect("model id must be a urn:uuid");
+    let groups: Vec<usize> = uuid.split('-').map(str::len).collect();
+    assert_eq!(groups, [8, 4, 4, 4, 12], "model id must be a UUID, got {urn}");
+    assert!(uuid.chars().all(|c| c == '-' || c.is_ascii_hexdigit()), "model id must be a UUID, got {urn}");
+}
+
 #[test]
 fn full_model_header_synthesized_when_absent() {
     if !pst_eq_path().exists() {
         return; // skip if submodule not initialized
     }
     // This dataset only has an EQ-profile FullModel entry, so requesting SSH must
-    // fall back to the synthetic header rather than reusing the EQ one.
+    // synthesize a header rather than reuse the EQ one, taking the scenario time and
+    // modelling authority from it.
     let ds = CimDataset::decode_file(pst_eq_path()).expect("decode failed");
     let json = serde_json::to_string(&dataset_to_json(&ds)).expect("serialize");
     let ds2 = dataset_from_json(&json).expect("from_json");
     let xml = dataset_to_xml_for_profile(&ds2, "SSH").expect("to_xml_for_profile failed");
 
+    assert_valid_header(&xml);
+    let header = header_of(&xml);
     assert!(
-        xml.contains("urn:uuid:cimoxide-SSH"),
-        "must fall back to the synthetic header, got:\n{xml}"
+        !header.contains("7b5b1bad-bc28-644c-8416-bc3125789aa3"),
+        "must not reuse the EQ FullModel's mrid for the SSH header, got:\n{header}"
     );
     assert!(
-        !xml.contains("7b5b1bad-bc28-644c-8416-bc3125789aa3"),
-        "must not leak the EQ FullModel's mrid into the SSH header, got:\n{xml}"
+        header.contains("<md:Model.scenarioTime>2021-05-03T05:00:00Z</md:Model.scenarioTime>"),
+        "must take scenarioTime from the dataset's EQ header, got:\n{header}"
     );
+    assert!(
+        header.contains("SteadyStateHypothesis-EU/3.0</md:Model.profile>"),
+        "must declare the SSH profile, got:\n{header}"
+    );
+    CimDataset::decode_str(&xml).expect("SSH profile XML must be parseable");
+}
+
+#[test]
+fn full_model_header_synthesized_without_any_header() {
+    // test_003.xml has no FullModel at all: every mandatory value falls back to a placeholder.
+    let ds = CimDataset::decode_file(test_xml_path()).expect("decode failed");
+    let xml = dataset_to_xml_for_profile(&ds, "TP").expect("to_xml_for_profile failed");
+
+    assert_valid_header(&xml);
+    let header = header_of(&xml);
+    assert!(header.contains("<md:Model.scenarioTime>1970-01-01T00:00:00Z</md:Model.scenarioTime>"));
+    assert!(header.contains(
+        "<md:Model.modelingAuthoritySet>urn:cimoxide:unknown-modeling-authority-set</md:Model.modelingAuthoritySet>"
+    ));
+}
+
+#[test]
+fn synthesized_header_id_is_deterministic_and_per_profile() {
+    let ds = CimDataset::decode_file(test_xml_path()).expect("decode failed");
+    let id = |profile: &str| {
+        let xml = dataset_to_xml_for_profile(&ds, profile).expect("to_xml_for_profile failed");
+        header_of(&xml).split('"').nth(1).unwrap().to_string()
+    };
+    assert_eq!(id("TP"), id("TP"), "same dataset and profile must give the same model id");
+    assert_ne!(id("TP"), id("SV"), "each profile of a dataset is its own model");
 }
 
 // ── Namespace prefixes and the EQBD profile ──────────────────────────────────
