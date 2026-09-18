@@ -17,6 +17,9 @@ struct Block {
     domain: String,
     range: String,
     stereotype: String,
+    // Any of the block's `cims:stereotype` values is `concrete`; `stereotype`
+    // keeps only the last one.
+    concrete: bool,
     multiplicity: String,
     association_used: String,
     inverse_role: String,
@@ -38,7 +41,10 @@ impl Block {
             "rdfs:subClassOf" => self.sub_class_of = value,
             "rdfs:domain" => self.domain = value,
             "rdfs:range" => self.range = value,
-            "cims:stereotype" => self.stereotype = value,
+            "cims:stereotype" => {
+                self.concrete |= uri_end(&value) == "concrete";
+                self.stereotype = value;
+            }
             "cims:multiplicity" => self.multiplicity = value,
             "cims:AssociationUsed" => self.association_used = value,
             "cims:inverseRoleName" => self.inverse_role = value,
@@ -216,6 +222,9 @@ fn parse_file(
                 let mut t = make_type(&b);
                 t.origin = keyword.clone();
                 t.origins = vec![keyword.clone()];
+                if b.concrete {
+                    t.concrete_in = vec![keyword.clone()];
+                }
                 types.insert(t.id.clone(), t);
             }
         } else if type_str.contains("rdf-syntax-ns#Property") {
@@ -396,6 +405,7 @@ fn merge_types(target: &mut HashMap<String, CimType>, source: HashMap<String, Ci
             if !src.origin.is_empty() {
                 existing.origins.push(src.origin);
             }
+            existing.concrete_in.extend(src.concrete_in);
             for attr in src.attributes {
                 if let Some(idx) = existing.attributes.iter().position(|a| a.id == attr.id) {
                     existing.attributes[idx].origins.extend(attr.origins);

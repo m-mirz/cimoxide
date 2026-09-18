@@ -62,6 +62,11 @@ pub struct CimType {
     pub enum_types: Vec<String>,
     pub origin: String,
     pub origins: Vec<String>,
+    /// Profiles whose RDFS declares this class with the `concrete` stereotype,
+    /// i.e. the profiles that define instances of it. A profile that only
+    /// references the class (SV's `TopologicalNode`, the target of
+    /// `SvVoltage.TopologicalNode`) lists it without the stereotype.
+    pub concrete_in: Vec<String>,
     pub cim_categories: Vec<String>,
     pub attributes: Vec<CimAttribute>,
 }
