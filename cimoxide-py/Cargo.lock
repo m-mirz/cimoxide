@@ -39,60 +39,61 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
-name = "cimconvert"
-version = "0.2.0"
+name = "cimoxide-convert"
+version = "0.3.1"
 dependencies = [
- "cimdecoder",
- "cimstructs",
+ "cimoxide-decoder",
+ "cimoxide-structs",
  "serde_json",
+ "sha1",
 ]
 
 [[package]]
-name = "cimdecoder"
-version = "0.2.0"
+name = "cimoxide-decoder"
+version = "0.3.1"
 dependencies = [
- "cimstructs",
+ "cimoxide-structs",
  "quick-xml",
 ]
 
 [[package]]
 name = "cimoxide-py"
-version = "0.2.0"
+version = "0.3.1"
 dependencies = [
- "cimconvert",
- "cimdecoder",
- "cimsparql",
- "cimstructs",
- "cimvalidation",
+ "cimoxide-convert",
+ "cimoxide-decoder",
+ "cimoxide-sparql",
+ "cimoxide-structs",
+ "cimoxide-validation",
  "pyo3",
  "pythonize",
  "serde_json",
 ]
 
 [[package]]
-name = "cimsparql"
-version = "0.2.0"
+name = "cimoxide-sparql"
+version = "0.3.1"
 dependencies = [
- "cimdecoder",
- "cimstructs",
+ "cimoxide-decoder",
+ "cimoxide-structs",
  "oxigraph",
  "serde_json",
 ]
 
 [[package]]
-name = "cimstructs"
-version = "0.2.0"
+name = "cimoxide-structs"
+version = "0.3.1"
 dependencies = [
  "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "cimvalidation"
-version = "0.2.0"
+name = "cimoxide-validation"
+version = "0.3.1"
 dependencies = [
- "cimdecoder",
- "cimstructs",
+ "cimoxide-decoder",
+ "cimoxide-structs",
  "regex",
 ]
 

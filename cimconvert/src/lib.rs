@@ -213,17 +213,7 @@ pub fn dataset_to_xml_for_profile(
                 write!(out, "{children}\n  </{hdr}:FullModel>\n")?;
             }
         } else {
-            let profile_ns = attr_meta("Model.profile", "FullModel")
-                .map_or(FALLBACK_PREFIX, |m| m.prefix);
-            writeln!(
-                out,
-                "  <{hdr}:FullModel rdf:about=\"urn:uuid:cimoxide-{profile_code}\">"
-            )?;
-            writeln!(
-                out,
-                "    <{profile_ns}:Model.profile>{uri}</{profile_ns}:Model.profile>"
-            )?;
-            writeln!(out, "  </{hdr}:FullModel>")?;
+            write_synthesized_header(&mut out, ds, profile_code, uri)?;
         }
     }
 
@@ -281,6 +271,93 @@ pub fn dataset_to_xml_for_profile(
 
     out.push_str("</rdf:RDF>\n");
     Ok(out)
+}
+
+/// Namespace for the v5 UUIDs of synthesized FullModel headers.
+const HEADER_UUID_NAMESPACE: [u8; 16] = [
+    0x3b, 0x8e, 0x5f, 0x0a, 0x9c, 0x41, 0x4d, 0x2e, 0xa7, 0x16, 0x5d, 0x0b, 0x6f, 0x93, 0xc2, 0x48,
+];
+/// Placeholders for mandatory header values the dataset does not provide.
+const UNKNOWN_TIME: &str = "1970-01-01T00:00:00Z";
+const UNKNOWN_AUTHORITY: &str = "urn:cimoxide:unknown-modeling-authority-set";
+
+/// Writes a FullModel header for a profile the dataset has no header for.
+///
+/// The Header profile (IEC 61970-552, `Header-AP-Voc-RDFS2020`) makes `Model.created`,
+/// `Model.description`, `Model.modelingAuthoritySet`, `Model.scenarioTime` and
+/// `Model.version` mandatory (1..1) and `Model.profile` 1..n, and a model is identified by
+/// a `urn:uuid:` URN. Readers rely on this: PowSyBl, for one, ignores an SSH file whose
+/// header has no `Model.modelingAuthoritySet`, silently importing no loads, setpoints or
+/// switch states.
+///
+/// - The identifier is a v5 UUID of the profile and the dataset's mRIDs, so encoding stays a
+///   pure function of the dataset and different datasets get different model ids.
+/// - `scenarioTime`, `modelingAuthoritySet` and `created` come from another FullModel
+///   decoded into the dataset when there is one (one dataset describes one scenario from
+///   one authority), else from recognisable placeholders. Callers that know the real values
+///   add a FullModel entry for the profile, which is then written as is.
+fn write_synthesized_header(
+    out: &mut String,
+    ds: &CimDataset,
+    profile_code: &str,
+    profile_uri: &str,
+) -> Result<(), Box<dyn Error>> {
+    let hdr = prefix_for_type("FullModel");
+    let md = |field: &str| {
+        attr_meta(&format!("Model.{field}"), "FullModel").map_or(FALLBACK_PREFIX, |m| m.prefix)
+    };
+    let inherited = |field: &str| -> Option<String> {
+        let mut headers: Vec<(&String, &RdfBlock)> = ds
+            .entries
+            .iter()
+            .filter(|(_, e)| e.element.type_name() == "FullModel")
+            .map(|(m, e)| (m, &e.block))
+            .collect();
+        headers.sort_by_key(|(m, _)| m.as_str());
+        headers.into_iter().find_map(|(_, b)| match b.fields.get(&format!("Model.{field}")) {
+            Some(FieldValue::Text(v)) if !v.is_empty() => Some(v.clone()),
+            _ => None,
+        })
+    };
+    let scenario_time = inherited("scenarioTime").unwrap_or_else(|| UNKNOWN_TIME.to_string());
+    let created = inherited("created").unwrap_or_else(|| scenario_time.clone());
+    let authority = inherited("modelingAuthoritySet").unwrap_or_else(|| UNKNOWN_AUTHORITY.to_string());
+
+    writeln!(out, "  <{hdr}:FullModel rdf:about=\"{}\">", header_urn(ds, profile_code))?;
+    let text = |out: &mut String, field: &str, value: &str| -> std::fmt::Result {
+        let p = md(field);
+        writeln!(out, "    <{p}:Model.{field}>{}</{p}:Model.{field}>", escape_text(value))
+    };
+    text(out, "created", &created)?;
+    text(out, "description", &format!("{profile_code} profile, header synthesized by cimoxide"))?;
+    text(out, "modelingAuthoritySet", &authority)?;
+    text(out, "profile", profile_uri)?;
+    text(out, "scenarioTime", &scenario_time)?;
+    text(out, "version", "1")?;
+    writeln!(out, "  </{hdr}:FullModel>")?;
+    Ok(())
+}
+
+/// `urn:uuid:` + a v5 UUID (RFC 9562, SHA-1 name-based) of the profile code and the
+/// dataset's sorted mRIDs.
+fn header_urn(ds: &CimDataset, profile_code: &str) -> String {
+    use sha1::{Digest, Sha1};
+    let mut mrids: Vec<&str> = ds.entries.keys().map(String::as_str).collect();
+    mrids.sort_unstable();
+    let mut h = Sha1::new();
+    h.update(HEADER_UUID_NAMESPACE);
+    h.update(profile_code.as_bytes());
+    for m in mrids {
+        h.update([0u8]);
+        h.update(m.as_bytes());
+    }
+    let d = h.finalize();
+    let mut b = [0u8; 16];
+    b.copy_from_slice(&d[..16]);
+    b[6] = (b[6] & 0x0f) | 0x50; // version 5
+    b[8] = (b[8] & 0x3f) | 0x80; // RFC 4122 variant
+    let hex: String = b.iter().map(|x| format!("{x:02x}")).collect();
+    format!("urn:uuid:{}-{}-{}-{}-{}", &hex[0..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..32])
 }
 
 /// Find the decoded `FullModel` entry (if any) whose `Model.profile` field names
