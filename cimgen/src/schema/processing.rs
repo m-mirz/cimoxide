@@ -189,7 +189,8 @@ fn set_profile_priorities(spec: &mut CimSpecification) {
 // alphabetical, which picks a profile that merely references the class when
 // the defining profile sorts later: `TopologicalNode` and
 // `DCTopologicalNode` appear in SV and TP, are concrete only in TP, and were
-// otherwise written to TP as bare `rdf:about` references.
+// otherwise written to TP as bare `rdf:about` references. Classes EQ declares
+// keep EQ first (see `promote_defining_origin`).
 fn reorder_origins(spec: &mut CimSpecification) {
     let prio: HashMap<String, u32> = spec
         .ontologies
@@ -208,6 +209,14 @@ fn reorder_origins(spec: &mut CimSpecification) {
 }
 
 fn promote_defining_origin(t: &mut CimType) {
+    // EQ defines every class it declares, abstract ones included: SSH declares
+    // `Equipment` concrete only so that `<cim:Equipment rdf:about=...>` can carry
+    // `Equipment.inService` for equipment defined in EQ, and must keep referencing it.
+    // Only a class EQ does not declare at all takes its defining profile from the
+    // `concrete` stereotype.
+    if t.origins.iter().any(|o| o == "EQ") {
+        return;
+    }
     let first_defines = t.origins.first().is_some_and(|o| t.concrete_in.contains(o));
     if first_defines || t.concrete_in.is_empty() {
         return;
@@ -446,6 +455,9 @@ mod tests {
         // Defined in TP, only referenced from SV.
         assert_eq!(origins(&spec, "TopologicalNode"), ["TP", "SV"]);
         assert_eq!(origins(&spec, "DCTopologicalNode"), ["TP", "SV"]);
+        // Declared by EQ (abstract there, concrete in SSH only as the carrier of
+        // Equipment.inService): EQ stays primary, so SSH keeps writing rdf:about.
+        assert_eq!(origins(&spec, "Equipment")[0], "EQ");
         // Already primary in a defining profile: unchanged.
         assert_eq!(origins(&spec, "Terminal")[0], "EQ");
         assert_eq!(origins(&spec, "ConnectivityNode")[0], "EQ");
