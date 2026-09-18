@@ -226,6 +226,7 @@ pub fn dataset_to_xml_for_profile(
 
         let type_origins: &[&str] = type_map.get(type_name).copied().unwrap_or(&[]);
         if !type_origins.contains(&profile_code) {
+            write_carried_fields(&mut out, mrid, &entry.block, profile_code, type_map, attr_map, ds)?;
             continue;
         }
 
@@ -382,6 +383,53 @@ fn find_full_model_header<'a>(ds: &'a CimDataset, profile_uri: &str) -> Option<(
         }
     }
     best
+}
+
+/// Writes the fields of an element whose own class does not belong to `profile_code`,
+/// but which carries attributes of a superclass that does, typed as that superclass.
+///
+/// CGMES 3.0 states `Equipment.inService` in SSH for equipment whose class SSH does not
+/// list (ACLineSegment, PowerTransformer, BusbarSection, ...) as
+/// `<cim:Equipment rdf:about="#...">`; that is why the SSH RDFS declares Equipment concrete.
+/// Without this, those elements were skipped entirely: re-encoding the SmallGrid fixture
+/// dropped all 314 of them, and readers that require the statement (cgmes2pgm converts no
+/// line without it) lost the equipment.
+///
+/// A field qualifies when its attribute exists in `profile_code` only (so no other profile
+/// can state it) and the class declaring it (the `Class.` part of its key) belongs to
+/// `profile_code`. Attributes shared across profiles, such as `IdentifiedObject.name`, never
+/// qualify: they are stated where the element's own class is. Always `rdf:about`: the
+/// element itself is defined by its own class's profile.
+fn write_carried_fields(
+    out: &mut String,
+    mrid: &str,
+    block: &RdfBlock,
+    profile_code: &str,
+    type_map: &HashMap<&'static str, &'static [&'static str]>,
+    attr_map: &HashMap<&'static str, &'static [&'static str]>,
+    ds: &CimDataset,
+) -> Result<(), Box<dyn Error>> {
+    let mut by_class: std::collections::BTreeMap<&str, Vec<(&String, &FieldValue)>> =
+        std::collections::BTreeMap::new();
+    for (key, val) in &block.fields {
+        let only_here = attr_map.get(key.as_str()).is_some_and(|o| *o == [profile_code]);
+        let Some((class, _)) = key.split_once('.') else { continue };
+        let class_in_profile = type_map.get(class).is_some_and(|o| o.contains(&profile_code));
+        if only_here && class_in_profile {
+            by_class.entry(class).or_default().push((key, val));
+        }
+    }
+    for (class, mut fields) in by_class {
+        let ns = prefix_for_type(class);
+        write!(out, "  <{ns}:{class} rdf:about=\"#{}\">", escape_attr(mrid))?;
+        fields.sort_by_key(|(k, _)| k.as_str());
+        let mut children = String::new();
+        for (key, val) in fields {
+            write_field(&mut children, key, val, class, "#", ds)?;
+        }
+        write!(out, "{children}\n  </{ns}:{class}>\n")?;
+    }
+    Ok(())
 }
 
 /// Write one field, with its own namespace prefix taken from `ATTR_RDF`.

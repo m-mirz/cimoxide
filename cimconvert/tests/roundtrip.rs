@@ -482,3 +482,58 @@ fn json_hop_exports_identically() {
 
     assert_eq!(direct, via_json, "JSON round-trip changed the EQBD export");
 }
+
+// ── Equipment.inService for equipment SSH does not list ─────────────────────
+//
+// CGMES 3.0 states it as `<cim:Equipment rdf:about=...>` in SSH for lines, transformers,
+// busbar sections, ... SmallGrid has 314 such statements, 5 of them `false`.
+
+fn smallgrid(profile: &str) -> std::path::PathBuf {
+    Path::new("../CGMES-Test-Configurations/v3.0/SmallGrid/SmallGrid-Merged").join(format!("SmallGrid_{profile}.xml"))
+}
+
+fn in_service_statements(xml: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = xml
+        .split("<cim:Equipment rdf:about=\"")
+        .skip(1)
+        .map(|b| {
+            let id = b[..b.find('"').unwrap()].trim_start_matches('#').to_string();
+            let v = b.split("<cim:Equipment.inService>").nth(1).unwrap();
+            (id, v[..v.find('<').unwrap()].to_string())
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+#[test]
+fn ssh_keeps_equipment_in_service_of_eq_equipment() {
+    if !smallgrid("SSH").exists() {
+        return; // skip if the submodule is not checked out
+    }
+    let source = in_service_statements(&std::fs::read_to_string(smallgrid("SSH")).unwrap());
+    assert_eq!(source.len(), 314);
+    assert!(source.iter().any(|(_, v)| v == "false"));
+
+    let eq = smallgrid("EQ");
+    let ssh = smallgrid("SSH");
+    let ds = CimDataset::decode_files(&[eq.as_path(), ssh.as_path()]).expect("decode failed");
+    let xml = dataset_to_xml_for_profile(&ds, "SSH").expect("to_xml_for_profile failed");
+    assert_eq!(in_service_statements(&xml), source, "every statement, with its value, must survive");
+    CimDataset::decode_str(&xml).expect("SSH output must parse");
+}
+
+#[test]
+fn shared_attributes_are_not_carried_into_other_profiles() {
+    if !smallgrid("TP").exists() {
+        return;
+    }
+    // IdentifiedObject.name exists in many profiles: it stays with the element's own class
+    // (TopologicalNode names are not restated in EQ).
+    let paths: Vec<std::path::PathBuf> = ["EQ", "SSH", "TP"].iter().map(|p| smallgrid(p)).collect();
+    let refs: Vec<&Path> = paths.iter().map(|p| p.as_path()).collect();
+    let ds = CimDataset::decode_files(&refs).expect("decode failed");
+    let eq = dataset_to_xml_for_profile(&ds, "EQ").expect("to_xml_for_profile failed");
+    assert!(!eq.contains("<cim:IdentifiedObject rdf:about="));
+    assert!(!eq.contains("<cim:Equipment rdf:about="));
+}
