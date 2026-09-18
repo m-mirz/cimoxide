@@ -176,6 +176,25 @@ fn profile_sv_does_not_define_topological_node() {
     );
 }
 
+/// SSH states `Equipment.inService` for equipment defined in EQ (lines, switches,
+/// transformers) as `<cim:Equipment rdf:about=...>`. Encoding an SSH-only dataset must
+/// keep them references: SSH does not define that equipment.
+#[test]
+fn smallgrid_ssh_equipment_stays_a_reference() {
+    let ssh = Path::new("../CGMES-Test-Configurations/v3.0/SmallGrid/SmallGrid-Merged/SmallGrid_SSH.xml");
+    if !ssh.exists() {
+        return; // skip if the submodule is not checked out
+    }
+    let source = std::fs::read_to_string(ssh).unwrap();
+    let referenced = source.matches("<cim:Equipment rdf:about=").count();
+    assert!(referenced > 0);
+
+    let ds = CimDataset::decode_file(ssh).expect("decode failed");
+    let xml = dataset_to_xml_for_profile(&ds, "SSH").expect("to_xml_for_profile failed");
+    assert_eq!(xml.matches("<cim:Equipment rdf:about=").count(), referenced);
+    assert_eq!(xml.matches("<cim:Equipment rdf:ID=").count(), 0);
+}
+
 /// A real conformity fixture: decoding and re-encoding TP must keep every
 /// TopologicalNode as a definition (rdf:ID, mRID, name), as the source has them.
 #[test]
