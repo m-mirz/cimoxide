@@ -103,10 +103,11 @@ fn numeric_fields_are_numbers() {
 //
 // test_003.xml contains:
 //   - Terminal.N0  (Terminal, EQ-primary, has Terminal.TopologicalNode → TP attr)
-//   - N0           (TopologicalNode, SV-primary, has IdentifiedObject.name → EQ/SV attr)
+//   - N0           (TopologicalNode, TP-primary: the TP RDFS declares it concrete, the SV RDFS
+//                   only references it; has IdentifiedObject.name)
 
 #[test]
-fn profile_tp_secondary_uses_rdf_about() {
+fn profile_tp_defines_topological_node_and_references_terminal() {
     let ds = CimDataset::decode_file(test_xml_path()).expect("decode failed");
     let json = serde_json::to_string(&dataset_to_json(&ds)).expect("serialize");
     let ds2 = dataset_from_json(&json).expect("from_json");
@@ -122,24 +123,26 @@ fn profile_tp_secondary_uses_rdf_about() {
         xml.contains("Terminal.TopologicalNode"),
         "TP output must include Terminal.TopologicalNode, got:\n{xml}"
     );
-    // No rdf:ID expected (nothing is TP-primary in this fixture)
+    // TopologicalNode is defined in TP (concrete there, only referenced from SV) → rdf:ID
     assert!(
-        !xml.contains("rdf:ID="),
-        "TP output must not contain rdf:ID for this fixture, got:\n{xml}"
+        xml.contains("rdf:ID=\"N0\"") && !xml.contains("rdf:about=\"#N0\""),
+        "TP output must define TopologicalNode N0 with rdf:ID, got:\n{xml}"
     );
 }
 
 #[test]
-fn profile_tp_excludes_eq_only_attrs() {
+fn profile_tp_names_only_the_topological_node() {
     let ds = CimDataset::decode_file(test_xml_path()).expect("decode failed");
     let json = serde_json::to_string(&dataset_to_json(&ds)).expect("serialize");
     let ds2 = dataset_from_json(&json).expect("from_json");
     let xml = dataset_to_xml_for_profile(&ds2, "TP").expect("to_xml_for_profile failed");
 
-    // IdentifiedObject.name is EQ-primary — must not appear in TP output for secondary elements
-    assert!(
-        !xml.contains("IdentifiedObject.name"),
-        "TP output must not include EQ-primary IdentifiedObject.name, got:\n{xml}"
+    // The defining element carries its IdentifiedObject attributes; secondary
+    // elements (the Terminal) only their TP-primary ones.
+    assert_eq!(
+        xml.matches("IdentifiedObject.name").count(),
+        2, // opening and closing tag of N0's name
+        "TP output must name N0 and nothing else, got:\n{xml}"
     );
 }
 
@@ -159,23 +162,50 @@ fn profile_eq_skips_tp_only_terminal() {
 }
 
 #[test]
-fn profile_sv_primary_uses_rdf_id() {
+fn profile_sv_does_not_define_topological_node() {
     let ds = CimDataset::decode_file(test_xml_path()).expect("decode failed");
     let json = serde_json::to_string(&dataset_to_json(&ds)).expect("serialize");
     let ds2 = dataset_from_json(&json).expect("from_json");
     let xml = dataset_to_xml_for_profile(&ds2, "SV").expect("to_xml_for_profile failed");
 
-    // TopologicalNode is SV-primary and has IdentifiedObject.name (which is in SV origins)
-    // → should appear with rdf:ID
+    // SV only references TopologicalNodes (SvVoltage.TopologicalNode, ...); N0 has no
+    // SV-primary fields, so SV output must not define it.
     assert!(
-        xml.contains("rdf:ID=\"N0\""),
-        "SV output must emit TopologicalNode N0 with rdf:ID (no # prefix), got:\n{xml}"
+        !xml.contains("rdf:ID=\"N0\""),
+        "SV output must not define TopologicalNode N0, got:\n{xml}"
     );
-    // Must not contain rdf:about for N0
-    assert!(
-        !xml.contains("rdf:about=\"#N0\""),
-        "SV output must use rdf:ID, not rdf:about, for primary N0, got:\n{xml}"
-    );
+}
+
+/// A real conformity fixture: decoding and re-encoding TP must keep every
+/// TopologicalNode as a definition (rdf:ID, mRID, name), as the source has them.
+#[test]
+fn smallgrid_tp_round_trip_keeps_topological_nodes() {
+    let dir = Path::new("../CGMES-Test-Configurations/v3.0/SmallGrid/SmallGrid-Merged");
+    let tp = dir.join("SmallGrid_TP.xml");
+    if !tp.exists() {
+        return; // skip if the submodule is not checked out
+    }
+    let source = std::fs::read_to_string(&tp).unwrap();
+    let defined = source.matches("<cim:TopologicalNode rdf:ID=").count();
+    assert!(defined > 0);
+
+    let files: Vec<_> = ["EQ", "SSH", "TP", "SV"]
+        .iter()
+        .map(|p| dir.join(format!("SmallGrid_{p}.xml")))
+        .collect();
+    let mut ds = CimDataset::decode_file(&files[0]).expect("decode failed");
+    for f in &files[1..] {
+        ds.merge(CimDataset::decode_file(f).expect("decode failed"));
+    }
+    let xml = dataset_to_xml_for_profile(&ds, "TP").expect("to_xml_for_profile failed");
+
+    assert_eq!(xml.matches("<cim:TopologicalNode rdf:ID=").count(), defined);
+    assert_eq!(xml.matches("<cim:TopologicalNode rdf:about=").count(), 0);
+    let tn_blocks: Vec<&str> = xml.split("<cim:TopologicalNode rdf:ID=").skip(1).collect();
+    assert!(tn_blocks.iter().all(|b| {
+        let block = &b[..b.find("</cim:TopologicalNode>").unwrap()];
+        block.contains("IdentifiedObject.mRID") && block.contains("IdentifiedObject.name")
+    }));
 }
 
 #[test]

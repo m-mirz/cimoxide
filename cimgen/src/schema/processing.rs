@@ -183,7 +183,13 @@ fn set_profile_priorities(spec: &mut CimSpecification) {
     spec.ontology_list = list.into_iter().map(|(_, k)| k).collect();
 }
 
-// Pass 4: sort origins by priority.
+// Pass 4: sort origins by priority, then make sure `origins[0]` (the primary
+// profile, the one that writes a class with `rdf:ID`, mRID and name) is a
+// profile that defines the class. Priority alone is EQ first, then
+// alphabetical, which picks a profile that merely references the class when
+// the defining profile sorts later: `TopologicalNode` and
+// `DCTopologicalNode` appear in SV and TP, are concrete only in TP, and were
+// otherwise written to TP as bare `rdf:about` references.
 fn reorder_origins(spec: &mut CimSpecification) {
     let prio: HashMap<String, u32> = spec
         .ontologies
@@ -193,10 +199,22 @@ fn reorder_origins(spec: &mut CimSpecification) {
 
     for t in spec.types.values_mut() {
         t.origins.sort_by_key(|o| prio.get(o).copied().unwrap_or(u32::MAX));
+        promote_defining_origin(t);
         for attr in &mut t.attributes {
             attr.origins
                 .sort_by_key(|o| prio.get(o).copied().unwrap_or(u32::MAX));
         }
+    }
+}
+
+fn promote_defining_origin(t: &mut CimType) {
+    let first_defines = t.origins.first().is_some_and(|o| t.concrete_in.contains(o));
+    if first_defines || t.concrete_in.is_empty() {
+        return;
+    }
+    if let Some(pos) = t.origins.iter().position(|o| t.concrete_in.contains(o)) {
+        let defining = t.origins.remove(pos);
+        t.origins.insert(0, defining);
     }
 }
 
@@ -408,5 +426,29 @@ fn remove_circular_dependencies(spec: &mut CimSpecification) {
                 attr.use_id_reference = true;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::schema::import::import_schema_files;
+
+    fn origins(spec: &crate::schema::model::CimSpecification, class: &str) -> Vec<String> {
+        spec.types[class].origins.clone()
+    }
+
+    #[test]
+    fn primary_origin_is_a_defining_profile() {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
+        let pattern = format!("{root}/application-profiles-library/CGMES/RDFS/61970-600-2_*-AP-Voc-RDFS2020.rdf");
+        let spec = import_schema_files(&pattern, false).unwrap();
+
+        // Defined in TP, only referenced from SV.
+        assert_eq!(origins(&spec, "TopologicalNode"), ["TP", "SV"]);
+        assert_eq!(origins(&spec, "DCTopologicalNode"), ["TP", "SV"]);
+        // Already primary in a defining profile: unchanged.
+        assert_eq!(origins(&spec, "Terminal")[0], "EQ");
+        assert_eq!(origins(&spec, "ConnectivityNode")[0], "EQ");
+        assert_eq!(origins(&spec, "SvVoltage")[0], "SV");
     }
 }
