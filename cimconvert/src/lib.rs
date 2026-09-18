@@ -284,6 +284,30 @@ pub fn dataset_to_xml_for_profile(
     Ok(out)
 }
 
+/// Find the decoded `FullModel` entry (if any) whose `Model.profile` field names
+/// `profile_uri`. If more than one matches, the lexicographically smallest MRID
+/// wins, for deterministic output.
+fn find_full_model_header<'a>(ds: &'a CimDataset, profile_uri: &str) -> Option<(&'a str, &'a RdfBlock)> {
+    let mut best: Option<(&str, &RdfBlock)> = None;
+    for (mrid, entry) in &ds.entries {
+        if entry.element.type_name() != "FullModel" {
+            continue;
+        }
+        let matches = match entry.block.fields.get("Model.profile") {
+            Some(FieldValue::Text(s)) => s == profile_uri,
+            Some(FieldValue::TextList(list)) => list.iter().any(|s| s == profile_uri),
+            _ => false,
+        };
+        if !matches {
+            continue;
+        }
+        if best.is_none_or(|(m, _)| mrid.as_str() < m) {
+            best = Some((mrid.as_str(), &entry.block));
+        }
+    }
+    best
+}
+
 /// Writes the fields of an element whose own class does not belong to `profile_code`,
 /// but which carries attributes of a superclass that does, typed as that superclass.
 ///
@@ -329,30 +353,6 @@ fn write_carried_fields(
         write!(out, "{children}\n  </{ns}:{class}>\n")?;
     }
     Ok(())
-}
-
-/// Find the decoded `FullModel` entry (if any) whose `Model.profile` field names
-/// `profile_uri`. If more than one matches, the lexicographically smallest MRID
-/// wins, for deterministic output.
-fn find_full_model_header<'a>(ds: &'a CimDataset, profile_uri: &str) -> Option<(&'a str, &'a RdfBlock)> {
-    let mut best: Option<(&str, &RdfBlock)> = None;
-    for (mrid, entry) in &ds.entries {
-        if entry.element.type_name() != "FullModel" {
-            continue;
-        }
-        let matches = match entry.block.fields.get("Model.profile") {
-            Some(FieldValue::Text(s)) => s == profile_uri,
-            Some(FieldValue::TextList(list)) => list.iter().any(|s| s == profile_uri),
-            _ => false,
-        };
-        if !matches {
-            continue;
-        }
-        if best.is_none_or(|(m, _)| mrid.as_str() < m) {
-            best = Some((mrid.as_str(), &entry.block));
-        }
-    }
-    best
 }
 
 /// Write one field, with its own namespace prefix taken from `ATTR_RDF`.
