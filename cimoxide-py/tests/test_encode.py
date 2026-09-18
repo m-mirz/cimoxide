@@ -1,6 +1,7 @@
 """Tests for encoding a CimDataset back to CGMES profile XML."""
 
 import os
+import re
 import cimoxide
 
 TESTDATA = os.path.join(os.path.dirname(__file__), "../../testdata")
@@ -82,5 +83,15 @@ def test_full_model_header_synthesized_when_absent():
     ds = cimoxide.decode_file(PST_EQ)
     xml = ds.to_xml_for_profile("SSH")
 
-    assert "urn:uuid:cimoxide-SSH" in xml
+    # The synthesized header gets its own urn:uuid id and every property the Header
+    # profile makes mandatory, inheriting scenario values from the decoded EQ header.
+    assert re.search(r'<md:FullModel rdf:about="urn:uuid:[0-9a-f-]{36}">', xml)
     assert "7b5b1bad-bc28-644c-8416-bc3125789aa3" not in xml
+    assert "<md:Model.profile>http://iec.ch/TC57/ns/CIM/SteadyStateHypothesis-EU/3.0</md:Model.profile>" in xml
+    assert "<md:Model.scenarioTime>2021-05-03T05:00:00Z</md:Model.scenarioTime>" in xml
+    assert "<md:Model.modelingAuthoritySet>http://www.pse.pl/OperationalPlanning</md:Model.modelingAuthoritySet>" in xml
+    for field in ("created", "description", "version"):
+        assert f"<md:Model.{field}>" in xml
+
+    # Encoding is a pure function of the dataset.
+    assert xml == cimoxide.decode_file(PST_EQ).to_xml_for_profile("SSH")
