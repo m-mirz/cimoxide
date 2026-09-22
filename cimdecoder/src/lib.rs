@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use quick_xml::events::Event;
+use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 
-use cimstructs::base::{CimElement, FieldValue, RdfBlock};
-use cimstructs::registry::{self, ParseFn};
+use cimstructs::base::{CimElement, FieldValue, RdfBlock, TypeEntry, TypeRegistry};
+use cimstructs::registry;
 
 pub struct CimEntry {
     pub element: Box<dyn CimElement>,
@@ -35,8 +35,7 @@ impl CimDataset {
     /// Decode an RDF/XML string into a CimDataset, using the provided type registry.
     pub fn decode_str(content: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let mut ds = Self::new();
-        let reg = registry::registry();
-        parse_rdf(content, &reg, &mut ds)?;
+        parse_rdf(content, registry::type_registry(), &mut ds)?;
         Ok(ds)
     }
 
@@ -93,13 +92,12 @@ impl CimDataset {
     /// For conflicting MRIDs: merge RdfBlocks (later scalar wins, lists union),
     /// then re-instantiate the typed element.
     pub fn merge(&mut self, other: CimDataset) {
-        let reg = registry::registry();
+        let reg = registry::type_registry();
         for (mrid, incoming) in other.entries {
             if let Some(existing) = self.entries.get_mut(&mrid) {
                 existing.block.merge_from(&incoming.block);
-                let type_name = existing.block.type_name.clone();
-                if let Some(f) = reg.get(type_name.as_str()) {
-                    existing.element = f(&existing.block);
+                if let Some(entry) = reg.by_type_name(&existing.block.type_name) {
+                    existing.element = (entry.parse)(&existing.block);
                 }
             } else {
                 let type_name = incoming.element.type_name().to_string();
@@ -152,37 +150,183 @@ impl CimDataset {
 
 // --- XML streaming parser ---------------------------------------------------
 
+/// Push an MRID onto its type bucket, allocating the key only when the bucket
+/// is new rather than once per element.
+fn index(by_type: &mut HashMap<String, Vec<String>>, type_name: &'static str, mrid: String) {
+    if let Some(bucket) = by_type.get_mut(type_name) {
+        bucket.push(mrid);
+    } else {
+        by_type.insert(type_name.to_string(), vec![mrid]);
+    }
+}
+
+type Table = HashMap<&'static str, TypeEntry>;
+
+/// The document's `xmlns` bindings, resolved once to dispatch tables.
+///
+/// Resolving a prefix per element rather than a namespace IRI is what keeps
+/// this cheap: prefixes are two to four bytes, IRIs are thirty-odd, and a
+/// document binds a handful of them and then repeats them on every element.
+#[derive(Default)]
+struct Scope {
+    prefixes: Vec<(Vec<u8>, Option<&'static Table>)>,
+    default: Option<&'static Table>,
+}
+
+impl Scope {
+    /// Collect `xmlns:*` and `xmlns` declarations from an element.
+    fn absorb(&mut self, e: &BytesStart, reg: &'static TypeRegistry) {
+        for attr in e.attributes().flatten() {
+            let key = attr.key.as_ref();
+            let Some(rest) = key.strip_prefix(b"xmlns".as_slice()) else {
+                continue;
+            };
+            let Ok(ns) = std::str::from_utf8(&attr.value) else {
+                continue;
+            };
+            // A namespace written without its delimiter still names the same vocabulary.
+            let table = reg.ns_table(ns).or_else(|| {
+                if ns.ends_with('#') || ns.ends_with('/') {
+                    None
+                } else {
+                    reg.ns_table(&format!("{ns}#"))
+                }
+            });
+            match rest.strip_prefix(b":".as_slice()) {
+                Some(prefix) => {
+                    let prefix = prefix.to_vec();
+                    match self.prefixes.iter_mut().find(|(k, _)| *k == prefix) {
+                        Some(slot) => slot.1 = table,
+                        None => self.prefixes.push((prefix, table)),
+                    }
+                }
+                None if rest.is_empty() => self.default = table,
+                None => {}
+            }
+        }
+    }
+
+    fn table(&self, prefix: Option<&[u8]>) -> Option<&'static Table> {
+        match prefix {
+            None => self.default,
+            Some(p) => self
+                .prefixes
+                .iter()
+                .find(|(k, _)| k.as_slice() == p)
+                .and_then(|(_, t)| *t),
+        }
+    }
+
+}
+
+/// One pass over an element's attributes, yielding both things the parser needs:
+/// the MRID and whether the element redeclares any namespace. Scanning twice
+/// costs more than the nested-`xmlns` case it would serve, because every element
+/// pays for it and almost none declare one.
+fn scan_attrs(e: &BytesStart) -> Result<(String, bool), Box<dyn std::error::Error>> {
+    let mut mrid = String::new();
+    let mut has_xmlns = false;
+    for attr in e.attributes().flatten() {
+        let key = attr.key.as_ref();
+        if key == b"rdf:about" || key == b"rdf:ID" {
+            mrid = strip_fragment(std::str::from_utf8(&attr.value)?);
+        } else if key.starts_with(b"xmlns") {
+            has_xmlns = true;
+        }
+    }
+    Ok((mrid, has_xmlns))
+}
+
+/// Split a qualified name into its prefix and local part.
+fn split_qname(raw: &[u8]) -> (Option<&[u8]>, &[u8]) {
+    match raw.iter().position(|b| *b == b':') {
+        Some(i) => (Some(&raw[..i]), &raw[i + 1..]),
+        None => (None, raw),
+    }
+}
+
+/// Resolve an element name to a parser.
+///
+/// The namespace wins when the document binds one we know. Otherwise we fall
+/// back to the bare local name, which is what every pre-namespace release did:
+/// real files bind prefixes we do not expect (one CGMES test file binds the
+/// ModelDescription IRI to `mdc`), and write elements under a namespace their
+/// class was not declared in (`<cim:BoundaryPoint>` where `BoundaryPoint` is
+/// declared in `CIM100-European#`). The fallback is therefore per element, not
+/// per document.
+fn resolve(
+    scope: &Scope,
+    reg: &'static TypeRegistry,
+    raw: &[u8],
+) -> Result<Option<TypeEntry>, Box<dyn std::error::Error>> {
+    let (prefix, local_bytes) = split_qname(raw);
+    let local = std::str::from_utf8(local_bytes)?;
+    if let Some(entry) = scope.table(prefix).and_then(|t| t.get(local)) {
+        return Ok(Some(*entry));
+    }
+    Ok(reg.bare().get(local).copied())
+}
+
 /// Parse an RDF/XML string into a CimDataset, using the provided type registry.
 fn parse_rdf(
     content: &str,
-    reg: &HashMap<&'static str, ParseFn>,
+    reg: &'static TypeRegistry,
     ds: &mut CimDataset,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut reader = Reader::from_str(content);
     let mut buf = Vec::new();
 
     let mut depth: u32 = 0;
-    let mut current: Option<RdfBlock> = None;
+    let mut scope = Scope::default();
+    // Outer scope parked while a nested `xmlns` override is in effect.
+    let mut nested: Option<Scope> = None;
+    // Resolved at the element's start tag, so an unregistered element never
+    // accumulates fields.
+    let mut current: Option<(RdfBlock, TypeEntry)> = None;
     let mut pending_key: Option<String> = None;
 
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => {
                 depth += 1;
-                let local = local_name(e.name().as_ref())?;
 
                 match depth {
+                    1 => scope.absorb(e, reg),
                     2 => {
-                        let mrid = extract_about(e.attributes())?;
-                        current = Some(RdfBlock {
-                            type_name: local,
-                            mrid,
-                            fields: HashMap::new(),
-                            duplicate_fields: std::collections::HashSet::new(),
-                        });
+                        // Every CGMES and NC file declares its namespaces on the
+                        // root, but a nested redeclaration is legal RDF/XML, so
+                        // honour one when it appears. The End arm restores the
+                        // outer scope.
+                        let (mrid, has_xmlns) = scan_attrs(e)?;
+                        if has_xmlns {
+                            let mut inner = Scope {
+                                prefixes: scope.prefixes.clone(),
+                                default: scope.default,
+                            };
+                            inner.absorb(e, reg);
+                            nested = Some(std::mem::replace(&mut scope, inner));
+                        }
+
+                        current = match resolve(&scope, reg, e.name().as_ref())? {
+                            Some(entry) => {
+                                Some((
+                                    RdfBlock {
+                                        type_name: entry.type_name.to_string(),
+                                        mrid,
+                                        fields: HashMap::new(),
+                                        duplicate_fields: std::collections::HashSet::new(),
+                                    },
+                                    entry,
+                                ))
+                            }
+                            None => None,
+                        };
                     }
                     3 => {
-                        if let Some(ref mut block) = current {
+                        if let Some((ref mut block, _)) = current {
+                            let name = e.name();
+                            let (_, local_bytes) = split_qname(name.as_ref());
+                            let local = std::str::from_utf8(local_bytes)?.to_string();
                             if let Some(res) = find_resource(e.attributes())? {
                                 add_field(block, &local, FieldValue::Resource(res));
                             } else {
@@ -195,26 +339,32 @@ fn parse_rdf(
             }
 
             Ok(Event::Empty(ref e)) => {
-                let local = local_name(e.name().as_ref())?;
                 match depth {
                     1 => {
                         // Top-level self-closing element: <cim:Foo rdf:ID="x" />
                         let mrid = extract_about(e.attributes())?;
                         if !mrid.is_empty() {
-                            if let Some(f) = reg.get(local.as_str()) {
-                                let block = RdfBlock { type_name: local, mrid: mrid.clone(), fields: HashMap::new(), duplicate_fields: std::collections::HashSet::new() };
-                                let element = f(&block);
-                                let type_name = element.type_name().to_string();
-                                ds.by_type.entry(type_name).or_default().push(mrid.clone());
+                            if let Some(entry) = resolve(&scope, reg, e.name().as_ref())? {
+                                let block = RdfBlock {
+                                    type_name: entry.type_name.to_string(),
+                                    mrid: mrid.clone(),
+                                    fields: HashMap::new(),
+                                    duplicate_fields: std::collections::HashSet::new(),
+                                };
+                                let element = (entry.parse)(&block);
+                                index(&mut ds.by_type, entry.type_name, mrid.clone());
                                 ds.entries.insert(mrid, CimEntry { element, block });
                             }
                         }
                     }
                     2 => {
                         // Self-closing field element within the current type block.
-                        if let Some(ref mut block) = current {
+                        if let Some((ref mut block, _)) = current {
                             if let Some(res) = find_resource(e.attributes())? {
-                                add_field(block, &local, FieldValue::Resource(res));
+                                let name = e.name();
+                                let (_, local_bytes) = split_qname(name.as_ref());
+                                let local = std::str::from_utf8(local_bytes)?;
+                                add_field(block, local, FieldValue::Resource(res));
                             }
                         }
                     }
@@ -224,9 +374,7 @@ fn parse_rdf(
 
             Ok(Event::Text(ref e)) => {
                 if depth == 3 {
-                    if let (Some(block), Some(key)) =
-                        (&mut current, pending_key.take())
-                    {
+                    if let (Some((block, _)), Some(key)) = (&mut current, pending_key.take()) {
                         let text = e.unescape()?.trim().to_string();
                         if !text.is_empty() {
                             add_field(block, &key, FieldValue::Text(text));
@@ -238,15 +386,16 @@ fn parse_rdf(
             Ok(Event::End(_)) => {
                 if depth == 2 {
                     pending_key = None;
-                    if let Some(block) = current.take() {
+                    if let Some((block, entry)) = current.take() {
                         if !block.mrid.is_empty() {
-                            if let Some(f) = reg.get(block.type_name.as_str()) {
-                                let element = f(&block);
-                                let type_name = element.type_name().to_string();
-                                ds.by_type.entry(type_name).or_default().push(block.mrid.clone());
-                                ds.entries.insert(block.mrid.clone(), CimEntry { element, block });
-                            }
+                            let element = (entry.parse)(&block);
+                            index(&mut ds.by_type, entry.type_name, block.mrid.clone());
+                            ds.entries
+                                .insert(block.mrid.clone(), CimEntry { element, block });
                         }
+                    }
+                    if let Some(outer) = nested.take() {
+                        scope = outer;
                     }
                 }
                 depth = depth.saturating_sub(1);
@@ -264,11 +413,6 @@ fn parse_rdf(
 
 // --- helpers ----------------------------------------------------------------
 
-/// Extract the local name from a qualified XML name, e.g. "cim:Foo" → "Foo".
-fn local_name(raw: &[u8]) -> Result<String, Box<dyn std::error::Error>> {
-    let s = std::str::from_utf8(raw)?;
-    Ok(s.find(':').map(|i| &s[i + 1..]).unwrap_or(s).to_string())
-}
 
 /// Strip the fragment from a URI, e.g. "http://example.com#foo" → "foo".
 fn strip_fragment(s: &str) -> String {
