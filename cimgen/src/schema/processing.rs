@@ -154,19 +154,23 @@ fn add_origins_of_attributes(spec: &mut CimSpecification) {
     }
 }
 
-// Pass 3: assign priorities — EQ=1, rest alphabetical from 2.
+// Pass 3: assign priorities — the family's base profile first (CGMES: EQ), the
+// rest alphabetical. A family without a base profile is purely alphabetical.
 fn set_profile_priorities(spec: &mut CimSpecification) {
-    if let Some(eq) = spec.ontologies.get_mut("EQ") {
-        eq.priority = 1;
+    let base = spec.family.base_profile;
+    if let Some(b) = base {
+        if let Some(o) = spec.ontologies.get_mut(b) {
+            o.priority = 1;
+        }
     }
     let mut others: Vec<String> = spec
         .ontologies
         .keys()
-        .filter(|k| k.as_str() != "EQ")
+        .filter(|k| Some(k.as_str()) != base)
         .cloned()
         .collect();
     others.sort();
-    let mut p = 2u32;
+    let mut p = if base.is_some() { 2u32 } else { 1u32 };
     for k in others {
         if let Some(o) = spec.ontologies.get_mut(&k) {
             o.priority = p;
@@ -192,6 +196,7 @@ fn set_profile_priorities(spec: &mut CimSpecification) {
 // otherwise written to TP as bare `rdf:about` references. Classes EQ declares
 // keep EQ first (see `promote_defining_origin`).
 fn reorder_origins(spec: &mut CimSpecification) {
+    let base = spec.family.base_profile;
     let prio: HashMap<String, u32> = spec
         .ontologies
         .iter()
@@ -200,7 +205,7 @@ fn reorder_origins(spec: &mut CimSpecification) {
 
     for t in spec.types.values_mut() {
         t.origins.sort_by_key(|o| prio.get(o).copied().unwrap_or(u32::MAX));
-        promote_defining_origin(t);
+        promote_defining_origin(t, base);
         for attr in &mut t.attributes {
             attr.origins
                 .sort_by_key(|o| prio.get(o).copied().unwrap_or(u32::MAX));
@@ -208,14 +213,17 @@ fn reorder_origins(spec: &mut CimSpecification) {
     }
 }
 
-fn promote_defining_origin(t: &mut CimType) {
-    // EQ defines every class it declares, abstract ones included: SSH declares
-    // `Equipment` concrete only so that `<cim:Equipment rdf:about=...>` can carry
-    // `Equipment.inService` for equipment defined in EQ, and must keep referencing it.
-    // Only a class EQ does not declare at all takes its defining profile from the
-    // `concrete` stereotype.
-    if t.origins.iter().any(|o| o == "EQ") {
-        return;
+fn promote_defining_origin(t: &mut CimType, base: Option<&str>) {
+    // A base profile defines every class it declares, abstract ones included:
+    // CGMES's SSH declares `Equipment` concrete only so that
+    // `<cim:Equipment rdf:about=...>` can carry `Equipment.inService` for
+    // equipment defined in EQ, and must keep referencing it. Only a class the
+    // base profile does not declare at all takes its defining profile from the
+    // `concrete` stereotype. A family without a base profile always does.
+    if let Some(b) = base {
+        if t.origins.iter().any(|o| o == b) {
+            return;
+        }
     }
     let first_defines = t.origins.first().is_some_and(|o| t.concrete_in.contains(o));
     if first_defines || t.concrete_in.is_empty() {
@@ -230,15 +238,20 @@ fn promote_defining_origin(t: &mut CimType) {
 // Pass 5: select the dominant origin per type.
 fn set_main_origin(spec: &mut CimSpecification) {
     let type_ids: Vec<String> = spec.types.keys().cloned().collect();
+    let base = spec.family.base_profile;
     for id in type_ids {
-        let origin = compute_main_origin(&id, &spec.types);
+        let origin = compute_main_origin(&id, &spec.types, base);
         if let Some(t) = spec.types.get_mut(&id) {
             t.origin = origin;
         }
     }
 }
 
-fn compute_main_origin(id: &str, types: &HashMap<String, CimType>) -> String {
+fn compute_main_origin(
+    id: &str,
+    types: &HashMap<String, CimType>,
+    base: Option<&str>,
+) -> String {
     let mut counts: HashMap<String, usize> = HashMap::new();
     let mut current_id = id.to_string();
 
@@ -278,13 +291,14 @@ fn compute_main_origin(id: &str, types: &HashMap<String, CimType>) -> String {
             .collect()
     };
 
-    if candidates.contains(&"EQ".to_string()) {
-        "EQ".to_string()
-    } else {
-        let mut s = candidates;
-        s.sort();
-        s.into_iter().next().unwrap_or_default()
+    if let Some(b) = base {
+        if candidates.iter().any(|c| c == b) {
+            return b.to_string();
+        }
     }
+    let mut s = candidates;
+    s.sort();
+    s.into_iter().next().unwrap_or_default()
 }
 
 // Pass 6: populate has_inverse_role and inverse_role_attribute.
@@ -359,22 +373,19 @@ fn set_missing_namespaces(spec: &mut CimSpecification) {
         }
     }
 
-    let md = "http://iec.ch/TC57/61970-552/ModelDescription/1#".to_string();
-    let rdf = "http://www.w3.org/1999/02/22-rdf-syntax-ns#".to_string();
-    spec.specification_namespaces
-        .entry("md".to_string())
-        .or_insert(md.clone());
-    spec.profile_namespaces.entry("md".to_string()).or_insert(md);
-    spec.specification_namespaces
-        .entry("rdf".to_string())
-        .or_insert(rdf.clone());
-    spec.profile_namespaces
-        .entry("rdf".to_string())
-        .or_insert(rdf);
+    // Namespaces the family always needs, whether or not a class lives in them.
+    for (prefix, ns) in spec.family.extra_namespaces {
+        spec.specification_namespaces
+            .entry((*prefix).to_string())
+            .or_insert_with(|| (*ns).to_string());
+        spec.profile_namespaces
+            .entry((*prefix).to_string())
+            .or_insert_with(|| (*ns).to_string());
+    }
 }
 
 fn normalize_ns(ns: &mut String, base: &str) {
-    if !ns.ends_with('#') {
+    if !ns.ends_with('#') && !ns.ends_with('/') {
         ns.push('#');
     }
     if ns.is_empty() || ns == "#" {
@@ -440,17 +451,22 @@ fn remove_circular_dependencies(spec: &mut CimSpecification) {
 
 #[cfg(test)]
 mod tests {
+    use crate::schema::family;
     use crate::schema::import::import_schema_files;
 
     fn origins(spec: &crate::schema::model::CimSpecification, class: &str) -> Vec<String> {
         spec.types[class].origins.clone()
     }
 
+    fn pattern_for(family: &family::Family) -> String {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
+        format!("{root}/{}", family.default_schema)
+    }
+
     #[test]
     fn primary_origin_is_a_defining_profile() {
-        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
-        let pattern = format!("{root}/application-profiles-library/CGMES/RDFS/61970-600-2_*-AP-Voc-RDFS2020.rdf");
-        let spec = import_schema_files(&pattern, false).unwrap();
+        let spec =
+            import_schema_files(&pattern_for(&family::CGMES), &family::CGMES, false).unwrap();
 
         // Defined in TP, only referenced from SV.
         assert_eq!(origins(&spec, "TopologicalNode"), ["TP", "SV"]);
@@ -462,5 +478,36 @@ mod tests {
         assert_eq!(origins(&spec, "Terminal")[0], "EQ");
         assert_eq!(origins(&spec, "ConnectivityNode")[0], "EQ");
         assert_eq!(origins(&spec, "SvVoltage")[0], "SV");
+    }
+
+    #[test]
+    fn nc_spec_parses_classes_enums_and_datatypes() {
+        let spec = import_schema_files(&pattern_for(&family::NC), &family::NC, false).unwrap();
+
+        // NCP declares classes in two namespaces and inherits across them.
+        assert_eq!(spec.types["Contingency"].namespace, "https://cim.ucaiug.io/ns#");
+        assert_eq!(
+            spec.types["OrdinaryContingency"].namespace,
+            "https://cim4.eu/ns/nc#"
+        );
+        assert_eq!(spec.types["OrdinaryContingency"].super_type, "Contingency");
+
+        // Regression guard for the stereotype ordering: NCP writes the
+        // classifier first and trails an "NC" tag, which last-wins misreads as
+        // a plain class.
+        assert!(spec.enums.contains_key("ContingencyEquipmentStatusKind"));
+        assert!(!spec.types.contains_key("ContingencyEquipmentStatusKind"));
+
+        // NC's Equipment is not CGMES's Equipment.
+        assert!(
+            spec.types["Equipment"]
+                .attributes
+                .iter()
+                .any(|a| a.id == "Equipment.networkAnalysisEnabled"),
+            "NC Equipment should carry networkAnalysisEnabled"
+        );
+
+        // No base profile: priorities are purely alphabetical from 1.
+        assert_eq!(spec.ontologies["AE"].priority, 1);
     }
 }

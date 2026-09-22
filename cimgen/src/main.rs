@@ -4,8 +4,6 @@ mod shacl;
 
 use std::path::Path;
 
-const DEFAULT_SCHEMA: &str =
-    "application-profiles-library/CGMES/RDFS/61970-600-2_*-AP-Voc-RDFS2020.rdf";
 const DEFAULT_OUTPUT: &str = "cimstructs/src";
 const DEFAULT_SHACL: &str =
     "application-profiles-library/CGMES/SHACL/*.ttl";
@@ -13,9 +11,28 @@ const DEFAULT_SHACL_OUTPUT: &str = "cimvalidation/src";
 const DEFAULT_SPARQL_DIR: &str = "cimvalidation/src/sparql";
 const DEFAULT_PYTHON_STUBS_OUTPUT: &str = "cimoxide-py/python/cimoxide";
 
+fn print_usage() {
+    eprintln!(
+        "cimgen — generate Rust sources from ENTSO-E RDFS and SHACL schemas
+
+Options:
+  --schema <glob>               CGMES RDFS glob
+  --output <dir>                where generated structs are written
+  --shacl <glob>                SHACL TTL glob
+  --shacl-output <dir>          where generated validators are written
+  --python-stubs-output <dir>   where types.pyi is written
+  --skip-shacl                  do not generate SHACL validators
+  --skip-python-stubs           do not generate Python stubs
+  --skip-report                 suppress the SHACL skip report
+  --rule-report                 print the SPARQL rule coverage report
+  --verbose, -v                 log each file as it is parsed
+  --help, -h                    show this message"
+    );
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let mut schema = DEFAULT_SCHEMA.to_string();
+    let mut schema = schema::family::CGMES.default_schema.to_string();
     let mut output = DEFAULT_OUTPUT.to_string();
     let mut shacl_glob: Option<String> = Some(DEFAULT_SHACL.to_string());
     let mut shacl_output: Option<String> = Some(DEFAULT_SHACL_OUTPUT.to_string());
@@ -50,6 +67,12 @@ fn main() {
             "--verbose" | "-v" => verbose = true,
             "--skip-report" => skip_report = true,
             "--rule-report" => rule_report = true,
+            "--skip-shacl" => shacl_output = None,
+            "--skip-python-stubs" => python_stubs_output = None,
+            "--help" | "-h" => {
+                print_usage();
+                return;
+            }
             other => {
                 eprintln!("unknown argument: {other}");
                 std::process::exit(1);
@@ -63,7 +86,7 @@ fn main() {
         eprintln!("output dir     : {output}");
     }
 
-    let mut spec = match schema::import::import_schema_files(&schema, verbose) {
+    let mut spec = match schema::import::import_schema_files(&schema, &schema::family::CGMES, verbose) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("error importing schema: {e}");

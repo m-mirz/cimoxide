@@ -4,6 +4,7 @@ use std::fs;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
+use super::family::Family;
 use super::model::*;
 
 // Collects all fields from one rdf:Description block during XML parsing.
@@ -16,9 +17,10 @@ struct Block {
     sub_class_of: String,
     domain: String,
     range: String,
-    stereotype: String,
-    // Any of the block's `cims:stereotype` values is `concrete`; `stereotype`
-    // keeps only the last one.
+    // Every `cims:stereotype` value on the block, in document order. Which one
+    // classifies the block depends on the family (see `Block::classifier`).
+    stereotypes: Vec<String>,
+    /// Any of the block's `cims:stereotype` values is `concrete`.
     concrete: bool,
     multiplicity: String,
     association_used: String,
@@ -32,7 +34,32 @@ struct Block {
     title: String,
 }
 
+/// Stereotypes that decide which bucket a block lands in. Everything else
+/// (`NC`, `profcim`, `deprecated`, `concrete`, ...) is an annotation.
+const CLASSIFIERS: &[&str] = &["enumeration", "Primitive", "CIMDatatype", "Compound"];
+
 impl Block {
+    /// The stereotype that classifies this block.
+    ///
+    /// CGMES blocks carry at most one meaningful stereotype, so the historical
+    /// last-wins reading is kept. NCP writes the classifier first and trails
+    /// profile tags, which last-wins would misread: 94 enumeration blocks and
+    /// 72+ Primitive blocks end on `NC`/`profcim`/`deprecated` and would be
+    /// classified as plain classes.
+    fn classifier(&self, family: &Family) -> String {
+        if family.stereotype_first_wins {
+            if let Some(s) = self
+                .stereotypes
+                .iter()
+                .map(|s| uri_end(s))
+                .find(|s| CLASSIFIERS.contains(&s.as_str()))
+            {
+                return s;
+            }
+        }
+        self.stereotypes.last().map(|s| uri_end(s)).unwrap_or_default()
+    }
+
     fn set(&mut self, tag: &str, value: String) {
         match tag {
             "rdf:type" => self.rdf_types.push(value),
@@ -43,7 +70,7 @@ impl Block {
             "rdfs:range" => self.range = value,
             "cims:stereotype" => {
                 self.concrete |= uri_end(&value) == "concrete";
-                self.stereotype = value;
+                self.stereotypes.push(value);
             }
             "cims:multiplicity" => self.multiplicity = value,
             "cims:AssociationUsed" => self.association_used = value,
@@ -62,6 +89,7 @@ impl Block {
 
 pub fn import_schema_files(
     pattern: &str,
+    family: &'static Family,
     verbose: bool,
 ) -> Result<CimSpecification, Box<dyn std::error::Error>> {
     let mut paths: Vec<String> = glob::glob(pattern)?
@@ -74,12 +102,12 @@ pub fn import_schema_files(
     }
     paths.sort();
 
-    let mut spec = CimSpecification::new();
+    let mut spec = CimSpecification::new(family);
     for path in &paths {
         if verbose {
             eprintln!("parsing {path}");
         }
-        parse_file(path, &mut spec)?;
+        parse_file(path, family, &mut spec)?;
     }
 
     super::processing::postprocess(&mut spec);
@@ -88,6 +116,7 @@ pub fn import_schema_files(
 
 fn parse_file(
     path: &str,
+    family: &'static Family,
     spec: &mut CimSpecification,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let content = fs::read_to_string(path)
@@ -111,7 +140,7 @@ fn parse_file(
                         let key = bytes_to_str(attr.key.as_ref())?;
                         let val = std::str::from_utf8(&attr.value)?.to_string();
                         if let Some(prefix) = key.strip_prefix("xmlns:").or_else(|| key.strip_prefix("xml:")) {
-                            let ns = ensure_hash(val);
+                            let ns = ensure_terminated(val);
                             ns_map.insert(prefix.to_string(), ns);
                         }
                     }
@@ -206,20 +235,20 @@ fn parse_file(
     for b in blocks {
         let type_str = b.rdf_types.join(" ");
         if type_str.contains("rdf-schema#Class") {
-            let stereo = uri_end(&b.stereotype);
+            let stereo = b.classifier(family);
             if stereo == "enumeration" {
-                let mut e = make_enum(&b);
+                let mut e = make_enum(&b, family);
                 e.origin = keyword.clone();
                 e.origins = vec![keyword.clone()];
                 enums.insert(e.id.clone(), e);
             } else if stereo == "CIMDatatype" {
-                let d = make_datatype(&b);
+                let d = make_datatype(&b, family);
                 datatypes.insert(d.id.clone(), d);
             } else if stereo == "Primitive" {
-                let p = make_primitive(&b);
+                let p = make_primitive(&b, family);
                 primitives.insert(p.id.clone(), p);
             } else {
-                let mut t = make_type(&b);
+                let mut t = make_type(&b, family);
                 t.origin = keyword.clone();
                 t.origins = vec![keyword.clone()];
                 if b.concrete {
@@ -228,7 +257,7 @@ fn parse_file(
                 types.insert(t.id.clone(), t);
             }
         } else if type_str.contains("rdf-syntax-ns#Property") {
-            let mut attr = make_attribute(&b);
+            let mut attr = make_attribute(&b, family);
             attr.origin = keyword.clone();
             attr.origins = vec![keyword.clone()];
             attributes.push(attr);
@@ -238,7 +267,7 @@ fn parse_file(
             // skip package category nodes
         } else if !type_str.is_empty() {
             // Enum value: rdf:type points to the owning enum class
-            enum_values.push(make_enum_value(&b));
+            enum_values.push(make_enum_value(&b, family));
         }
     }
 
@@ -264,63 +293,63 @@ fn parse_file(
 
 // --- constructors -----------------------------------------------------------
 
-fn make_type(b: &Block) -> CimType {
+fn make_type(b: &Block, family: &Family) -> CimType {
     CimType {
         id: uri_end(&b.about),
         label: b.label.clone(),
         comment: clean_text(&b.comment),
         namespace: uri_path(&b.about),
         super_type: uri_end(&b.sub_class_of),
-        cim_stereotype: uri_end(&b.stereotype),
+        cim_stereotype: b.classifier(family),
         rdf_type: b.rdf_types.first().map(|s| uri_end(s)).unwrap_or_default(),
         cim_categories: vec![uri_end(&b.category)],
         ..Default::default()
     }
 }
 
-fn make_primitive(b: &Block) -> CimPrimitive {
+fn make_primitive(b: &Block, family: &Family) -> CimPrimitive {
     CimPrimitive {
         id: uri_end(&b.about),
         label: b.label.clone(),
         comment: clean_text(&b.comment),
         namespace: uri_path(&b.about),
-        cim_stereotype: uri_end(&b.stereotype),
+        cim_stereotype: b.classifier(family),
         rdf_type: b.rdf_types.first().map(|s| uri_end(s)).unwrap_or_default(),
         ..Default::default()
     }
 }
 
-fn make_datatype(b: &Block) -> CimDatatype {
+fn make_datatype(b: &Block, family: &Family) -> CimDatatype {
     CimDatatype {
         id: uri_end(&b.about),
         label: b.label.clone(),
         comment: clean_text(&b.comment),
         namespace: uri_path(&b.about),
-        cim_stereotype: uri_end(&b.stereotype),
+        cim_stereotype: b.classifier(family),
         rdf_type: b.rdf_types.first().map(|s| uri_end(s)).unwrap_or_default(),
         cim_category: uri_end(&b.category),
         ..Default::default()
     }
 }
 
-fn make_enum(b: &Block) -> CimEnum {
+fn make_enum(b: &Block, family: &Family) -> CimEnum {
     CimEnum {
         id: uri_end(&b.about),
         label: b.label.clone(),
         comment: clean_text(&b.comment),
         namespace: uri_path(&b.about),
-        cim_stereotype: uri_end(&b.stereotype),
+        cim_stereotype: b.classifier(family),
         rdf_type: b.rdf_types.first().map(|s| uri_end(s)).unwrap_or_default(),
         ..Default::default()
     }
 }
 
-fn make_enum_value(b: &Block) -> CimEnumValue {
+fn make_enum_value(b: &Block, family: &Family) -> CimEnumValue {
     CimEnumValue {
         id: uri_end(&b.about),
         label: b.label.clone(),
         comment: clean_text(&b.comment),
-        cim_stereotype: uri_end(&b.stereotype),
+        cim_stereotype: b.classifier(family),
         rdf_type: b.rdf_types.first().map(|s| uri_end(s)).unwrap_or_default(),
     }
 }
@@ -338,7 +367,7 @@ fn make_ontology(b: &Block) -> CimOntology {
     }
 }
 
-fn make_attribute(b: &Block) -> CimAttribute {
+fn make_attribute(b: &Block, family: &Family) -> CimAttribute {
     let assoc = b.association_used.to_lowercase();
     let is_assoc = assoc == "yes" || assoc.is_empty();
     let is_list = is_list_multiplicity(&b.multiplicity);
@@ -347,7 +376,7 @@ fn make_attribute(b: &Block) -> CimAttribute {
         label: b.label.clone(),
         comment: clean_text(&b.comment),
         namespace: uri_path(&b.about),
-        cim_stereotype: uri_end(&b.stereotype),
+        cim_stereotype: b.classifier(family),
         rdf_domain: uri_end(&b.domain),
         rdf_range: uri_end(&b.range),
         cim_data_type: uri_end(&b.data_type),
@@ -493,32 +522,48 @@ fn find_resource(
     None
 }
 
+/// Local name of a URI. `#` wins; `/` is the fallback for slash-terminated
+/// vocabularies such as `http://purl.org/dc/terms/title`, which NCP's
+/// DatasetMetadata profile uses and CGMES never does.
 pub fn uri_end(uri: &str) -> String {
-    match uri.rfind('#') {
-        Some(pos) => uri[pos + 1..].to_string(),
-        None => uri.to_string(),
+    if let Some(pos) = uri.rfind('#') {
+        uri[pos + 1..].to_string()
+    } else if let Some(pos) = uri.rfind('/') {
+        uri[pos + 1..].to_string()
+    } else {
+        uri.to_string()
     }
 }
 
+/// Namespace of a URI, including its trailing delimiter.
 pub fn uri_path(uri: &str) -> String {
-    match uri.rfind('#') {
-        Some(pos) => uri[..pos].to_string(),
-        None => String::new(),
+    if let Some(pos) = uri.rfind('#') {
+        uri[..=pos].to_string()
+    } else if let Some(pos) = uri.rfind('/') {
+        uri[..=pos].to_string()
+    } else {
+        String::new()
     }
 }
 
+/// True when the multiplicity's upper bound admits more than one value.
+///
+/// Reproduces the CGMES set (`0..n`, `1..n`, `2..n`, `0..2`) exactly and also
+/// covers NCP's `0..3`, `1..2` and `2..2`, which a literal match would silently
+/// treat as scalar.
 fn is_list_multiplicity(m: &str) -> bool {
-    matches!(
-        m,
-        "http://iec.ch/TC57/1999/rdf-schema-extensions-19990926#M:0..n"
-            | "http://iec.ch/TC57/1999/rdf-schema-extensions-19990926#M:1..n"
-            | "http://iec.ch/TC57/1999/rdf-schema-extensions-19990926#M:2..n"
-            | "http://iec.ch/TC57/1999/rdf-schema-extensions-19990926#M:0..2"
-    )
+    let token = match m.rfind("#M:") {
+        Some(pos) => &m[pos + 3..],
+        None => return false,
+    };
+    let upper = token.rsplit("..").next().unwrap_or(token);
+    upper == "n" || upper.parse::<u32>().is_ok_and(|n| n > 1)
 }
 
-fn ensure_hash(mut ns: String) -> String {
-    if !ns.ends_with('#') {
+/// Namespaces are compared verbatim downstream, so they must carry a delimiter.
+/// A slash-terminated namespace is already terminated.
+fn ensure_terminated(mut ns: String) -> String {
+    if !ns.ends_with('#') && !ns.ends_with('/') {
         ns.push('#');
     }
     ns

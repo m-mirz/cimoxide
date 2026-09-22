@@ -48,6 +48,8 @@ fn cimstructs_codegen_stable() {
         .current_dir(&root)
         .arg("--output")
         .arg(&out)
+        .arg("--skip-shacl")
+        .arg("--skip-python-stubs")
         .status()
         .unwrap();
     assert!(status.success(), "cimgen exited with failure");
@@ -78,6 +80,7 @@ fn cimvalidation_codegen_stable() {
         .arg(&shacl_glob)
         .arg("--shacl-output")
         .arg(&shacl_out)
+        .arg("--skip-python-stubs")
         .status()
         .unwrap();
     assert!(status.success(), "cimgen exited with failure");
