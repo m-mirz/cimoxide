@@ -128,6 +128,165 @@ impl TypeRegistry {
     }
 }
 
+// --- Property-bag elements ---------------------------------------------------
+
+/// How an attribute's value is carried in RDF/XML.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttrKind {
+    /// A literal, written as element text.
+    Literal,
+    /// A reference to another object, written as `rdf:resource`.
+    Association,
+    /// An enumeration value, written as `rdf:resource` to a vocabulary IRI.
+    Enum,
+}
+
+/// One attribute of a class, as the schema declares it.
+#[derive(Debug)]
+pub struct AttrDef {
+    /// `Class.attr`, matching the key in [`RdfBlock::fields`].
+    pub id: &'static str,
+    pub ns: &'static str,
+    pub kind: AttrKind,
+    /// xsd type for literals, target class for associations and enums.
+    pub range: &'static str,
+    pub is_list: bool,
+    /// Profile codes that carry this attribute.
+    pub origins: &'static [&'static str],
+}
+
+/// A class represented as a property bag rather than a generated struct.
+#[derive(Debug)]
+pub struct ClassDef {
+    pub ns: &'static str,
+    pub local: &'static str,
+    /// Family-qualified name; the `CimDataset::by_type` key.
+    pub qualified: &'static str,
+    /// Index of the super class within the same table.
+    pub super_class: Option<usize>,
+    pub concrete: bool,
+    pub attrs: &'static [AttrDef],
+    pub origins: &'static [&'static str],
+}
+
+impl ClassDef {
+    pub fn attr(&self, id: &str) -> Option<&'static AttrDef> {
+        self.attrs.iter().find(|a| a.id == id)
+    }
+}
+
+/// An element of a family that is not generated as typed structs.
+///
+/// Attributes are addressed by their RDF id (`"IdentifiedObject.mRID"`), the
+/// same key [`RdfBlock::fields`] uses.
+#[derive(Debug, Clone)]
+pub struct GenericElement {
+    class: &'static ClassDef,
+    mrid: String,
+    fields: HashMap<String, FieldValue>,
+}
+
+impl GenericElement {
+    pub fn from_block(class: &'static ClassDef, b: &RdfBlock) -> Self {
+        Self { class, mrid: b.mrid.clone(), fields: b.fields.clone() }
+    }
+
+    pub fn class_def(&self) -> &'static ClassDef {
+        self.class
+    }
+
+    pub fn fields(&self) -> &HashMap<String, FieldValue> {
+        &self.fields
+    }
+
+    pub fn get(&self, attr: &str) -> Option<&FieldValue> {
+        self.fields.get(attr)
+    }
+
+    pub fn get_str(&self, attr: &str) -> Option<&str> {
+        match self.fields.get(attr) {
+            Some(FieldValue::Text(s)) => Some(s.as_str()),
+            Some(FieldValue::TextList(v)) => v.first().map(String::as_str),
+            _ => None,
+        }
+    }
+
+    pub fn get_f64(&self, attr: &str) -> Option<f64> {
+        self.get_str(attr)?.parse().ok()
+    }
+
+    pub fn get_bool(&self, attr: &str) -> Option<bool> {
+        match self.get_str(attr)? {
+            "true" | "1" => Some(true),
+            "false" | "0" => Some(false),
+            _ => None,
+        }
+    }
+
+    /// Referenced MRIDs.
+    ///
+    /// Always a slice, even where the schema says the association is 1:1 — CGMES
+    /// has widened 1:1 to 1:many between versions, and a caller written against
+    /// a slice does not have to change when that happens.
+    pub fn get_refs(&self, attr: &str) -> &[String] {
+        match self.fields.get(attr) {
+            Some(FieldValue::Resource(s)) => std::slice::from_ref(s),
+            Some(FieldValue::ResourceList(v)) => v.as_slice(),
+            _ => &[],
+        }
+    }
+
+    /// First referenced MRID, for associations known to be single-valued.
+    pub fn get_ref(&self, attr: &str) -> Option<&str> {
+        self.get_refs(attr).first().map(String::as_str)
+    }
+}
+
+fn field_to_json(v: &FieldValue) -> serde_json::Value {
+    match v {
+        FieldValue::Text(s) | FieldValue::Resource(s) => serde_json::Value::String(s.clone()),
+        FieldValue::TextList(v) | FieldValue::ResourceList(v) => {
+            serde_json::Value::Array(v.iter().cloned().map(serde_json::Value::String).collect())
+        }
+    }
+}
+
+impl CimElement for GenericElement {
+    fn mrid(&self) -> &str {
+        &self.mrid
+    }
+    fn type_name(&self) -> &'static str {
+        self.class.qualified
+    }
+    fn type_ns(&self) -> &'static str {
+        self.class.ns
+    }
+    fn local_name(&self) -> &'static str {
+        self.class.local
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn to_json_value(&self) -> serde_json::Value {
+        // `id` matches the identity field the generated structs serialise, so
+        // both representations look the same to a JSON or Python consumer.
+        let mut map = serde_json::Map::with_capacity(self.fields.len() + 1);
+        map.insert("id".to_string(), serde_json::Value::String(self.mrid.clone()));
+        for (k, v) in &self.fields {
+            map.insert(k.clone(), field_to_json(v));
+        }
+        serde_json::Value::Object(map)
+    }
+    fn to_block(&self) -> RdfBlock {
+        RdfBlock {
+            type_name: self.class.qualified.to_string(),
+            mrid: self.mrid.clone(),
+            fields: self.fields.clone(),
+            duplicate_fields: std::collections::HashSet::new(),
+        }
+    }
+}
+
 /// A reference to another CIM object by MRID.
 #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
