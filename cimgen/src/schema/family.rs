@@ -8,6 +8,15 @@
 /// Everything that differs between one profile family and another.
 #[derive(Debug)]
 pub struct Family {
+    /// Short identifier; also the `--families` token and the module name.
+    pub id: &'static str,
+    /// Prefix on `CimElement::type_name` and `CimDataset::by_type` keys.
+    /// Empty for the default family, which keeps bare names so every existing
+    /// consumer is untouched. `:` cannot occur in a CIM class name, so the two
+    /// key spaces are provably disjoint.
+    pub type_prefix: &'static str,
+    /// Generated as typed structs rather than property bags.
+    pub typed: bool,
     /// Default RDFS glob, relative to the workspace root.
     pub default_schema: &'static str,
     /// Profile forced to priority 1 and used as the origin tie-break.
@@ -22,6 +31,9 @@ pub struct Family {
 }
 
 pub const CGMES: Family = Family {
+    id: "cgmes",
+    type_prefix: "",
+    typed: true,
     default_schema:
         "application-profiles-library/CGMES/RDFS/61970-600-2_*-AP-Voc-RDFS2020.rdf",
     base_profile: Some("EQ"),
@@ -35,11 +47,18 @@ pub const CGMES: Family = Family {
 // NCP's DatasetMetadata profile keyword is "DM", which reads like the `dm` XML
 // prefix bound to DifferenceModel in CGMES. They are unrelated: profile codes and
 // namespace prefixes live in different tables.
-// Referenced by the schema tests until NC generation is wired up.
-#[allow(dead_code)]
 pub const NC: Family = Family {
+    id: "nc",
+    type_prefix: "nc:",
+    typed: false,
     default_schema: "application-profiles-library/NCP/RDFS/*-AP-Voc-RDFS2020.rdf",
     base_profile: None,
     extra_namespaces: &[("rdf", "http://www.w3.org/1999/02/22-rdf-syntax-ns#")],
     stereotype_first_wins: true,
 };
+
+pub const FAMILIES: &[&Family] = &[&CGMES, &NC];
+
+pub fn by_id(id: &str) -> Option<&'static Family> {
+    FAMILIES.iter().copied().find(|f| f.id == id)
+}

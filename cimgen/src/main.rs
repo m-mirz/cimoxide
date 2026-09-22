@@ -17,6 +17,8 @@ fn print_usage() {
 
 Options:
   --schema <glob>               CGMES RDFS glob
+  --nc-schema <glob>            NCP RDFS glob
+  --families cgmes,nc           families to generate (default: all)
   --output <dir>                where generated structs are written
   --shacl <glob>                SHACL TTL glob
   --shacl-output <dir>          where generated validators are written
@@ -33,6 +35,9 @@ Options:
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut schema = schema::family::CGMES.default_schema.to_string();
+    let mut nc_schema = schema::family::NC.default_schema.to_string();
+    let mut families: Vec<&'static schema::family::Family> =
+        schema::family::FAMILIES.to_vec();
     let mut output = DEFAULT_OUTPUT.to_string();
     let mut shacl_glob: Option<String> = Some(DEFAULT_SHACL.to_string());
     let mut shacl_output: Option<String> = Some(DEFAULT_SHACL_OUTPUT.to_string());
@@ -47,6 +52,24 @@ fn main() {
             "--schema" => {
                 i += 1;
                 schema = args.get(i).cloned().unwrap_or_default();
+            }
+            "--nc-schema" => {
+                i += 1;
+                nc_schema = args.get(i).cloned().unwrap_or_default();
+            }
+            "--families" => {
+                i += 1;
+                let list = args.get(i).cloned().unwrap_or_default();
+                families = Vec::new();
+                for name in list.split(',').filter(|s| !s.is_empty()) {
+                    match schema::family::by_id(name) {
+                        Some(f) => families.push(f),
+                        None => {
+                            eprintln!("unknown family: {name}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
             }
             "--output" => {
                 i += 1;
@@ -86,6 +109,11 @@ fn main() {
         eprintln!("output dir     : {output}");
     }
 
+    if !families.iter().any(|f| f.typed) {
+        eprintln!("--families must include the typed family (cgmes)");
+        std::process::exit(1);
+    }
+
     let mut spec = match schema::import::import_schema_files(&schema, &schema::family::CGMES, verbose) {
         Ok(s) => s,
         Err(e) => {
@@ -93,6 +121,22 @@ fn main() {
             std::process::exit(1);
         }
     };
+
+    // Property-bag families are imported into their own specification: the
+    // prefix-to-namespace maps collide (both bind `cim`, to different IRIs), so
+    // a merged import would silently mis-namespace whichever parsed second.
+    let mut bag_specs: Vec<schema::model::CimSpecification> = Vec::new();
+    for family in families.iter().filter(|f| !f.typed) {
+        let pattern = if family.id == "nc" { &nc_schema } else { family.default_schema };
+        match schema::import::import_schema_files(pattern, family, verbose) {
+            Ok(s) => bag_specs.push(s),
+            Err(e) => {
+                eprintln!("error importing {} schema: {e}", family.id);
+                std::process::exit(1);
+            }
+        }
+    }
+    let bags: Vec<&schema::model::CimSpecification> = bag_specs.iter().collect();
 
     if verbose {
         eprintln!(
@@ -103,7 +147,7 @@ fn main() {
         );
     }
 
-    if let Err(e) = generator::rust_gen::generate_rust(&mut spec, Path::new(&output)) {
+    if let Err(e) = generator::rust_gen::generate_rust(&mut spec, &bags, Path::new(&output)) {
         eprintln!("error generating code: {e}");
         std::process::exit(1);
     }
@@ -113,6 +157,14 @@ fn main() {
         spec.types.len(),
         spec.enums.len()
     );
+    for bag in &bags {
+        eprintln!(
+            "generated {} {} classes into {output}/{}_classes.rs",
+            bag.types.len(),
+            bag.family.id,
+            bag.family.id
+        );
+    }
 
     if let (Some(glob), Some(out_dir)) = (shacl_glob, shacl_output) {
         run_shacl(&spec, &glob, &out_dir, verbose, skip_report, rule_report);

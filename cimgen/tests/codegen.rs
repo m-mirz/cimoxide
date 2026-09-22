@@ -55,7 +55,7 @@ fn cimstructs_codegen_stable() {
     assert!(status.success(), "cimgen exited with failure");
 
     let hash = hash_dir(&out);
-    assert_eq!(hash, "05eef2559f146d75646a253614950caa16510ab20af814987a87d318887d24ac", "cimstructs output drifted — rerun to update hash");
+    assert_eq!(hash, "e39a200bfd57121ccdb6f34fc6c7f937d93a34bc039eea68337874902c555046", "cimstructs output drifted — rerun to update hash");
 }
 
 #[test]
@@ -87,4 +87,31 @@ fn cimvalidation_codegen_stable() {
 
     let hash = hash_dir(&shacl_out);
     assert_eq!(hash, "5369720ee910af3ab9f30d2e3ed3fd7395df87f6140bc2f2ebb7069d730a4e11", "cimvalidation output drifted — rerun to update hash");
+}
+
+/// Hashes the NC class table on its own, so a CGMES-only change cannot mask an
+/// NC change and vice versa. This is the only mechanical guard that bumping the
+/// `application-profiles-library` submodule did not silently alter the NC
+/// surface.
+#[test]
+fn nc_classes_codegen_stable() {
+    let root = workspace_root();
+    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("cimstructs-nc");
+    let _ = std::fs::remove_dir_all(&out);
+    std::fs::create_dir_all(&out).unwrap();
+
+    let status = Command::new(env!("CARGO_BIN_EXE_cimgen"))
+        .current_dir(&root)
+        .arg("--output")
+        .arg(&out)
+        .arg("--skip-shacl")
+        .arg("--skip-python-stubs")
+        .status()
+        .unwrap();
+    assert!(status.success(), "cimgen exited with failure");
+
+    let mut h = Sha256::new();
+    h.update(std::fs::read(out.join("nc_classes.rs")).unwrap());
+    let hash: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(hash, "637d0b191948a64e9dec994a7f5d175dd5d93b9b285164555fe67dbc1eb32e8d", "NC class table drifted — rerun to update hash");
 }
