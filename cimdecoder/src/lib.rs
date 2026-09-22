@@ -342,9 +342,23 @@ fn parse_rdf(
                 match depth {
                     1 => {
                         // Top-level self-closing element: <cim:Foo rdf:ID="x" />
-                        let mrid = extract_about(e.attributes())?;
+                        // It can carry its own xmlns; with no children there is
+                        // nothing to restore afterwards, so resolve against a
+                        // throwaway scope.
+                        let (mrid, has_xmlns) = scan_attrs(e)?;
+                        let local_scope = if has_xmlns {
+                            let mut inner = Scope {
+                                prefixes: scope.prefixes.clone(),
+                                default: scope.default,
+                            };
+                            inner.absorb(e, reg);
+                            Some(inner)
+                        } else {
+                            None
+                        };
+                        let active = local_scope.as_ref().unwrap_or(&scope);
                         if !mrid.is_empty() {
-                            if let Some(entry) = resolve(&scope, reg, e.name().as_ref())? {
+                            if let Some(entry) = resolve(active, reg, e.name().as_ref())? {
                                 let block = RdfBlock {
                                     type_name: entry.type_name.to_string(),
                                     mrid: mrid.clone(),
@@ -423,18 +437,6 @@ fn strip_fragment(s: &str) -> String {
     }
 }
 
-/// Extract the value of the "rdf:about" or "rdf:ID" attribute from an element.
-fn extract_about(
-    attrs: quick_xml::events::attributes::Attributes<'_>,
-) -> Result<String, Box<dyn std::error::Error>> {
-    for attr in attrs.flatten() {
-        let key = std::str::from_utf8(attr.key.as_ref())?;
-        if key == "rdf:about" || key == "rdf:ID" {
-            return Ok(strip_fragment(std::str::from_utf8(&attr.value)?));
-        }
-    }
-    Ok(String::new())
-}
 
 /// Find the value of the "rdf:resource" attribute from an element.
 fn find_resource(
