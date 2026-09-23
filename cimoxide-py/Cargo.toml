@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 cimoxide-decoder    = { path = "../cimdecoder" }
-cimoxide-structs    = { path = "../cimstructs" }
+cimoxide-structs    = { path = "../cimstructs", features = ["dynamic-schema"] }
 cimoxide-validation = { path = "../cimvalidation" }
 cimoxide-convert    = { path = "../cimconvert" }
 cimoxide-sparql     = { path = "../cimsparql", optional = true }

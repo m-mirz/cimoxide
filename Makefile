@@ -23,5 +23,5 @@ python-build:
 
 clean:
 	cargo clean
-	find cimstructs/src -name '*.rs' ! -name 'base.rs' -delete
+	find cimstructs/src -name '*.rs' ! -name 'base.rs' ! -name 'schema_source.rs' -delete
 	rm -f cimvalidation/src/generated_*.rs cimvalidation/src/generated_lib.rs

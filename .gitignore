@@ -2,6 +2,7 @@ target
 
 cimstructs/src/*.rs
 !cimstructs/src/base.rs
+!cimstructs/src/schema_source.rs
 cimvalidation/src/generated*
 cimoxide-py/python/cimoxide/types.pyi
 

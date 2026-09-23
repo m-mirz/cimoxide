@@ -443,6 +443,7 @@ fn render_lib(ids: &[String], bag_modules: &[String]) -> String {
     writeln!(s, "pub mod constants;").unwrap();
     writeln!(s, "pub mod profile_meta;").unwrap();
     writeln!(s, "pub mod registry;").unwrap();
+    writeln!(s, "pub mod schema_source;").unwrap();
     for m in bag_modules {
         writeln!(s, "pub mod {m};").unwrap();
     }
@@ -755,8 +756,8 @@ fn render_registry(spec: &CimSpecification, bags: &[&CimSpecification]) -> Strin
     for bag in bags {
         writeln!(
             s,
-            "        reg.add_bag_family(crate::{}_classes::CLASSES);",
-            bag.family.id
+            "        reg.add_bag_family(crate::schema_source::resolve(\"{id}\", crate::{id}_classes::CLASSES));",
+            id = bag.family.id
         )
         .unwrap();
     }

@@ -15,7 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 cimoxide-decoder    = { workspace = true }
-cimoxide-structs    = { workspace = true }
+cimoxide-structs    = { workspace = true, features = ["dynamic-schema"] }
 cimoxide-validation = { workspace = true }
 cimoxide-convert    = { workspace = true }
 cimoxide-sparql     = { workspace = true, optional = true }
