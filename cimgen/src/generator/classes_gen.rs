@@ -110,24 +110,3 @@ pub fn render_classes(spec: &CimSpecification) -> String {
     writeln!(s, "];").unwrap();
     s
 }
-
-/// `(namespace, local, qualified, parser)` rows dispatching to property bags.
-pub fn registry_rows(spec: &CimSpecification) -> Vec<(String, String, String, String)> {
-    let family = spec.family;
-    ordered_ids(spec)
-        .iter()
-        .enumerate()
-        .map(|(i, id)| {
-            let t = &spec.types[*id];
-            (
-                t.namespace.clone(),
-                t.id.clone(),
-                format!("{}{}", family.type_prefix, t.id),
-                format!(
-                    "|b| Box::new(crate::base::GenericElement::from_block(&crate::{}_classes::CLASSES[{i}], b))",
-                    family.id
-                ),
-            )
-        })
-        .collect()
-}

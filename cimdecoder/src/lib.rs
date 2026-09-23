@@ -97,7 +97,7 @@ impl CimDataset {
             if let Some(existing) = self.entries.get_mut(&mrid) {
                 existing.block.merge_from(&incoming.block);
                 if let Some(entry) = reg.by_type_name(&existing.block.type_name) {
-                    existing.element = (entry.parse)(&existing.block);
+                    existing.element = entry.parse(&existing.block);
                 }
             } else {
                 let type_name = incoming.element.type_name().to_string();
@@ -365,7 +365,7 @@ fn parse_rdf(
                                     fields: HashMap::new(),
                                     duplicate_fields: std::collections::HashSet::new(),
                                 };
-                                let element = (entry.parse)(&block);
+                                let element = entry.parse(&block);
                                 index(&mut ds.by_type, entry.type_name, mrid.clone());
                                 ds.entries.insert(mrid, CimEntry { element, block });
                             }
@@ -402,7 +402,7 @@ fn parse_rdf(
                     pending_key = None;
                     if let Some((block, entry)) = current.take() {
                         if !block.mrid.is_empty() {
-                            let element = (entry.parse)(&block);
+                            let element = entry.parse(&block);
                             index(&mut ds.by_type, entry.type_name, block.mrid.clone());
                             ds.entries
                                 .insert(block.mrid.clone(), CimEntry { element, block });

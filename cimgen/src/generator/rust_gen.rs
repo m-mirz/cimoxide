@@ -728,12 +728,6 @@ fn render_registry(spec: &CimSpecification, bags: &[&CimSpecification]) -> Strin
         )
         .unwrap();
     }
-    for bag in bags {
-        writeln!(s, "    // --- {} ---", bag.family.id).unwrap();
-        for (ns, local, qualified, parse) in super::classes_gen::registry_rows(bag) {
-            writeln!(s, "    (\"{ns}\", \"{local}\", \"{qualified}\", {parse}),").unwrap();
-        }
-    }
     writeln!(s, "];").unwrap();
     writeln!(s).unwrap();
 
@@ -756,7 +750,18 @@ fn render_registry(spec: &CimSpecification, bags: &[&CimSpecification]) -> Strin
     writeln!(s, "/// Memoized namespace-aware registry. Built once per process.").unwrap();
     writeln!(s, "pub fn type_registry() -> &'static TypeRegistry {{").unwrap();
     writeln!(s, "    static R: OnceLock<TypeRegistry> = OnceLock::new();").unwrap();
-    writeln!(s, "    R.get_or_init(|| TypeRegistry::from_rows(TYPE_ROWS, BARE_ROWS))").unwrap();
+    writeln!(s, "    R.get_or_init(|| {{").unwrap();
+    writeln!(s, "        let mut reg = TypeRegistry::from_rows(TYPE_ROWS, BARE_ROWS);").unwrap();
+    for bag in bags {
+        writeln!(
+            s,
+            "        reg.add_bag_family(crate::{}_classes::CLASSES);",
+            bag.family.id
+        )
+        .unwrap();
+    }
+    writeln!(s, "        reg").unwrap();
+    writeln!(s, "    }})").unwrap();
     writeln!(s, "}}").unwrap();
     writeln!(s).unwrap();
 

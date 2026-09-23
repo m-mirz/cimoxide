@@ -75,10 +75,34 @@ impl RdfBlock {
 
 pub type ParseFn = fn(&RdfBlock) -> Box<dyn CimElement>;
 
+/// How a resolved class turns a block into an element.
+///
+/// A generated struct has a compiled constructor. A class described only by
+/// data cannot: `ParseFn` is a bare function pointer, and the generated rows
+/// only work because each is a distinct non-capturing closure with a constant
+/// index baked in. A table built at runtime has no such closures, so the
+/// `ClassDef` travels in the entry instead.
+#[derive(Clone, Copy)]
+pub enum Dispatch {
+    Typed(ParseFn),
+    Bag(&'static ClassDef),
+}
+
 #[derive(Clone, Copy)]
 pub struct TypeEntry {
     pub type_name: &'static str,
-    pub parse: ParseFn,
+    pub dispatch: Dispatch,
+}
+
+impl TypeEntry {
+    /// Build the element. The branch lives here so the decoder's hot path has
+    /// one call site rather than a match at each of its two constructors.
+    pub fn parse(&self, b: &RdfBlock) -> Box<dyn CimElement> {
+        match self.dispatch {
+            Dispatch::Typed(f) => f(b),
+            Dispatch::Bag(class) => Box::new(GenericElement::from_block(class, b)),
+        }
+    }
 }
 
 /// Namespace-aware type dispatch.
@@ -102,15 +126,36 @@ impl TypeRegistry {
         let mut by_ns: HashMap<&'static str, HashMap<&'static str, TypeEntry>> = HashMap::new();
         let mut by_type_name = HashMap::new();
         for (ns, local, type_name, parse) in rows {
-            let entry = TypeEntry { type_name, parse: *parse };
+            let entry = TypeEntry { type_name, dispatch: Dispatch::Typed(*parse) };
             by_ns.entry(ns).or_default().insert(local, entry);
             by_type_name.insert(*type_name, entry);
         }
         let bare = bare_rows
             .iter()
-            .map(|(local, type_name, parse)| (*local, TypeEntry { type_name, parse: *parse }))
+            .map(|(local, type_name, parse)| {
+                (*local, TypeEntry { type_name, dispatch: Dispatch::Typed(*parse) })
+            })
             .collect();
         Self { by_ns, bare, by_type_name }
+    }
+
+    /// Register a family described by data rather than generated structs.
+    ///
+    /// Deliberately not added to the bare-name fallback: an unbound prefix
+    /// means the families cannot be told apart, and the historical
+    /// default-family guess is the safer one.
+    pub fn add_bag_family(&mut self, classes: &'static [ClassDef]) {
+        for class in classes {
+            let entry = TypeEntry {
+                type_name: class.qualified,
+                dispatch: Dispatch::Bag(class),
+            };
+            self.by_ns
+                .entry(class.ns)
+                .or_default()
+                .insert(class.local, entry);
+            self.by_type_name.insert(class.qualified, entry);
+        }
     }
 
     /// Dispatch table for one namespace, resolved once per XML prefix per file.
