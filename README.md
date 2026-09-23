@@ -103,6 +103,42 @@ for mrid in &ds.by_type["nc:OrdinaryContingency"] {
 `:` cannot occur in a CIM class name, so `by_type["Equipment"]` (CGMES) and
 `by_type["nc:Equipment"]` never collide, and existing CGMES code is unaffected.
 
+### Loading the class table from RDFS
+
+The NC class table is generated into the binary, but `cimcli` and the Python
+bindings can load it from the ENTSO-E RDFS files at runtime instead, so a new
+profile version is a data load rather than a recompile:
+
+```bash
+CIMOXIDE_RDFS_DIR=application-profiles-library/NCP/RDFS cimcli import model.xml
+```
+
+Resolution is explicit `cimstructs::schema_source::load_from` > `CIMOXIDE_RDFS_DIR`
+> the generated table. A directory that is missing or fails to parse warns,
+naming the glob it tried, and falls back to the generated table. In library
+crates this lives behind the `dynamic-schema` feature, off by default, so
+nothing that merely wants the types pulls in an XML parser.
+
+**What it costs** (18 files, 3.65 MB of RDFS; `scripts/bench_schema_source.sh`):
+
+| | Generated | From RDFS | Delta |
+|---|---|---|---|
+| Startup, per process | 7 ms | 32 ms | **+25 ms** |
+| Decode, 50k NC elements | 87.4 ms | 90.4 ms | **+3.5%** |
+| Peak RSS | 7.2 MB | 13.5 MB | +6.2 MB |
+| Binary size | — | — | unchanged |
+
+The startup cost splits into 23 ms of XML parsing and ~8 ms of building and
+interning the table. It is paid once per process, so it is noise for a
+long-running service and dominates a one-shot CLI run on a small file.
+
+The 3.5% decode cost was not expected — both paths do identical hash lookups
+once the table exists. The likely cause is memory layout rather than extra
+work: the generated table's strings sit contiguously in rodata, while interned
+ones are scattered heap allocations. That explanation is inferred from the
+shape of the change, not profiled.
+
+
 Not yet supported for NC: SHACL validation, the DCAT `DatasetMetadata` header
 profile (NC has no `md:FullModel`), RDF/XML encoding, and SPARQL. `cimcli
 validate` on an NC file is a clean no-op, and the encoder skips NC elements

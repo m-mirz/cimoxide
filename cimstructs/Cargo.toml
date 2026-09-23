@@ -24,3 +24,10 @@ dynamic-schema = ["dep:cimoxide-schema"]
 cimoxide-schema = { workspace = true, optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "schema_load"
+harness = false

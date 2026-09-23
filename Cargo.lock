@@ -168,6 +168,7 @@ name = "cimoxide-structs"
 version = "0.3.3"
 dependencies = [
  "cimoxide-schema",
+ "criterion",
  "serde",
  "serde_json",
 ]

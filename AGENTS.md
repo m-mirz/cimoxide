@@ -109,6 +109,27 @@ The two families must be imported into **separate** `CimSpecification`s —
 `specification_namespaces` is one prefix-to-IRI map filled with `or_insert`, and both
 bind `cim` and `base` differently.
 
+### Loading the NC table from RDFS
+
+`cimstructs::schema_source` can build the NC class table from RDFS at runtime
+instead of using the generated one, behind the `dynamic-schema` feature (off by
+default; on for `cimoxide-cli` and `cimoxide-py`). Resolution: explicit
+`load_from` > `CIMOXIDE_RDFS_DIR` > generated table.
+
+The parser lives in `cimschema/` (package `cimoxide-schema`) so both `cimgen`
+at build time and `cimstructs` at runtime use the same code. `postprocess` is
+**not** optional for either: attribute classification, profile origins and
+namespace fill-in all happen there.
+
+`cimstructs/tests/dynamic_schema.rs` compares the runtime table against the
+generated one field by field. The two are built by separate code paths — the
+loader in `schema_source.rs` and `classes_gen.rs` in cimgen — and nothing else
+stops them drifting.
+
+Measured cost (`scripts/bench_schema_source.sh`): +25 ms per process, +3.5%
+decode, +6.2 MB RSS. See the README table.
+
+
 ## Codegen Stability Tests
 
 `cimgen/tests/codegen.rs` contains three hash-based tests that detect unintended generator drift:
