@@ -451,10 +451,10 @@ fn remove_circular_dependencies(spec: &mut CimSpecification) {
 
 #[cfg(test)]
 mod tests {
-    use crate::schema::family;
-    use crate::schema::import::import_schema_files;
+    use crate::family;
+    use crate::import::import_schema_files;
 
-    fn origins(spec: &crate::schema::model::CimSpecification, class: &str) -> Vec<String> {
+    fn origins(spec: &crate::model::CimSpecification, class: &str) -> Vec<String> {
         spec.types[class].origins.clone()
     }
 

@@ -1,6 +1,8 @@
 mod generator;
-mod schema;
 mod shacl;
+
+// Keeps `crate::schema::...` working across the generator and shacl modules.
+use cimschema as schema;
 
 use std::path::Path;
 
