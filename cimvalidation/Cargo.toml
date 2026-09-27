@@ -29,3 +29,17 @@ cimoxide-structs = { workspace = true }
 cimoxide-decoder = { workspace = true }
 cimoxide-schema = { workspace = true, optional = true }
 regex       = "1"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+# The shape-load bench measures the parser directly, so it needs the crate even
+# when the feature that would pull it in is off.
+cimoxide-schema = { workspace = true }
+
+[[bench]]
+name = "nc_validate"
+harness = false
+
+[[bench]]
+name = "shape_load"
+harness = false

@@ -202,6 +202,11 @@ what caught the sibling families' schemas being resolved against the working
 directory and silently dropped — which had emptied every CGMES class out of the
 cross-family value-type rules.
 
+Measured cost (`scripts/bench_shape_source.sh`): +163 ms per process, +51 MB
+RSS, and validation 14.9% *faster* on the loaded table than the generated one.
+See the README table for the breakdown and for why the throughput went the
+opposite way from the decoder's.
+
 **Not covered**, and reported as skips rather than silently dropped: NCP's 35
 `sh:sparql` constraints; the 119 `cim16:`/`cim17:` target classes (NC shapes on
 CGMES classes, whose NC attributes the decoder discards, so checking them would

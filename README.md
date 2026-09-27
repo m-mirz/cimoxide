@@ -139,10 +139,83 @@ ones are scattered heap allocations. That explanation is inferred from the
 shape of the change, not profiled.
 
 
-Not yet supported for NC: SHACL validation, the DCAT `DatasetMetadata` header
-profile (NC has no `md:FullModel`), RDF/XML encoding, and SPARQL. `cimcli
-validate` on an NC file is a clean no-op, and the encoder skips NC elements
-rather than emit a malformed document.
+### NC validation: a shape table and an interpreter
+
+CGMES validation is generated code — 260,900 lines, one function per check,
+each downcasting to a concrete struct and reading a typed field. NC classes are
+property bags, so there is no struct to downcast to and nothing for that
+strategy to reference. Its shapes are a data table instead, interpreted at run
+time: 1,966 shapes and 14,839 checks in a 2.4 MB generated table.
+
+**The bag checks more than the generated path can.** `sh:datatype` and
+`sh:nodeKind` are tautologies against an `f64` and real checks against a
+`FieldValue::Text` — 2,747 NCP constraints that used to be discarded as
+type-system guarantees. `sh:closed` (823 shapes, "this property is not in the
+profile") cannot be expressed against generated structs at all, because unknown
+properties are dropped at decode; a bag still has them.
+
+Profiles come from the schema rather than from code: `NCP/SHACL/Validation/`
+names which constraint files each of the 18 profiles uses, and `NCP/PROF/` maps
+a dataset's `dcterms:conformsTo` IRI to a short code. NC announces itself with a
+DCAT header (`dcat:Dataset`), not CGMES's `md:FullModel` — with no header, no NC
+profile is detected and nothing runs.
+
+NC leans on advisory severity far more than CGMES: 842 `sh:Info` occurrences
+against 7. `cimcli validate` therefore reports `sh:Info` findings but does not
+fail on them.
+
+```bash
+cimcli validate model.xml                                    # generated table
+CIMOXIDE_SHACL_DIR=application-profiles-library/NCP/SHACL \
+  cimcli validate model.xml                                  # from SHACL
+```
+
+**What it costs** (32 files, 4.55 MB of Turtle; `scripts/bench_shape_source.sh`;
+20,000 synthetic CO elements producing 45,000 violations):
+
+| | Generated | From SHACL | Delta |
+|---|---|---|---|
+| Startup, per process | 8 ms | 171 ms | **+163 ms** |
+| Validate, CO profile | 47.9 ms | 40.7 ms | **−14.9%** |
+| Validate, all 18 profiles | 289 ms | 290 ms | no change |
+| Peak RSS | 11.4 MB | 62.7 MB | +51 MB |
+| Binary size | — | — | unchanged |
+
+The startup cost splits into 54 ms of Turtle parsing, 22 ms of resolving the
+shapes against the class table, and the rest re-importing both families' RDFS —
+the shapes have to agree with the classes they constrain, so the dynamic path
+pays for that import too. At 192 ms for the load it is far more expensive than
+the class table's 25 ms, and it dominates any one-shot run.
+
+Two results worth stating plainly, because both went against expectation:
+
+- **The loaded table is 14.9% faster to validate with, not slower.** The
+  decoder's equivalent measurement went the other way (+3.5%). The likely cause
+  is that the generated table shares one `PropShape` between the ~10,000 places
+  that reference it, while the loader allocates one per reference during the
+  load — so a shape's properties end up contiguous instead of scattered across
+  rodata. Duplication buying locality. That is inferred from the shape of the
+  result, not profiled.
+- **Indexing `sh:targetSubjectsOf` mattered more than the interpreter itself.**
+  Resolving those targets by scanning the dataset per shape cost 10.7 ms on a
+  profile whose shapes matched *nothing*, because the scan happens before
+  anything can be ruled out. One pass over the fields any active shape asks
+  about took that to 6.2 ms, the CO profile from 47.3 to 40.5 ms, and all 18
+  profiles from 467 to 290 ms.
+
+For scale: `cimcli validate` over the 7-file CGMES FullGrid corpus takes 19 ms
+through the generated validators. NC's 40 ms over 20,000 synthetic elements is
+the same order, which is the interesting part — it suggests the 260,900
+generated lines could become a table too. Acting on that is a separate decision.
+
+Not covered for NC, and reported as skips rather than dropped silently: the 35
+`sh:sparql` constraints; 119 `cim16:`/`cim17:` target classes, which are NC
+shapes on CGMES classes whose NC attributes the decoder discards; and three
+`sh:qualifiedValueShape` shapes reachable only through
+`sh:or ( [ sh:not <shape> ] … )`, which is material implication.
+
+Still not supported for NC: RDF/XML encoding and SPARQL. The encoder skips NC
+elements rather than emit a malformed document.
 
 ## Setup
 

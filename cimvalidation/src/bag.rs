@@ -266,8 +266,46 @@ fn check_closed(el: &GenericElement, mrid: &str, closed: &ClosedShape, out: &mut
     }
 }
 
+/// Which elements carry a given field, for `sh:targetSubjectsOf`.
+///
+/// `by_type` answers class targets directly, but nothing indexes elements by
+/// the fields they have. Scanning the dataset per shape is what the obvious
+/// implementation does, and it is O(elements x shapes): on a 20k-element
+/// dataset that cost 10 ms *for a profile whose shapes matched nothing*, since
+/// the scan happens before anything can be ruled out. One pass up front, over
+/// only the fields some active shape asks about, removes that.
+#[derive(Default)]
+struct SubjectIndex {
+    by_field: HashMap<&'static str, Vec<String>>,
+}
+
+impl SubjectIndex {
+    fn build(ds: &CimDataset, fields: &[&'static str]) -> Self {
+        let mut by_field: HashMap<&'static str, Vec<String>> =
+            fields.iter().map(|f| (*f, Vec::new())).collect();
+        for (mrid, entry) in &ds.entries {
+            let Some(el) = entry.element.as_any().downcast_ref::<GenericElement>() else {
+                continue;
+            };
+            for field in fields {
+                if el.get(field).is_some() {
+                    by_field.get_mut(field).expect("seeded above").push(mrid.clone());
+                }
+            }
+        }
+        for v in by_field.values_mut() {
+            v.sort_unstable();
+        }
+        Self { by_field }
+    }
+
+    fn subjects(&self, field: &'static str) -> &[String] {
+        self.by_field.get(field).map_or(&[], Vec::as_slice)
+    }
+}
+
 /// Every mRID a shape's targets select.
-fn targets_of(ds: &CimDataset, shape: &ShapeDef) -> Vec<String> {
+fn targets_of(ds: &CimDataset, shape: &ShapeDef, subjects: &SubjectIndex) -> Vec<String> {
     let mut mrids: Vec<String> = Vec::new();
     for target in shape.targets {
         match target {
@@ -279,16 +317,7 @@ fn targets_of(ds: &CimDataset, shape: &ShapeDef) -> Vec<String> {
                 }
             }
             Target::SubjectsOf(field) => {
-                for (mrid, entry) in &ds.entries {
-                    let is_bag = entry
-                        .element
-                        .as_any()
-                        .downcast_ref::<GenericElement>()
-                        .is_some_and(|el| el.get(field).is_some());
-                    if is_bag {
-                        mrids.push(mrid.clone());
-                    }
-                }
+                mrids.extend(subjects.subjects(field).iter().cloned());
             }
         }
     }
@@ -338,9 +367,27 @@ pub fn validate_profile(
     let reverse = (!inverse_fields.is_empty())
         .then(|| ReverseIndex::build(ds, &inverse_fields));
 
+    // The same treatment for sh:targetSubjectsOf: one pass over the fields any
+    // active shape targets, rather than a dataset scan per shape.
+    let mut subject_fields: Vec<&'static str> = active
+        .iter()
+        .flat_map(|s| s.targets.iter())
+        .filter_map(|t| match t {
+            Target::SubjectsOf(f) => Some(*f),
+            Target::Class(_) => None,
+        })
+        .collect();
+    subject_fields.sort_unstable();
+    subject_fields.dedup();
+    let subjects = if subject_fields.is_empty() {
+        SubjectIndex::default()
+    } else {
+        SubjectIndex::build(ds, &subject_fields)
+    };
+
     let mut out = Vec::new();
     for shape in &active {
-        for mrid in targets_of(ds, shape) {
+        for mrid in targets_of(ds, shape, &subjects) {
             let Some(entry) = ds.entries.get(&mrid) else { continue };
             let Some(el) = entry.element.as_any().downcast_ref::<GenericElement>() else {
                 // A target that decoded as a typed CGMES struct. Its NC-only
