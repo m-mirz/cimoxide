@@ -592,3 +592,146 @@ pub fn clean_text(s: &str) -> String {
 
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
+
+// ---------------------------------------------------------------------------
+// Profile index
+// ---------------------------------------------------------------------------
+
+/// One application profile's identity: which IRIs a dataset can declare
+/// conformance to, and the short code the constraint manifests use.
+#[derive(Debug)]
+pub struct ProfileInfo {
+    /// `dcat:keyword` — the short code (`"CO"`, `"ER"`, …).
+    pub keyword: String,
+    /// The profile IRI and every version IRI of it. A dataset's
+    /// `dcterms:conformsTo` names one of these.
+    pub iris: Vec<String>,
+}
+
+/// Read the profile descriptors in an `NCP/PROF`-style directory.
+///
+/// These are the authority on profile identity. Without them a dataset's
+/// `dcterms:conformsTo` is an opaque IRI and nothing can say which shapes
+/// apply — the NC counterpart of `cimvalidation::detect`'s hardcoded CGMES
+/// profile URI table.
+pub fn import_profile_index(
+    dir: &std::path::Path,
+) -> Result<Vec<ProfileInfo>, Box<dyn std::error::Error>> {
+    let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("rdf"))
+        .collect();
+    paths.sort();
+
+    let mut out = Vec::new();
+    for path in &paths {
+        if let Some(info) = read_profile(path)? {
+            out.push(info);
+        }
+    }
+    out.sort_by(|a, b| a.keyword.cmp(&b.keyword));
+    Ok(out)
+}
+
+fn read_profile(
+    path: &std::path::Path,
+) -> Result<Option<ProfileInfo>, Box<dyn std::error::Error>> {
+    use quick_xml::events::Event;
+
+    let mut reader = quick_xml::Reader::from_file(path)?;
+    reader.config_mut().trim_text(true);
+
+    let mut buf = Vec::new();
+    let mut keyword: Option<String> = None;
+    // A PROF file holds several sibling rdf:Description blocks: the profile
+    // itself, then one per artifact. Only the profile carries dcat:keyword, so
+    // the current subject is tracked per block and kept when the keyword
+    // arrives — taking the last subject seen would name an artifact instead.
+    let mut current: Option<String> = None;
+    let mut subject: Option<String> = None;
+    let mut iris: Vec<String> = Vec::new();
+    let mut versions: Vec<(String, String)> = Vec::new();
+    let mut in_keyword = false;
+    let mut depth = 0usize;
+
+    loop {
+        match reader.read_event_into(&mut buf)? {
+            Event::Eof => break,
+            Event::Start(e) | Event::Empty(e) => {
+                let name = e.name();
+                let local = local_name(name.as_ref());
+                match local {
+                    b"Description" => {
+                        depth += 1;
+                        if depth == 1 {
+                            current = attr(&e, b"about")?;
+                        }
+                    }
+                    b"keyword" if depth == 1 => in_keyword = true,
+                    // Recorded against the block that declares it; which
+                    // block was the profile is only known once the keyword
+                    // turns up, and it can appear either side of this.
+                    b"versionIRI" if depth == 1 => {
+                        if let (Some(subj), Some(v)) = (current.clone(), attr(&e, b"resource")?) {
+                            versions.push((subj, v));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Event::End(e) => {
+                let name = e.name();
+                match local_name(name.as_ref()) {
+                    b"Description" => depth = depth.saturating_sub(1),
+                    b"keyword" => in_keyword = false,
+                    _ => {}
+                }
+            }
+            Event::Text(t) if in_keyword => {
+                let s = t.unescape()?.trim().to_string();
+                if !s.is_empty() && keyword.is_none() {
+                    keyword = Some(s);
+                    subject = current.clone();
+                }
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    let Some(keyword) = keyword else { return Ok(None) };
+    let Some(subject) = subject else { return Ok(None) };
+    iris.extend(
+        versions
+            .into_iter()
+            .filter(|(subj, _)| *subj == subject)
+            .map(|(_, v)| v),
+    );
+    iris.push(subject);
+    iris.sort();
+    iris.dedup();
+    if iris.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(ProfileInfo { keyword, iris }))
+}
+
+fn local_name(qname: &[u8]) -> &[u8] {
+    match qname.iter().position(|b| *b == b':') {
+        Some(i) => &qname[i + 1..],
+        None => qname,
+    }
+}
+
+fn attr(
+    e: &quick_xml::events::BytesStart<'_>,
+    want: &[u8],
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    for a in e.attributes().flatten() {
+        if local_name(a.key.as_ref()) == want {
+            return Ok(Some(String::from_utf8(a.value.to_vec())?));
+        }
+    }
+    Ok(None)
+}

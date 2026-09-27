@@ -254,3 +254,62 @@ fn the_shape_table_is_populated() {
     let checks: usize = shapes.iter().flat_map(|s| s.props.iter()).map(|p| p.checks.len()).sum();
     assert!(checks > 10_000, "only {checks} checks");
 }
+
+// ── profile detection ──────────────────────────────────────────────────────
+
+/// CGMES announces its profiles in an `md:FullModel` header. NC uses DCAT: a
+/// `dcat:Dataset` with `dcterms:conformsTo` naming profile IRIs, which the
+/// `NCP/PROF` descriptors map to short codes.
+#[test]
+fn a_dcat_header_selects_the_profile() {
+    let ds = CimDataset::decode_file(std::path::Path::new("../testdata/test_nc_CO_002.xml"))
+        .expect("fixture did not decode");
+    assert_eq!(cimvalidation::detect_nc_profiles(&ds), ["CO"]);
+}
+
+/// Without a header there is nothing to say which profile applies, so nothing
+/// runs. This is why `test_nc_CO_001.xml` — written for the decoder — reports
+/// no violations through the CLI.
+#[test]
+fn no_header_selects_no_profile() {
+    let ds = CimDataset::decode_file(std::path::Path::new("../testdata/test_nc_CO_001.xml"))
+        .expect("fixture did not decode");
+    assert!(cimvalidation::detect_nc_profiles(&ds).is_empty());
+}
+
+/// An IRI the descriptors do not list is not an NC profile — silently mapping
+/// an unknown IRI to some profile would run the wrong shapes.
+#[test]
+fn an_unknown_conforms_to_iri_selects_nothing() {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:dcat="http://www.w3.org/ns/dcat#"
+         xmlns:dcterms="http://purl.org/dc/terms/">
+  <dcat:Dataset rdf:about="urn:uuid:00000000-0000-0000-0000-000000000000">
+    <dcterms:conformsTo rdf:resource="https://example.invalid/NotAProfile/1.0"/>
+  </dcat:Dataset>
+</rdf:RDF>"#;
+    let ds = CimDataset::decode_str(xml).unwrap();
+    assert!(cimvalidation::detect_nc_profiles(&ds).is_empty());
+}
+
+/// Both the base IRI and a version IRI identify the same profile, because a
+/// dataset may declare either.
+#[test]
+fn base_and_version_iris_map_to_the_same_code() {
+    use cimvalidation::detect::nc_profile_code;
+    assert_eq!(nc_profile_code("https://ap.cim4.eu/Contingency"), Some("CO"));
+    assert_eq!(nc_profile_code("https://ap.cim4.eu/Contingency/2.3"), Some("CO"));
+    assert_eq!(nc_profile_code("https://ap.cim4.eu/RemedialAction/2.5"), Some("RA"));
+    assert_eq!(nc_profile_code("https://example.invalid/x"), None);
+}
+
+/// The conforming fixture must stay conforming: it is the one end-to-end
+/// example of a valid NC dataset in the repo.
+#[test]
+fn the_conforming_fixture_validates_clean() {
+    let ds = CimDataset::decode_file(std::path::Path::new("../testdata/test_nc_CO_002.xml"))
+        .expect("fixture did not decode");
+    let v = validate_nc_profile(&ds, "CO", &Config::default());
+    assert!(v.is_empty(), "{v:#?}");
+}

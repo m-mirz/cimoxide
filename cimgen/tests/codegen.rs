@@ -96,7 +96,7 @@ fn cimvalidation_codegen_stable() {
         .unwrap();
     assert!(status.success(), "cimgen exited with failure");
 
-    let hash = hash_dir_except(&shacl_out, &["nc_shapes.rs"]);
+    let hash = hash_dir_except(&shacl_out, &["nc_shapes.rs", "nc_profiles.rs"]);
     assert_eq!(hash, "5369720ee910af3ab9f30d2e3ed3fd7395df87f6140bc2f2ebb7069d730a4e11", "cimvalidation output drifted — rerun to update hash");
 }
 

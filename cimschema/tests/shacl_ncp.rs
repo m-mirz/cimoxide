@@ -299,3 +299,31 @@ fn manifests_map_profiles_to_constraint_files() {
         .count();
     assert!(shared >= 17, "expected DatasetMetadata to be near-universal, got {shared}");
 }
+
+/// `NCP/PROF` is the authority on profile identity: a dataset declares
+/// `dcterms:conformsTo <some IRI>`, and only these descriptors say which short
+/// code that IRI means.
+#[test]
+fn profile_descriptors_map_iris_to_codes() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let profiles = cimschema::import::import_profile_index(
+        &root.join("application-profiles-library/NCP/PROF"),
+    )
+    .expect("cannot read NCP/PROF");
+
+    assert_eq!(profiles.len(), 18, "expected one descriptor per NC profile");
+
+    let co = profiles
+        .iter()
+        .find(|p| p.keyword == "CO")
+        .expect("no Contingency descriptor");
+    assert!(co.iris.contains(&"https://ap.cim4.eu/Contingency".to_string()));
+    assert!(co.iris.contains(&"https://ap.cim4.eu/Contingency/2.3".to_string()));
+
+    // Codes must be unique, or a conformsTo IRI would map ambiguously.
+    let mut codes: Vec<&str> = profiles.iter().map(|p| p.keyword.as_str()).collect();
+    codes.sort_unstable();
+    let before = codes.len();
+    codes.dedup();
+    assert_eq!(codes.len(), before, "duplicate profile codes: {codes:?}");
+}

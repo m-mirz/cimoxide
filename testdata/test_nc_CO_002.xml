@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Network Code Profiles — Contingency (CO) with a DCAT dataset header.
+
+  NC announces its profiles the way DCAT does, with a dcat:Dataset carrying
+  dcterms:conformsTo, rather than the md:FullModel header CGMES uses. That
+  header is what makes `cimcli validate` pick the CO shapes; without it there
+  is nothing to say which profile applies. See test_nc_CO_001.xml for the
+  decoder-focused fixture.
+
+  The breaker is bound to the CGMES namespace deliberately: the CO profile's
+  value-type rule for ContingencyEquipment.Equipment lists cim17: classes,
+  i.e. http://iec.ch/TC57/CIM100#, so conforming CO data references equipment
+  across the two families.
+-->
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:cim="https://cim.ucaiug.io/ns#"
+         xmlns:cim17="http://iec.ch/TC57/CIM100#"
+         xmlns:nc="https://cim4.eu/ns/nc#"
+         xmlns:dcat="http://www.w3.org/ns/dcat#"
+         xmlns:dcterms="http://purl.org/dc/terms/"
+         xmlns:prov="http://www.w3.org/ns/prov#">
+
+  <dcat:Dataset rdf:about="urn:uuid:00000000-0000-0000-0000-000000000000">
+    <dcterms:conformsTo rdf:resource="https://ap.cim4.eu/Contingency/2.3"/>
+    <dcterms:identifier>00000000-0000-0000-0000-000000000000</dcterms:identifier>
+    <dcterms:publisher rdf:resource="http://energy.referencedata.eu/EIC/10X1001A1001A094"/>
+    <dcterms:isVersionOf rdf:resource="urn:uuid:00000000-0000-0000-0000-0000000000ff"/>
+    <prov:wasGeneratedBy rdf:resource="http://energy.referencedata.eu/Process/1D"/>
+    <dcat:startDate>2026-01-01T00:00:00Z</dcat:startDate>
+    <dcat:version>1</dcat:version>
+  </dcat:Dataset>
+
+  <!-- The series this version belongs to; isVersionOf must name a Dataset. -->
+  <dcat:Dataset rdf:about="urn:uuid:00000000-0000-0000-0000-0000000000ff">
+    <dcterms:conformsTo rdf:resource="https://ap.cim4.eu/Contingency/2.3"/>
+    <dcterms:identifier>00000000-0000-0000-0000-0000000000ff</dcterms:identifier>
+    <dcterms:publisher rdf:resource="http://energy.referencedata.eu/EIC/10X1001A1001A094"/>
+    <dcterms:isVersionOf rdf:resource="urn:uuid:00000000-0000-0000-0000-0000000000ff"/>
+    <prov:wasGeneratedBy rdf:resource="http://energy.referencedata.eu/Process/1D"/>
+    <dcat:startDate>2026-01-01T00:00:00Z</dcat:startDate>
+    <dcat:version>1</dcat:version>
+  </dcat:Dataset>
+
+  <nc:OrdinaryContingency rdf:about="urn:uuid:11111111-1111-1111-1111-111111111111">
+    <cim:IdentifiedObject.mRID>11111111-1111-1111-1111-111111111111</cim:IdentifiedObject.mRID>
+    <cim:IdentifiedObject.name>N-1 line outage</cim:IdentifiedObject.name>
+    <nc:Contingency.normalMustStudy>true</nc:Contingency.normalMustStudy>
+  </nc:OrdinaryContingency>
+
+  <cim:ContingencyEquipment rdf:about="urn:uuid:22222222-2222-2222-2222-222222222222">
+    <cim:IdentifiedObject.mRID>22222222-2222-2222-2222-222222222222</cim:IdentifiedObject.mRID>
+    <cim:ContingencyElement.Contingency rdf:resource="urn:uuid:11111111-1111-1111-1111-111111111111"/>
+    <cim:ContingencyEquipment.Equipment rdf:resource="urn:uuid:33333333-3333-3333-3333-333333333333"/>
+    <cim:ContingencyEquipment.contingentStatus rdf:resource="https://cim.ucaiug.io/ns#ContingencyEquipmentStatusKind.outOfService"/>
+  </cim:ContingencyEquipment>
+
+  <cim17:Breaker rdf:about="urn:uuid:33333333-3333-3333-3333-333333333333">
+    <cim17:IdentifiedObject.mRID>33333333-3333-3333-3333-333333333333</cim17:IdentifiedObject.mRID>
+  </cim17:Breaker>
+
+</rdf:RDF>

@@ -66,3 +66,56 @@ pub fn detect_config(dataset: &CimDataset) -> Config {
         ..Config::default()
     }
 }
+
+// ── NC / property-bag families ─────────────────────────────────────────────
+
+/// Profile codes an NC dataset declares conformance to.
+///
+/// CGMES announces its profiles in an `md:FullModel` header whose
+/// `Model.profile` values are matched against a hardcoded URI table above. NC
+/// uses a DCAT header instead: a `dcat:Dataset` with `dcterms:conformsTo`
+/// naming profile IRIs, which `NCP/PROF` maps to short codes — read from the
+/// descriptors rather than written out by hand.
+///
+/// The field key is the bare `conformsTo`, because the decoder keys fields by
+/// the XML local name and the predicate is written `<dcterms:conformsTo>`.
+pub fn detect_nc_profiles(dataset: &CimDataset) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    for type_name in ["nc:Dataset", "nc:DifferenceSet"] {
+        for mrid in dataset.by_type.get(type_name).into_iter().flatten() {
+            let Some(entry) = dataset.entries.get(mrid) else { continue };
+            let Some(el) = entry
+                .element
+                .as_any()
+                .downcast_ref::<cimstructs::base::GenericElement>()
+            else {
+                continue;
+            };
+            // Written as rdf:resource in practice, but a plain literal is
+            // legal too, so both are read.
+            let refs: Vec<&str> = el.get_refs("conformsTo").iter().map(String::as_str).collect();
+            let text = el.get_str("conformsTo").into_iter().collect::<Vec<_>>();
+            for iri in refs.into_iter().chain(text) {
+                if let Some(code) = nc_profile_code(iri) {
+                    if !seen.iter().any(|s| s == code) {
+                        seen.push(code.to_string());
+                    }
+                }
+            }
+        }
+    }
+    seen.sort();
+    seen
+}
+
+/// The short code for a profile IRI, if it names one.
+///
+/// A dataset may declare the base IRI or a version IRI; the descriptors list
+/// both. An IRI the descriptors do not know is not an NC profile.
+pub fn nc_profile_code(iri: &str) -> Option<&'static str> {
+    let iri = iri.trim();
+    crate::nc_profiles::PROFILE_IRIS
+        .iter()
+        .find(|(known, _)| *known == iri)
+        .map(|(_, code)| *code)
+}

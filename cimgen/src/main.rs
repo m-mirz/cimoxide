@@ -437,6 +437,34 @@ fn run_bag_shacl(
         }
     };
 
+    // The profile descriptors sit beside the SHACL tree, not inside it.
+    let prof_dir = shacl_dir
+        .parent()
+        .map(|p| p.join("PROF"))
+        .unwrap_or_else(|| shacl_dir.join("PROF"));
+    match schema::import::import_profile_index(&prof_dir) {
+        Ok(profiles) => {
+            let path = std::path::Path::new(out_dir)
+                .join(format!("{}_profiles.rs", spec.family.id));
+            if let Err(e) = std::fs::write(&path, generator::shapes_gen::render_profiles(&profiles))
+            {
+                eprintln!("error writing {}: {e}", path.display());
+                std::process::exit(1);
+            }
+            eprintln!(
+                "{} profiles: {} descriptors → {}",
+                spec.family.id,
+                profiles.len(),
+                path.display()
+            );
+        }
+        Err(e) => eprintln!(
+            "warning: cannot read {} profile descriptors from {}: {e}",
+            spec.family.id,
+            prof_dir.display()
+        ),
+    }
+
     let mut results: Vec<shacl::model::FileResults> = Vec::new();
     for path in &ttl_paths {
         match shacl::ttl_import::import_ttl_file(path) {

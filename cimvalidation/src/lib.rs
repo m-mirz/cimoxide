@@ -3,7 +3,7 @@ pub use violation::Violation;
 
 pub mod sparql;
 pub mod detect;
-pub use detect::detect_config;
+pub use detect::{detect_config, detect_nc_profiles};
 
 use std::collections::HashSet;
 
@@ -35,6 +35,7 @@ pub mod helpers;
 pub mod bag;
 pub mod shapes;
 pub mod nc_shapes;
+pub mod nc_profiles;
 
 /// Run one NC profile's shapes against a dataset.
 ///
@@ -218,6 +219,12 @@ pub fn validate_profile_local(dataset: &cimdecoder::CimDataset, profile: &str, c
     if !cfg.profiles.is_empty() && !cfg.profiles.iter().any(|p| p == profile) {
         return Vec::new();
     }
+    // NC profile codes cannot collide with CGMES ones, so one flat
+    // `Config::profiles` list carries both families.
+    if nc_profiles::PROFILES.contains(&profile) {
+        return validate_nc_profile(dataset, profile, cfg);
+    }
+
     let mut v = match profile {
         "DL"   => validate_dl_local(dataset, cfg),
         "DY"   => validate_dy_local(dataset, cfg),
@@ -264,7 +271,7 @@ pub fn combined_config(
     let mut cfg = Config::default();
     for ds in per_file {
         let c = detect_config(ds);
-        for p in c.profiles {
+        for p in c.profiles.into_iter().chain(detect_nc_profiles(ds)) {
             if !cfg.profiles.contains(&p) {
                 cfg.profiles.push(p);
             }
@@ -291,8 +298,9 @@ pub fn validate_files(per_file: Vec<cimdecoder::CimDataset>, cfg: &Config) -> Ve
             .map(|ds| {
                 s.spawn(move || {
                     let mut v = validate_header(ds, cfg);
-                    let file_cfg = detect_config(ds);
-                    for profile in &file_cfg.profiles {
+                    let mut profiles = detect_config(ds).profiles;
+                    profiles.extend(detect_nc_profiles(ds));
+                    for profile in &profiles {
                         v.extend(validate_profile_local(ds, profile, cfg));
                     }
                     v
