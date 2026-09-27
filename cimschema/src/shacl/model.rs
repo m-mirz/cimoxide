@@ -86,6 +86,18 @@ pub struct ShapeInfo {
     pub constraints: Vec<ConstraintInfo>,
     /// Nested sh:property shapes.
     pub properties: Vec<ShapeInfo>,
+    /// `sh:closed true` — the shape's `sh:property` paths, plus
+    /// `sh:ignoredProperties`, are the *only* properties the profile allows on
+    /// the target class. Simplified IRIs, as [`Self::path`] uses.
+    ///
+    /// Read straight off the NodeShape rather than from [`Self::properties`]:
+    /// the allowed set is written as constraint-less `[ sh:path X ]` blank
+    /// nodes, which `build_property_shape` drops for having nothing to check.
+    pub closed: Option<Vec<String>>,
+    /// `sh:deactivated true` — the schema switched this shape off. Carried
+    /// rather than dropped at parse time so the simplification stage can
+    /// account for it like any other skip.
+    pub deactivated: bool,
 }
 
 /// All shapes extracted from one TTL file.

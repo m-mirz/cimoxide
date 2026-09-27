@@ -1,9 +1,22 @@
 use super::model::*;
 use super::skip;
+use crate::family::Family;
 
-/// Apply all 7 normalisation rules to every FileResults.
-/// Returns per-file skip entries for every constraint dropped during simplification.
-pub fn simplify(results: &mut Vec<FileResults>) -> Vec<(String, Vec<skip::SkipEntry>)> {
+/// Apply the normalisation rules to every FileResults.
+///
+/// Returns per-file skip entries for every constraint dropped here.
+///
+/// `family` decides whether the type-system rules apply. Rules 1, 2 and 7 drop
+/// `sh:nodeKind` and `sh:datatype` on the grounds that a generated Rust struct
+/// cannot hold a violating value — true of an `f64`, false of a property bag's
+/// `FieldValue::Text(String)`. For a bag family those constraints are the only
+/// thing standing between a malformed literal and a silent accept, so they are
+/// kept. On the NCP schema that is the difference between 2,747 dropped
+/// constraints and 2,747 checked ones.
+pub fn simplify(
+    results: &mut Vec<FileResults>,
+    family: &'static Family,
+) -> Vec<(String, Vec<skip::SkipEntry>)> {
     let mut all_skips = Vec::new();
     for fr in results.iter_mut() {
         let mut collector = skip::SkipCollector::new();
@@ -17,7 +30,7 @@ pub fn simplify(results: &mut Vec<FileResults>) -> Vec<(String, Vec<skip::SkipEn
                 .map(|t| local_name(&t.value))
                 .filter(|n| !n.is_empty())
                 .collect();
-            simplify_shape(shape, &class_names, &mut collector);
+            simplify_shape(shape, &class_names, family, &mut collector);
         }
         all_skips.push((fr.file_name.clone(), collector.into_entries()));
     }
@@ -28,13 +41,46 @@ fn local_name(iri: &str) -> String {
     iri.find(':').map(|i| iri[i + 1..].to_string()).unwrap_or_else(|| iri.to_string())
 }
 
-fn simplify_shape(shape: &mut ShapeInfo, class_names: &[String], collector: &mut skip::SkipCollector) {
+fn simplify_shape(
+    shape: &mut ShapeInfo,
+    class_names: &[String],
+    family: &'static Family,
+    collector: &mut skip::SkipCollector,
+) {
+    // A shape the schema switched off contributes nothing, but it must be
+    // accounted for rather than vanishing — an unreported drop is
+    // indistinguishable from a rule that was checked and passed.
+    if shape.deactivated {
+        for prop in &shape.properties {
+            let path = prop.path.first().map(|s| s.as_str()).unwrap_or("");
+            for c in &prop.constraints {
+                push_for_classes(collector, class_names, path, &c.component, &c.name,
+                    "sh:deactivated — switched off by the schema");
+            }
+        }
+        shape.properties.clear();
+        shape.constraints.clear();
+        shape.closed = None;
+        return;
+    }
+    shape.properties.retain(|prop| {
+        if !prop.deactivated {
+            return true;
+        }
+        let path = prop.path.first().map(|s| s.as_str()).unwrap_or("");
+        for c in &prop.constraints {
+            push_for_classes(collector, class_names, path, &c.component, &c.name,
+                "sh:deactivated — switched off by the schema");
+        }
+        false
+    });
     for prop in &mut shape.properties {
         let path = prop.path.first().map(|s| s.as_str()).unwrap_or("");
         prop.constraints = simplify_constraints(
             std::mem::take(&mut prop.constraints),
             class_names,
             path,
+            family,
             collector,
         );
     }
@@ -45,6 +91,7 @@ fn simplify_constraints(
     constraints: Vec<ConstraintInfo>,
     class_names: &[String],
     path: &str,
+    family: &'static Family,
     collector: &mut skip::SkipCollector,
 ) -> Vec<ConstraintInfo> {
     // Pass 1: determine whether a sh:datatype is present on this shape's constraints.
@@ -58,7 +105,7 @@ fn simplify_constraints(
         match c.component.as_str() {
             // Rule 1: Drop NodeKind=Literal if any sh:datatype is present —
             // the datatype already implies a literal node.
-            "sh:NodeKindConstraintComponent" => {
+            "sh:NodeKindConstraintComponent" if family.typed => {
                 let nk = c.payload.get("nodeKind").and_then(|v| v.as_str()).unwrap_or("");
                 if nk == "sh:Literal" && has_datatype {
                     push_for_classes(collector, class_names, path, &c.component, &c.name,
@@ -76,7 +123,7 @@ fn simplify_constraints(
             }
 
             // Rule 7: Drop sh:datatype when Rust's type system already enforces it.
-            "sh:DatatypeConstraintComponent" => {
+            "sh:DatatypeConstraintComponent" if family.typed => {
                 let dt = c.payload.get("datatype").and_then(|v| v.as_str()).unwrap_or("");
                 if is_native_rust_type(dt) {
                     push_for_classes(collector, class_names, path, &c.component, &c.name,

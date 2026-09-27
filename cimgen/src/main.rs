@@ -229,7 +229,7 @@ fn run_shacl(
         }
     }
 
-    let simplify_skips = shacl::simplify::simplify(&mut results);
+    let simplify_skips = shacl::simplify::simplify(&mut results, &schema::family::CGMES);
 
     let (total_checks, mut file_skips) = match shacl::codegen::generate_validation(&results, spec, Path::new(out_dir)) {
         Ok(r) => r,
