@@ -176,8 +176,8 @@ CIMOXIDE_SHACL_DIR=application-profiles-library/NCP/SHACL \
 | | Generated | From SHACL | Delta |
 |---|---|---|---|
 | Startup, per process | 8 ms | 171 ms | **+163 ms** |
-| Validate, CO profile | 47.9 ms | 40.7 ms | **−14.9%** |
-| Validate, all 18 profiles | 289 ms | 290 ms | no change |
+| Validate, CO profile | 40.8 ms | 40.8 ms | none (p = 0.83) |
+| Validate, all 18 profiles | 290 ms | 296 ms | +2.0% |
 | Peak RSS | 11.4 MB | 62.7 MB | +51 MB |
 | Binary size | — | — | unchanged |
 
@@ -187,26 +187,26 @@ the shapes have to agree with the classes they constrain, so the dynamic path
 pays for that import too. At 192 ms for the load it is far more expensive than
 the class table's 25 ms, and it dominates any one-shot run.
 
-Two results worth stating plainly, because both went against expectation:
+Steady-state throughput is flat, which is what the identical tables predict. The
+decoder's equivalent measurement showing +3.5% remains the odd one out.
 
-- **The loaded table is 14.9% faster to validate with, not slower.** The
-  decoder's equivalent measurement went the other way (+3.5%). The likely cause
-  is that the generated table shares one `PropShape` between the ~10,000 places
-  that reference it, while the loader allocates one per reference during the
-  load — so a shape's properties end up contiguous instead of scattered across
-  rodata. Duplication buying locality. That is inferred from the shape of the
-  result, not profiled.
-- **Indexing `sh:targetSubjectsOf` mattered more than the interpreter itself.**
-  Resolving those targets by scanning the dataset per shape cost 10.7 ms on a
-  profile whose shapes matched *nothing*, because the scan happens before
-  anything can be ruled out. One pass over the fields any active shape asks
-  about took that to 6.2 ms, the CO profile from 47.3 to 40.5 ms, and all 18
-  profiles from 467 to 290 ms.
+**Indexing `sh:targetSubjectsOf` mattered more than anything else here.**
+Resolving those targets by scanning the dataset per shape cost 10.8 ms on a
+profile whose shapes matched *nothing*, because the scan happens before anything
+can be ruled out. One pass over the fields any active shape asks about took that
+to 6.3 ms, the CO profile from 47.4 to 40.8 ms, and all 18 profiles from 469 to
+290 ms. Measured twice, in independent A/Bs, agreeing to within a point.
 
 For scale: `cimcli validate` over the 7-file CGMES FullGrid corpus takes 19 ms
-through the generated validators. NC's 40 ms over 20,000 synthetic elements is
+through the generated validators. NC's 41 ms over 20,000 synthetic elements is
 the same order, which is the interesting part — it suggests the 260,900
 generated lines could become a table too. Acting on that is a separate decision.
+
+A note on method, since this bench is easy to misread: criterion baselines give
+rigour *within* a run, but the two halves of a generated-vs-loaded comparison
+are separate processes, and cross-run drift on this machine has been measured at
+20% for byte-identical code. Any difference under about 5% needs a second
+independent A/B before it means anything.
 
 Not covered for NC, and reported as skips rather than dropped silently: the 35
 `sh:sparql` constraints; 119 `cim16:`/`cim17:` target classes, which are NC

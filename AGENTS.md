@@ -203,9 +203,14 @@ directory and silently dropped — which had emptied every CGMES class out of th
 cross-family value-type rules.
 
 Measured cost (`scripts/bench_shape_source.sh`): +163 ms per process, +51 MB
-RSS, and validation 14.9% *faster* on the loaded table than the generated one.
-See the README table for the breakdown and for why the throughput went the
-opposite way from the decoder's.
+RSS, and no measurable change in validation throughput. See the README table.
+
+**Reading that bench:** criterion baselines are rigorous within a run, but the
+two halves of a generated-vs-loaded comparison are separate processes, and
+cross-run drift here has been measured at 20% for byte-identical code. A
+difference under ~5% means nothing until a second independent A/B reproduces
+it — a 14.9% "speedup" was reported from a single pair of runs and vanished on
+re-measurement.
 
 **Not covered**, and reported as skips rather than silently dropped: NCP's 35
 `sh:sparql` constraints; the 119 `cim16:`/`cim17:` target classes (NC shapes on
