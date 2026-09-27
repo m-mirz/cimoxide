@@ -178,6 +178,30 @@ NC leans on `sh:Info` far more than CGMES: 842 occurrences against 7. `cimcli
 validate` therefore treats `sh:Info` as advisory and excludes it from the exit
 code.
 
+#### Loading the shapes from SHACL at runtime
+
+`cimvalidation::shape_source` can build the shape table and profile index from
+a SHACL directory instead of using the generated ones, behind the
+`dynamic-shapes` feature (off by default; on for `cimoxide-cli` and
+`cimoxide-py`). Resolution: explicit `load_from` > `CIMOXIDE_SHACL_DIR` >
+generated. A bad path warns and falls back.
+
+The feature also enables `cimstructs/dynamic-schema`, because the shapes
+resolve against the class table: a shape table from one release and a class
+table from another would disagree about what a class is. The RDFS is found
+beside the SHACL directory (`<dir>/../RDFS`, the way `PROF` is), so a load is
+self-contained and does not depend on the working directory.
+`CIMOXIDE_RDFS_DIR` still takes precedence for the family being loaded.
+
+Unlike the class table, there is **no second implementation to drift**: both
+`cimgen` and the runtime loader call `cimschema::shacl::resolve`, and only the
+output differs — rendered Rust source versus interned `&'static` data.
+`cimvalidation/tests/dynamic_shapes.rs` still compares the two tables shape by
+shape, because that rendering-versus-interning step is duplicated, and it is
+what caught the sibling families' schemas being resolved against the working
+directory and silently dropped — which had emptied every CGMES class out of the
+cross-family value-type rules.
+
 **Not covered**, and reported as skips rather than silently dropped: NCP's 35
 `sh:sparql` constraints; the 119 `cim16:`/`cim17:` target classes (NC shapes on
 CGMES classes, whose NC attributes the decoder discards, so checking them would

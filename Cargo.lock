@@ -178,6 +178,7 @@ name = "cimoxide-validation"
 version = "0.3.3"
 dependencies = [
  "cimoxide-decoder",
+ "cimoxide-schema",
  "cimoxide-structs",
  "regex",
 ]

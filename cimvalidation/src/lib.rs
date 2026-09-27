@@ -34,8 +34,28 @@ pub mod helpers;
 // Its shapes are a data table instead, interpreted by `bag`.
 pub mod bag;
 pub mod shapes;
+pub mod shape_source;
 pub mod nc_shapes;
 pub mod nc_profiles;
+
+/// The NC shape table in force: loaded from SHACL if the `dynamic-shapes`
+/// feature is on and a directory was supplied, otherwise the generated one.
+pub fn nc_shapes() -> &'static [shapes::ShapeDef] {
+    static R: std::sync::OnceLock<&'static [shapes::ShapeDef]> = std::sync::OnceLock::new();
+    *R.get_or_init(|| shape_source::resolve("nc", nc_shapes::SHAPES))
+}
+
+/// The NC profile index in force. Loaded together with the shapes, since an
+/// index and a table from different releases would run the wrong rules.
+pub fn nc_profile_index() -> (&'static [(&'static str, &'static str)], &'static [&'static str]) {
+    static R: std::sync::OnceLock<(
+        &'static [(&'static str, &'static str)],
+        &'static [&'static str],
+    )> = std::sync::OnceLock::new();
+    *R.get_or_init(|| {
+        shape_source::resolve_profiles("nc", nc_profiles::PROFILE_IRIS, nc_profiles::PROFILES)
+    })
+}
 
 /// Run one NC profile's shapes against a dataset.
 ///
@@ -46,7 +66,7 @@ pub fn validate_nc_profile(
     profile: &str,
     cfg: &Config,
 ) -> Vec<Violation> {
-    bag::validate_profile(dataset, profile, nc_shapes::SHAPES, cfg)
+    bag::validate_profile(dataset, profile, nc_shapes(), cfg)
 }
 
 pub mod generated_p61968_13_geographicallocation_ap_con_complex_shacl;
@@ -221,7 +241,7 @@ pub fn validate_profile_local(dataset: &cimdecoder::CimDataset, profile: &str, c
     }
     // NC profile codes cannot collide with CGMES ones, so one flat
     // `Config::profiles` list carries both families.
-    if nc_profiles::PROFILES.contains(&profile) {
+    if nc_profile_index().1.contains(&profile) {
         return validate_nc_profile(dataset, profile, cfg);
     }
 

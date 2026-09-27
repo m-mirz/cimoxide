@@ -11,5 +11,6 @@
 
 pub mod model;
 pub mod simplify;
+pub mod resolve;
 pub mod skip;
 pub mod ttl_import;

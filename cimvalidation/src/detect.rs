@@ -114,7 +114,8 @@ pub fn detect_nc_profiles(dataset: &CimDataset) -> Vec<String> {
 /// both. An IRI the descriptors do not know is not an NC profile.
 pub fn nc_profile_code(iri: &str) -> Option<&'static str> {
     let iri = iri.trim();
-    crate::nc_profiles::PROFILE_IRIS
+    crate::nc_profile_index()
+        .0
         .iter()
         .find(|(known, _)| *known == iri)
         .map(|(_, code)| *code)

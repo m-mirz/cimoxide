@@ -13,7 +13,19 @@ include = ["src/**/*.rs", "Cargo.toml"]
 [lib]
 name = "cimvalidation"
 
+[features]
+default = []
+# Load a bag family's shape table from SHACL TTL at runtime. Off by default:
+# it pulls a TTL parser and an RDFS import, which the crates depending on
+# cimvalidation for its types have no use for.
+#
+# Enables cimstructs' dynamic-schema too, because the shapes resolve against
+# the class table: a shape table built from one release and a class table from
+# another would disagree about what a class is.
+dynamic-shapes = ["dep:cimoxide-schema", "cimoxide-structs/dynamic-schema"]
+
 [dependencies]
 cimoxide-structs = { workspace = true }
 cimoxide-decoder = { workspace = true }
+cimoxide-schema = { workspace = true, optional = true }
 regex       = "1"

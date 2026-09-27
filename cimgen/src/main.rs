@@ -414,90 +414,60 @@ fn run_bag_shacl(
     verbose: bool,
     skip_report: bool,
 ) {
-    let ttl_paths = match ttl_files(glob) {
-        Ok(p) => p,
+    let shacl_dir = std::path::Path::new(glob)
+        .parent()
+        .unwrap_or(std::path::Path::new("."));
+
+    let mut collector = shacl::skip::SkipCollector::new();
+    let table = match schema::shacl::resolve::load_shape_table(
+        spec.family,
+        spec,
+        others,
+        shacl_dir,
+        &mut collector,
+    ) {
+        Ok(t) => t,
         Err(e) => {
             eprintln!("warning: skipping {} shapes: {e}", spec.family.id);
             return;
         }
     };
-    if ttl_paths.is_empty() {
-        eprintln!("warning: no SHACL files matched {glob}; skipping {} shapes", spec.family.id);
-        return;
-    }
 
-    let shacl_dir = std::path::Path::new(glob)
-        .parent()
-        .unwrap_or(std::path::Path::new("."));
-    let profiles_of = match profile_files(&shacl_dir.join("Validation")) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("warning: cannot read {} profile manifests: {e}", spec.family.id);
-            return;
+    let write = |name: &str, code: String| {
+        let path = std::path::Path::new(out_dir).join(name);
+        if let Err(e) = std::fs::write(&path, code) {
+            eprintln!("error writing {}: {e}", path.display());
+            std::process::exit(1);
         }
+        path
     };
 
-    // The profile descriptors sit beside the SHACL tree, not inside it.
-    let prof_dir = shacl_dir
-        .parent()
-        .map(|p| p.join("PROF"))
-        .unwrap_or_else(|| shacl_dir.join("PROF"));
-    match schema::import::import_profile_index(&prof_dir) {
-        Ok(profiles) => {
-            let path = std::path::Path::new(out_dir)
-                .join(format!("{}_profiles.rs", spec.family.id));
-            if let Err(e) = std::fs::write(&path, generator::shapes_gen::render_profiles(&profiles))
-            {
-                eprintln!("error writing {}: {e}", path.display());
-                std::process::exit(1);
-            }
-            eprintln!(
-                "{} profiles: {} descriptors → {}",
-                spec.family.id,
-                profiles.len(),
-                path.display()
-            );
-        }
-        Err(e) => eprintln!(
-            "warning: cannot read {} profile descriptors from {}: {e}",
-            spec.family.id,
-            prof_dir.display()
-        ),
-    }
-
-    let mut results: Vec<shacl::model::FileResults> = Vec::new();
-    for path in &ttl_paths {
-        match shacl::ttl_import::import_ttl_file(path) {
-            Ok(fr) => results.push(fr),
-            Err(e) => eprintln!("warning: skipping {}: {e}", path.display()),
-        }
-    }
-
-    let simplify_skips = shacl::simplify::simplify(&mut results, spec.family);
-    let mut collector = shacl::skip::SkipCollector::new();
-    let (code, stats) =
-        generator::shapes_gen::render_shapes(spec, others, &results, &profiles_of, &mut collector);
-
-    let path = std::path::Path::new(out_dir).join(format!("{}_shapes.rs", spec.family.id));
-    if let Err(e) = std::fs::write(&path, code) {
-        eprintln!("error writing {}: {e}", path.display());
-        std::process::exit(1);
-    }
-
-    let mut skips = collector.into_entries();
-    for (_, s) in simplify_skips {
-        skips.extend(s);
-    }
-    eprintln!(
-        "{} shapes: {} files, {} shapes, {} checks, {} closed, {} skipped → {}",
-        spec.family.id,
-        results.len(),
-        stats.shapes,
-        stats.constraints,
-        stats.closed,
-        skips.len(),
-        path.display(),
+    let shapes_path = write(
+        &format!("{}_shapes.rs", spec.family.id),
+        generator::shapes_gen::render_shapes(spec.family.id, &table.shapes),
     );
+    let profiles_path = write(
+        &format!("{}_profiles.rs", spec.family.id),
+        generator::shapes_gen::render_profiles_from(&table.profile_iris, &table.profiles),
+    );
+
+    let skips = collector.into_entries();
+    eprintln!(
+        "{} shapes: {} shapes, {} checks, {} closed, {} skipped → {}",
+        spec.family.id,
+        table.stats.shapes,
+        table.stats.checks,
+        table.stats.closed,
+        skips.len(),
+        shapes_path.display(),
+    );
+    eprintln!(
+        "{} profiles: {} descriptors → {}",
+        spec.family.id,
+        table.profiles.len(),
+        profiles_path.display()
+    );
+
     if skip_report {
         for e in &skips {
             eprintln!("{}\t{e}", spec.family.id);
@@ -511,50 +481,3 @@ fn run_bag_shacl(
     }
 }
 
-/// TTL files matching a glob, sorted. Top level only — `Validation/` holds
-/// manifests, not shapes.
-fn ttl_files(glob: &str) -> Result<Vec<std::path::PathBuf>, Box<dyn std::error::Error>> {
-    let pattern = glob::Pattern::new(glob)?;
-    let dir = std::path::Path::new(glob)
-        .parent()
-        .unwrap_or(std::path::Path::new("."));
-    let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(dir)?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| {
-            p.extension().and_then(|x| x.to_str()) == Some("ttl") && pattern.matches_path(p)
-        })
-        .collect();
-    paths.sort();
-    Ok(paths)
-}
-
-/// TTL base file name → the profile codes whose manifest imports it.
-fn profile_files(
-    dir: &std::path::Path,
-) -> Result<std::collections::HashMap<String, Vec<String>>, Box<dyn std::error::Error>> {
-    let mut map: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
-    let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(dir)?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("ttl"))
-        .collect();
-    paths.sort();
-    for path in &paths {
-        let m = shacl::ttl_import::import_manifest(path)?;
-        // The combined "ALL" manifest imports every file; recording it would
-        // put a redundant profile on every shape.
-        if m.profile == "ALL" {
-            continue;
-        }
-        for file in m.imports {
-            map.entry(file).or_default().push(m.profile.clone());
-        }
-    }
-    for v in map.values_mut() {
-        v.sort();
-        v.dedup();
-    }
-    Ok(map)
-}
