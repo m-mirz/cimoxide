@@ -26,6 +26,28 @@ pub struct Config {
 }
 
 pub mod helpers;
+
+// ── property-bag families ──────────────────────────────────────────────────
+//
+// NC classes decode into GenericElement bags, so there is no struct to
+// downcast to and nothing for the generated-validator strategy to reference.
+// Its shapes are a data table instead, interpreted by `bag`.
+pub mod bag;
+pub mod shapes;
+pub mod nc_shapes;
+
+/// Run one NC profile's shapes against a dataset.
+///
+/// Separate from `validate_profile_local` so a caller can drive it with an
+/// explicit profile code, without depending on header detection.
+pub fn validate_nc_profile(
+    dataset: &cimdecoder::CimDataset,
+    profile: &str,
+    cfg: &Config,
+) -> Vec<Violation> {
+    bag::validate_profile(dataset, profile, nc_shapes::SHAPES, cfg)
+}
+
 pub mod generated_p61968_13_geographicallocation_ap_con_complex_shacl;
 pub mod generated_p61970_301_diagramlayout_ap_con_complex_notsolvedmas_shacl;
 pub mod generated_p61970_301_diagramlayout_ap_con_complex_shacl;

@@ -106,4 +106,12 @@ pub struct FileResults {
     /// TTL base file name without extension (e.g. "61970-600-2_Equipment-AP-Con-Simple-SHACL").
     pub file_name: String,
     pub shapes: Vec<ShapeInfo>,
+    /// The file's own `@prefix` declarations, prefix → IRI.
+    ///
+    /// Shapes carry simplified IRIs (`"cim:Equipment"`), and the prefix alone
+    /// does not identify a class: NCP binds `cim` to `https://cim.ucaiug.io/ns#`
+    /// while CGMES binds it to `http://iec.ch/TC57/CIM100#`, and the two
+    /// families overlap on 164 local names. Resolving a target or a path
+    /// therefore needs the map that was in scope where it was written.
+    pub prefixes: HashMap<String, String>,
 }

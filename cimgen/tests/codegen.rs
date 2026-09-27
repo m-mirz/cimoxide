@@ -10,8 +10,19 @@ fn workspace_root() -> PathBuf {
 }
 
 fn hash_dir(dir: &Path) -> String {
+    hash_dir_except(dir, &[])
+}
+
+/// `skip` names files to leave out, relative to `dir`.
+///
+/// The bag families' shape tables are written into the same output directory as
+/// the CGMES validators, and folding them into this hash would mean an NC-only
+/// change trips the CGMES test and vice versa — exactly what the separate
+/// `nc_classes_codegen_stable` test exists to prevent.
+fn hash_dir_except(dir: &Path, skip: &[&str]) -> String {
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
     collect(dir, dir, &mut files);
+    files.retain(|(rel, _)| !skip.contains(&rel.as_str()));
     files.sort_by(|a, b| a.0.cmp(&b.0));
 
     let mut h = Sha256::new();
@@ -85,8 +96,39 @@ fn cimvalidation_codegen_stable() {
         .unwrap();
     assert!(status.success(), "cimgen exited with failure");
 
-    let hash = hash_dir(&shacl_out);
+    let hash = hash_dir_except(&shacl_out, &["nc_shapes.rs"]);
     assert_eq!(hash, "5369720ee910af3ab9f30d2e3ed3fd7395df87f6140bc2f2ebb7069d730a4e11", "cimvalidation output drifted — rerun to update hash");
+}
+
+/// Hashes the NC shape table on its own, for the same reason
+/// `nc_classes_codegen_stable` hashes the class table on its own: the CGMES
+/// validators and the NC shapes come out of the same run, and a single hash
+/// over both cannot say which family moved.
+#[test]
+fn nc_shapes_codegen_stable() {
+    let root = workspace_root();
+    let structs_out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("cimstructs-ncshapes");
+    let shacl_out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("cimvalidation-ncshapes");
+    let _ = std::fs::remove_dir_all(&structs_out);
+    let _ = std::fs::remove_dir_all(&shacl_out);
+    std::fs::create_dir_all(&structs_out).unwrap();
+    std::fs::create_dir_all(&shacl_out).unwrap();
+
+    let status = Command::new(env!("CARGO_BIN_EXE_cimgen"))
+        .current_dir(&root)
+        .arg("--output")
+        .arg(&structs_out)
+        .arg("--shacl-output")
+        .arg(&shacl_out)
+        .arg("--skip-python-stubs")
+        .status()
+        .unwrap();
+    assert!(status.success(), "cimgen exited with failure");
+
+    let mut h = Sha256::new();
+    h.update(std::fs::read(shacl_out.join("nc_shapes.rs")).unwrap());
+    let hash: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(hash, "f9e0e8bb9529f0786cbcd552fbcc30cb032cabadd15066e819f5c92ea297ee97", "NC shape table drifted — rerun to update hash");
 }
 
 /// Hashes the NC class table on its own, so a CGMES-only change cannot mask an

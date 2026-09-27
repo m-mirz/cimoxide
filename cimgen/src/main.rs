@@ -9,6 +9,7 @@ use std::path::Path;
 const DEFAULT_OUTPUT: &str = "cimstructs/src";
 const DEFAULT_SHACL: &str =
     "application-profiles-library/CGMES/SHACL/*.ttl";
+const DEFAULT_NC_SHACL: &str = "application-profiles-library/NCP/SHACL/*.ttl";
 const DEFAULT_SHACL_OUTPUT: &str = "cimvalidation/src";
 const DEFAULT_SPARQL_DIR: &str = "cimvalidation/src/sparql";
 const DEFAULT_PYTHON_STUBS_OUTPUT: &str = "cimoxide-py/python/cimoxide";
@@ -23,6 +24,7 @@ Options:
   --families cgmes,nc           families to generate (default: all)
   --output <dir>                where generated structs are written
   --shacl <glob>                SHACL TTL glob
+  --nc-shacl <glob>             NCP SHACL TTL glob (bag-family shape table)
   --shacl-output <dir>          where generated validators are written
   --python-stubs-output <dir>   where types.pyi is written
   --skip-shacl                  do not generate SHACL validators
@@ -42,6 +44,7 @@ fn main() {
         schema::family::FAMILIES.to_vec();
     let mut output = DEFAULT_OUTPUT.to_string();
     let mut shacl_glob: Option<String> = Some(DEFAULT_SHACL.to_string());
+    let mut nc_shacl_glob = DEFAULT_NC_SHACL.to_string();
     let mut shacl_output: Option<String> = Some(DEFAULT_SHACL_OUTPUT.to_string());
     let mut python_stubs_output: Option<String> = Some(DEFAULT_PYTHON_STUBS_OUTPUT.to_string());
     let mut verbose = false;
@@ -80,6 +83,10 @@ fn main() {
             "--shacl" => {
                 i += 1;
                 shacl_glob = args.get(i).cloned();
+            }
+            "--nc-shacl" => {
+                i += 1;
+                nc_shacl_glob = args.get(i).cloned().unwrap_or_default();
             }
             "--shacl-output" => {
                 i += 1;
@@ -168,8 +175,19 @@ fn main() {
         );
     }
 
-    if let (Some(glob), Some(out_dir)) = (shacl_glob, shacl_output) {
+    if let (Some(glob), Some(out_dir)) = (shacl_glob, shacl_output.clone()) {
         run_shacl(&spec, &glob, &out_dir, verbose, skip_report, rule_report);
+    }
+
+    // Bag families get a shape *table* rather than generated check functions:
+    // there is no struct to downcast to, so nothing to generate against.
+    if let Some(out_dir) = shacl_output {
+        // The typed family's spec goes along: NCP's association value-type
+        // lists name CGMES classes beside NC ones, and a reference can decode
+        // as either.
+        for bag in &bags {
+            run_bag_shacl(bag, &[&spec], &nc_shacl_glob, &out_dir, verbose, skip_report);
+        }
     }
 
     if let Some(out_dir) = python_stubs_output {
@@ -382,3 +400,133 @@ fn run_shacl(
     }
 }
 
+
+/// Generate the shape table for one property-bag family.
+///
+/// Unlike `run_shacl`, the profile-to-file mapping is read rather than
+/// hardcoded: `NCP/SHACL/Validation/` ships one manifest per profile whose
+/// `owl:imports` list names exactly the constraint files that apply.
+fn run_bag_shacl(
+    spec: &schema::model::CimSpecification,
+    others: &[&schema::model::CimSpecification],
+    glob: &str,
+    out_dir: &str,
+    verbose: bool,
+    skip_report: bool,
+) {
+    let ttl_paths = match ttl_files(glob) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("warning: skipping {} shapes: {e}", spec.family.id);
+            return;
+        }
+    };
+    if ttl_paths.is_empty() {
+        eprintln!("warning: no SHACL files matched {glob}; skipping {} shapes", spec.family.id);
+        return;
+    }
+
+    let shacl_dir = std::path::Path::new(glob)
+        .parent()
+        .unwrap_or(std::path::Path::new("."));
+    let profiles_of = match profile_files(&shacl_dir.join("Validation")) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("warning: cannot read {} profile manifests: {e}", spec.family.id);
+            return;
+        }
+    };
+
+    let mut results: Vec<shacl::model::FileResults> = Vec::new();
+    for path in &ttl_paths {
+        match shacl::ttl_import::import_ttl_file(path) {
+            Ok(fr) => results.push(fr),
+            Err(e) => eprintln!("warning: skipping {}: {e}", path.display()),
+        }
+    }
+
+    let simplify_skips = shacl::simplify::simplify(&mut results, spec.family);
+    let mut collector = shacl::skip::SkipCollector::new();
+    let (code, stats) =
+        generator::shapes_gen::render_shapes(spec, others, &results, &profiles_of, &mut collector);
+
+    let path = std::path::Path::new(out_dir).join(format!("{}_shapes.rs", spec.family.id));
+    if let Err(e) = std::fs::write(&path, code) {
+        eprintln!("error writing {}: {e}", path.display());
+        std::process::exit(1);
+    }
+
+    let mut skips = collector.into_entries();
+    for (_, s) in simplify_skips {
+        skips.extend(s);
+    }
+    eprintln!(
+        "{} shapes: {} files, {} shapes, {} checks, {} closed, {} skipped → {}",
+        spec.family.id,
+        results.len(),
+        stats.shapes,
+        stats.constraints,
+        stats.closed,
+        skips.len(),
+        path.display(),
+    );
+    if skip_report {
+        for e in &skips {
+            eprintln!("{}\t{e}", spec.family.id);
+        }
+    }
+    if verbose || skip_report {
+        let mut counts: std::collections::HashMap<&'static str, usize> =
+            std::collections::HashMap::new();
+        shacl::skip::accumulate_counts(&mut counts, &skips);
+        shacl::skip::print_global_summary(&counts);
+    }
+}
+
+/// TTL files matching a glob, sorted. Top level only — `Validation/` holds
+/// manifests, not shapes.
+fn ttl_files(glob: &str) -> Result<Vec<std::path::PathBuf>, Box<dyn std::error::Error>> {
+    let pattern = glob::Pattern::new(glob)?;
+    let dir = std::path::Path::new(glob)
+        .parent()
+        .unwrap_or(std::path::Path::new("."));
+    let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.extension().and_then(|x| x.to_str()) == Some("ttl") && pattern.matches_path(p)
+        })
+        .collect();
+    paths.sort();
+    Ok(paths)
+}
+
+/// TTL base file name → the profile codes whose manifest imports it.
+fn profile_files(
+    dir: &std::path::Path,
+) -> Result<std::collections::HashMap<String, Vec<String>>, Box<dyn std::error::Error>> {
+    let mut map: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("ttl"))
+        .collect();
+    paths.sort();
+    for path in &paths {
+        let m = shacl::ttl_import::import_manifest(path)?;
+        // The combined "ALL" manifest imports every file; recording it would
+        // put a redundant profile on every shape.
+        if m.profile == "ALL" {
+            continue;
+        }
+        for file in m.imports {
+            map.entry(file).or_default().push(m.profile.clone());
+        }
+    }
+    for v in map.values_mut() {
+        v.sort();
+        v.dedup();
+    }
+    Ok(map)
+}

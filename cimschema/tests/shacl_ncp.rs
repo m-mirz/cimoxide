@@ -259,3 +259,43 @@ fn type_system_rules_apply_to_typed_families_only() {
     );
     assert_eq!(typed, 0, "typed family should drop all of them on this file");
 }
+
+/// The manifests are the authority on which shapes apply to which profile.
+/// CGMES has no equivalent, so this mapping is the one part of NC validation
+/// that replaces hand-written dispatch with data.
+#[test]
+fn manifests_map_profiles_to_constraint_files() {
+    let dir = ncp_shacl("Validation");
+    let mut manifests: Vec<ttl_import::Manifest> = std::fs::read_dir(&dir)
+        .expect("no Validation directory")
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("ttl"))
+        .map(|p| ttl_import::import_manifest(&p).unwrap_or_else(|e| panic!("{p:?}: {e}")))
+        .collect();
+    manifests.sort_by(|a, b| a.profile.cmp(&b.profile));
+
+    assert_eq!(manifests.len(), 18, "expected one manifest per NC profile");
+
+    let co = manifests
+        .iter()
+        .find(|m| m.profile == "CO")
+        .expect("no Contingency manifest");
+    assert_eq!(
+        co.imports,
+        [
+            "Contingency-AP-Con-Simple-SHACL",
+            "DatasetMetadata-AP-Con-SHACL",
+            "NC-AP-Con-ClassCount-Complex-SHACL",
+            "NC-AP-Con-Complex-IdentifiedObjecStringLength-SHACL",
+            "NC-AP-Con-PrefixDeclaration-Complex-SHACL",
+        ]
+    );
+
+    // The shared files are why a shape belongs to many profiles, not one.
+    let shared = manifests
+        .iter()
+        .filter(|m| m.imports.iter().any(|i| i == "DatasetMetadata-AP-Con-SHACL"))
+        .count();
+    assert!(shared >= 17, "expected DatasetMetadata to be near-universal, got {shared}");
+}

@@ -16,9 +16,9 @@ pub fn import_ttl_file(path: &Path) -> Result<FileResults, Box<dyn std::error::E
         .unwrap_or("")
         .to_string();
 
-    let graph = parse_turtle(&src)?;
+    let (graph, prefixes) = parse_turtle(&src)?;
     let shapes = extract_shapes(&graph);
-    Ok(FileResults { file_name, shapes })
+    Ok(FileResults { file_name, shapes, prefixes })
 }
 
 // ---------------------------------------------------------------------------
@@ -228,6 +228,13 @@ impl<'a> Lexer<'a> {
             "a" => Token::A,
             "true" => Token::Bool(true),
             "false" => Token::Bool(false),
+            // SPARQL-style declarations, which Turtle 1.1 also allows: no `@`
+            // and no terminating dot. NCP's DatasetMetadata file is written
+            // this way, and it is imported by 17 of the 18 profile manifests,
+            // so failing to recognise these loses every DM prefix binding and
+            // with it every DM target class.
+            "PREFIX" => Token::PrefixDecl,
+            "BASE" => Token::BaseDecl,
             _ => Token::PrefixedName(s),
         }
     }
@@ -600,11 +607,13 @@ impl Parser {
     }
 }
 
-fn parse_turtle(src: &str) -> Result<Graph, Box<dyn std::error::Error>> {
+fn parse_turtle(
+    src: &str,
+) -> Result<(Graph, HashMap<String, String>), Box<dyn std::error::Error>> {
     let tokens = Lexer::new(src).tokenize();
     let mut parser = Parser::new(tokens);
     parser.parse();
-    Ok(parser.graph)
+    Ok((parser.graph, parser.prefixes))
 }
 
 // ---------------------------------------------------------------------------
@@ -1441,4 +1450,60 @@ fn nested_shape_ids(g: &Graph, id: &str) -> Vec<String> {
 fn get_str(g: &Graph, subj: &str, pred: &str) -> Option<String> {
     get_one(g, subj, pred).and_then(|v| v.as_str().map(str::to_string)
         .or_else(|| v.as_iri().map(|s| s.to_string())))
+}
+
+// ---------------------------------------------------------------------------
+// Profile manifests
+// ---------------------------------------------------------------------------
+
+/// One NCP validation manifest: which profile, and which constraint files it
+/// pulls in.
+///
+/// `NCP/SHACL/Validation/` ships 18 of these, one per profile, and they are the
+/// authority on which shapes apply to which profile. CGMES has no equivalent —
+/// `cimvalidation/src/lib.rs` hardcodes the mapping as ten hand-written
+/// functions — so reading them replaces code with data rather than adding a
+/// second source of truth.
+#[derive(Debug)]
+pub struct Manifest {
+    /// `dcat:keyword`, the profile code (`"CO"`, `"ER"`, …; `"ALL"` for the
+    /// combined manifest).
+    pub profile: String,
+    /// Base file names of the imported constraint files, extension stripped.
+    /// `owl:imports` gives absolute GitHub URLs; only the file name is usable
+    /// against a local checkout.
+    pub imports: Vec<String>,
+}
+
+/// Read one validation manifest.
+pub fn import_manifest(path: &Path) -> Result<Manifest, Box<dyn std::error::Error>> {
+    let src = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let (graph, _) = parse_turtle(&src)?;
+
+    let mut profile = String::new();
+    let mut imports = Vec::new();
+    for pairs in graph.values() {
+        for (pred, val) in pairs {
+            match (pred.as_str(), val) {
+                ("dcat:keyword", RdfVal::Str(s)) if profile.is_empty() && !s.is_empty() => {
+                    profile = s.clone();
+                }
+                ("owl:imports", RdfVal::Iri(iri)) => {
+                    // An absolute URL that no prefix matched stays wrapped in
+                    // angle brackets by `simplify`.
+                    let trimmed = iri.trim_start_matches('<').trim_end_matches('>');
+                    let file = trimmed.rsplit('/').next().unwrap_or(trimmed);
+                    imports.push(file.trim_end_matches(".ttl").to_string());
+                }
+                _ => {}
+            }
+        }
+    }
+    if profile.is_empty() {
+        return Err(format!("no dcat:keyword in {}", path.display()).into());
+    }
+    imports.sort();
+    imports.dedup();
+    Ok(Manifest { profile, imports })
 }
