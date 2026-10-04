@@ -140,6 +140,9 @@ pub fn validate_crossprofile_shacl(dataset: &cimdecoder::CimDataset, cfg: &Confi
     run_cgmes(dataset, &active)
 }
 
+/// Every CGMES profile code `detect_config` can report.
+const CGMES_PROFILES: &[&str] = &["DL", "DY", "EQ", "EQBD", "GL", "OP", "SC", "SSH", "SV", "TP"];
+
 /// The profiles with cross-profile rules. Mirrors
 /// `cimschema::shacl::cgmes_manifest::CROSS_PROFILES`, which this crate does
 /// not depend on outside the `dynamic-shapes` feature.
@@ -160,8 +163,10 @@ pub fn validate_profile_local(dataset: &cimdecoder::CimDataset, profile: &str, c
         return Vec::new();
     }
     // NC profile codes cannot collide with CGMES ones, so one flat
-    // `Config::profiles` list carries both families.
-    if nc_profile_index().1.contains(&profile) {
+    // `Config::profiles` list carries both families. The CGMES codes are
+    // checked first: they are fixed, and asking the NC index loads the NC
+    // table — 170 ms when it comes from SHACL — for data that has no NC in it.
+    if !CGMES_PROFILES.contains(&profile) && nc_profile_index().1.contains(&profile) {
         return validate_nc_profile(dataset, profile, cfg);
     }
 

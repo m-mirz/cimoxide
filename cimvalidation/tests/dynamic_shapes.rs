@@ -1,4 +1,4 @@
-//! Loading the NC shape table from SHACL at runtime.
+//! Loading the NC and CGMES shape tables from SHACL at runtime.
 //!
 //! Unlike `cimstructs`' equivalent, there is no second implementation to guard
 //! against: the generator and this loader both call
@@ -55,32 +55,14 @@ fn the_runtime_table_matches_the_generated_one() {
     }
 }
 
-/// The same comparison for CGMES, whose table validation now runs. It cannot
-/// go through `load_table` — CGMES is deliberately not loadable at runtime,
-/// see `a_non_bag_family_is_rejected` — so it resolves directly and interns
-/// with `intern_shapes`, which is the loader's own conversion.
+/// The same comparison for CGMES, through the same runtime path.
 #[test]
-fn the_cgmes_table_matches_its_runtime_resolution() {
-    use cimschema::family;
-
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    let import = |f: &'static family::Family| {
-        let glob = root.join(f.default_schema);
-        cimschema::import::import_schema_files(glob.to_str().unwrap(), f, false)
-            .unwrap_or_else(|e| panic!("could not import the {} RDFS: {e}", f.id))
-    };
-    let spec = import(&family::CGMES);
-    let nc = import(&family::NC);
-    let mut collector = cimschema::shacl::skip::SkipCollector::new();
-    let table = cimschema::shacl::resolve::load_shape_table(
-        &family::CGMES,
-        &spec,
-        &[&nc],
-        &root.join("application-profiles-library/CGMES/SHACL"),
-        &mut collector,
-    )
-    .expect("could not resolve the CGMES shapes");
-    let loaded = cimvalidation::shape_source::intern_shapes(&table.shapes);
+fn the_cgmes_table_matches_its_runtime_load() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("application-profiles-library/CGMES/SHACL");
+    let loaded = load_table("cgmes", &dir).expect("could not load CGMES shapes");
     let generated = cimvalidation::cgmes_shapes::SHAPES;
 
     assert_eq!(loaded.len(), generated.len(), "loaded {} shapes, generated has {}", loaded.len(), generated.len());
@@ -89,13 +71,20 @@ fn the_cgmes_table_matches_its_runtime_resolution() {
     }
 }
 
+/// `CIMOXIDE_SHACL_DIR` may list several directories; each serves the family
+/// whose files it holds, so pointing it at NC's directory alone never makes
+/// CGMES try to load from there.
 #[test]
-fn a_non_bag_family_is_rejected() {
-    // CGMES is generated as typed structs; it has no shape table to load.
-    assert!(matches!(
-        load_table("cgmes", &shacl_dir()),
-        Err(ShapeError::UnknownFamily(_))
-    ));
+fn a_directory_is_matched_to_its_family() {
+    use cimvalidation::shape_source::family_of_dir;
+    let lib = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("application-profiles-library");
+    assert_eq!(family_of_dir(&lib.join("NCP/SHACL")).map(|f| f.id), Some("nc"));
+    assert_eq!(family_of_dir(&lib.join("CGMES/SHACL")).map(|f| f.id), Some("cgmes"));
+    assert_eq!(family_of_dir(&lib.join("CGMES/RDFS")).map(|f| f.id), None);
+}
+
+#[test]
+fn an_unknown_family_is_rejected() {
     assert!(matches!(
         load_table("not-a-family", &shacl_dir()),
         Err(ShapeError::UnknownFamily(_))

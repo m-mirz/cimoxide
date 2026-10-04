@@ -1,4 +1,4 @@
-//! Where a bag family's shape table comes from.
+//! Where a family's shape table comes from.
 //!
 //! By default it is the table `cimgen` generated. With the `dynamic-shapes`
 //! feature, a directory of SHACL TTL files can supply it instead, so a new
@@ -7,8 +7,15 @@
 //! Resolution order, highest first:
 //!
 //! 1. [`load_from`] — an explicit call, for libraries and tests
-//! 2. `CIMOXIDE_SHACL_DIR` — for the CLI and the Python bindings
+//! 2. `CIMOXIDE_SHACL_DIR` — for the CLI and the Python bindings. It may list
+//!    several directories, separated as in `PATH`; each serves the family
+//!    whose files it holds (see [`family_of_dir`]), so `…/NCP/SHACL` alone
+//!    still loads only NC, as it always did
 //! 3. the generated table
+//!
+//! CGMES classes are compiled structs, so a CGMES table loaded from another
+//! release can name classes this build cannot decode; shapes on those simply
+//! match nothing.
 //!
 //! A directory that is missing or fails to parse falls back to the generated
 //! table **with a warning**. Silently validating against a stale profile
@@ -23,7 +30,7 @@
 
 use crate::shapes::ShapeDef;
 
-/// Resolve the shape table for a bag family.
+/// Resolve the shape table for a family.
 ///
 /// `generated` is the table `cimgen` emitted, used unless something overrides
 /// it.
@@ -61,7 +68,7 @@ pub fn resolve_profiles(
 }
 
 #[cfg(feature = "dynamic-shapes")]
-pub use dynamic::{intern_shapes, load_from, load_table, ShapeError, SHACL_DIR_ENV};
+pub use dynamic::{family_of_dir, intern_shapes, load_from, load_table, ShapeError, SHACL_DIR_ENV};
 
 #[cfg(feature = "dynamic-shapes")]
 mod dynamic {
@@ -79,7 +86,9 @@ mod dynamic {
         PropShape, ShapeDef, Step, Target,
     };
 
-    /// Environment variable naming a directory of SHACL constraint files.
+    /// Environment variable naming SHACL constraint directories — one, or
+    /// several separated as in `PATH`, each serving the family whose files it
+    /// holds.
     pub const SHACL_DIR_ENV: &str = "CIMOXIDE_SHACL_DIR";
 
     #[derive(Debug)]
@@ -88,7 +97,7 @@ mod dynamic {
         TooLate,
         /// A table was already loaded for this family.
         AlreadyLoaded,
-        /// No family with this id, or it is not a bag family.
+        /// No family with this id.
         UnknownFamily(String),
         /// The RDFS the shapes resolve against could not be read.
         Schema(String),
@@ -103,7 +112,7 @@ mod dynamic {
                     "the shape table is already resolved; load the shapes before validating"
                 ),
                 Self::AlreadyLoaded => write!(f, "shapes are already loaded for this family"),
-                Self::UnknownFamily(id) => write!(f, "unknown or non-bag family: {id}"),
+                Self::UnknownFamily(id) => write!(f, "unknown family: {id}"),
                 Self::Schema(e) => write!(f, "cannot read the schema the shapes resolve against: {e}"),
                 Self::Parse(e) => write!(f, "{e}"),
             }
@@ -165,9 +174,21 @@ mod dynamic {
     }
 
     fn bag_family(id: &str) -> Result<&'static Family, ShapeError> {
-        family::by_id(id)
-            .filter(|f| !f.typed)
-            .ok_or_else(|| ShapeError::UnknownFamily(id.to_string()))
+        family::by_id(id).ok_or_else(|| ShapeError::UnknownFamily(id.to_string()))
+    }
+
+    /// Which family's constraint files a SHACL directory holds: NC ships
+    /// per-profile manifests in `Validation/`, CGMES files named in its
+    /// written-out manifest. `None` when it is neither.
+    pub fn family_of_dir(dir: &Path) -> Option<&'static Family> {
+        if dir.join("Validation").is_dir() {
+            return family::by_id("nc");
+        }
+        family::FAMILIES.iter().copied().find(|f| {
+            f.shacl_manifest.is_some_and(|m| {
+                m.iter().any(|(stem, _)| dir.join(format!("{stem}.ttl")).is_file())
+            })
+        })
     }
 
     pub(super) fn resolve(
@@ -199,21 +220,36 @@ mod dynamic {
             return *cached;
         }
 
-        let loaded = match std::env::var_os(SHACL_DIR_ENV) {
-            None => None,
-            Some(dir) => match bag_family(family_id) {
-                Err(_) => None,
-                Ok(family) => match load(family, &PathBuf::from(dir)) {
-                    Ok(l) => Some(l),
-                    Err(e) => {
-                        eprintln!(
-                            "warning: {SHACL_DIR_ENV} set but the {family_id} shapes could not \
-                             be loaded ({e}); falling back to the generated shape table"
-                        );
-                        None
-                    }
-                },
+        // The directory, if any, that holds this family's files. A directory
+        // holding neither family's files is reported once, by the first family
+        // to look, rather than silently ignored.
+        let dir: Option<PathBuf> = std::env::var_os(SHACL_DIR_ENV).and_then(|dirs| {
+            let dirs: Vec<PathBuf> = std::env::split_paths(&dirs).collect();
+            static REPORTED: AtomicBool = AtomicBool::new(false);
+            if !REPORTED.swap(true, Ordering::SeqCst) {
+                for d in dirs.iter().filter(|d| family_of_dir(d).is_none()) {
+                    eprintln!(
+                        "warning: {SHACL_DIR_ENV} names {}, which holds no NC or CGMES \
+                         constraint files; ignoring it",
+                        d.display()
+                    );
+                }
+            }
+            dirs.into_iter().find(|d| family_of_dir(d).is_some_and(|f| f.id == family_id))
+        });
+        let loaded = match (dir, bag_family(family_id)) {
+            (Some(dir), Ok(family)) => match load(family, &dir) {
+                Ok(l) => Some(l),
+                Err(e) => {
+                    eprintln!(
+                        "warning: {SHACL_DIR_ENV} names {} but the {family_id} shapes could not \
+                         be loaded ({e}); falling back to the generated shape table",
+                        dir.display()
+                    );
+                    None
+                }
             },
+            _ => None,
         };
         cache.insert(family_id, loaded);
         loaded
