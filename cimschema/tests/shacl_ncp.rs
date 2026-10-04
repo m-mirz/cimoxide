@@ -7,7 +7,6 @@
 
 use std::path::{Path, PathBuf};
 
-use cimschema::family;
 use cimschema::shacl::model::{FileResults, ShapeInfo};
 use cimschema::shacl::{simplify, ttl_import};
 
@@ -212,7 +211,7 @@ fn deactivated_shapes_are_dropped_and_accounted_for() {
         .count();
     assert!(before > 0, "fixture no longer contains a deactivated shape");
 
-    let skips = simplify::simplify(&mut results, &family::NC);
+    let skips = simplify::simplify(&mut results);
 
     assert!(
         !results[0]
@@ -230,14 +229,12 @@ fn deactivated_shapes_are_dropped_and_accounted_for() {
     assert!(reported > 0, "deactivated drops were not reported as skips");
 }
 
-/// The family gate. `sh:nodeKind` and `sh:datatype` are tautologies against a
-/// generated struct and real checks against a property bag, so the same file
-/// must simplify differently for the two families.
+/// `sh:nodeKind` and `sh:datatype` survive simplification. Validation reads
+/// the text as written, so they are the only constraints that report a
+/// malformed literal or a literal where a reference belongs.
 #[test]
-fn type_system_rules_apply_to_typed_families_only() {
-    let count = |family| {
-        let mut results = vec![parse("Contingency-AP-Con-Simple-SHACL.ttl")];
-        simplify::simplify(&mut results, family);
+fn node_kind_and_datatype_are_kept() {
+    let count = |results: &[cimschema::shacl::model::FileResults]| {
         results[0]
             .shapes
             .iter()
@@ -249,15 +246,11 @@ fn type_system_rules_apply_to_typed_families_only() {
             })
             .count()
     };
-
-    let bag = count(&family::NC);
-    let typed = count(&family::CGMES);
-    assert!(
-        bag > typed,
-        "bag family kept {bag} nodeKind/datatype constraints, typed kept {typed} — \
-         the gate is not doing anything"
-    );
-    assert_eq!(typed, 0, "typed family should drop all of them on this file");
+    let mut results = vec![parse("Contingency-AP-Con-Simple-SHACL.ttl")];
+    let before = count(&results);
+    assert!(before > 0, "fixture no longer has nodeKind/datatype constraints");
+    simplify::simplify(&mut results);
+    assert_eq!(count(&results), before);
 }
 
 /// The manifests are the authority on which shapes apply to which profile.

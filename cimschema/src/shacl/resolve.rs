@@ -856,7 +856,7 @@ pub fn load_shape_table(
     // Simplification drops constraints too (deactivated shapes, vacuous
     // minCount=0), and those belong in the same accounting as the resolution
     // skips — an unreported drop reads like a rule that passed.
-    for (_, entries) in crate::shacl::simplify::simplify(&mut files, family) {
+    for (_, entries) in crate::shacl::simplify::simplify(&mut files) {
         for e in entries {
             collector.push(
                 e.class_names.first().map(String::as_str).unwrap_or(""),

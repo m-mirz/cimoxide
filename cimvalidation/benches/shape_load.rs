@@ -85,7 +85,7 @@ fn bench(c: &mut Criterion) {
                     .iter()
                     .map(|p| ttl_import::import_ttl_file(p).expect("parse failed"))
                     .collect();
-                cimschema::shacl::simplify::simplify(&mut files, &family::NC);
+                cimschema::shacl::simplify::simplify(&mut files);
                 files
             },
             |files| {

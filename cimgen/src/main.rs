@@ -260,7 +260,7 @@ fn run_cgmes_reports(
     }
 
     let mut simplify_skips: std::collections::HashMap<String, Vec<shacl::skip::SkipEntry>> =
-        shacl::simplify::simplify(&mut results, &schema::family::CGMES).into_iter().collect();
+        shacl::simplify::simplify(&mut results).into_iter().collect();
 
     // Resolve every file, under its manifest tags or a placeholder one.
     let mut profiles_of: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();

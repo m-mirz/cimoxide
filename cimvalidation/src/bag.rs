@@ -348,7 +348,9 @@ fn fails(ctx: &Ctx<'_>, el: &Fields, values: &Values<'_>, constraint: &Constrain
         Constraint::NodeKind(kind) => match kind {
             NodeKind::Literal => values.is_refs() && values.count() != Some(0),
             NodeKind::Iri => values.is_text() && values.count() != Some(0),
-            NodeKind::BlankNode => (values.is_text() || values.is_refs()) && values.count() != Some(0),
+            // A reference decodes the same whether the XML wrote an IRI or a
+            // blank node, so only a literal is certainly not one.
+            NodeKind::BlankNode => values.is_text() && values.count() != Some(0),
         },
 
         Constraint::In(allowed) => {
