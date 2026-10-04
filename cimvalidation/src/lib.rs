@@ -3,7 +3,7 @@ pub use violation::Violation;
 
 pub mod sparql;
 pub mod detect;
-pub use detect::detect_config;
+pub use detect::{detect_config, detect_nc_profiles};
 
 use std::collections::HashSet;
 
@@ -26,6 +26,49 @@ pub struct Config {
 }
 
 pub mod helpers;
+
+// ── property-bag families ──────────────────────────────────────────────────
+//
+// NC classes decode into GenericElement bags, so there is no struct to
+// downcast to and nothing for the generated-validator strategy to reference.
+// Its shapes are a data table instead, interpreted by `bag`.
+pub mod bag;
+pub mod shapes;
+pub mod shape_source;
+pub mod nc_shapes;
+pub mod nc_profiles;
+
+/// The NC shape table in force: loaded from SHACL if the `dynamic-shapes`
+/// feature is on and a directory was supplied, otherwise the generated one.
+pub fn nc_shapes() -> &'static [shapes::ShapeDef] {
+    static R: std::sync::OnceLock<&'static [shapes::ShapeDef]> = std::sync::OnceLock::new();
+    *R.get_or_init(|| shape_source::resolve("nc", nc_shapes::SHAPES))
+}
+
+/// The NC profile index in force. Loaded together with the shapes, since an
+/// index and a table from different releases would run the wrong rules.
+pub fn nc_profile_index() -> (&'static [(&'static str, &'static str)], &'static [&'static str]) {
+    static R: std::sync::OnceLock<(
+        &'static [(&'static str, &'static str)],
+        &'static [&'static str],
+    )> = std::sync::OnceLock::new();
+    *R.get_or_init(|| {
+        shape_source::resolve_profiles("nc", nc_profiles::PROFILE_IRIS, nc_profiles::PROFILES)
+    })
+}
+
+/// Run one NC profile's shapes against a dataset.
+///
+/// Separate from `validate_profile_local` so a caller can drive it with an
+/// explicit profile code, without depending on header detection.
+pub fn validate_nc_profile(
+    dataset: &cimdecoder::CimDataset,
+    profile: &str,
+    cfg: &Config,
+) -> Vec<Violation> {
+    bag::validate_profile(dataset, profile, nc_shapes(), cfg)
+}
+
 pub mod generated_p61968_13_geographicallocation_ap_con_complex_shacl;
 pub mod generated_p61970_301_diagramlayout_ap_con_complex_notsolvedmas_shacl;
 pub mod generated_p61970_301_diagramlayout_ap_con_complex_shacl;
@@ -196,6 +239,12 @@ pub fn validate_profile_local(dataset: &cimdecoder::CimDataset, profile: &str, c
     if !cfg.profiles.is_empty() && !cfg.profiles.iter().any(|p| p == profile) {
         return Vec::new();
     }
+    // NC profile codes cannot collide with CGMES ones, so one flat
+    // `Config::profiles` list carries both families.
+    if nc_profile_index().1.contains(&profile) {
+        return validate_nc_profile(dataset, profile, cfg);
+    }
+
     let mut v = match profile {
         "DL"   => validate_dl_local(dataset, cfg),
         "DY"   => validate_dy_local(dataset, cfg),
@@ -242,7 +291,7 @@ pub fn combined_config(
     let mut cfg = Config::default();
     for ds in per_file {
         let c = detect_config(ds);
-        for p in c.profiles {
+        for p in c.profiles.into_iter().chain(detect_nc_profiles(ds)) {
             if !cfg.profiles.contains(&p) {
                 cfg.profiles.push(p);
             }
@@ -269,8 +318,9 @@ pub fn validate_files(per_file: Vec<cimdecoder::CimDataset>, cfg: &Config) -> Ve
             .map(|ds| {
                 s.spawn(move || {
                     let mut v = validate_header(ds, cfg);
-                    let file_cfg = detect_config(ds);
-                    for profile in &file_cfg.profiles {
+                    let mut profiles = detect_config(ds).profiles;
+                    profiles.extend(detect_nc_profiles(ds));
+                    for profile in &profiles {
                         v.extend(validate_profile_local(ds, profile, cfg));
                     }
                     v

@@ -136,11 +136,20 @@ dependencies = [
 name = "cimoxide-gen"
 version = "0.3.3"
 dependencies = [
+ "cimoxide-schema",
  "glob",
  "proc-macro2",
  "quick-xml",
  "sha2",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "cimoxide-schema"
+version = "0.3.3"
+dependencies = [
+ "glob",
+ "quick-xml",
 ]
 
 [[package]]
@@ -158,6 +167,8 @@ dependencies = [
 name = "cimoxide-structs"
 version = "0.3.3"
 dependencies = [
+ "cimoxide-schema",
+ "criterion",
  "serde",
  "serde_json",
 ]
@@ -167,7 +178,9 @@ name = "cimoxide-validation"
 version = "0.3.3"
 dependencies = [
  "cimoxide-decoder",
+ "cimoxide-schema",
  "cimoxide-structs",
+ "criterion",
  "regex",
 ]
 

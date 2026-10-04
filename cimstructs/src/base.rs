@@ -2,7 +2,17 @@ use std::collections::HashMap;
 
 pub trait CimElement: Send + Sync {
     fn mrid(&self) -> &str;
+    /// Family-qualified name, e.g. `"Terminal"` (CGMES) or `"nc:Contingency"`.
+    /// This is the `CimDataset::by_type` key.
     fn type_name(&self) -> &'static str;
+    /// RDF namespace IRI of the declaring class, trailing delimiter included.
+    fn type_ns(&self) -> &'static str {
+        ""
+    }
+    /// Bare CIM class name, without the family qualifier.
+    fn local_name(&self) -> &'static str {
+        self.type_name()
+    }
     fn as_any(&self) -> &dyn std::any::Any;
     fn to_json_value(&self) -> serde_json::Value;
     fn to_block(&self) -> RdfBlock;
@@ -20,6 +30,8 @@ pub enum FieldValue {
 
 #[derive(Debug, Clone)]
 pub struct RdfBlock {
+    /// Family-qualified type name, matching `CimElement::type_name`. Unique
+    /// across families, so it is enough to re-dispatch a block on merge.
     pub type_name: String,
     pub mrid: String,
     pub fields: HashMap<String, FieldValue>,
@@ -57,6 +69,265 @@ impl RdfBlock {
                     self.fields.insert(k.clone(), v.clone());
                 }
             }
+        }
+    }
+}
+
+pub type ParseFn = fn(&RdfBlock) -> Box<dyn CimElement>;
+
+/// How a resolved class turns a block into an element.
+///
+/// A generated struct has a compiled constructor. A class described only by
+/// data cannot: `ParseFn` is a bare function pointer, and the generated rows
+/// only work because each is a distinct non-capturing closure with a constant
+/// index baked in. A table built at runtime has no such closures, so the
+/// `ClassDef` travels in the entry instead.
+#[derive(Clone, Copy)]
+pub enum Dispatch {
+    Typed(ParseFn),
+    Bag(&'static ClassDef),
+}
+
+#[derive(Clone, Copy)]
+pub struct TypeEntry {
+    pub type_name: &'static str,
+    pub dispatch: Dispatch,
+}
+
+impl TypeEntry {
+    /// Build the element. The branch lives here so the decoder's hot path has
+    /// one call site rather than a match at each of its two constructors.
+    pub fn parse(&self, b: &RdfBlock) -> Box<dyn CimElement> {
+        match self.dispatch {
+            Dispatch::Typed(f) => f(b),
+            Dispatch::Bag(class) => Box::new(GenericElement::from_block(class, b)),
+        }
+    }
+}
+
+/// Namespace-aware type dispatch.
+///
+/// RDF/XML identifies a class by `(namespace, local name)`, and the two profile
+/// families overlap on 164 local names — both even spell the prefix `cim`, so
+/// only the xmlns binding distinguishes them. Lookup is therefore keyed on the
+/// resolved namespace, with a bare-name fallback that preserves the historical
+/// behaviour for files whose prefixes are unbound or unexpected.
+pub struct TypeRegistry {
+    by_ns: HashMap<&'static str, HashMap<&'static str, TypeEntry>>,
+    bare: HashMap<&'static str, TypeEntry>,
+    by_type_name: HashMap<&'static str, TypeEntry>,
+}
+
+impl TypeRegistry {
+    pub fn from_rows(
+        rows: &'static [(&'static str, &'static str, &'static str, ParseFn)],
+        bare_rows: &'static [(&'static str, &'static str, ParseFn)],
+    ) -> Self {
+        let mut by_ns: HashMap<&'static str, HashMap<&'static str, TypeEntry>> = HashMap::new();
+        let mut by_type_name = HashMap::new();
+        for (ns, local, type_name, parse) in rows {
+            let entry = TypeEntry { type_name, dispatch: Dispatch::Typed(*parse) };
+            by_ns.entry(ns).or_default().insert(local, entry);
+            by_type_name.insert(*type_name, entry);
+        }
+        let bare = bare_rows
+            .iter()
+            .map(|(local, type_name, parse)| {
+                (*local, TypeEntry { type_name, dispatch: Dispatch::Typed(*parse) })
+            })
+            .collect();
+        Self { by_ns, bare, by_type_name }
+    }
+
+    /// Register a family described by data rather than generated structs.
+    ///
+    /// Deliberately not added to the bare-name fallback: an unbound prefix
+    /// means the families cannot be told apart, and the historical
+    /// default-family guess is the safer one.
+    pub fn add_bag_family(&mut self, classes: &'static [ClassDef]) {
+        for class in classes {
+            let entry = TypeEntry {
+                type_name: class.qualified,
+                dispatch: Dispatch::Bag(class),
+            };
+            self.by_ns
+                .entry(class.ns)
+                .or_default()
+                .insert(class.local, entry);
+            self.by_type_name.insert(class.qualified, entry);
+        }
+    }
+
+    /// Dispatch table for one namespace, resolved once per XML prefix per file.
+    pub fn ns_table(&self, ns: &str) -> Option<&HashMap<&'static str, TypeEntry>> {
+        self.by_ns.get(ns)
+    }
+
+    pub fn bare(&self) -> &HashMap<&'static str, TypeEntry> {
+        &self.bare
+    }
+
+    /// Re-dispatch an already-decoded element, used when merging datasets.
+    pub fn by_type_name(&self, name: &str) -> Option<TypeEntry> {
+        self.by_type_name.get(name).copied()
+    }
+}
+
+// --- Property-bag elements ---------------------------------------------------
+
+/// How an attribute's value is carried in RDF/XML.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttrKind {
+    /// A literal, written as element text.
+    Literal,
+    /// A reference to another object, written as `rdf:resource`.
+    Association,
+    /// An enumeration value, written as `rdf:resource` to a vocabulary IRI.
+    Enum,
+}
+
+/// One attribute of a class, as the schema declares it.
+#[derive(Debug)]
+pub struct AttrDef {
+    /// `Class.attr`, matching the key in [`RdfBlock::fields`].
+    pub id: &'static str,
+    pub ns: &'static str,
+    pub kind: AttrKind,
+    /// xsd type for literals, target class for associations and enums.
+    pub range: &'static str,
+    pub is_list: bool,
+    /// Profile codes that carry this attribute.
+    pub origins: &'static [&'static str],
+}
+
+/// A class represented as a property bag rather than a generated struct.
+#[derive(Debug)]
+pub struct ClassDef {
+    pub ns: &'static str,
+    pub local: &'static str,
+    /// Family-qualified name; the `CimDataset::by_type` key.
+    pub qualified: &'static str,
+    /// Index of the super class within the same table.
+    pub super_class: Option<usize>,
+    pub concrete: bool,
+    pub attrs: &'static [AttrDef],
+    pub origins: &'static [&'static str],
+}
+
+impl ClassDef {
+    pub fn attr(&self, id: &str) -> Option<&'static AttrDef> {
+        self.attrs.iter().find(|a| a.id == id)
+    }
+}
+
+/// An element of a family that is not generated as typed structs.
+///
+/// Attributes are addressed by their RDF id (`"IdentifiedObject.mRID"`), the
+/// same key [`RdfBlock::fields`] uses.
+#[derive(Debug, Clone)]
+pub struct GenericElement {
+    class: &'static ClassDef,
+    mrid: String,
+    fields: HashMap<String, FieldValue>,
+}
+
+impl GenericElement {
+    pub fn from_block(class: &'static ClassDef, b: &RdfBlock) -> Self {
+        Self { class, mrid: b.mrid.clone(), fields: b.fields.clone() }
+    }
+
+    pub fn class_def(&self) -> &'static ClassDef {
+        self.class
+    }
+
+    pub fn fields(&self) -> &HashMap<String, FieldValue> {
+        &self.fields
+    }
+
+    pub fn get(&self, attr: &str) -> Option<&FieldValue> {
+        self.fields.get(attr)
+    }
+
+    pub fn get_str(&self, attr: &str) -> Option<&str> {
+        match self.fields.get(attr) {
+            Some(FieldValue::Text(s)) => Some(s.as_str()),
+            Some(FieldValue::TextList(v)) => v.first().map(String::as_str),
+            _ => None,
+        }
+    }
+
+    pub fn get_f64(&self, attr: &str) -> Option<f64> {
+        self.get_str(attr)?.parse().ok()
+    }
+
+    pub fn get_bool(&self, attr: &str) -> Option<bool> {
+        match self.get_str(attr)? {
+            "true" | "1" => Some(true),
+            "false" | "0" => Some(false),
+            _ => None,
+        }
+    }
+
+    /// Referenced MRIDs.
+    ///
+    /// Always a slice, even where the schema says the association is 1:1 — CGMES
+    /// has widened 1:1 to 1:many between versions, and a caller written against
+    /// a slice does not have to change when that happens.
+    pub fn get_refs(&self, attr: &str) -> &[String] {
+        match self.fields.get(attr) {
+            Some(FieldValue::Resource(s)) => std::slice::from_ref(s),
+            Some(FieldValue::ResourceList(v)) => v.as_slice(),
+            _ => &[],
+        }
+    }
+
+    /// First referenced MRID, for associations known to be single-valued.
+    pub fn get_ref(&self, attr: &str) -> Option<&str> {
+        self.get_refs(attr).first().map(String::as_str)
+    }
+}
+
+fn field_to_json(v: &FieldValue) -> serde_json::Value {
+    match v {
+        FieldValue::Text(s) | FieldValue::Resource(s) => serde_json::Value::String(s.clone()),
+        FieldValue::TextList(v) | FieldValue::ResourceList(v) => {
+            serde_json::Value::Array(v.iter().cloned().map(serde_json::Value::String).collect())
+        }
+    }
+}
+
+impl CimElement for GenericElement {
+    fn mrid(&self) -> &str {
+        &self.mrid
+    }
+    fn type_name(&self) -> &'static str {
+        self.class.qualified
+    }
+    fn type_ns(&self) -> &'static str {
+        self.class.ns
+    }
+    fn local_name(&self) -> &'static str {
+        self.class.local
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn to_json_value(&self) -> serde_json::Value {
+        // `id` matches the identity field the generated structs serialise, so
+        // both representations look the same to a JSON or Python consumer.
+        let mut map = serde_json::Map::with_capacity(self.fields.len() + 1);
+        map.insert("id".to_string(), serde_json::Value::String(self.mrid.clone()));
+        for (k, v) in &self.fields {
+            map.insert(k.clone(), field_to_json(v));
+        }
+        serde_json::Value::Object(map)
+    }
+    fn to_block(&self) -> RdfBlock {
+        RdfBlock {
+            type_name: self.class.qualified.to_string(),
+            mrid: self.mrid.clone(),
+            fields: self.fields.clone(),
+            duplicate_fields: std::collections::HashSet::new(),
         }
     }
 }

@@ -1,23 +1,50 @@
 mod generator;
-mod schema;
 mod shacl;
+
+// Keeps `crate::schema::...` working across the generator and shacl modules.
+use cimschema as schema;
 
 use std::path::Path;
 
-const DEFAULT_SCHEMA: &str =
-    "application-profiles-library/CGMES/RDFS/61970-600-2_*-AP-Voc-RDFS2020.rdf";
 const DEFAULT_OUTPUT: &str = "cimstructs/src";
 const DEFAULT_SHACL: &str =
     "application-profiles-library/CGMES/SHACL/*.ttl";
+const DEFAULT_NC_SHACL: &str = "application-profiles-library/NCP/SHACL/*.ttl";
 const DEFAULT_SHACL_OUTPUT: &str = "cimvalidation/src";
 const DEFAULT_SPARQL_DIR: &str = "cimvalidation/src/sparql";
 const DEFAULT_PYTHON_STUBS_OUTPUT: &str = "cimoxide-py/python/cimoxide";
 
+fn print_usage() {
+    eprintln!(
+        "cimgen — generate Rust sources from ENTSO-E RDFS and SHACL schemas
+
+Options:
+  --schema <glob>               CGMES RDFS glob
+  --nc-schema <glob>            NCP RDFS glob
+  --families cgmes,nc           families to generate (default: all)
+  --output <dir>                where generated structs are written
+  --shacl <glob>                SHACL TTL glob
+  --nc-shacl <glob>             NCP SHACL TTL glob (bag-family shape table)
+  --shacl-output <dir>          where generated validators are written
+  --python-stubs-output <dir>   where types.pyi is written
+  --skip-shacl                  do not generate SHACL validators
+  --skip-python-stubs           do not generate Python stubs
+  --skip-report                 suppress the SHACL skip report
+  --rule-report                 print the SPARQL rule coverage report
+  --verbose, -v                 log each file as it is parsed
+  --help, -h                    show this message"
+    );
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let mut schema = DEFAULT_SCHEMA.to_string();
+    let mut schema = schema::family::CGMES.default_schema.to_string();
+    let mut nc_schema = schema::family::NC.default_schema.to_string();
+    let mut families: Vec<&'static schema::family::Family> =
+        schema::family::FAMILIES.to_vec();
     let mut output = DEFAULT_OUTPUT.to_string();
     let mut shacl_glob: Option<String> = Some(DEFAULT_SHACL.to_string());
+    let mut nc_shacl_glob = DEFAULT_NC_SHACL.to_string();
     let mut shacl_output: Option<String> = Some(DEFAULT_SHACL_OUTPUT.to_string());
     let mut python_stubs_output: Option<String> = Some(DEFAULT_PYTHON_STUBS_OUTPUT.to_string());
     let mut verbose = false;
@@ -31,6 +58,24 @@ fn main() {
                 i += 1;
                 schema = args.get(i).cloned().unwrap_or_default();
             }
+            "--nc-schema" => {
+                i += 1;
+                nc_schema = args.get(i).cloned().unwrap_or_default();
+            }
+            "--families" => {
+                i += 1;
+                let list = args.get(i).cloned().unwrap_or_default();
+                families = Vec::new();
+                for name in list.split(',').filter(|s| !s.is_empty()) {
+                    match schema::family::by_id(name) {
+                        Some(f) => families.push(f),
+                        None => {
+                            eprintln!("unknown family: {name}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+            }
             "--output" => {
                 i += 1;
                 output = args.get(i).cloned().unwrap_or_default();
@@ -38,6 +83,10 @@ fn main() {
             "--shacl" => {
                 i += 1;
                 shacl_glob = args.get(i).cloned();
+            }
+            "--nc-shacl" => {
+                i += 1;
+                nc_shacl_glob = args.get(i).cloned().unwrap_or_default();
             }
             "--shacl-output" => {
                 i += 1;
@@ -50,6 +99,12 @@ fn main() {
             "--verbose" | "-v" => verbose = true,
             "--skip-report" => skip_report = true,
             "--rule-report" => rule_report = true,
+            "--skip-shacl" => shacl_output = None,
+            "--skip-python-stubs" => python_stubs_output = None,
+            "--help" | "-h" => {
+                print_usage();
+                return;
+            }
             other => {
                 eprintln!("unknown argument: {other}");
                 std::process::exit(1);
@@ -63,13 +118,34 @@ fn main() {
         eprintln!("output dir     : {output}");
     }
 
-    let mut spec = match schema::import::import_schema_files(&schema, verbose) {
+    if !families.iter().any(|f| f.typed) {
+        eprintln!("--families must include the typed family (cgmes)");
+        std::process::exit(1);
+    }
+
+    let mut spec = match schema::import::import_schema_files(&schema, &schema::family::CGMES, verbose) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("error importing schema: {e}");
             std::process::exit(1);
         }
     };
+
+    // Property-bag families are imported into their own specification: the
+    // prefix-to-namespace maps collide (both bind `cim`, to different IRIs), so
+    // a merged import would silently mis-namespace whichever parsed second.
+    let mut bag_specs: Vec<schema::model::CimSpecification> = Vec::new();
+    for family in families.iter().filter(|f| !f.typed) {
+        let pattern = if family.id == "nc" { &nc_schema } else { family.default_schema };
+        match schema::import::import_schema_files(pattern, family, verbose) {
+            Ok(s) => bag_specs.push(s),
+            Err(e) => {
+                eprintln!("error importing {} schema: {e}", family.id);
+                std::process::exit(1);
+            }
+        }
+    }
+    let bags: Vec<&schema::model::CimSpecification> = bag_specs.iter().collect();
 
     if verbose {
         eprintln!(
@@ -80,7 +156,7 @@ fn main() {
         );
     }
 
-    if let Err(e) = generator::rust_gen::generate_rust(&mut spec, Path::new(&output)) {
+    if let Err(e) = generator::rust_gen::generate_rust(&mut spec, &bags, Path::new(&output)) {
         eprintln!("error generating code: {e}");
         std::process::exit(1);
     }
@@ -90,9 +166,28 @@ fn main() {
         spec.types.len(),
         spec.enums.len()
     );
+    for bag in &bags {
+        eprintln!(
+            "generated {} {} classes into {output}/{}_classes.rs",
+            bag.types.len(),
+            bag.family.id,
+            bag.family.id
+        );
+    }
 
-    if let (Some(glob), Some(out_dir)) = (shacl_glob, shacl_output) {
+    if let (Some(glob), Some(out_dir)) = (shacl_glob, shacl_output.clone()) {
         run_shacl(&spec, &glob, &out_dir, verbose, skip_report, rule_report);
+    }
+
+    // Bag families get a shape *table* rather than generated check functions:
+    // there is no struct to downcast to, so nothing to generate against.
+    if let Some(out_dir) = shacl_output {
+        // The typed family's spec goes along: NCP's association value-type
+        // lists name CGMES classes beside NC ones, and a reference can decode
+        // as either.
+        for bag in &bags {
+            run_bag_shacl(bag, &[&spec], &nc_shacl_glob, &out_dir, verbose, skip_report);
+        }
     }
 
     if let Some(out_dir) = python_stubs_output {
@@ -152,7 +247,7 @@ fn run_shacl(
         }
     }
 
-    let simplify_skips = shacl::simplify::simplify(&mut results);
+    let simplify_skips = shacl::simplify::simplify(&mut results, &schema::family::CGMES);
 
     let (total_checks, mut file_skips) = match shacl::codegen::generate_validation(&results, spec, Path::new(out_dir)) {
         Ok(r) => r,
@@ -302,6 +397,87 @@ fn run_shacl(
                 }
             }
         }
+    }
+}
+
+
+/// Generate the shape table for one property-bag family.
+///
+/// Unlike `run_shacl`, the profile-to-file mapping is read rather than
+/// hardcoded: `NCP/SHACL/Validation/` ships one manifest per profile whose
+/// `owl:imports` list names exactly the constraint files that apply.
+fn run_bag_shacl(
+    spec: &schema::model::CimSpecification,
+    others: &[&schema::model::CimSpecification],
+    glob: &str,
+    out_dir: &str,
+    verbose: bool,
+    skip_report: bool,
+) {
+    let shacl_dir = std::path::Path::new(glob)
+        .parent()
+        .unwrap_or(std::path::Path::new("."));
+
+    let mut collector = shacl::skip::SkipCollector::new();
+    let table = match schema::shacl::resolve::load_shape_table(
+        spec.family,
+        spec,
+        others,
+        shacl_dir,
+        &mut collector,
+    ) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("warning: skipping {} shapes: {e}", spec.family.id);
+            return;
+        }
+    };
+
+    let write = |name: &str, code: String| {
+        let path = std::path::Path::new(out_dir).join(name);
+        if let Err(e) = std::fs::write(&path, code) {
+            eprintln!("error writing {}: {e}", path.display());
+            std::process::exit(1);
+        }
+        path
+    };
+
+    let shapes_path = write(
+        &format!("{}_shapes.rs", spec.family.id),
+        generator::shapes_gen::render_shapes(spec.family.id, &table.shapes),
+    );
+    let profiles_path = write(
+        &format!("{}_profiles.rs", spec.family.id),
+        generator::shapes_gen::render_profiles_from(&table.profile_iris, &table.profiles),
+    );
+
+    let skips = collector.into_entries();
+    eprintln!(
+        "{} shapes: {} shapes, {} checks, {} closed, {} skipped → {}",
+        spec.family.id,
+        table.stats.shapes,
+        table.stats.checks,
+        table.stats.closed,
+        skips.len(),
+        shapes_path.display(),
+    );
+    eprintln!(
+        "{} profiles: {} descriptors → {}",
+        spec.family.id,
+        table.profiles.len(),
+        profiles_path.display()
+    );
+
+    if skip_report {
+        for e in &skips {
+            eprintln!("{}\t{e}", spec.family.id);
+        }
+    }
+    if verbose || skip_report {
+        let mut counts: std::collections::HashMap<&'static str, usize> =
+            std::collections::HashMap::new();
+        shacl::skip::accumulate_counts(&mut counts, &skips);
+        shacl::skip::print_global_summary(&counts);
     }
 }
 

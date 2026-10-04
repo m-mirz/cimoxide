@@ -122,6 +122,17 @@ pub fn dataset_from_json(json: &str) -> Result<CimDataset, Box<dyn Error>> {
     Ok(ds)
 }
 
+/// True when the element belongs to a profile family this encoder cannot write.
+///
+/// Only the default family is generated as typed structs with per-attribute
+/// namespace tables, which is what the RDF/XML writer needs. Other families
+/// carry a qualified type name (`nc:Contingency`); emitting one as
+/// `<cim:nc:Contingency>` would produce a malformed document, so they are
+/// skipped and reported instead.
+fn is_foreign_family(type_name: &str) -> bool {
+    type_name.contains(':')
+}
+
 pub fn dataset_to_xml(ds: &CimDataset) -> Result<String, Box<dyn Error>> {
     let mut out = String::new();
     out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
@@ -134,10 +145,15 @@ pub fn dataset_to_xml(ds: &CimDataset) -> Result<String, Box<dyn Error>> {
     let mut mrids: Vec<&str> = ds.entries.keys().map(String::as_str).collect();
     mrids.sort();
 
+    let mut skipped = 0usize;
     for mrid in mrids {
         let entry = &ds.entries[mrid];
         let block = &entry.block;
         let type_name = block.type_name.as_str();
+        if is_foreign_family(type_name) {
+            skipped += 1;
+            continue;
+        }
         let ns = prefix_for_type(type_name);
         write!(out, "  <{ns}:{type_name} rdf:about=\"#{}\">", escape_attr(mrid))?;
 
@@ -158,6 +174,11 @@ pub fn dataset_to_xml(ds: &CimDataset) -> Result<String, Box<dyn Error>> {
     }
 
     out.push_str("</rdf:RDF>\n");
+    if skipped > 0 {
+        eprintln!(
+            "warning: skipped {skipped} element(s) from a profile family this encoder cannot write yet"
+        );
+    }
     Ok(out)
 }
 
@@ -223,6 +244,13 @@ pub fn dataset_to_xml_for_profile(
     for mrid in mrids {
         let entry = &ds.entries[mrid];
         let type_name = entry.element.type_name();
+
+        // Another family's element has no CGMES profile membership and no entry
+        // in these tables, so it would fall through to `write_carried_fields`
+        // and emit nothing. Skip it outright rather than rely on that.
+        if is_foreign_family(type_name) {
+            continue;
+        }
 
         let type_origins: &[&str] = type_map.get(type_name).copied().unwrap_or(&[]);
         if !type_origins.contains(&profile_code) {

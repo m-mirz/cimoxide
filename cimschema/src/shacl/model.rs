@@ -86,6 +86,18 @@ pub struct ShapeInfo {
     pub constraints: Vec<ConstraintInfo>,
     /// Nested sh:property shapes.
     pub properties: Vec<ShapeInfo>,
+    /// `sh:closed true` — the shape's `sh:property` paths, plus
+    /// `sh:ignoredProperties`, are the *only* properties the profile allows on
+    /// the target class. Simplified IRIs, as [`Self::path`] uses.
+    ///
+    /// Read straight off the NodeShape rather than from [`Self::properties`]:
+    /// the allowed set is written as constraint-less `[ sh:path X ]` blank
+    /// nodes, which `build_property_shape` drops for having nothing to check.
+    pub closed: Option<Vec<String>>,
+    /// `sh:deactivated true` — the schema switched this shape off. Carried
+    /// rather than dropped at parse time so the simplification stage can
+    /// account for it like any other skip.
+    pub deactivated: bool,
 }
 
 /// All shapes extracted from one TTL file.
@@ -94,4 +106,12 @@ pub struct FileResults {
     /// TTL base file name without extension (e.g. "61970-600-2_Equipment-AP-Con-Simple-SHACL").
     pub file_name: String,
     pub shapes: Vec<ShapeInfo>,
+    /// The file's own `@prefix` declarations, prefix → IRI.
+    ///
+    /// Shapes carry simplified IRIs (`"cim:Equipment"`), and the prefix alone
+    /// does not identify a class: NCP binds `cim` to `https://cim.ucaiug.io/ns#`
+    /// while CGMES binds it to `http://iec.ch/TC57/CIM100#`, and the two
+    /// families overlap on 164 local names. Resolving a target or a path
+    /// therefore needs the map that was in scope where it was written.
+    pub prefixes: HashMap<String, String>,
 }

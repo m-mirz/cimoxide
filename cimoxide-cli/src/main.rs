@@ -356,8 +356,20 @@ fn cmd_validate(args: &[String]) {
         for v in &violations {
             println!("[{}] {} — {} ({})", v.severity, v.rule_id, v.message, v.object_id);
         }
-        eprintln!("{} violation(s) found.", violations.len());
-        process::exit(2);
+        // sh:Info is advisory and does not fail the run. NC leans on it
+        // heavily — 842 occurrences against CGMES's 7, nearly all of them the
+        // sh:closed "property not in profile" rule — so treating every finding
+        // as a failure would fail almost every real NC dataset.
+        let failures = violations.iter().filter(|v| v.severity != "sh:Info").count();
+        let advisory = violations.len() - failures;
+        if advisory > 0 {
+            eprintln!("{failures} violation(s), {advisory} advisory (sh:Info).");
+        } else {
+            eprintln!("{failures} violation(s) found.");
+        }
+        if failures > 0 {
+            process::exit(2);
+        }
     }
 }
 

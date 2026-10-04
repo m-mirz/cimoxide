@@ -1,5 +1,5 @@
 [workspace]
-members = ["cimoxide", "cimgen", "cimstructs", "cimdecoder", "cimvalidation", "cimconvert", "cimsparql", "cimoxide-cli"]
+members = ["cimoxide", "cimgen", "cimschema", "cimstructs", "cimdecoder", "cimvalidation", "cimconvert", "cimsparql", "cimoxide-cli"]
 exclude = ["cimoxide-py"]
 resolver = "2"
 
@@ -17,6 +17,7 @@ categories = ["science", "parsing"]
 # Internal crates carry both a path (used inside the workspace) and a version
 # (used by crates.io once published) — a path-only dependency cannot be published.
 [workspace.dependencies]
+cimoxide-schema = { path = "cimschema", version = "0.3.3" }
 cimoxide-structs = { path = "cimstructs", version = "0.3.3" }
 cimoxide-decoder = { path = "cimdecoder", version = "0.3.3" }
 cimoxide-validation = { path = "cimvalidation", version = "0.3.3" }

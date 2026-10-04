@@ -10,8 +10,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 cimoxide-decoder    = { path = "../cimdecoder" }
-cimoxide-structs    = { path = "../cimstructs" }
-cimoxide-validation = { path = "../cimvalidation" }
+cimoxide-structs    = { path = "../cimstructs", features = ["dynamic-schema"] }
+cimoxide-validation = { path = "../cimvalidation", features = ["dynamic-shapes"] }
 cimoxide-convert    = { path = "../cimconvert" }
 cimoxide-sparql     = { path = "../cimsparql", optional = true }
 pyo3          = { version = "0.25", features = ["extension-module", "abi3-py39"] }

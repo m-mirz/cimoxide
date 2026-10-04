@@ -17,8 +17,13 @@ cimoxide-structs = { workspace = true }
 quick-xml  = { version = "0.37", features = ["encoding"] }
 
 [dev-dependencies]
+cimoxide-structs = { workspace = true, features = ["dynamic-schema"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]
 name = "real_grid"
+harness = false
+
+[[bench]]
+name = "nc_decode"
 harness = false

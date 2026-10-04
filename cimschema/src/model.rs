@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use super::family::Family;
+
 pub const CGMES_VERSION_3_0_0: &str = "3.0.0";
 
 pub const DATA_TYPE_STRING: &str = "String";
@@ -136,8 +138,10 @@ pub struct CimOntology {
     pub priority: u32,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct CimSpecification {
+    /// The profile family this specification was imported from.
+    pub family: &'static Family,
     pub specification_namespaces: HashMap<String, String>,
     pub profile_namespaces: HashMap<String, String>,
     pub ontologies: HashMap<String, CimOntology>,
@@ -150,10 +154,18 @@ pub struct CimSpecification {
 }
 
 impl CimSpecification {
-    pub fn new() -> Self {
+    pub fn new(family: &'static Family) -> Self {
         CimSpecification {
+            family,
+            specification_namespaces: HashMap::new(),
+            profile_namespaces: HashMap::new(),
+            ontologies: HashMap::new(),
+            ontology_list: Vec::new(),
+            types: HashMap::new(),
+            enums: HashMap::new(),
+            primitive_types: HashMap::new(),
+            cim_datatypes: HashMap::new(),
             cgmes_version: CGMES_VERSION_3_0_0.to_string(),
-            ..Default::default()
         }
     }
 }

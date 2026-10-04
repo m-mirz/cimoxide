@@ -1,0 +1,17 @@
+[package]
+name = "cimoxide-schema"
+description = "Parser for ENTSO-E RDFS application profile schemas (CGMES, NCP) into a typed specification model"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories = ["parsing", "science"]
+
+[lib]
+name = "cimschema"
+
+[dependencies]
+quick-xml = { version = "0.37", features = ["encoding"] }
+glob = "0.3"

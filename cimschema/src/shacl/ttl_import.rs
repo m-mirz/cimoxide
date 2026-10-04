@@ -16,9 +16,9 @@ pub fn import_ttl_file(path: &Path) -> Result<FileResults, Box<dyn std::error::E
         .unwrap_or("")
         .to_string();
 
-    let graph = parse_turtle(&src)?;
+    let (graph, prefixes) = parse_turtle(&src)?;
     let shapes = extract_shapes(&graph);
-    Ok(FileResults { file_name, shapes })
+    Ok(FileResults { file_name, shapes, prefixes })
 }
 
 // ---------------------------------------------------------------------------
@@ -228,6 +228,13 @@ impl<'a> Lexer<'a> {
             "a" => Token::A,
             "true" => Token::Bool(true),
             "false" => Token::Bool(false),
+            // SPARQL-style declarations, which Turtle 1.1 also allows: no `@`
+            // and no terminating dot. NCP's DatasetMetadata file is written
+            // this way, and it is imported by 17 of the 18 profile manifests,
+            // so failing to recognise these loses every DM prefix binding and
+            // with it every DM target class.
+            "PREFIX" => Token::PrefixDecl,
+            "BASE" => Token::BaseDecl,
             _ => Token::PrefixedName(s),
         }
     }
@@ -600,11 +607,13 @@ impl Parser {
     }
 }
 
-fn parse_turtle(src: &str) -> Result<Graph, Box<dyn std::error::Error>> {
+fn parse_turtle(
+    src: &str,
+) -> Result<(Graph, HashMap<String, String>), Box<dyn std::error::Error>> {
     let tokens = Lexer::new(src).tokenize();
     let mut parser = Parser::new(tokens);
     parser.parse();
-    Ok(parser.graph)
+    Ok((parser.graph, parser.prefixes))
 }
 
 // ---------------------------------------------------------------------------
@@ -737,7 +746,48 @@ fn build_node_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
         description,
         constraints,
         properties,
+        closed: closed_properties(g, id),
+        deactivated: is_deactivated(g, id),
     })
+}
+
+/// The allowed property set of an `sh:closed true` NodeShape, or `None` when
+/// the shape is not closed.
+///
+/// Deliberately re-reads `sh:property` instead of using the already-built
+/// property shapes: the allowed set is written as `[ sh:path X ]` blank nodes
+/// carrying no constraint, and `build_property_shape` returns `None` for those
+/// because it has nothing to check. They are exactly what is needed here.
+fn closed_properties(g: &Graph, id: &str) -> Option<Vec<String>> {
+    let closed = match get_one(g, id, "sh:closed") {
+        Some(RdfVal::Bool(b)) => *b,
+        _ => false,
+    };
+    if !closed {
+        return None;
+    }
+    let mut allowed: Vec<String> = Vec::new();
+    for prop_id in collect_iri_list(g, id, "sh:property") {
+        allowed.extend(extract_path(g, &prop_id));
+    }
+    // sh:ignoredProperties is a collection of bare predicate IRIs (in practice
+    // just rdf:type) that closedness must not flag.
+    for val in get_all(g, id, "sh:ignoredProperties") {
+        if let Some(items) = val.as_list() {
+            allowed.extend(items.iter().filter_map(|i| i.as_iri()).map(str::to_string));
+        }
+    }
+    allowed.sort();
+    allowed.dedup();
+    Some(allowed)
+}
+
+/// `sh:deactivated true` — the schema switched this shape off.
+///
+/// Honoured for both node and property shapes: in NCP it appears on property
+/// shapes that would otherwise contribute a live `sh:in` check.
+fn is_deactivated(g: &Graph, id: &str) -> bool {
+    matches!(get_one(g, id, "sh:deactivated"), Some(RdfVal::Bool(true)))
 }
 
 /// Extract compound node constraints (sh:or, sh:and, sh:xone) from a NodeShape.
@@ -1226,6 +1276,32 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
         });
     }
 
+    // sh:qualifiedValueShape + sh:qualifiedMinCount — "at least N of this
+    // property's values satisfy the nested shape". NCP uses it only with a
+    // nested sh:in, to assert conformance to one of a set of profile IRIs.
+    if let Some(qmin) = get_one(g, id, "sh:qualifiedMinCount").and_then(|v| v.as_int()) {
+        if let Some(shape_id) = get_one(g, id, "sh:qualifiedValueShape").and_then(|v| v.as_iri()) {
+            // The nested shape carries no sh:path of its own; the outer
+            // constraint's path is the one that applies.
+            let branch = extract_branch_constraints(g, shape_id);
+            if !branch.is_empty() {
+                let mut payload = HashMap::new();
+                payload.insert("qualifiedMinCount".to_string(), ShaclValue::Int(qmin));
+                payload.insert("shape".to_string(), ShaclValue::Shapes(vec![branch]));
+                constraints.push(ConstraintInfo {
+                    path: path.clone(),
+                    severity: severity.clone(),
+                    message: message.clone(),
+                    name: name.clone(),
+                    description: description.clone(),
+                    component: "sh:QualifiedMinCountConstraintComponent".to_string(),
+                    payload,
+                    rule_id: id.to_string(),
+                });
+            }
+        }
+    }
+
     if constraints.is_empty() {
         return None;
     }
@@ -1238,14 +1314,24 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
         description,
         constraints,
         properties: Vec::new(),
+        closed: None,
+        deactivated: is_deactivated(g, id),
     })
 }
 
 /// Extract the path from sh:path on a shape — returns simplified IRI segments.
-/// Inverse paths are encoded as "^<forward-iri>" (e.g. "^cim:Terminal.TopologicalNode").
-/// Keep this prefix in sync with codegen.rs's `starts_with('^')` inverse-path routing —
-/// a mismatch silently degrades every inverse constraint into an
-/// "attribute not found in hierarchy" skip (this happened once already).
+///
+/// Two encodings ride inside the segment strings, both of which consumers must
+/// decode:
+///
+/// - `"^<iri>"` — an `sh:inversePath`, e.g. `"^cim:Terminal.TopologicalNode"`.
+/// - `"|<iri>|<iri>|…"` — an `sh:alternativePath`, one segment holding every
+///   branch. A branch may itself be inverse, so `"|^nc:A.b|nc:C.d"` is valid.
+///
+/// Keep both in sync with their consumers — codegen.rs routes on
+/// `starts_with('^')`, the bag interpreter on `starts_with('|')`. A mismatch
+/// silently degrades every affected constraint into an "attribute not found in
+/// hierarchy" skip rather than failing loudly (this happened once already).
 fn extract_path(g: &Graph, id: &str) -> Vec<String> {
     let val = match get_one(g, id, "sh:path") {
         Some(v) => v,
@@ -1253,9 +1339,11 @@ fn extract_path(g: &Graph, id: &str) -> Vec<String> {
     };
     match val {
         RdfVal::Iri(iri) if iri.starts_with("_:") => {
-            // Blank node — unpack sh:inversePath if present
+            // Blank node — unpack sh:inversePath or sh:alternativePath if present
             if let Some(RdfVal::Iri(inv)) = get_one(g, iri, "sh:inversePath") {
                 vec![format!("^{inv}")]
+            } else if let Some(alt) = alternative_path(g, iri) {
+                vec![alt]
             } else {
                 Vec::new()
             }
@@ -1266,9 +1354,11 @@ fn extract_path(g: &Graph, id: &str) -> Vec<String> {
             for item in items.iter() {
                 if let Some(iri) = item.as_iri() {
                     if iri.starts_with("_:") {
-                        // Blank-node path element — try to resolve as inverse path.
+                        // Blank-node path element — inverse or alternative.
                         if let Some(RdfVal::Iri(inv)) = get_one(g, iri, "sh:inversePath") {
                             segs.push(format!("^{inv}"));
+                        } else if let Some(alt) = alternative_path(g, iri) {
+                            segs.push(alt);
                         }
                         // Other blank-node element types (e.g. zero-or-more) are not yet resolved.
                     } else {
@@ -1280,6 +1370,32 @@ fn extract_path(g: &Graph, id: &str) -> Vec<String> {
         }
         _ => Vec::new(),
     }
+}
+
+/// Encode an `sh:alternativePath` collection as a single `"|a|b|c"` segment.
+///
+/// Branches are kept in the order the file writes them, because the message on
+/// these shapes enumerates the alternatives in that order and a reordered
+/// report would not match it.
+fn alternative_path(g: &Graph, bnode_id: &str) -> Option<String> {
+    let items = get_one(g, bnode_id, "sh:alternativePath")?.as_list()?;
+    let mut branches: Vec<String> = Vec::with_capacity(items.len());
+    for item in items {
+        let iri = item.as_iri()?;
+        if iri.starts_with("_:") {
+            // A branch can be an inverse path in its own right.
+            match get_one(g, iri, "sh:inversePath") {
+                Some(RdfVal::Iri(inv)) => branches.push(format!("^{inv}")),
+                _ => return None,
+            }
+        } else {
+            branches.push(iri.to_string());
+        }
+    }
+    if branches.is_empty() {
+        return None;
+    }
+    Some(format!("|{}", branches.join("|")))
 }
 
 /// Collect all IRI values for a predicate, including from List objects.
@@ -1334,4 +1450,60 @@ fn nested_shape_ids(g: &Graph, id: &str) -> Vec<String> {
 fn get_str(g: &Graph, subj: &str, pred: &str) -> Option<String> {
     get_one(g, subj, pred).and_then(|v| v.as_str().map(str::to_string)
         .or_else(|| v.as_iri().map(|s| s.to_string())))
+}
+
+// ---------------------------------------------------------------------------
+// Profile manifests
+// ---------------------------------------------------------------------------
+
+/// One NCP validation manifest: which profile, and which constraint files it
+/// pulls in.
+///
+/// `NCP/SHACL/Validation/` ships 18 of these, one per profile, and they are the
+/// authority on which shapes apply to which profile. CGMES has no equivalent —
+/// `cimvalidation/src/lib.rs` hardcodes the mapping as ten hand-written
+/// functions — so reading them replaces code with data rather than adding a
+/// second source of truth.
+#[derive(Debug)]
+pub struct Manifest {
+    /// `dcat:keyword`, the profile code (`"CO"`, `"ER"`, …; `"ALL"` for the
+    /// combined manifest).
+    pub profile: String,
+    /// Base file names of the imported constraint files, extension stripped.
+    /// `owl:imports` gives absolute GitHub URLs; only the file name is usable
+    /// against a local checkout.
+    pub imports: Vec<String>,
+}
+
+/// Read one validation manifest.
+pub fn import_manifest(path: &Path) -> Result<Manifest, Box<dyn std::error::Error>> {
+    let src = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let (graph, _) = parse_turtle(&src)?;
+
+    let mut profile = String::new();
+    let mut imports = Vec::new();
+    for pairs in graph.values() {
+        for (pred, val) in pairs {
+            match (pred.as_str(), val) {
+                ("dcat:keyword", RdfVal::Str(s)) if profile.is_empty() && !s.is_empty() => {
+                    profile = s.clone();
+                }
+                ("owl:imports", RdfVal::Iri(iri)) => {
+                    // An absolute URL that no prefix matched stays wrapped in
+                    // angle brackets by `simplify`.
+                    let trimmed = iri.trim_start_matches('<').trim_end_matches('>');
+                    let file = trimmed.rsplit('/').next().unwrap_or(trimmed);
+                    imports.push(file.trim_end_matches(".ttl").to_string());
+                }
+                _ => {}
+            }
+        }
+    }
+    if profile.is_empty() {
+        return Err(format!("no dcat:keyword in {}", path.display()).into());
+    }
+    imports.sort();
+    imports.dedup();
+    Ok(Manifest { profile, imports })
 }
