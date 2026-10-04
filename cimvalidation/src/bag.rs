@@ -42,32 +42,6 @@ struct ReverseIndex<'a> {
 }
 
 impl<'a> ReverseIndex<'a> {
-    fn build(
-        ds: &'a CimDataset,
-        source: Source,
-        count_fields: &[&'static str],
-        list_fields: &[&'static str],
-    ) -> Self {
-        let mut idx = Self::default();
-        if count_fields.is_empty() && list_fields.is_empty() {
-            return idx;
-        }
-        for (mrid, entry) in &ds.entries {
-            let Some(f) = source.fields(entry) else { continue };
-            for field in count_fields {
-                for target in refs_of(f, field) {
-                    *idx.counts.entry((target.as_str(), *field)).or_insert(0) += 1;
-                }
-            }
-            for field in list_fields {
-                for target in refs_of(f, field) {
-                    idx.sources.entry((target.as_str(), *field)).or_default().push(mrid);
-                }
-            }
-        }
-        idx
-    }
-
     fn count(&self, mrid: &str, field: &'static str) -> u32 {
         self.counts.get(&(mrid, field)).copied().unwrap_or(0)
     }
@@ -525,72 +499,137 @@ fn check_closed(el: &Fields, class: &str, mrid: &str, closed: &ClosedShape, out:
     }
 }
 
-/// Which elements carry a given field, for `sh:targetSubjectsOf`.
-///
-/// `by_type` answers class targets directly, but nothing indexes elements by
-/// the fields they have. Scanning the dataset per shape is what the obvious
-/// implementation does, and it is O(elements x shapes): on a 20k-element
-/// dataset that cost 10 ms *for a profile whose shapes matched nothing*, since
-/// the scan happens before anything can be ruled out. One pass up front, over
-/// only the fields some active shape asks about, removes that.
-#[derive(Default)]
-struct SubjectIndex<'a> {
-    by_field: FastMap<&'static str, Vec<&'a String>>,
+/// A target element, resolved once per call: its mRID, its class, and the
+/// fields it is read through.
+#[derive(Clone, Copy)]
+struct Resolved<'a> {
+    mrid: &'a String,
+    class: &'static str,
+    fields: &'a Fields,
 }
 
-impl<'a> SubjectIndex<'a> {
-    fn build(ds: &'a CimDataset, source: Source, fields: &[&'static str]) -> Self {
-        let mut by_field: FastMap<&'static str, Vec<&'a String>> =
-            fields.iter().map(|f| (*f, Vec::new())).collect();
-        for (mrid, entry) in &ds.entries {
-            let Some(el) = source.fields(entry) else { continue };
-            for field in fields {
-                if el.contains_key(*field) {
-                    by_field.get_mut(field).expect("seeded above").push(mrid);
-                }
+/// Resolve `mrid` for `source`: `None` when it is missing or another family's
+/// element — e.g. a CGMES struct under an NC shape, whose attributes that
+/// family does not define and would report as absent.
+///
+/// # Panics
+///
+/// For a typed element of this source whose block was dropped: there is
+/// nothing left to read, and skipping it would report the element as valid.
+fn resolve_target<'a>(ds: &'a CimDataset, source: Source, mrid: &'a String) -> Option<Resolved<'a>> {
+    let entry = ds.entries.get(mrid)?;
+    if !source.owns(entry) {
+        return None;
+    }
+    let fields = source.fields(entry).unwrap_or_else(|| {
+        panic!(
+            "{mrid} ({}) has no fields to validate: its block was dropped \
+             (CimDataset::drop_blocks) before validation",
+            entry.element.type_name()
+        )
+    });
+    Some(Resolved { mrid, class: entry.element.type_name(), fields })
+}
+
+/// The reverse index and the `sh:targetSubjectsOf` index, built in one pass.
+///
+/// Both need a walk over every element, and that walk — random access into a
+/// map of every element, then into each one's fields — was most of their
+/// cost; one pass does it once. Only fields some active shape asks about are
+/// indexed, and nothing is scanned when no shape asks.
+///
+/// `sh:targetSubjectsOf` has no `by_type` to answer it, and scanning per shape
+/// is O(elements x shapes): on a 20k-element dataset that cost 10 ms for a
+/// profile whose shapes matched nothing.
+fn build_indexes<'a>(
+    ds: &'a CimDataset,
+    source: Source,
+    count_fields: &[&'static str],
+    list_fields: &[&'static str],
+    subject_fields: &[&'static str],
+) -> (ReverseIndex<'a>, FastMap<&'static str, Vec<Resolved<'a>>>) {
+    let mut reverse = ReverseIndex::default();
+    let mut subjects: FastMap<&'static str, Vec<Resolved<'a>>> =
+        subject_fields.iter().map(|f| (*f, Vec::new())).collect();
+    if count_fields.is_empty() && list_fields.is_empty() && subject_fields.is_empty() {
+        return (reverse, subjects);
+    }
+    for (mrid, entry) in &ds.entries {
+        let Some(f) = source.fields(entry) else { continue };
+        for field in count_fields {
+            for target in refs_of(f, field) {
+                *reverse.counts.entry((target.as_str(), *field)).or_insert(0) += 1;
             }
         }
-        Self { by_field }
+        for field in list_fields {
+            for target in refs_of(f, field) {
+                reverse.sources.entry((target.as_str(), *field)).or_default().push(mrid);
+            }
+        }
+        for field in subject_fields {
+            if f.contains_key(*field) {
+                let r = Resolved { mrid, class: entry.element.type_name(), fields: f };
+                subjects.get_mut(field).expect("seeded above").push(r);
+            }
+        }
     }
-
-    fn subjects(&self, field: &'static str) -> &[&'a String] {
-        self.by_field.get(field).map_or(&[], Vec::as_slice)
-    }
+    (reverse, subjects)
 }
 
-/// Every mRID a shape's targets select, in `by_type` order.
+/// Every element a shape's targets select, in `by_type` order — for a shape
+/// that mixes target kinds; the others are walked element-major in
+/// [`validate_shapes`].
 ///
 /// That order is reproducible from run to run: decoding appends in document
-/// order, and `merge` walks a map whose hasher has a fixed seed. Sorting per
-/// shape for determinism cost up to 30% on profiles with few shapes per class.
-///
-/// Borrowed rather than cloned: cloning every mRID for every shape was the
-/// interpreter's largest avoidable cost on datasets with many small elements.
-fn targets_of<'a>(ds: &'a CimDataset, shape: &ShapeDef, subjects: &SubjectIndex<'a>) -> Vec<&'a String> {
-    let mut mrids: Vec<&String> = Vec::new();
-    let mut subjects_of = false;
+/// order, and `merge` walks a map whose hasher has a fixed seed. A class's
+/// elements are resolved once per call and shared with the element-major walk.
+fn targets_of<'a>(
+    ds: &'a CimDataset,
+    source: Source,
+    shape: &ShapeDef,
+    subjects: &FastMap<&'static str, Vec<Resolved<'a>>>,
+    by_class: &mut FastMap<&'static str, Vec<Resolved<'a>>>,
+) -> Vec<Resolved<'a>> {
+    let mut out: Vec<Resolved<'a>> = Vec::new();
     for target in shape.targets {
         match target {
             Target::Class(classes) => {
                 for class in *classes {
-                    if let Some(list) = ds.by_type.get(*class) {
-                        mrids.extend(list.iter());
-                    }
+                    let list = by_class.entry(class).or_insert_with(|| {
+                        ds.by_type
+                            .get(*class)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|mrid| resolve_target(ds, source, mrid))
+                            .collect()
+                    });
+                    out.extend_from_slice(list);
                 }
             }
             Target::SubjectsOf(field) => {
-                subjects_of = true;
-                mrids.extend_from_slice(subjects.subjects(field));
+                out.extend_from_slice(subjects.get(field).map_or(&[], Vec::as_slice));
             }
         }
     }
-    // An element has one class, so class lists never overlap; only a
-    // subjectsOf target can repeat an element another target already chose.
-    if subjects_of {
-        let mut seen = FastSet::default();
-        mrids.retain(|m| seen.insert(*m));
+    // A shape's targets overlap whenever it lists a class and one of its
+    // subclasses (`cim:Switch, cim:Breaker`), and a subjectsOf target can pick
+    // any of them again. SHACL validates a focus node once per shape.
+    let mut seen = FastSet::default();
+    out.retain(|t| seen.insert(t.mrid));
+    out
+}
+
+/// Every check of one shape against one target.
+fn run_shape<'a>(ctx: &Ctx<'a>, shape: &ShapeDef, t: &Resolved<'a>, out: &mut Vec<Violation>) {
+    for prop in shape.props {
+        check_prop(ctx, t.fields, t.class, t.mrid, prop, out);
     }
-    mrids
+    for logic in shape.logic {
+        check_logic(ctx, t.fields, t.class, t.mrid, logic, out);
+    }
+    if let Some(closed) = shape.closed {
+        check_closed(t.fields, t.class, t.mrid, closed, out);
+    }
 }
 
 /// Validate one profile's shapes against a dataset.
@@ -657,14 +696,7 @@ pub fn validate_shapes(ds: &CimDataset, source: Source, active: &[&ShapeDef]) ->
     count_fields.dedup();
     list_fields.sort_unstable();
     list_fields.dedup();
-    let ctx = Ctx {
-        ds,
-        source,
-        reverse: ReverseIndex::build(ds, source, &count_fields, &list_fields),
-    };
 
-    // The same treatment for sh:targetSubjectsOf: one pass over the fields any
-    // active shape targets, rather than a dataset scan per shape.
     let mut subject_fields: Vec<&'static str> = active
         .iter()
         .flat_map(|s| s.targets.iter())
@@ -675,40 +707,87 @@ pub fn validate_shapes(ds: &CimDataset, source: Source, active: &[&ShapeDef]) ->
         .collect();
     subject_fields.sort_unstable();
     subject_fields.dedup();
-    let subjects = if subject_fields.is_empty() {
-        SubjectIndex::default()
-    } else {
-        SubjectIndex::build(ds, source, &subject_fields)
-    };
 
-    let mut out = Vec::new();
+    let (reverse, subjects) = build_indexes(ds, source, &count_fields, &list_fields, &subject_fields);
+    let ctx = Ctx { ds, source, reverse };
+
+    // Element-major: visit each target once and apply every shape that
+    // targets it, rather than walking a class's elements once per shape. The
+    // cost per visit is reaching the element's fields — a cache miss into its
+    // own map — so doing it once for all of a class's shapes, not once per
+    // shape, is what pays. Shapes are grouped by their one kind of target; a
+    // shape mixing kinds can select an element twice and keeps the per-shape
+    // walk, which removes the duplicate. Within one kind, the classes are
+    // de-duplicated per shape: `sh:targetClass cim:Switch, cim:Breaker`
+    // expands `Switch` to its subclasses, Breaker among them, and a breaker
+    // must still be checked once.
+    let mut by_class_shapes: FastMap<&'static str, Vec<&ShapeDef>> = FastMap::default();
+    let mut by_subject_shapes: FastMap<&'static str, Vec<&ShapeDef>> = FastMap::default();
+    let mut mixed: Vec<&ShapeDef> = Vec::new();
     for shape in active {
-        for mrid in targets_of(ds, shape, &subjects) {
-            let Some(entry) = ds.entries.get(mrid) else { continue };
-            if !source.owns(entry) {
-                // Another family's element, e.g. a CGMES struct under an NC
-                // shape: the shape asks about attributes that element's family
-                // does not define, and would report them absent.
-                continue;
+        let all_class = shape.targets.iter().all(|t| matches!(t, Target::Class(_)));
+        match shape.targets {
+            _ if all_class => {
+                let mut classes: Vec<&'static str> = shape
+                    .targets
+                    .iter()
+                    .flat_map(|t| match t {
+                        Target::Class(cs) => cs.iter().copied(),
+                        Target::SubjectsOf(_) => [].iter().copied(),
+                    })
+                    .collect();
+                classes.sort_unstable();
+                classes.dedup();
+                for class in classes {
+                    by_class_shapes.entry(class).or_default().push(shape);
+                }
             }
-            let el = source.fields(entry).unwrap_or_else(|| {
-                panic!(
-                    "{mrid} ({}) has no fields to validate: its block was dropped \
-                     (CimDataset::drop_blocks) before validation",
-                    entry.element.type_name()
-                )
-            });
-            let class = entry.element.type_name();
-            for prop in shape.props {
-                check_prop(&ctx, el, class, mrid, prop, &mut out);
-            }
-            for logic in shape.logic {
-                check_logic(&ctx, el, class, mrid, logic, &mut out);
-            }
-            if let Some(closed) = shape.closed {
-                check_closed(el, class, mrid, closed, &mut out);
+            [Target::SubjectsOf(field)] => by_subject_shapes.entry(field).or_default().push(shape),
+            _ => mixed.push(shape),
+        }
+    }
+
+    let mut by_class: FastMap<&'static str, Vec<Resolved>> = FastMap::default();
+    let mut out = Vec::new();
+    for (class, shapes) in &by_class_shapes {
+        let targets = by_class.entry(class).or_insert_with(|| {
+            ds.by_type
+                .get(*class)
+                .into_iter()
+                .flatten()
+                .filter_map(|mrid| resolve_target(ds, source, mrid))
+                .collect()
+        });
+        for t in targets.iter() {
+            for shape in shapes {
+                run_shape(&ctx, shape, t, &mut out);
             }
         }
     }
+    for (field, shapes) in &by_subject_shapes {
+        for t in subjects.get(field).map_or(&[][..], Vec::as_slice) {
+            for shape in shapes {
+                run_shape(&ctx, shape, t, &mut out);
+            }
+        }
+    }
+    for shape in mixed {
+        for t in targets_of(ds, source, shape, &subjects, &mut by_class) {
+            run_shape(&ctx, shape, &t, &mut out);
+        }
+    }
+
+    // One result per element and rule. A property shape that several node
+    // shapes share — `eq:Switch.retained-cardinality` under both `eq:Switch`
+    // and `eq:Breaker` — reaches a breaker through each once `Switch` is
+    // expanded to its subclasses, and would report the same finding twice.
+    let mut seen = FastSet::default();
+    let keep: Vec<bool> = out
+        .iter()
+        .map(|v| seen.insert((v.object_id.as_str(), v.rule_id.as_str(), v.property.as_str(), v.message.as_str())))
+        .collect();
+    drop(seen);
+    let mut keep = keep.into_iter();
+    out.retain(|_| keep.next().unwrap_or(true));
     out
 }

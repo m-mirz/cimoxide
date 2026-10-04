@@ -15,7 +15,6 @@ pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
     v.extend(check_phase_tap_changer_linear_x_min_consistency(dataset));
     v.extend(check_phase_tap_changer_non_linear_x_min_consistency(dataset));
     v.extend(check_power_transformer_end_rated_s_2winding(dataset));
-    v.extend(check_power_transformer_base_voltage_association(dataset));
     v.extend(check_power_transformer_end_r_value_range(dataset));
     v.extend(check_regulating_control_terminal_connectivity_node(dataset));
     v.extend(check_tap_changer_ltc_flag_control(dataset));
@@ -402,24 +401,6 @@ fn check_power_transformer_end_rated_s_2winding(dataset: &CimDataset) -> Vec<Vio
                 name: "C:301:EQ:PowerTransformerEnd.ratedS:valueRange2winding".into(), class: "PowerTransformer".into(),
                 property: "PowerTransformerEnd.ratedS".into(),
                 message: format!("The RatedS value is different for a two-winding transformer. End 1: {s0}, End 2: {s1}."),
-                severity: "sh:Violation".into(), description: String::new(),
-            });
-        }
-    }
-    v
-}
-
-fn check_power_transformer_base_voltage_association(dataset: &CimDataset) -> Vec<Violation> {
-    let mut v = Vec::new();
-    for mrid in dataset.by_type.get("PowerTransformer").into_iter().flatten() {
-        let entry = &dataset.entries[mrid];
-        let pt = match entry.element.as_any().downcast_ref::<cimstructs::PowerTransformer>() { Some(p) => p, None => continue };
-        if pt.base.base_voltage.is_some() {
-            v.push(Violation {
-                object_id: mrid.clone(), rule_id: "equ:PowerTransformer-associationNotUsed".into(),
-                name: "C:301:EQ:PowerTransformer:associationNotUsed".into(), class: "PowerTransformer".into(),
-                property: "ConductingEquipment.BaseVoltage".into(),
-                message: "The inherited association ConductingEquipment.BaseVoltage is used.".into(),
                 severity: "sh:Violation".into(), description: String::new(),
             });
         }
