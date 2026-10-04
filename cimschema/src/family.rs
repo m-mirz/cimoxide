@@ -28,6 +28,9 @@ pub struct Family {
     /// (`NC`, `profcim`, `deprecated`), so it needs first-match classification.
     /// CGMES relies on the historical last-wins reading.
     pub stereotype_first_wins: bool,
+    /// `(TTL file stem, profile tag)` for a family whose SHACL ships no
+    /// per-profile manifests. `None` reads them from `SHACL/Validation/`.
+    pub shacl_manifest: Option<&'static [(&'static str, &'static str)]>,
 }
 
 pub const CGMES: Family = Family {
@@ -42,6 +45,7 @@ pub const CGMES: Family = Family {
         ("rdf", "http://www.w3.org/1999/02/22-rdf-syntax-ns#"),
     ],
     stereotype_first_wins: false,
+    shacl_manifest: Some(crate::shacl::cgmes_manifest::MANIFEST),
 };
 
 // NCP's DatasetMetadata profile keyword is "DM", which reads like the `dm` XML
@@ -55,6 +59,7 @@ pub const NC: Family = Family {
     base_profile: None,
     extra_namespaces: &[("rdf", "http://www.w3.org/1999/02/22-rdf-syntax-ns#")],
     stereotype_first_wins: true,
+    shacl_manifest: None,
 };
 
 pub const FAMILIES: &[&Family] = &[&CGMES, &NC];

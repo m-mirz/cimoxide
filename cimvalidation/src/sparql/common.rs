@@ -19,31 +19,20 @@ pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
 /// field-map conversion, not free), so three full redundant passes over the
 /// whole dataset became one shared pass with one `.to_block()` call per entry.
 fn check_per_entry_block_checks(dataset: &CimDataset) -> Vec<Violation> {
-    let mut seen: HashMap<String, String> = HashMap::new();
+    // mRID → every (object, class) carrying it. Collected first and decided
+    // after the pass: deciding during it reported whichever duplicate the map
+    // iteration reached second, which with a randomly seeded hasher changed
+    // from run to run.
+    let mut by_mrid: HashMap<String, Vec<(&String, String)>> = HashMap::new();
     let mut v = Vec::new();
     for (id, entry) in &dataset.entries {
         let block = entry.element.to_block();
         let class = &block.type_name;
 
-        // --- mRID uniqueness (all600:All-GENC1) ---
+        // --- mRID uniqueness (all600:All-GENC1), collected ---
         if let Some(cimstructs::base::FieldValue::Text(m_rid)) = block.fields.get("IdentifiedObject.mRID") {
             if !m_rid.is_empty() {
-                if let Some(first_id) = seen.get(m_rid) {
-                    if first_id != id {
-                        v.push(Violation {
-                            object_id: id.clone(),
-                            rule_id:   "all600:All-GENC1".into(),
-                            name:      "C:600:ALL:NA:GENC1".into(),
-                            class:     class.clone(),
-                            property:  "IdentifiedObject.mRID".into(),
-                            message:   "Not a unique identifier.".into(),
-                            severity:  "sh:Violation".into(),
-                            description: String::new(),
-                        });
-                    }
-                } else {
-                    seen.insert(m_rid.clone(), id.clone());
-                }
+                by_mrid.entry(m_rid.clone()).or_default().push((id, class.clone()));
             }
         }
 
@@ -121,6 +110,25 @@ fn check_per_entry_block_checks(dataset: &CimDataset) -> Vec<Violation> {
                 }
                 _ => {}
             }
+        }
+    }
+
+    // --- mRID uniqueness (all600:All-GENC1), decided ---
+    // The smallest object id counts as the original and every other one is
+    // reported, so the result does not depend on iteration order.
+    for owners in by_mrid.values_mut().filter(|o| o.len() > 1) {
+        owners.sort_unstable();
+        for (id, class) in owners.drain(1..) {
+            v.push(Violation {
+                object_id: id.clone(),
+                rule_id:   "all600:All-GENC1".into(),
+                name:      "C:600:ALL:NA:GENC1".into(),
+                class,
+                property:  "IdentifiedObject.mRID".into(),
+                message:   "Not a unique identifier.".into(),
+                severity:  "sh:Violation".into(),
+                description: String::new(),
+            });
         }
     }
     v

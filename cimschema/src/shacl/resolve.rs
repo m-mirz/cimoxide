@@ -18,7 +18,7 @@ use std::collections::HashMap;
 
 use crate::family::Family;
 use crate::model::{CimSpecification, CimType};
-use crate::shacl::model::{ConstraintInfo, FileResults, ShapeInfo};
+use crate::shacl::model::{ConstraintInfo, FileResults, ShapeInfo, LITERALS, UNSUPPORTED};
 use crate::shacl::skip::SkipCollector;
 
 // ---------------------------------------------------------------------------
@@ -39,6 +39,30 @@ pub enum Path {
     /// `sh:path ( nc:X.y rdf:type )` — follow the association, then read the
     /// referenced element's class.
     RefType(String),
+    /// Any other sequence path, e.g. `( ^cim:Terminal.ConductingEquipment
+    /// cim:Terminal.phases )`. Kept apart from [`Path::RefType`], which is the
+    /// common two-step case and has the cheaper evaluation.
+    Chain(Vec<Step>),
+}
+
+/// One step of a [`Path::Chain`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Step {
+    Forward(String),
+    Inverse(String),
+    /// `rdf:type` — the classes of the elements reached so far. Last only.
+    Type,
+}
+
+impl Path {
+    /// Does the path end in `rdf:type`, so that its values are class names?
+    pub fn yields_types(&self) -> bool {
+        match self {
+            Path::RefType(_) => true,
+            Path::Chain(steps) => matches!(steps.last(), Some(Step::Type)),
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +85,40 @@ pub enum Constraint {
     MinLength(u32),
     /// The referenced element's class, from `sh:in` on a [`Path::RefType`].
     RefClass(Vec<String>),
+    MinInclusive(f64),
+    MaxInclusive(f64),
+    MinExclusive(f64),
+    MaxExclusive(f64),
+    /// `sh:lessThan` — the field key of the property this one must be below.
+    LessThan(String),
+    LessThanOrEquals(String),
+    /// `sh:not [ sh:class X ]` — the referenced element must *not* be an
+    /// instance of these (already expanded) classes.
+    NotClass(Vec<String>),
+}
+
+/// How a node-level `sh:and` / `sh:or` / `sh:xone` combines its branches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogicOp {
+    And,
+    Or,
+    Xone,
+}
+
+/// A node-level `sh:and` / `sh:or` / `sh:xone` over anonymous property shapes.
+///
+/// A branch conforms when none of its checks fail. The checks inside a branch
+/// carry no report text of their own: the shape reports once, with the node
+/// shape's name and message, when the combination fails.
+#[derive(Debug, Clone)]
+pub struct Logic {
+    pub op: LogicOp,
+    pub branches: Vec<Vec<PropShape>>,
+    pub rule_id: String,
+    pub name: String,
+    pub message: String,
+    pub description: String,
+    pub severity: String,
 }
 
 #[derive(Debug, Clone)]
@@ -100,6 +158,7 @@ pub struct ShapeDef {
     pub targets: Vec<Target>,
     pub props: Vec<PropShape>,
     pub closed: Option<ClosedShape>,
+    pub logic: Vec<Logic>,
     pub profiles: Vec<String>,
     pub file: String,
 }
@@ -110,6 +169,7 @@ pub struct Stats {
     pub props: usize,
     pub checks: usize,
     pub closed: usize,
+    pub logic: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -248,6 +308,17 @@ fn field_key(iri: &str) -> &str {
 /// `rdf:resource` values keep only the fragment (the decoder's
 /// `strip_fragment`), so `cim:Kind.value` and `<http://…#Kind.value>` must both
 /// compare as `Kind.value`.
+/// An `sh:in` / `sh:hasValue` member as the decoder would store it: a string
+/// literal verbatim, an IRI as its fragment.
+fn value_key(c: &ConstraintInfo, v: &str) -> String {
+    let literal = c
+        .payload
+        .get(LITERALS)
+        .and_then(|l| l.as_list())
+        .is_some_and(|l| l.iter().any(|x| x == v));
+    if literal { v.to_string() } else { enum_fragment(v) }
+}
+
 fn enum_fragment(v: &str) -> String {
     let v = v.trim_start_matches('<').trim_end_matches('>');
     match v.rsplit_once('#') {
@@ -277,7 +348,7 @@ pub fn resolve_shapes(
             Some(p) if !p.is_empty() => p.clone(),
             _ => {
                 collector.push("", &fr.file_name, "file", "",
-                    "not imported by any NC profile manifest");
+                    "not imported by any profile manifest");
                 continue;
             }
         };
@@ -360,7 +431,15 @@ fn resolve_shape(
         }
     });
 
-    if props.is_empty() && closed.is_none() {
+    let mut logic: Vec<Logic> = Vec::new();
+    for c in &shape.constraints {
+        if let Some(l) = resolve_logic(c, shape, fr, &class_label, r, collector) {
+            logic.push(l);
+        }
+    }
+    stats.logic += logic.len();
+
+    if props.is_empty() && closed.is_none() && logic.is_empty() {
         return None;
     }
     stats.props += props.len();
@@ -369,6 +448,7 @@ fn resolve_shape(
         targets,
         props,
         closed,
+        logic,
         profiles: profiles.to_vec(),
         file: fr.file_name.clone(),
     })
@@ -382,27 +462,11 @@ fn resolve_prop(
     collector: &mut SkipCollector,
     stats: &mut Stats,
 ) -> Option<PropShape> {
-    let (seg, path) = match prop.path.as_slice() {
-        [one] => match decode_path(one) {
-            Some(p) => (one.as_str(), p),
-            None => {
-                collector.push(class_label, one, "sh:path", &prop.name, "unsupported path form");
-                return None;
-            }
-        },
-        // `( nc:X.y rdf:type )` — 170 of NCP's 178 chains.
-        [first, last] if last == "rdf:type" => {
-            (first.as_str(), Path::RefType(field_key(first).to_string()))
-        }
-        // Anything longer, or ending elsewhere, walks through intermediate
-        // objects. Guessing at one would be worse than reporting it.
-        segs if !segs.is_empty() => {
-            collector.push(class_label, &segs.join(" / "), "sh:path", &prop.name,
-                "multi-segment property path not supported for bag families");
-            return None;
-        }
-        _ => {
-            collector.push(class_label, "", "sh:path", &prop.name, "shape has no resolvable path");
+    let seg = prop.path.first().map_or("", String::as_str);
+    let path = match resolve_path(&prop.path) {
+        Ok(p) => p,
+        Err(reason) => {
+            collector.push(class_label, &prop.path.join(" / "), "sh:path", &prop.name, reason);
             return None;
         }
     };
@@ -418,7 +482,7 @@ fn resolve_prop(
     // cardinality shape on one would over-report. The shapes ship in the same
     // ENTSO-E release as the RDFS, so that would be a schema bug.
 
-    let is_ref_type = matches!(path, Path::RefType(_));
+    let is_ref_type = path.yields_types();
     let mut checks: Vec<Check> = Vec::new();
     for c in &prop.constraints {
         match resolve_constraint(c, r, &fr.prefixes, is_ref_type) {
@@ -449,6 +513,113 @@ fn resolve_prop(
     }
     stats.checks += checks.len();
     Some(PropShape { path, checks })
+}
+
+/// A property path as `extract_path` encodes it: one segment per step, each
+/// `"iri"`, `"^iri"` (inverse) or `"|a|b"` (alternative).
+fn resolve_path(segs: &[String]) -> Result<Path, &'static str> {
+    match segs {
+        [] => Err("shape has no resolvable path"),
+        [one] => decode_path(one).ok_or("unsupported path form"),
+        // `( nc:X.y rdf:type )` — 170 of NCP's 178 chains.
+        [first, last] if last == "rdf:type" && !first.starts_with(['^', '|']) => {
+            Ok(Path::RefType(field_key(first).to_string()))
+        }
+        _ => {
+            let mut steps = Vec::with_capacity(segs.len());
+            for (i, seg) in segs.iter().enumerate() {
+                let last = i + 1 == segs.len();
+                steps.push(match seg.as_str() {
+                    "rdf:type" if last => Step::Type,
+                    "rdf:type" => return Err("rdf:type before the end of a sequence path"),
+                    s if s.starts_with('|') => {
+                        return Err("alternative path inside a sequence path")
+                    }
+                    s => match s.strip_prefix('^') {
+                        Some(inv) => Step::Inverse(field_key(inv).to_string()),
+                        None => Step::Forward(field_key(s).to_string()),
+                    },
+                });
+            }
+            Ok(Path::Chain(steps))
+        }
+    }
+}
+
+/// Resolve a node-level `sh:and` / `sh:or` / `sh:xone`.
+///
+/// All or nothing: a branch that drops one of its constraints conforms more
+/// often than the schema says, which changes what the combination means rather
+/// than just checking less. So any part that does not resolve skips the whole
+/// combination, as does anything the importer saw in a branch but could not
+/// represent.
+fn resolve_logic(
+    c: &ConstraintInfo,
+    shape: &ShapeInfo,
+    fr: &FileResults,
+    class_label: &str,
+    r: &Resolver,
+    collector: &mut SkipCollector,
+) -> Option<Logic> {
+    let op = match c.component.as_str() {
+        "sh:AndConstraintComponent" => LogicOp::And,
+        "sh:OrConstraintComponent" => LogicOp::Or,
+        "sh:XoneConstraintComponent" => LogicOp::Xone,
+        _ => return None,
+    };
+    let mut skip = |reason: &str| {
+        collector.push(class_label, "", &c.component, &shape.name, reason);
+        None
+    };
+    if c.payload.get(UNSUPPORTED).and_then(|v| v.as_list()).is_some_and(|u| !u.is_empty()) {
+        return skip("logical branch uses a construct the importer does not represent");
+    }
+    let Some(raw) = c.payload.get("branches").and_then(|v| v.as_shapes()) else {
+        return skip("logical constraint without branches");
+    };
+
+    let mut branches: Vec<Vec<PropShape>> = Vec::new();
+    for raw_branch in raw {
+        // One branch may constrain several paths; group by path.
+        let mut props: Vec<PropShape> = Vec::new();
+        for bc in raw_branch {
+            let Ok(path) = resolve_path(&bc.path) else {
+                return skip("logical branch path does not resolve");
+            };
+            // minCount 0 is vacuous, and is how EnergySourcePQ spells "absent"
+            // next to its maxCount 0.
+            if bc.component == "sh:MinCountConstraintComponent"
+                && bc.payload.get("minCount").and_then(|v| v.as_int()) == Some(0)
+            {
+                continue;
+            }
+            let Some(constraint) = resolve_constraint(bc, r, &fr.prefixes, path.yields_types()) else {
+                return skip("logical branch constraint not supported for bag families");
+            };
+            let check = Check {
+                constraint,
+                rule_id: String::new(),
+                name: String::new(),
+                message: String::new(),
+                description: String::new(),
+                severity: String::new(),
+            };
+            match props.iter_mut().find(|p| p.path == path) {
+                Some(p) => p.checks.push(check),
+                None => props.push(PropShape { path, checks: vec![check] }),
+            }
+        }
+        branches.push(props);
+    }
+    Some(Logic {
+        op,
+        branches,
+        rule_id: c.rule_id.clone(),
+        name: c.name.clone(),
+        message: c.message.clone(),
+        description: c.description.clone(),
+        severity: if c.severity.is_empty() { "sh:Violation".to_string() } else { c.severity.clone() },
+    })
 }
 
 /// Decode the two encodings `extract_path` uses — `"^iri"` for inverse and
@@ -484,6 +655,7 @@ fn resolve_constraint(
     is_ref_type: bool,
 ) -> Option<Constraint> {
     let int = |key: &str| c.payload.get(key).and_then(|v| v.as_int());
+    let float = |key: &str| c.payload.get(key).and_then(|v| v.as_float());
 
     // On a RefType path the values are class IRIs, so sh:in is a class
     // membership test rather than a literal comparison, and it has to resolve
@@ -543,16 +715,42 @@ fn resolve_constraint(
             let classes = r.any_classes(std::slice::from_ref(&cls), prefixes);
             (!classes.is_empty()).then_some(Constraint::Class(classes))
         }
+        // `sh:or ( [ sh:class A ] [ sh:class B ] )` on one property: each value
+        // must be an instance of one of them, which is `sh:class` over the
+        // union.
+        "sh:OrClassConstraintComponent" => {
+            let classes = r.any_classes(c.payload.get("classes")?.as_list()?, prefixes);
+            (!classes.is_empty()).then_some(Constraint::Class(classes))
+        }
+        "sh:NotClassConstraintComponent" => {
+            let cls = c.payload.get("class")?.as_str()?.to_string();
+            let classes = r.any_classes(std::slice::from_ref(&cls), prefixes);
+            (!classes.is_empty()).then_some(Constraint::NotClass(classes))
+        }
         "sh:InConstraintComponent" => {
             let values = c.payload.get("in")?.as_list()?;
-            Some(Constraint::In(values.iter().map(|v| enum_fragment(v)).collect()))
+            Some(Constraint::In(values.iter().map(|v| value_key(c, v)).collect()))
         }
         "sh:HasValueConstraintComponent" => {
             let v = c.payload.get("hasValue")?.as_str()?;
-            Some(Constraint::HasValue(enum_fragment(v)))
+            Some(Constraint::HasValue(value_key(c, v)))
         }
         "sh:MaxLengthConstraintComponent" => Some(Constraint::MaxLength(int("maxLength")? as u32)),
         "sh:MinLengthConstraintComponent" => Some(Constraint::MinLength(int("minLength")? as u32)),
+        "sh:MinInclusiveConstraintComponent" => Some(Constraint::MinInclusive(float("minInclusive")?)),
+        "sh:MaxInclusiveConstraintComponent" => Some(Constraint::MaxInclusive(float("maxInclusive")?)),
+        "sh:MinExclusiveConstraintComponent" => Some(Constraint::MinExclusive(float("minExclusive")?)),
+        "sh:MaxExclusiveConstraintComponent" => Some(Constraint::MaxExclusive(float("maxExclusive")?)),
+        // The other property is read from the same element, so it resolves to
+        // a field key exactly as the path does.
+        "sh:LessThanConstraintComponent" => {
+            let other = c.payload.get("lessThan")?.as_str()?;
+            Some(Constraint::LessThan(field_key(other).to_string()))
+        }
+        "sh:LessThanOrEqualsConstraintComponent" => {
+            let other = c.payload.get("lessThanOrEquals")?.as_str()?;
+            Some(Constraint::LessThanOrEquals(field_key(other).to_string()))
+        }
         _ => None,
     }
 }
@@ -594,7 +792,16 @@ pub fn load_shape_table(
         return Err(format!("no SHACL .ttl files in {}", dir.display()).into());
     }
 
-    let profiles_of = profile_files(&dir.join("Validation"))?;
+    let profiles_of: HashMap<String, Vec<String>> = match family.shacl_manifest {
+        Some(manifest) => {
+            let mut m: HashMap<String, Vec<String>> = HashMap::new();
+            for (stem, tag) in manifest {
+                m.entry((*stem).to_string()).or_default().push((*tag).to_string());
+            }
+            m
+        }
+        None => profile_files(&dir.join("Validation"))?,
+    };
 
     let mut files: Vec<FileResults> = Vec::new();
     for path in &ttl_paths {
@@ -620,8 +827,14 @@ pub fn load_shape_table(
 
     let (shapes, stats) = resolve_shapes(spec, others, &files, &profiles_of, collector);
 
-    let prof_dir = dir.parent().map_or_else(|| dir.join("PROF"), |p| p.join("PROF"));
-    let index = crate::import::import_profile_index(&prof_dir)?;
+    // A family with a written-out manifest detects its profiles another way
+    // (CGMES: the `md:Model.profile` header), so it has no index to load.
+    let index = if family.shacl_manifest.is_some() {
+        Vec::new()
+    } else {
+        let prof_dir = dir.parent().map_or_else(|| dir.join("PROF"), |p| p.join("PROF"));
+        crate::import::import_profile_index(&prof_dir)?
+    };
     let mut profile_iris: Vec<(String, String)> = index
         .iter()
         .flat_map(|p| p.iris.iter().map(|i| (i.clone(), p.keyword.clone())))

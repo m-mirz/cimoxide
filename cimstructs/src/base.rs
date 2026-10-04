@@ -1,4 +1,74 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::hash::{BuildHasherDefault, Hasher};
+
+// --- Hashing -----------------------------------------------------------------
+
+/// A fast, non-cryptographic hasher for the decoder's maps.
+///
+/// Every field read during validation and every element lookup goes through a
+/// `String`-keyed map, and std's SipHash made those lookups a measurable share
+/// of a validation run. This is the multiply-rotate scheme of FxHash (as in
+/// `rustc-hash` 2): a word at a time, with the high bits rotated down at the
+/// end because hashbrown takes its bucket index from the low bits.
+///
+/// Written out rather than imported so the core crates carry no dependency for
+/// it. Not resistant to deliberately colliding keys, which is acceptable for a
+/// tool that reads grid model files rather than serving untrusted requests.
+#[derive(Default, Clone, Copy)]
+pub struct FastHasher {
+    hash: u64,
+}
+
+const SEED: u64 = 0xf135_7aea_2e62_a9c5;
+
+impl FastHasher {
+    #[inline]
+    fn add(&mut self, word: u64) {
+        self.hash = self.hash.wrapping_add(word).wrapping_mul(SEED);
+    }
+}
+
+impl Hasher for FastHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        let mut chunks = bytes.chunks_exact(8);
+        for c in &mut chunks {
+            self.add(u64::from_le_bytes(c.try_into().expect("chunk of 8")));
+        }
+        let rest = chunks.remainder();
+        if !rest.is_empty() {
+            let mut buf = [0u8; 8];
+            buf[..rest.len()].copy_from_slice(rest);
+            self.add(u64::from_le_bytes(buf));
+        }
+    }
+    #[inline]
+    fn write_u8(&mut self, i: u8) {
+        self.add(i as u64);
+    }
+    #[inline]
+    fn write_u32(&mut self, i: u32) {
+        self.add(i as u64);
+    }
+    #[inline]
+    fn write_u64(&mut self, i: u64) {
+        self.add(i);
+    }
+    #[inline]
+    fn write_usize(&mut self, i: usize) {
+        self.add(i as u64);
+    }
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.hash.rotate_left(26)
+    }
+}
+
+pub type FastBuildHasher = BuildHasherDefault<FastHasher>;
+pub type FastMap<K, V> = HashMap<K, V, FastBuildHasher>;
+pub type FastSet<T> = HashSet<T, FastBuildHasher>;
+/// An element's fields, keyed by `Class.attr`.
+pub type FieldMap = FastMap<String, FieldValue>;
 
 pub trait CimElement: Send + Sync {
     fn mrid(&self) -> &str;
@@ -34,10 +104,10 @@ pub struct RdfBlock {
     /// across families, so it is enough to re-dispatch a block on merge.
     pub type_name: String,
     pub mrid: String,
-    pub fields: HashMap<String, FieldValue>,
+    pub fields: FieldMap,
     /// Field names (local XML element name) that were assigned more than once
     /// within a single parsed element, indicating a MaxCount violation.
-    pub duplicate_fields: std::collections::HashSet<String>,
+    pub duplicate_fields: FastSet<String>,
 }
 
 impl Default for RdfBlock {
@@ -45,8 +115,8 @@ impl Default for RdfBlock {
         Self {
             type_name: String::new(),
             mrid: String::new(),
-            fields: HashMap::new(),
-            duplicate_fields: std::collections::HashSet::new(),
+            fields: FieldMap::default(),
+            duplicate_fields: FastSet::default(),
         }
     }
 }
@@ -113,9 +183,9 @@ impl TypeEntry {
 /// resolved namespace, with a bare-name fallback that preserves the historical
 /// behaviour for files whose prefixes are unbound or unexpected.
 pub struct TypeRegistry {
-    by_ns: HashMap<&'static str, HashMap<&'static str, TypeEntry>>,
-    bare: HashMap<&'static str, TypeEntry>,
-    by_type_name: HashMap<&'static str, TypeEntry>,
+    by_ns: FastMap<&'static str, FastMap<&'static str, TypeEntry>>,
+    bare: FastMap<&'static str, TypeEntry>,
+    by_type_name: FastMap<&'static str, TypeEntry>,
 }
 
 impl TypeRegistry {
@@ -123,8 +193,8 @@ impl TypeRegistry {
         rows: &'static [(&'static str, &'static str, &'static str, ParseFn)],
         bare_rows: &'static [(&'static str, &'static str, ParseFn)],
     ) -> Self {
-        let mut by_ns: HashMap<&'static str, HashMap<&'static str, TypeEntry>> = HashMap::new();
-        let mut by_type_name = HashMap::new();
+        let mut by_ns: FastMap<&'static str, FastMap<&'static str, TypeEntry>> = FastMap::default();
+        let mut by_type_name = FastMap::default();
         for (ns, local, type_name, parse) in rows {
             let entry = TypeEntry { type_name, dispatch: Dispatch::Typed(*parse) };
             by_ns.entry(ns).or_default().insert(local, entry);
@@ -159,11 +229,11 @@ impl TypeRegistry {
     }
 
     /// Dispatch table for one namespace, resolved once per XML prefix per file.
-    pub fn ns_table(&self, ns: &str) -> Option<&HashMap<&'static str, TypeEntry>> {
+    pub fn ns_table(&self, ns: &str) -> Option<&FastMap<&'static str, TypeEntry>> {
         self.by_ns.get(ns)
     }
 
-    pub fn bare(&self) -> &HashMap<&'static str, TypeEntry> {
+    pub fn bare(&self) -> &FastMap<&'static str, TypeEntry> {
         &self.bare
     }
 
@@ -228,7 +298,7 @@ impl ClassDef {
 pub struct GenericElement {
     class: &'static ClassDef,
     mrid: String,
-    fields: HashMap<String, FieldValue>,
+    fields: FieldMap,
 }
 
 impl GenericElement {
@@ -240,7 +310,7 @@ impl GenericElement {
         self.class
     }
 
-    pub fn fields(&self) -> &HashMap<String, FieldValue> {
+    pub fn fields(&self) -> &FieldMap {
         &self.fields
     }
 
@@ -327,7 +397,7 @@ impl CimElement for GenericElement {
             type_name: self.class.qualified.to_string(),
             mrid: self.mrid.clone(),
             fields: self.fields.clone(),
-            duplicate_fields: std::collections::HashSet::new(),
+            duplicate_fields: FastSet::default(),
         }
     }
 }

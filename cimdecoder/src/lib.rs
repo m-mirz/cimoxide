@@ -1,10 +1,9 @@
-use std::collections::HashMap;
 use std::path::Path;
 
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 
-use cimstructs::base::{CimElement, FieldValue, RdfBlock, TypeEntry, TypeRegistry};
+use cimstructs::base::{CimElement, FastMap, FieldValue, RdfBlock, TypeEntry, TypeRegistry};
 use cimstructs::registry;
 
 pub struct CimEntry {
@@ -13,9 +12,9 @@ pub struct CimEntry {
 }
 
 pub struct CimDataset {
-    pub entries: HashMap<String, CimEntry>,
+    pub entries: FastMap<String, CimEntry>,
     /// Maps `type_name()` → list of MRIDs of that type. Populated on insert, maintained on merge.
-    pub by_type: HashMap<String, Vec<String>>,
+    pub by_type: FastMap<String, Vec<String>>,
 }
 
 impl Default for CimDataset {
@@ -27,8 +26,8 @@ impl Default for CimDataset {
 impl CimDataset {
     pub fn new() -> Self {
         Self {
-            entries: HashMap::new(),
-            by_type: HashMap::new(),
+            entries: FastMap::default(),
+            by_type: FastMap::default(),
         }
     }
 
@@ -152,7 +151,7 @@ impl CimDataset {
 
 /// Push an MRID onto its type bucket, allocating the key only when the bucket
 /// is new rather than once per element.
-fn index(by_type: &mut HashMap<String, Vec<String>>, type_name: &'static str, mrid: String) {
+fn index(by_type: &mut FastMap<String, Vec<String>>, type_name: &'static str, mrid: String) {
     if let Some(bucket) = by_type.get_mut(type_name) {
         bucket.push(mrid);
     } else {
@@ -160,7 +159,7 @@ fn index(by_type: &mut HashMap<String, Vec<String>>, type_name: &'static str, mr
     }
 }
 
-type Table = HashMap<&'static str, TypeEntry>;
+type Table = FastMap<&'static str, TypeEntry>;
 
 /// The document's `xmlns` bindings, resolved once to dispatch tables.
 ///
@@ -313,8 +312,8 @@ fn parse_rdf(
                                     RdfBlock {
                                         type_name: entry.type_name.to_string(),
                                         mrid,
-                                        fields: HashMap::new(),
-                                        duplicate_fields: std::collections::HashSet::new(),
+                                        fields: Default::default(),
+                                        duplicate_fields: Default::default(),
                                     },
                                     entry,
                                 ))
@@ -362,8 +361,8 @@ fn parse_rdf(
                                 let block = RdfBlock {
                                     type_name: entry.type_name.to_string(),
                                     mrid: mrid.clone(),
-                                    fields: HashMap::new(),
-                                    duplicate_fields: std::collections::HashSet::new(),
+                                    fields: Default::default(),
+                                    duplicate_fields: Default::default(),
                                 };
                                 let element = entry.parse(&block);
                                 index(&mut ds.by_type, entry.type_name, mrid.clone());

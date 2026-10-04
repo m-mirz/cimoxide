@@ -7,6 +7,10 @@ use super::model::*;
 // Public entry point
 // ---------------------------------------------------------------------------
 
+fn literals(values: &[RdfVal]) -> Vec<String> {
+    values.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()
+}
+
 pub fn import_ttl_file(path: &Path) -> Result<FileResults, Box<dyn std::error::Error>> {
     let src = std::fs::read_to_string(path)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
@@ -813,8 +817,10 @@ fn extract_node_compound_constraints(
                 None => continue,
             };
             let mut branches: Vec<Vec<ConstraintInfo>> = Vec::new();
+            let mut unsupported: Vec<String> = Vec::new();
             for item in items {
                 if let Some(bnode_id) = item.as_iri() {
+                    unsupported.extend(unsupported_branch_predicates(g, bnode_id));
                     let branch = extract_branch_constraints(g, bnode_id);
                     if !branch.is_empty() {
                         branches.push(branch);
@@ -824,8 +830,11 @@ fn extract_node_compound_constraints(
             if branches.len() < 2 {
                 continue;
             }
+            unsupported.sort();
+            unsupported.dedup();
             let mut payload = HashMap::new();
             payload.insert("branches".to_string(), ShaclValue::Shapes(branches));
+            payload.insert(UNSUPPORTED.to_string(), ShaclValue::List(unsupported));
             constraints.push(ConstraintInfo {
                 path: Vec::new(),
                 severity: severity.clone(),
@@ -839,6 +848,23 @@ fn extract_node_compound_constraints(
         }
     }
     constraints
+}
+
+/// Predicates on a branch node that [`extract_branch_constraints`] neither
+/// turns into a constraint nor can safely ignore.
+fn unsupported_branch_predicates(g: &Graph, bnode_id: &str) -> Vec<String> {
+    const UNDERSTOOD: &[&str] = &[
+        "sh:path", "sh:minCount", "sh:maxCount", "sh:hasValue", "sh:in",
+        // Annotations: no effect on conformance.
+        RDF_TYPE, "sh:name", "sh:description", "sh:message", "sh:severity", "sh:order", "sh:group",
+    ];
+    g.get(bnode_id)
+        .into_iter()
+        .flatten()
+        .map(|(p, _)| p.as_str())
+        .filter(|p| !UNDERSTOOD.contains(p))
+        .map(str::to_string)
+        .collect()
 }
 
 /// Extract constraints from a single compound-shape branch blank node.
@@ -871,7 +897,9 @@ fn extract_branch_constraints(g: &Graph, bnode_id: &str) -> Vec<ConstraintInfo> 
     if let Some(v) = get_one(g, bnode_id, "sh:hasValue") {
         let sv = v.as_iri().or_else(|| v.as_str()).map(str::to_string);
         if let Some(s) = sv {
-            constraints.push(mk("sh:HasValueConstraintComponent", "hasValue", ShaclValue::Str(s), path.clone()));
+            let mut c = mk("sh:HasValueConstraintComponent", "hasValue", ShaclValue::Str(s), path.clone());
+            c.payload.insert(LITERALS.to_string(), ShaclValue::List(literals(std::slice::from_ref(v))));
+            constraints.push(c);
         }
     }
     if let Some(in_list) = get_one(g, bnode_id, "sh:in").and_then(|v| v.as_list()) {
@@ -880,7 +908,9 @@ fn extract_branch_constraints(g: &Graph, bnode_id: &str) -> Vec<ConstraintInfo> 
             .filter_map(|v| v.as_iri().or_else(|| v.as_str()).map(str::to_string))
             .collect();
         if !values.is_empty() {
-            constraints.push(mk("sh:InConstraintComponent", "in", ShaclValue::List(values), path.clone()));
+            let mut c = mk("sh:InConstraintComponent", "in", ShaclValue::List(values), path.clone());
+            c.payload.insert(LITERALS.to_string(), ShaclValue::List(literals(in_list)));
+            constraints.push(c);
         }
     }
     constraints
@@ -1032,6 +1062,7 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
             .collect();
         let mut payload = HashMap::new();
         payload.insert("in".to_string(), ShaclValue::List(values));
+        payload.insert(LITERALS.to_string(), ShaclValue::List(literals(in_list)));
         constraints.push(ConstraintInfo {
             path: path.clone(),
             severity: severity.clone(),
@@ -1050,6 +1081,7 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
         if let Some(hv) = val {
             let mut payload = HashMap::new();
             payload.insert("hasValue".to_string(), ShaclValue::Str(hv));
+            payload.insert(LITERALS.to_string(), ShaclValue::List(literals(std::slice::from_ref(v))));
             constraints.push(ConstraintInfo {
                 path: path.clone(),
                 severity: severity.clone(),

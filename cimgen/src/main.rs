@@ -175,8 +175,11 @@ fn main() {
         );
     }
 
-    if let (Some(glob), Some(out_dir)) = (shacl_glob, shacl_output.clone()) {
+    if let (Some(glob), Some(out_dir)) = (shacl_glob.clone(), shacl_output.clone()) {
         run_shacl(&spec, &glob, &out_dir, verbose, skip_report, rule_report);
+        // The same shapes as a table, for the interpreter. Resolved with the
+        // bag families alongside, for the cross-family class lists.
+        run_bag_shacl(&spec, &bags, &glob, &out_dir, verbose, skip_report);
     }
 
     // Bag families get a shape *table* rather than generated check functions:
@@ -401,11 +404,12 @@ fn run_shacl(
 }
 
 
-/// Generate the shape table for one property-bag family.
+/// Generate the shape table for one family.
 ///
-/// Unlike `run_shacl`, the profile-to-file mapping is read rather than
-/// hardcoded: `NCP/SHACL/Validation/` ships one manifest per profile whose
-/// `owl:imports` list names exactly the constraint files that apply.
+/// The profile-to-file mapping comes from `Family::shacl_manifest` where the
+/// family has one (CGMES), and otherwise is read: `NCP/SHACL/Validation/`
+/// ships one manifest per profile whose `owl:imports` list names exactly the
+/// constraint files that apply.
 fn run_bag_shacl(
     spec: &schema::model::CimSpecification,
     others: &[&schema::model::CimSpecification],
@@ -446,10 +450,14 @@ fn run_bag_shacl(
         &format!("{}_shapes.rs", spec.family.id),
         generator::shapes_gen::render_shapes(spec.family.id, &table.shapes),
     );
-    let profiles_path = write(
-        &format!("{}_profiles.rs", spec.family.id),
-        generator::shapes_gen::render_profiles_from(&table.profile_iris, &table.profiles),
-    );
+    // A family with a written-out manifest detects its profiles from its own
+    // headers and has no profile index to emit.
+    let profiles_path = spec.family.shacl_manifest.is_none().then(|| {
+        write(
+            &format!("{}_profiles.rs", spec.family.id),
+            generator::shapes_gen::render_profiles_from(&table.profile_iris, &table.profiles),
+        )
+    });
 
     let skips = collector.into_entries();
     eprintln!(
@@ -461,12 +469,14 @@ fn run_bag_shacl(
         skips.len(),
         shapes_path.display(),
     );
-    eprintln!(
-        "{} profiles: {} descriptors → {}",
-        spec.family.id,
-        table.profiles.len(),
-        profiles_path.display()
-    );
+    if let Some(profiles_path) = profiles_path {
+        eprintln!(
+            "{} profiles: {} descriptors → {}",
+            spec.family.id,
+            table.profiles.len(),
+            profiles_path.display()
+        );
+    }
 
     if skip_report {
         for e in &skips {

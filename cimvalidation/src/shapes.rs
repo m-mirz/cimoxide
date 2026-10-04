@@ -40,6 +40,25 @@ pub enum Path {
     /// CGMES classes (`cim17:ACLineSegment`) alongside NC ones, and
     /// `CimElement::type_name` answers for both.
     RefType(&'static str),
+    /// Any other sequence path: `( ^cim:Terminal.ConductingEquipment
+    /// cim:Terminal.phases )`, `( cim:Location.mainAddress
+    /// cim:StreetAddress.status cim:Status.dateTime )`.
+    ///
+    /// A hop to an element absent from the dataset makes the result unknown
+    /// and every check on it silent, as it is for [`Constraint::RefClass`]:
+    /// phase 1 runs per file, so leaving the file is normal.
+    Chain(&'static [Step]),
+}
+
+/// One step of a [`Path::Chain`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    Forward(&'static str),
+    /// Needs the reverse index, like [`Path::Inverse`], but as a list of the
+    /// elements pointing here rather than a count.
+    Inverse(&'static str),
+    /// `rdf:type`, last only: the classes of the elements reached.
+    Type,
 }
 
 /// One branch of an [`Path::Alternative`].
@@ -89,6 +108,21 @@ pub enum Constraint {
     /// normal and is a different rule's business — reporting it here would make
     /// every cross-file association a value-type violation.
     RefClass(&'static [&'static str]),
+    /// `sh:minInclusive` and friends. Compared as `f64`; a value that does not
+    /// parse as a number is skipped, the way a typed numeric field that failed
+    /// to parse is `None` — malformed numbers are `sh:datatype`'s business.
+    MinInclusive(f64),
+    MaxInclusive(f64),
+    MinExclusive(f64),
+    MaxExclusive(f64),
+    /// `sh:lessThan` — this property's value must be below the named field's
+    /// on the same element. Only checked when both are present and numeric.
+    LessThan(&'static str),
+    LessThanOrEquals(&'static str),
+    /// `sh:not [ sh:class X ]` — the referenced element must not be an
+    /// instance of these family-qualified classes. Silent when the referenced
+    /// element is absent, like [`Constraint::Class`].
+    NotClass(&'static [&'static str]),
 }
 
 /// One constraint together with how to report it.
@@ -131,6 +165,28 @@ pub enum Target {
     SubjectsOf(&'static str),
 }
 
+/// How a [`Logic`] combines its branches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogicOp {
+    And,
+    Or,
+    Xone,
+}
+
+/// A node-level `sh:and` / `sh:or` / `sh:xone`. A branch conforms when none of
+/// its checks fail; the shape reports once, with its own name and message,
+/// when the combination does not hold. The branch checks carry no report text.
+#[derive(Debug)]
+pub struct Logic {
+    pub op: LogicOp,
+    pub branches: &'static [&'static [PropShape]],
+    pub rule_id: &'static str,
+    pub name: &'static str,
+    pub message: &'static str,
+    pub description: &'static str,
+    pub severity: &'static str,
+}
+
 /// One `sh:NodeShape`.
 #[derive(Debug)]
 pub struct ShapeDef {
@@ -148,6 +204,8 @@ pub struct ShapeDef {
     /// structs drop unknown properties at decode, leaving nothing to compare
     /// against. 823 NCP shapes use it.
     pub closed: Option<&'static ClosedShape>,
+    /// Node-level `sh:and` / `sh:or` / `sh:xone`.
+    pub logic: &'static [Logic],
     /// Every NC profile code whose manifest imports the file this shape came
     /// from. Plural because four shared constraint files are imported by 17 or
     /// 18 of the 18 manifests.

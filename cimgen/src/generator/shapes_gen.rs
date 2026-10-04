@@ -13,11 +13,15 @@ use std::collections::HashMap;
 use std::fmt::Write;
 
 use cimschema::shacl::resolve::{
-    AltBranch, Check, ClosedShape, Constraint, NodeKind, Path, PropShape, ShapeDef, Target,
+    AltBranch, Check, ClosedShape, Constraint, Logic, LogicOp, NodeKind, Path, PropShape,
+    ShapeDef, Step, Target,
 };
 
+/// Escape for a Rust string literal. Line breaks are kept as `\n` rather than
+/// flattened: the runtime loader interns the text as written, and the two
+/// tables must agree (`tests/dynamic_shapes.rs`).
 fn esc(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', " ")
+    s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r")
 }
 
 /// Interns the strings that repeat across shapes, and whole property shapes.
@@ -84,6 +88,17 @@ fn render_path(path: &Path, pool: &mut Pool) -> String {
         Path::Forward(f) => format!("Path::Forward({})", pool.intern(f)),
         Path::Inverse(f) => format!("Path::Inverse({})", pool.intern(f)),
         Path::RefType(f) => format!("Path::RefType({})", pool.intern(f)),
+        Path::Chain(steps) => {
+            let rendered: Vec<String> = steps
+                .iter()
+                .map(|s| match s {
+                    Step::Forward(f) => format!("Step::Forward({})", pool.intern(f)),
+                    Step::Inverse(f) => format!("Step::Inverse({})", pool.intern(f)),
+                    Step::Type => "Step::Type".to_string(),
+                })
+                .collect();
+            format!("Path::Chain(&[{}])", rendered.join(", "))
+        }
         Path::Alternative(branches) => {
             let rendered: Vec<String> = branches
                 .iter()
@@ -116,6 +131,15 @@ fn render_constraint(c: &Constraint, pool: &mut Pool) -> String {
         Constraint::Class(v) => format!("Constraint::Class({})", pool.intern_list(v)),
         Constraint::RefClass(v) => format!("Constraint::RefClass({})", pool.intern_list(v)),
         Constraint::In(v) => format!("Constraint::In({})", pool.intern_list(v)),
+        Constraint::MinInclusive(v) => format!("Constraint::MinInclusive({v:?})"),
+        Constraint::MaxInclusive(v) => format!("Constraint::MaxInclusive({v:?})"),
+        Constraint::MinExclusive(v) => format!("Constraint::MinExclusive({v:?})"),
+        Constraint::MaxExclusive(v) => format!("Constraint::MaxExclusive({v:?})"),
+        Constraint::LessThan(f) => format!("Constraint::LessThan({})", pool.intern(f)),
+        Constraint::LessThanOrEquals(f) => {
+            format!("Constraint::LessThanOrEquals({})", pool.intern(f))
+        }
+        Constraint::NotClass(v) => format!("Constraint::NotClass({})", pool.intern_list(v)),
     }
 }
 
@@ -135,6 +159,31 @@ fn render_prop(p: &PropShape, pool: &mut Pool) -> String {
     let path = render_path(&p.path, pool);
     let checks: Vec<String> = p.checks.iter().map(|c| render_check(c, pool)).collect();
     format!("PropShape {{ path: {path}, checks: &[{}] }}", checks.join(", "))
+}
+
+fn render_logic(l: &Logic, pool: &mut Pool) -> String {
+    let op = match l.op {
+        LogicOp::And => "LogicOp::And",
+        LogicOp::Or => "LogicOp::Or",
+        LogicOp::Xone => "LogicOp::Xone",
+    };
+    let branches: Vec<String> = l
+        .branches
+        .iter()
+        .map(|b| {
+            let props: Vec<String> = b.iter().map(|p| render_prop(p, pool)).collect();
+            format!("&[{}]", props.join(", "))
+        })
+        .collect();
+    format!(
+        "Logic {{ op: {op}, branches: &[{}], rule_id: {}, name: {}, message: {}, description: {}, severity: {} }}",
+        branches.join(", "),
+        pool.intern(&l.rule_id),
+        pool.intern(&l.name),
+        pool.intern(&l.message),
+        pool.intern(&l.description),
+        pool.intern(&l.severity),
+    )
 }
 
 fn render_closed(c: &ClosedShape, pool: &mut Pool) -> String {
@@ -179,6 +228,7 @@ pub fn render_shapes(family_id: &str, shapes: &[ShapeDef]) -> String {
             .map(|c| format!("Some({})", render_closed(c, &mut pool)))
             .unwrap_or_else(|| "None".to_string());
 
+        let logic: Vec<String> = shape.logic.iter().map(|l| render_logic(l, &mut pool)).collect();
         let profiles = pool.intern_list(&shape.profiles);
         let file = pool.intern(&shape.file);
 
@@ -186,6 +236,7 @@ pub fn render_shapes(family_id: &str, shapes: &[ShapeDef]) -> String {
         writeln!(body, "        targets: &[{}],", targets.join(", ")).unwrap();
         writeln!(body, "        props: &[{}],", props.join(", ")).unwrap();
         writeln!(body, "        closed: {closed},").unwrap();
+        writeln!(body, "        logic: &[{}],", logic.join(", ")).unwrap();
         writeln!(body, "        profiles: {profiles},").unwrap();
         writeln!(body, "        file: {file},").unwrap();
         writeln!(body, "    }},").unwrap();
@@ -197,7 +248,7 @@ pub fn render_shapes(family_id: &str, shapes: &[ShapeDef]) -> String {
     writeln!(s).unwrap();
     writeln!(
         s,
-        "use crate::shapes::{{AltBranch, Check, ClosedShape, Constraint, NodeKind, Path, PropShape, ShapeDef, Target}};"
+        "use crate::shapes::{{AltBranch, Check, ClosedShape, Constraint, Logic, LogicOp, NodeKind, Path, PropShape, ShapeDef, Step, Target}};"
     )
     .unwrap();
     writeln!(s).unwrap();

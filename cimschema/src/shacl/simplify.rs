@@ -170,6 +170,9 @@ fn simplify_constraints(
                         let single = vals[0].clone();
                         let mut payload = std::collections::HashMap::new();
                         payload.insert("hasValue".to_string(), ShaclValue::Str(single));
+                        if let Some(lits) = c.payload.get(LITERALS) {
+                            payload.insert(LITERALS.to_string(), lits.clone());
+                        }
                         out.push(ConstraintInfo {
                             component: "sh:HasValueConstraintComponent".to_string(),
                             payload,

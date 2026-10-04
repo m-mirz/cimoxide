@@ -61,7 +61,7 @@ pub fn resolve_profiles(
 }
 
 #[cfg(feature = "dynamic-shapes")]
-pub use dynamic::{load_from, load_table, ShapeError, SHACL_DIR_ENV};
+pub use dynamic::{intern_shapes, load_from, load_table, ShapeError, SHACL_DIR_ENV};
 
 #[cfg(feature = "dynamic-shapes")]
 mod dynamic {
@@ -75,8 +75,8 @@ mod dynamic {
     use cimschema::shacl::skip::SkipCollector;
 
     use crate::shapes::{
-        AltBranch, Check, ClosedShape, Constraint, NodeKind, Path as SPath, PropShape, ShapeDef,
-        Target,
+        AltBranch, Check, ClosedShape, Constraint, Logic, LogicOp, NodeKind, Path as SPath,
+        PropShape, ShapeDef, Step, Target,
     };
 
     /// Environment variable naming a directory of SHACL constraint files.
@@ -361,6 +361,14 @@ mod dynamic {
         }
     }
 
+    /// Convert an already-resolved table into the `&'static` IR, for a caller
+    /// that resolved the shapes itself (e.g. with its own profile mapping).
+    /// Leaked once per call.
+    pub fn intern_shapes(shapes: &[r::ShapeDef]) -> &'static [ShapeDef] {
+        let mut interner = Interner::default();
+        Vec::leak(shapes.iter().map(|s| shape(s, &mut interner)).collect())
+    }
+
     /// Interns resolved strings so they satisfy the `&'static` signatures the
     /// IR and the violation types require. Bounded by schema size and leaked
     /// once per process.
@@ -398,6 +406,7 @@ mod dynamic {
                     .collect::<Vec<_>>(),
             ),
             closed: s.closed.as_ref().map(|c| &*Box::leak(Box::new(closed(c, i)))),
+            logic: Vec::leak(s.logic.iter().map(|l| logic(l, i)).collect::<Vec<_>>()),
             profiles: i.intern_all(&s.profiles),
             file: i.intern(&s.file),
         }
@@ -422,6 +431,16 @@ mod dynamic {
             r::Path::Forward(f) => SPath::Forward(i.intern(f)),
             r::Path::Inverse(f) => SPath::Inverse(i.intern(f)),
             r::Path::RefType(f) => SPath::RefType(i.intern(f)),
+            r::Path::Chain(steps) => SPath::Chain(Vec::leak(
+                steps
+                    .iter()
+                    .map(|s| match s {
+                        r::Step::Forward(f) => Step::Forward(i.intern(f)),
+                        r::Step::Inverse(f) => Step::Inverse(i.intern(f)),
+                        r::Step::Type => Step::Type,
+                    })
+                    .collect::<Vec<_>>(),
+            )),
             r::Path::Alternative(branches) => SPath::Alternative(Vec::leak(
                 branches
                     .iter()
@@ -461,6 +480,34 @@ mod dynamic {
             r::Constraint::Class(v) => Constraint::Class(i.intern_all(v)),
             r::Constraint::RefClass(v) => Constraint::RefClass(i.intern_all(v)),
             r::Constraint::In(v) => Constraint::In(i.intern_all(v)),
+            r::Constraint::MinInclusive(v) => Constraint::MinInclusive(*v),
+            r::Constraint::MaxInclusive(v) => Constraint::MaxInclusive(*v),
+            r::Constraint::MinExclusive(v) => Constraint::MinExclusive(*v),
+            r::Constraint::MaxExclusive(v) => Constraint::MaxExclusive(*v),
+            r::Constraint::LessThan(f) => Constraint::LessThan(i.intern(f)),
+            r::Constraint::LessThanOrEquals(f) => Constraint::LessThanOrEquals(i.intern(f)),
+            r::Constraint::NotClass(v) => Constraint::NotClass(i.intern_all(v)),
+        }
+    }
+
+    fn logic(l: &r::Logic, i: &mut Interner) -> Logic {
+        Logic {
+            op: match l.op {
+                r::LogicOp::And => LogicOp::And,
+                r::LogicOp::Or => LogicOp::Or,
+                r::LogicOp::Xone => LogicOp::Xone,
+            },
+            branches: Vec::leak(
+                l.branches
+                    .iter()
+                    .map(|b| &*Vec::leak(b.iter().map(|p| prop(p, i)).collect::<Vec<_>>()))
+                    .collect::<Vec<_>>(),
+            ),
+            rule_id: i.intern(&l.rule_id),
+            name: i.intern(&l.name),
+            message: i.intern(&l.message),
+            description: i.intern(&l.description),
+            severity: i.intern(&l.severity),
         }
     }
 

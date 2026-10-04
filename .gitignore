@@ -5,6 +5,7 @@ cimstructs/src/*.rs
 !cimstructs/src/schema_source.rs
 cimvalidation/src/generated*
 cimvalidation/src/nc_shapes.rs
+cimvalidation/src/cgmes_shapes.rs
 cimvalidation/src/nc_profiles.rs
 cimoxide-py/python/cimoxide/types.pyi
 

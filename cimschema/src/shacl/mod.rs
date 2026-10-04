@@ -9,6 +9,7 @@
 //! runtime shape loader in `cimvalidation` parse with the same code — the same
 //! reason the RDFS parser moved out of `cimgen`.
 
+pub mod cgmes_manifest;
 pub mod model;
 pub mod simplify;
 pub mod resolve;

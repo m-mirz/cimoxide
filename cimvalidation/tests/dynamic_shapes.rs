@@ -29,8 +29,8 @@ fn shacl_dir() -> PathBuf {
 /// pointer identity or on the string pool's numbering.
 fn describe(s: &ShapeDef) -> String {
     format!(
-        "{:?}|{:?}|{:?}|{:?}|{}",
-        s.targets, s.props, s.closed, s.profiles, s.file
+        "{:?}|{:?}|{:?}|{:?}|{:?}|{}",
+        s.targets, s.props, s.closed, s.logic, s.profiles, s.file
     )
 }
 
@@ -50,6 +50,40 @@ fn the_runtime_table_matches_the_generated_one() {
         generated.len()
     );
 
+    for (i, (a, b)) in loaded.iter().zip(generated.iter()).enumerate() {
+        assert_eq!(describe(a), describe(b), "shape {i} differs");
+    }
+}
+
+/// The same comparison for CGMES, whose table validation now runs. It cannot
+/// go through `load_table` — CGMES is deliberately not loadable at runtime,
+/// see `a_non_bag_family_is_rejected` — so it resolves directly and interns
+/// with `intern_shapes`, which is the loader's own conversion.
+#[test]
+fn the_cgmes_table_matches_its_runtime_resolution() {
+    use cimschema::family;
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let import = |f: &'static family::Family| {
+        let glob = root.join(f.default_schema);
+        cimschema::import::import_schema_files(glob.to_str().unwrap(), f, false)
+            .unwrap_or_else(|e| panic!("could not import the {} RDFS: {e}", f.id))
+    };
+    let spec = import(&family::CGMES);
+    let nc = import(&family::NC);
+    let mut collector = cimschema::shacl::skip::SkipCollector::new();
+    let table = cimschema::shacl::resolve::load_shape_table(
+        &family::CGMES,
+        &spec,
+        &[&nc],
+        &root.join("application-profiles-library/CGMES/SHACL"),
+        &mut collector,
+    )
+    .expect("could not resolve the CGMES shapes");
+    let loaded = cimvalidation::shape_source::intern_shapes(&table.shapes);
+    let generated = cimvalidation::cgmes_shapes::SHAPES;
+
+    assert_eq!(loaded.len(), generated.len(), "loaded {} shapes, generated has {}", loaded.len(), generated.len());
     for (i, (a, b)) in loaded.iter().zip(generated.iter()).enumerate() {
         assert_eq!(describe(a), describe(b), "shape {i} differs");
     }

@@ -66,7 +66,7 @@ fn cimstructs_codegen_stable() {
     assert!(status.success(), "cimgen exited with failure");
 
     let hash = hash_dir(&out);
-    assert_eq!(hash, "f13b6abf847800d21dd182bb4670fd985cbd7ab8e53caa1d72df22fd8eb422d5", "cimstructs output drifted — rerun to update hash");
+    assert_eq!(hash, "f5aac603a2ae326cdf6e2679057101c64adb0c6d3a648947f756d0f02103db78", "cimstructs output drifted — rerun to update hash");
 }
 
 #[test]
@@ -96,7 +96,7 @@ fn cimvalidation_codegen_stable() {
         .unwrap();
     assert!(status.success(), "cimgen exited with failure");
 
-    let hash = hash_dir_except(&shacl_out, &["nc_shapes.rs", "nc_profiles.rs"]);
+    let hash = hash_dir_except(&shacl_out, &["nc_shapes.rs", "nc_profiles.rs", "cgmes_shapes.rs"]);
     assert_eq!(hash, "5369720ee910af3ab9f30d2e3ed3fd7395df87f6140bc2f2ebb7069d730a4e11", "cimvalidation output drifted — rerun to update hash");
 }
 
@@ -128,7 +128,37 @@ fn nc_shapes_codegen_stable() {
     let mut h = Sha256::new();
     h.update(std::fs::read(shacl_out.join("nc_shapes.rs")).unwrap());
     let hash: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
-    assert_eq!(hash, "5bb7aca81b0421a80ff3f6435e6a61df9d3265f36aa291e013ba570379022edd", "NC shape table drifted — rerun to update hash");
+    assert_eq!(hash, "601a95448a4a5bb43338e7598b4795975b59a60311bd34a17c5b161b47534fc8", "NC shape table drifted — rerun to update hash");
+}
+
+/// Hashes the CGMES shape table on its own: it replaced the generated
+/// validators as what validation runs, and comes out of the same cimgen run as
+/// they and the NC table do.
+#[test]
+fn cgmes_shapes_codegen_stable() {
+    let root = workspace_root();
+    let structs_out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("cimstructs-cgmesshapes");
+    let shacl_out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("cimvalidation-cgmesshapes");
+    let _ = std::fs::remove_dir_all(&structs_out);
+    let _ = std::fs::remove_dir_all(&shacl_out);
+    std::fs::create_dir_all(&structs_out).unwrap();
+    std::fs::create_dir_all(&shacl_out).unwrap();
+
+    let status = Command::new(env!("CARGO_BIN_EXE_cimgen"))
+        .current_dir(&root)
+        .arg("--output")
+        .arg(&structs_out)
+        .arg("--shacl-output")
+        .arg(&shacl_out)
+        .arg("--skip-python-stubs")
+        .status()
+        .unwrap();
+    assert!(status.success(), "cimgen exited with failure");
+
+    let mut h = Sha256::new();
+    h.update(std::fs::read(shacl_out.join("cgmes_shapes.rs")).unwrap());
+    let hash: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(hash, "034b117b2ab8c0eb382a436169c539a903f66881412bca25de60abea79cc3cd9", "CGMES shape table drifted — rerun to update hash");
 }
 
 /// Hashes the NC class table on its own, so a CGMES-only change cannot mask an
