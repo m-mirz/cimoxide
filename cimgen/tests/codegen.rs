@@ -69,37 +69,6 @@ fn cimstructs_codegen_stable() {
     assert_eq!(hash, "f5aac603a2ae326cdf6e2679057101c64adb0c6d3a648947f756d0f02103db78", "cimstructs output drifted — rerun to update hash");
 }
 
-#[test]
-fn cimvalidation_codegen_stable() {
-    let root = workspace_root();
-    let structs_out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("cimstructs-shacl");
-    let shacl_out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("cimvalidation");
-    let _ = std::fs::remove_dir_all(&structs_out);
-    let _ = std::fs::remove_dir_all(&shacl_out);
-    std::fs::create_dir_all(&structs_out).unwrap();
-    std::fs::create_dir_all(&shacl_out).unwrap();
-
-    let shacl_glob = root.join(
-        "application-profiles-library/CGMES/SHACL/*.ttl",
-    );
-
-    let status = Command::new(env!("CARGO_BIN_EXE_cimgen"))
-        .current_dir(&root)
-        .arg("--output")
-        .arg(&structs_out)
-        .arg("--shacl")
-        .arg(&shacl_glob)
-        .arg("--shacl-output")
-        .arg(&shacl_out)
-        .arg("--skip-python-stubs")
-        .status()
-        .unwrap();
-    assert!(status.success(), "cimgen exited with failure");
-
-    let hash = hash_dir_except(&shacl_out, &["nc_shapes.rs", "nc_profiles.rs", "cgmes_shapes.rs"]);
-    assert_eq!(hash, "5369720ee910af3ab9f30d2e3ed3fd7395df87f6140bc2f2ebb7069d730a4e11", "cimvalidation output drifted — rerun to update hash");
-}
-
 /// Hashes the NC shape table on its own, for the same reason
 /// `nc_classes_codegen_stable` hashes the class table on its own: the CGMES
 /// validators and the NC shapes come out of the same run, and a single hash

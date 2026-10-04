@@ -23,10 +23,6 @@ default = []
 # the class table: a shape table built from one release and a class table from
 # another would disagree about what a class is.
 dynamic-shapes = ["dep:cimoxide-schema", "cimoxide-structs/dynamic-schema"]
-# The generated per-check validators the CGMES shape table replaced (~250k
-# lines). Off by default; on only to compare the two (examples/cgmes_ab.rs).
-# Needs `make generate` to have written cimvalidation/src/generated_*.rs.
-generated-validators = []
 
 [dependencies]
 cimoxide-structs = { workspace = true }
@@ -47,7 +43,3 @@ harness = false
 [[bench]]
 name = "shape_load"
 harness = false
-
-[[example]]
-name = "cgmes_ab"
-required-features = ["dynamic-shapes", "generated-validators"]
