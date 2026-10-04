@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Enum-valued SPARQL rules: Terminal.phases (PhaseCode) and
+     OperationalLimitType.kind (LimitKind). Written with the full IRIs real
+     files use, which the decoder stores as fragments. -->
+<rdf:RDF xmlns:cim="http://iec.ch/TC57/CIM100#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <cim:ConnectivityNode rdf:ID="CN.OK1"/>
+  <cim:ConnectivityNode rdf:ID="CN.OK2"/>
+  <cim:ConnectivityNode rdf:ID="CN.OK3"/>
+  <cim:ConnectivityNode rdf:ID="CN.BAD"/>
+
+  <!-- OK: both terminals ABC -->
+  <cim:Breaker rdf:ID="BRK.OK"/>
+  <cim:Terminal rdf:ID="T.OK1">
+    <cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber>
+    <cim:Terminal.ConductingEquipment rdf:resource="#BRK.OK"/>
+    <cim:Terminal.ConnectivityNode rdf:resource="#CN.OK1"/>
+    <cim:Terminal.phases rdf:resource="http://iec.ch/TC57/CIM100#PhaseCode.ABC"/>
+  </cim:Terminal>
+  <cim:Terminal rdf:ID="T.OK2">
+    <cim:ACDCTerminal.sequenceNumber>2</cim:ACDCTerminal.sequenceNumber>
+    <cim:Terminal.ConductingEquipment rdf:resource="#BRK.OK"/>
+    <cim:Terminal.ConnectivityNode rdf:resource="#CN.OK2"/>
+    <cim:Terminal.phases rdf:resource="http://iec.ch/TC57/CIM100#PhaseCode.ABC"/>
+  </cim:Terminal>
+
+  <!-- BAD: terminal 1 ABCN, terminal 2 ABC (consistencyEquipment); and
+       terminal 1 shares CN.BAD with an ABC terminal (consistencyConnectivityNode) -->
+  <cim:Breaker rdf:ID="BRK.BAD"/>
+  <cim:Terminal rdf:ID="T.BAD1">
+    <cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber>
+    <cim:Terminal.ConductingEquipment rdf:resource="#BRK.BAD"/>
+    <cim:Terminal.ConnectivityNode rdf:resource="#CN.BAD"/>
+    <cim:Terminal.phases rdf:resource="http://iec.ch/TC57/CIM100#PhaseCode.ABCN"/>
+  </cim:Terminal>
+  <cim:Terminal rdf:ID="T.BAD2">
+    <cim:ACDCTerminal.sequenceNumber>2</cim:ACDCTerminal.sequenceNumber>
+    <cim:Terminal.ConductingEquipment rdf:resource="#BRK.BAD"/>
+    <cim:Terminal.ConnectivityNode rdf:resource="#CN.OK2"/>
+    <cim:Terminal.phases rdf:resource="http://iec.ch/TC57/CIM100#PhaseCode.ABC"/>
+  </cim:Terminal>
+  <cim:Breaker rdf:ID="BRK.X"/>
+  <cim:Terminal rdf:ID="T.X1">
+    <cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber>
+    <cim:Terminal.ConductingEquipment rdf:resource="#BRK.X"/>
+    <cim:Terminal.ConnectivityNode rdf:resource="#CN.BAD"/>
+    <cim:Terminal.phases rdf:resource="http://iec.ch/TC57/CIM100#PhaseCode.ABC"/>
+  </cim:Terminal>
+  <cim:Terminal rdf:ID="T.X2">
+    <cim:ACDCTerminal.sequenceNumber>2</cim:ACDCTerminal.sequenceNumber>
+    <cim:Terminal.ConductingEquipment rdf:resource="#BRK.X"/>
+    <cim:Terminal.ConnectivityNode rdf:resource="#CN.OK3"/>
+    <cim:Terminal.phases rdf:resource="http://iec.ch/TC57/CIM100#PhaseCode.ABC"/>
+  </cim:Terminal>
+
+  <cim:OperationalLimitSet rdf:ID="OLS.1">
+    <cim:OperationalLimitSet.Terminal rdf:resource="#T.OK1"/>
+  </cim:OperationalLimitSet>
+  <cim:OperationalLimitSet rdf:ID="OLS.2">
+    <cim:OperationalLimitSet.Terminal rdf:resource="#T.OK2"/>
+  </cim:OperationalLimitSet>
+
+  <!-- OK: PATL with infinite duration, one limit per set -->
+  <cim:OperationalLimitType rdf:ID="OLT.PATL.OK">
+    <cim:OperationalLimitType.kind rdf:resource="http://iec.ch/TC57/CIM100-European#LimitKind.patl"/>
+    <cim:OperationalLimitType.isInfiniteDuration>true</cim:OperationalLimitType.isInfiniteDuration>
+  </cim:OperationalLimitType>
+  <cim:CurrentLimit rdf:ID="CL.1">
+    <cim:OperationalLimit.OperationalLimitSet rdf:resource="#OLS.1"/>
+    <cim:OperationalLimit.OperationalLimitType rdf:resource="#OLT.PATL.OK"/>
+  </cim:CurrentLimit>
+
+  <!-- BAD: PATL used by a limit but not of infinite duration -->
+  <cim:OperationalLimitType rdf:ID="OLT.PATL.BAD">
+    <cim:OperationalLimitType.kind rdf:resource="http://iec.ch/TC57/CIM100-European#LimitKind.patl"/>
+    <cim:OperationalLimitType.isInfiniteDuration>false</cim:OperationalLimitType.isInfiniteDuration>
+  </cim:OperationalLimitType>
+  <cim:CurrentLimit rdf:ID="CL.2">
+    <cim:OperationalLimit.OperationalLimitSet rdf:resource="#OLS.2"/>
+    <cim:OperationalLimit.OperationalLimitType rdf:resource="#OLT.PATL.BAD"/>
+  </cim:CurrentLimit>
+
+  <!-- OK: TC without acceptableDuration; BAD: TC with acceptableDuration 60 -->
+  <cim:OperationalLimitType rdf:ID="OLT.TC.OK">
+    <cim:OperationalLimitType.kind rdf:resource="http://iec.ch/TC57/CIM100-European#LimitKind.tc"/>
+  </cim:OperationalLimitType>
+  <cim:OperationalLimitType rdf:ID="OLT.TC.BAD">
+    <cim:OperationalLimitType.kind rdf:resource="http://iec.ch/TC57/CIM100-European#LimitKind.tc"/>
+    <cim:OperationalLimitType.acceptableDuration>60</cim:OperationalLimitType.acceptableDuration>
+  </cim:OperationalLimitType>
+
+  <!-- VoltageLimit: OK with a TATL type, BAD with a PATL type -->
+  <cim:OperationalLimitType rdf:ID="OLT.TATL">
+    <cim:OperationalLimitType.kind rdf:resource="http://iec.ch/TC57/CIM100-European#LimitKind.tatl"/>
+    <cim:OperationalLimitType.acceptableDuration>900</cim:OperationalLimitType.acceptableDuration>
+  </cim:OperationalLimitType>
+  <cim:VoltageLimit rdf:ID="VL.OK">
+    <cim:OperationalLimit.OperationalLimitType rdf:resource="#OLT.TATL"/>
+  </cim:VoltageLimit>
+  <cim:VoltageLimit rdf:ID="VL.BAD">
+    <cim:OperationalLimit.OperationalLimitType rdf:resource="#OLT.PATL.OK"/>
+  </cim:VoltageLimit>
+</rdf:RDF>

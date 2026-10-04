@@ -485,3 +485,34 @@ fn sparql_op_001() {
     assert_eq!(by_id.get("MEAS.VOLT.BAD.ABSENT").map_or(0, |v| v.len()), 1,
         "MEAS.VOLT.BAD.ABSENT: expected 1 violation, got: {:?}", by_id.get("MEAS.VOLT.BAD.ABSENT"));
 }
+
+#[test]
+fn sparql_eq_004_enum_valued_rules() {
+    // PhaseCode and LimitKind values are written as full IRIs and stored as
+    // fragments. These rules compared against the full IRI and so never
+    // matched; each OK/BAD pair below would have reported nothing.
+    let ds = common::load_dataset("../testdata/test_sparql_EQ_004.xml");
+    let cfg = Config { profiles: vec!["EQ".into()], ..Default::default() };
+    let vs = validate(&ds, &cfg);
+    let count = |id: &str, rule: &str| vs.iter().filter(|v| v.object_id == id && v.rule_id == rule).count();
+
+    let phases_eq = "equ:Terminal.phases-consistencyEquipment";
+    assert_eq!(count("BRK.OK", phases_eq), 0, "{vs:#?}");
+    assert_eq!(count("BRK.BAD", phases_eq), 1, "{vs:#?}");
+
+    let phases_cn = "equ:Terminal.phases-consistencyConnectivityNode";
+    assert_eq!(count("CN.OK2", phases_cn), 0, "{vs:#?}");
+    assert_eq!(count("CN.BAD", phases_cn), 1, "{vs:#?}");
+
+    let patl = "equ:LimitKind.patl-numberOfLimitType";
+    assert_eq!(count("OLT.PATL.OK", patl), 0, "{vs:#?}");
+    assert_eq!(count("OLT.PATL.BAD", patl), 1, "{vs:#?}");
+
+    let tc = "equ:LimitKind.tc-duration";
+    assert_eq!(count("OLT.TC.OK", tc), 0, "{vs:#?}");
+    assert_eq!(count("OLT.TC.BAD", tc), 1, "{vs:#?}");
+
+    let vl = "equ:LimitKind.patl-allowedType";
+    assert_eq!(count("VL.OK", vl), 0, "{vs:#?}");
+    assert_eq!(count("VL.BAD", vl), 1, "{vs:#?}");
+}

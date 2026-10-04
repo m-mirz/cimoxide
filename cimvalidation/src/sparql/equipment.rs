@@ -66,6 +66,10 @@ pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
     v
 }
 
+// Enum values (`PhaseCode.ABC`, `LimitKind.patl`) are compared in the form the
+// decoder stores an `rdf:resource`: the fragment after `#`. Comparing against
+// the full IRI, as these rules once did, never matches anything.
+
 /// Terminals grouped by what they connect, built once per [`validate`] call.
 ///
 /// Five rules group terminals by equipment or by connectivity node. Each used
@@ -150,9 +154,9 @@ fn check_acdcterminal_sequence_numbering(dataset: &CimDataset, terms: &Terminals
 }
 
 fn check_terminal_phases_consistency_equipment(_dataset: &CimDataset, terms: &Terminals) -> Vec<Violation> {
-    let abcn = "http://iec.ch/TC57/CIM100#PhaseCode.ABCN";
-    let n_code = "http://iec.ch/TC57/CIM100#PhaseCode.N";
-    let abc = "http://iec.ch/TC57/CIM100#PhaseCode.ABC";
+    let abcn = "PhaseCode.ABCN";
+    let n_code = "PhaseCode.N";
+    let abc = "PhaseCode.ABC";
     let mut v = Vec::new();
     for (eq_id, ts) in &terms.by_equipment {
         // The last terminal with each sequence number wins, as when these were
@@ -680,7 +684,7 @@ fn check_power_transformer_end_rated_u_value_range(dataset: &CimDataset) -> Vec<
 }
 
 fn check_voltage_limit_patl(dataset: &CimDataset) -> Vec<Violation> {
-    let patl = "http://iec.ch/TC57/CIM100-European#LimitKind.patl";
+    let patl = "LimitKind.patl";
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("VoltageLimit").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
@@ -773,9 +777,9 @@ fn check_dc_converter_unit_tap_changer_control(dataset: &CimDataset) -> Vec<Viol
 }
 
 fn check_connectivity_node_terminal_phases_consistency(_dataset: &CimDataset, terms: &Terminals) -> Vec<Violation> {
-    let abcn = "http://iec.ch/TC57/CIM100#PhaseCode.ABCN";
-    let n_code = "http://iec.ch/TC57/CIM100#PhaseCode.N";
-    let abc = "http://iec.ch/TC57/CIM100#PhaseCode.ABC";
+    let abcn = "PhaseCode.ABCN";
+    let n_code = "PhaseCode.N";
+    let abc = "PhaseCode.ABC";
     let mut v = Vec::new();
     'outer: for (node_id, ts) in &terms.by_node {
         if ts.len() < 2 { continue; }
@@ -1018,7 +1022,7 @@ fn check_dc_converter_unit_cs_converter_power_transformer(dataset: &CimDataset) 
 }
 
 fn check_limit_kind_patl_number_of_limit_type(dataset: &CimDataset) -> Vec<Violation> {
-    let patl_uri = "http://iec.ch/TC57/CIM100-European#LimitKind.patl";
+    let patl_uri = "LimitKind.patl";
     let mut patl_olts: HashMap<String, bool> = HashMap::default();
     for mrid in dataset.by_type.get("OperationalLimitType").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
@@ -1071,7 +1075,7 @@ fn check_limit_kind_patl_number_of_limit_type(dataset: &CimDataset) -> Vec<Viola
 }
 
 fn check_limit_kind_tc_duration(dataset: &CimDataset) -> Vec<Violation> {
-    let tc_uri = "http://iec.ch/TC57/CIM100-European#LimitKind.tc";
+    let tc_uri = "LimitKind.tc";
     let mut tc_olts: HashMap<String, f64> = HashMap::default();
     for mrid in dataset.by_type.get("OperationalLimitType").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
