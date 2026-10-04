@@ -3,42 +3,84 @@ use cimdecoder::CimDataset;
 use crate::Violation;
 
 pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
+    let topo = Topology::build(dataset);
     let mut v = Vec::new();
-    v.extend(check_angle_reference(dataset));
+    v.extend(check_angle_reference(dataset, &topo));
     v.extend(check_dangling_references(dataset));
     v.extend(check_sv_tap_step_position_sync(dataset));
     v.extend(check_sv_shunt_compensator_sections_sync(dataset));
-    v.extend(check_state_variables_instantiated(dataset));
-    v.extend(check_sv_status_instance(dataset));
-    v.extend(check_sv_shunt_compensator_sections_instance(dataset));
-    v.extend(check_sv_tap_step_instance(dataset));
+    v.extend(check_state_variables_instantiated(dataset, &topo));
+    v.extend(check_sv_status_instance(dataset, &topo));
+    v.extend(check_sv_shunt_compensator_sections_instance(dataset, &topo));
+    v.extend(check_sv_tap_step_instance(dataset, &topo));
     v.extend(check_regulating_control_contradictory(dataset));
-    v.extend(check_regulating_control_same_island(dataset));
+    v.extend(check_regulating_control_same_island(dataset, &topo));
     v
 }
 
-fn build_tn_to_island(dataset: &CimDataset) -> HashMap<String, String> {
-    let mut map = HashMap::default();
-    for mrid in dataset.by_type.get("TopologicalIsland").into_iter().flatten() {
-        let entry = &dataset.entries[mrid];
-        if let Some(island) = entry.element.as_any().downcast_ref::<cimstructs::TopologicalIsland>() {
-            for tn in &island.topological_nodes {
-                map.insert(tn.mrid.trim_start_matches('#').to_string(), mrid.clone());
-            }
-        }
-    }
-    map
+/// Islands and terminals, built once per [`validate`] call.
+///
+/// Five rules mapped topological nodes to islands, and six scanned every
+/// terminal into their own `String`-keyed maps; each did it from scratch.
+/// Borrowed keys and one build serve them all. Maps fill in `by_type` order,
+/// so a later entry wins exactly as it did when each rule built its own.
+struct Topology<'a> {
+    /// TopologicalNode → the TopologicalIsland listing it.
+    tn_to_island: HashMap<&'a str, &'a str>,
+    /// Terminal → its TopologicalNode.
+    term_tn: HashMap<&'a str, &'a str>,
+    /// ConductingEquipment → the TopologicalNodes of its terminals that have one.
+    equip_tns: HashMap<&'a str, Vec<&'a str>>,
+    /// ConductingEquipment → its terminals.
+    equip_terms: HashMap<&'a str, Vec<&'a str>>,
 }
 
-fn check_angle_reference(dataset: &CimDataset) -> Vec<Violation> {
+impl<'a> Topology<'a> {
+    fn build(dataset: &'a CimDataset) -> Self {
+        let mut tn_to_island: HashMap<&'a str, &'a str> = HashMap::default();
+        for mrid in dataset.by_type.get("TopologicalIsland").into_iter().flatten() {
+            let entry = &dataset.entries[mrid];
+            if let Some(island) = entry.element.as_any().downcast_ref::<cimstructs::TopologicalIsland>() {
+                for tn in &island.topological_nodes {
+                    tn_to_island.insert(tn.mrid.trim_start_matches('#'), mrid);
+                }
+            }
+        }
+        let mut term_tn: HashMap<&'a str, &'a str> = HashMap::default();
+        let mut equip_tns: HashMap<&'a str, Vec<&'a str>> = HashMap::default();
+        let mut equip_terms: HashMap<&'a str, Vec<&'a str>> = HashMap::default();
+        for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
+            let entry = &dataset.entries[mrid];
+            let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() else { continue };
+            let tn = term.topological_node.as_ref().map(|r| r.mrid.trim_start_matches('#'));
+            if let Some(tn) = tn {
+                term_tn.insert(mrid, tn);
+            }
+            if let Some(ce) = &term.conducting_equipment {
+                let eq = ce.mrid.trim_start_matches('#');
+                equip_terms.entry(eq).or_default().push(mrid);
+                if let Some(tn) = tn {
+                    equip_tns.entry(eq).or_default().push(tn);
+                }
+            }
+        }
+        Self { tn_to_island, term_tn, equip_tns, equip_terms }
+    }
+
+    /// Is any terminal of this equipment on a node in a topological island?
+    fn energized(&self, eq: &str) -> bool {
+        self.equip_tns.get(eq).is_some_and(|tns| tns.iter().any(|tn| self.tn_to_island.contains_key(tn)))
+    }
+}
+
+fn check_angle_reference(dataset: &CimDataset, topo: &Topology) -> Vec<Violation> {
     let mut angle_ref_tns: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("TopologicalIsland").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(island) = entry.element.as_any().downcast_ref::<cimstructs::TopologicalIsland>() {
-            if let Some(r) = &island.angle_ref_topological_node {
+        if let Some(island) = entry.element.as_any().downcast_ref::<cimstructs::TopologicalIsland>()
+            && let Some(r) = &island.angle_ref_topological_node {
                 angle_ref_tns.insert(r.mrid.trim_start_matches('#').to_string());
             }
-        }
     }
 
     // Find SMs with highest referencePriority (> 0)
@@ -74,22 +116,8 @@ fn check_angle_reference(dataset: &CimDataset) -> Vec<Violation> {
         });
     }
 
-    // Build terminal → TN map for SM terminals
-    let mut sm_term_tns: HashMap<String, Vec<String>> = HashMap::default();
-    for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
-        let entry = &dataset.entries[mrid];
-        if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
-            if let Some(ce) = &term.conducting_equipment {
-                let sm_id = ce.mrid.trim_start_matches('#').to_string();
-                if let Some(tn) = &term.topological_node {
-                    sm_term_tns.entry(sm_id).or_default().push(tn.mrid.trim_start_matches('#').to_string());
-                }
-            }
-        }
-    }
-
     for sm_id in &highest_prio_sms {
-        let found = sm_term_tns.get(sm_id).map_or(false, |tns| tns.iter().any(|tn| angle_ref_tns.contains(tn)));
+        let found = topo.equip_tns.get(sm_id.as_str()).is_some_and(|tns| tns.iter().any(|tn| angle_ref_tns.contains(*tn)));
         if !found {
             v.push(Violation {
                 object_id:   sm_id.clone(),
@@ -159,24 +187,23 @@ fn check_dangling_references(dataset: &CimDataset) -> Vec<Violation> {
     v
 }
 
-fn check_state_variables_instantiated(dataset: &CimDataset) -> Vec<Violation> {
-    let tn_to_island = build_tn_to_island(dataset);
+fn check_state_variables_instantiated(dataset: &CimDataset, topo: &Topology) -> Vec<Violation> {
+    let tn_to_island = &topo.tn_to_island;
     let mut v = Vec::new();
 
     // 1. SvVoltage for each TN in island
     let mut tn_has_sv_voltage: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("SvVoltage").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(svv) = entry.element.as_any().downcast_ref::<cimstructs::SvVoltage>() {
-            if let Some(r) = &svv.topological_node {
+        if let Some(svv) = entry.element.as_any().downcast_ref::<cimstructs::SvVoltage>()
+            && let Some(r) = &svv.topological_node {
                 tn_has_sv_voltage.insert(r.mrid.trim_start_matches('#').to_string());
             }
-        }
     }
-    for (tn_id, island_id) in &tn_to_island {
-        if !tn_has_sv_voltage.contains(tn_id) {
+    for (tn_id, island_id) in tn_to_island {
+        if !tn_has_sv_voltage.contains(*tn_id) {
             v.push(Violation {
-                object_id:   tn_id.clone(),
+                object_id:   tn_id.to_string(),
                 rule_id:     "sm600:SvVoltage-SV__4".into(),
                 name:        "C:600:SV:SvVoltage:SV__4".into(),
                 class:       "TopologicalNode".into(),
@@ -188,40 +215,23 @@ fn check_state_variables_instantiated(dataset: &CimDataset) -> Vec<Violation> {
         }
     }
 
-    // Terminal → TN index
-    let mut term_tns: HashMap<String, String> = HashMap::default();
-    let mut equip_tns: HashMap<String, Vec<String>> = HashMap::default();
-    for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
-        let entry = &dataset.entries[mrid];
-        if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
-            if let Some(tn) = &term.topological_node {
-                let tn_id = tn.mrid.trim_start_matches('#').to_string();
-                term_tns.insert(mrid.clone(), tn_id.clone());
-                if let Some(ce) = &term.conducting_equipment {
-                    let eq_id = ce.mrid.trim_start_matches('#').to_string();
-                    equip_tns.entry(eq_id).or_default().push(tn_id);
-                }
-            }
-        }
-    }
+    let equip_tns = &topo.equip_tns;
 
     // 2. SvSwitch for energized retained switches
     let mut sw_has_sv_switch: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("SvSwitch").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(svsw) = entry.element.as_any().downcast_ref::<cimstructs::SvSwitch>() {
-            if let Some(r) = &svsw.switch {
+        if let Some(svsw) = entry.element.as_any().downcast_ref::<cimstructs::SvSwitch>()
+            && let Some(r) = &svsw.switch {
                 sw_has_sv_switch.insert(r.mrid.trim_start_matches('#').to_string());
             }
-        }
     }
     for mrid in dataset.by_type.get("Switch").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(sw) = entry.element.as_any().downcast_ref::<cimstructs::Switch>() {
             if !sw.retained.unwrap_or(false) { continue; }
             if !sw.base.base.in_service.unwrap_or(false) { continue; }
-            let energized = equip_tns.get(mrid).map_or(false, |tns| tns.iter().any(|tn| tn_to_island.contains_key(tn)));
-            if !energized { continue; }
+            if !topo.energized(mrid) { continue; }
             if !sw_has_sv_switch.contains(mrid) {
                 v.push(Violation {
                     object_id:   mrid.clone(),
@@ -241,19 +251,18 @@ fn check_state_variables_instantiated(dataset: &CimDataset) -> Vec<Violation> {
     let mut ce_has_sv_status: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("SvStatus").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(svs) = entry.element.as_any().downcast_ref::<cimstructs::SvStatus>() {
-            if let Some(r) = &svs.conducting_equipment {
+        if let Some(svs) = entry.element.as_any().downcast_ref::<cimstructs::SvStatus>()
+            && let Some(r) = &svs.conducting_equipment {
                 ce_has_sv_status.insert(r.mrid.trim_start_matches('#').to_string());
             }
-        }
     }
-    for (eq_id, tns) in &equip_tns {
+    for (eq_id, tns) in equip_tns {
         let energized = tns.iter().any(|tn| tn_to_island.contains_key(tn));
         if !energized { continue; }
-        if !ce_has_sv_status.contains(eq_id) {
-            let type_name = dataset.entries.get(eq_id).map_or("ConductingEquipment", |e| e.element.type_name());
+        if !ce_has_sv_status.contains(*eq_id) {
+            let type_name = dataset.entries.get(*eq_id).map_or("ConductingEquipment", |e| e.element.type_name());
             v.push(Violation {
-                object_id:   eq_id.clone(),
+                object_id:   eq_id.to_string(),
                 rule_id:     "sm600:SvStatus-SV__4".into(),
                 name:        "C:600:SV:SvStatus:SV__4".into(),
                 class:       type_name.to_string(),
@@ -308,12 +317,11 @@ fn check_sv_shunt_compensator_sections_sync(dataset: &CimDataset) -> Vec<Violati
     let mut sv_status_in_service: HashMap<String, bool> = HashMap::default();
     for mrid in dataset.by_type.get("SvStatus").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(svs) = entry.element.as_any().downcast_ref::<cimstructs::SvStatus>() {
-            if let Some(r) = &svs.conducting_equipment {
+        if let Some(svs) = entry.element.as_any().downcast_ref::<cimstructs::SvStatus>()
+            && let Some(r) = &svs.conducting_equipment {
                 let ce_id = r.mrid.trim_start_matches('#').to_string();
                 sv_status_in_service.insert(ce_id, svs.in_service.unwrap_or(false));
             }
-        }
     }
 
     let mut v = Vec::new();
@@ -345,10 +353,10 @@ fn check_sv_shunt_compensator_sections_sync(dataset: &CimDataset) -> Vec<Violati
         let rc_enabled = rc_id.as_deref()
             .and_then(|id| dataset.entries.get(id))
             .and_then(|e| e.element.as_any().downcast_ref::<cimstructs::RegulatingControl>())
-            .map_or(true, |rc| rc.enabled.unwrap_or(false));
+            .is_none_or(|rc| rc.enabled.unwrap_or(false));
 
-        if !control_enabled || !rc_enabled {
-            if sv_sections != sections {
+        if (!control_enabled || !rc_enabled)
+            && sv_sections != sections {
                 v.push(Violation {
                     object_id:   sc_id.to_string(),
                     rule_id:     "sm600:SvShuntCompensatorSections.sections-SV__4".into(),
@@ -360,7 +368,6 @@ fn check_sv_shunt_compensator_sections_sync(dataset: &CimDataset) -> Vec<Violati
                     description: String::new(),
                 });
             }
-        }
     }
     v
 }
@@ -377,9 +384,9 @@ fn check_sv_tap_step_position_sync(dataset: &CimDataset) -> Vec<Violation> {
         let rc_enabled = tcc_id.as_deref()
             .and_then(|id| dataset.entries.get(id))
             .and_then(|e| e.element.as_any().downcast_ref::<cimstructs::TapChangerControl>())
-            .map_or(true, |tcc| tcc.base.enabled.unwrap_or(false));
-        if !control_enabled || !rc_enabled {
-            if position != step {
+            .is_none_or(|tcc| tcc.base.enabled.unwrap_or(false));
+        if (!control_enabled || !rc_enabled)
+            && position != step {
                 v.push(Violation {
                     object_id:   tc_id.to_string(),
                     rule_id:     "sm600:SvTapStep.position-SV__4".into(),
@@ -391,7 +398,6 @@ fn check_sv_tap_step_position_sync(dataset: &CimDataset) -> Vec<Violation> {
                     description: String::new(),
                 });
             }
-        }
     }
     v
 }
@@ -420,29 +426,14 @@ fn get_tap_changer_info(entry: &cimdecoder::CimEntry) -> Option<(bool, Option<St
     None
 }
 
-fn check_sv_status_instance(dataset: &CimDataset) -> Vec<Violation> {
-    let tn_to_island = build_tn_to_island(dataset);
-
-    let mut equip_tns: HashMap<String, Vec<String>> = HashMap::default();
-    for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
-        let entry = &dataset.entries[mrid];
-        if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
-            if let Some(tn) = &term.topological_node {
-                if let Some(ce) = &term.conducting_equipment {
-                    let eq_id = ce.mrid.trim_start_matches('#').to_string();
-                    equip_tns.entry(eq_id).or_default().push(tn.mrid.trim_start_matches('#').to_string());
-                }
-            }
-        }
-    }
+fn check_sv_status_instance(dataset: &CimDataset, topo: &Topology) -> Vec<Violation> {
     let mut ce_has_sv_status: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("SvStatus").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(svs) = entry.element.as_any().downcast_ref::<cimstructs::SvStatus>() {
-            if let Some(r) = &svs.conducting_equipment {
+        if let Some(svs) = entry.element.as_any().downcast_ref::<cimstructs::SvStatus>()
+            && let Some(r) = &svs.conducting_equipment {
                 ce_has_sv_status.insert(r.mrid.trim_start_matches('#').to_string());
             }
-        }
     }
 
     let ce_type_names = ["SynchronousMachine", "AsynchronousMachine", "EnergyConsumer",
@@ -452,8 +443,7 @@ fn check_sv_status_instance(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for type_name in &ce_type_names {
         for mrid in dataset.by_type.get(*type_name).into_iter().flatten() {
-            let energized = equip_tns.get(mrid).map_or(false, |tns| tns.iter().any(|tn| tn_to_island.contains_key(tn)));
-            if !energized { continue; }
+            if !topo.energized(mrid) { continue; }
             if !ce_has_sv_status.contains(mrid) {
                 v.push(Violation {
                     object_id:   mrid.clone(),
@@ -471,34 +461,19 @@ fn check_sv_status_instance(dataset: &CimDataset) -> Vec<Violation> {
     v
 }
 
-fn check_sv_shunt_compensator_sections_instance(dataset: &CimDataset) -> Vec<Violation> {
-    let tn_to_island = build_tn_to_island(dataset);
-    let mut equip_tns: HashMap<String, Vec<String>> = HashMap::default();
-    for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
-        let entry = &dataset.entries[mrid];
-        if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
-            if let Some(tn) = &term.topological_node {
-                if let Some(ce) = &term.conducting_equipment {
-                    let eq_id = ce.mrid.trim_start_matches('#').to_string();
-                    equip_tns.entry(eq_id).or_default().push(tn.mrid.trim_start_matches('#').to_string());
-                }
-            }
-        }
-    }
+fn check_sv_shunt_compensator_sections_instance(dataset: &CimDataset, topo: &Topology) -> Vec<Violation> {
     let mut sc_has_sv: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("SvShuntCompensatorSections").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(svsc) = entry.element.as_any().downcast_ref::<cimstructs::SvShuntCompensatorSections>() {
-            if let Some(r) = &svsc.shunt_compensator {
+        if let Some(svsc) = entry.element.as_any().downcast_ref::<cimstructs::SvShuntCompensatorSections>()
+            && let Some(r) = &svsc.shunt_compensator {
                 sc_has_sv.insert(r.mrid.trim_start_matches('#').to_string());
             }
-        }
     }
     let mut v = Vec::new();
     for type_name in &["LinearShuntCompensator", "NonlinearShuntCompensator"] {
         for mrid in dataset.by_type.get(*type_name).into_iter().flatten() {
-            let energized = equip_tns.get(mrid).map_or(false, |tns| tns.iter().any(|tn| tn_to_island.contains_key(tn)));
-            if !energized { continue; }
+            if !topo.energized(mrid) { continue; }
             if !sc_has_sv.contains(mrid) {
                 v.push(Violation {
                     object_id:   mrid.clone(),
@@ -516,45 +491,32 @@ fn check_sv_shunt_compensator_sections_instance(dataset: &CimDataset) -> Vec<Vio
     v
 }
 
-fn check_sv_tap_step_instance(dataset: &CimDataset) -> Vec<Violation> {
-    let tn_to_island = build_tn_to_island(dataset);
+fn check_sv_tap_step_instance(dataset: &CimDataset, topo: &Topology) -> Vec<Violation> {
 
     // TapChanger → energized via TransformerEnd → Terminal → TN
     let mut te_terminal: HashMap<String, String> = HashMap::default();
     for type_name in &["PowerTransformerEnd"] {
         for mrid in dataset.by_type.get(*type_name).into_iter().flatten() {
             let entry = &dataset.entries[mrid];
-            if let Some(pte) = entry.element.as_any().downcast_ref::<cimstructs::PowerTransformerEnd>() {
-                if let Some(r) = &pte.base.terminal {
+            if let Some(pte) = entry.element.as_any().downcast_ref::<cimstructs::PowerTransformerEnd>()
+                && let Some(r) = &pte.base.terminal {
                     te_terminal.insert(mrid.clone(), r.mrid.trim_start_matches('#').to_string());
                 }
-            }
         }
     }
-    let mut term_tn: HashMap<String, String> = HashMap::default();
-    for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
-        let entry = &dataset.entries[mrid];
-        if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
-            if let Some(tn) = &term.topological_node {
-                term_tn.insert(mrid.clone(), tn.mrid.trim_start_matches('#').to_string());
-            }
-        }
-    }
-
     let is_tc_energized = |te_id: &str| -> bool {
         let term_id = match te_terminal.get(te_id) { Some(t) => t, None => return false };
-        let tn_id = match term_tn.get(term_id) { Some(t) => t, None => return false };
-        tn_to_island.contains_key(tn_id)
+        let tn_id = match topo.term_tn.get(term_id.as_str()) { Some(t) => t, None => return false };
+        topo.tn_to_island.contains_key(tn_id)
     };
 
     let mut tc_has_sv: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("SvTapStep").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(svts) = entry.element.as_any().downcast_ref::<cimstructs::SvTapStep>() {
-            if let Some(r) = &svts.tap_changer {
+        if let Some(svts) = entry.element.as_any().downcast_ref::<cimstructs::SvTapStep>()
+            && let Some(r) = &svts.tap_changer {
                 tc_has_sv.insert(r.mrid.trim_start_matches('#').to_string());
             }
-        }
     }
 
     let mut v = Vec::new();
@@ -578,7 +540,7 @@ fn check_sv_tap_step_instance(dataset: &CimDataset) -> Vec<Violation> {
                     None
                 }
             });
-            let energized = te_id.as_deref().map_or(false, is_tc_energized);
+            let energized = te_id.as_deref().is_some_and(is_tc_energized);
             if !energized { continue; }
             if !tc_has_sv.contains(mrid) {
                 v.push(Violation {
@@ -597,44 +559,20 @@ fn check_sv_tap_step_instance(dataset: &CimDataset) -> Vec<Violation> {
     v
 }
 
-fn check_regulating_control_same_island(dataset: &CimDataset) -> Vec<Violation> {
-    let tn_to_island = build_tn_to_island(dataset);
+fn check_regulating_control_same_island(dataset: &CimDataset, topo: &Topology) -> Vec<Violation> {
     // Terminal → island
-    let mut term_to_island: HashMap<String, String> = HashMap::default();
-    for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
-        let entry = &dataset.entries[mrid];
-        if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
-            if let Some(tn) = &term.topological_node {
-                let tn_id = tn.mrid.trim_start_matches('#');
-                if let Some(island_id) = tn_to_island.get(tn_id) {
-                    term_to_island.insert(mrid.clone(), island_id.clone());
-                }
-            }
-        }
-    }
-    // Equipment → terminal list
-    let mut equip_terms: HashMap<String, Vec<String>> = HashMap::default();
-    for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
-        let entry = &dataset.entries[mrid];
-        if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
-            if let Some(ce) = &term.conducting_equipment {
-                let eq_id = ce.mrid.trim_start_matches('#').to_string();
-                equip_terms.entry(eq_id).or_default().push(mrid.clone());
-            }
-        }
-    }
+    let term_to_island = |term: &str| topo.term_tn.get(term).and_then(|tn| topo.tn_to_island.get(tn)).copied();
 
     // RegulatingControl MRID → SynchronousMachines referencing it. Built once instead of
     // rescanning all SynchronousMachine per RegulatingControl below.
     let mut rc_to_sm: HashMap<String, Vec<String>> = HashMap::default();
     for sm_mrid in dataset.by_type.get("SynchronousMachine").into_iter().flatten() {
         let sm_entry = &dataset.entries[sm_mrid];
-        if let Some(sm) = sm_entry.element.as_any().downcast_ref::<cimstructs::SynchronousMachine>() {
-            if let Some(rc_ref) = sm.base.base.regulating_control.as_ref() {
+        if let Some(sm) = sm_entry.element.as_any().downcast_ref::<cimstructs::SynchronousMachine>()
+            && let Some(rc_ref) = sm.base.base.regulating_control.as_ref() {
                 let rc_id = rc_ref.mrid.trim_start_matches('#').to_string();
                 rc_to_sm.entry(rc_id).or_default().push(sm_mrid.clone());
             }
-        }
     }
 
     // TapChangerControl (RegulatingControl) MRID → (tap changer MRID, type name, transformer
@@ -642,7 +580,9 @@ fn check_regulating_control_same_island(dataset: &CimDataset) -> Vec<Violation> 
     // below.
     let tc_types = ["RatioTapChanger", "PhaseTapChangerLinear", "PhaseTapChangerSymmetrical",
                     "PhaseTapChangerAsymmetrical", "PhaseTapChangerTabular"];
-    let mut tcc_to_tc: HashMap<String, Vec<(String, &'static str, Option<String>)>> = HashMap::default();
+    // (tap changer MRID, its type, its TransformerEnd MRID)
+    type TapChangers = Vec<(String, &'static str, Option<String>)>;
+    let mut tcc_to_tc: HashMap<String, TapChangers> = HashMap::default();
     for tc_type in &tc_types {
         for tc_mrid in dataset.by_type.get(*tc_type).into_iter().flatten() {
             let tc_entry = &dataset.entries[tc_mrid];
@@ -676,13 +616,13 @@ fn check_regulating_control_same_island(dataset: &CimDataset) -> Vec<Violation> 
         let rc = match entry.element.as_any().downcast_ref::<cimstructs::RegulatingControl>() { Some(r) => r, None => continue };
         if !rc.enabled.unwrap_or(false) { continue; }
         let rc_term_id = match &rc.terminal { Some(r) => r.mrid.trim_start_matches('#'), None => continue };
-        let rc_island = match term_to_island.get(rc_term_id) { Some(i) => i.clone(), None => continue };
+        let rc_island = match term_to_island(rc_term_id) { Some(i) => i, None => continue };
 
         // Check SynchronousMachines referencing this RC
         for sm_mrid in rc_to_sm.get(mrid).into_iter().flatten() {
-            for term_id in equip_terms.get(sm_mrid).into_iter().flatten() {
-                if let Some(sm_island) = term_to_island.get(term_id) {
-                    if sm_island != &rc_island {
+            for term_id in topo.equip_terms.get(sm_mrid.as_str()).into_iter().flatten() {
+                if let Some(sm_island) = term_to_island(term_id)
+                    && sm_island != rc_island {
                         v.push(Violation {
                             object_id:   mrid.clone(),
                             rule_id:     "sm6002:RegulatingControl-point".into(),
@@ -695,7 +635,6 @@ fn check_regulating_control_same_island(dataset: &CimDataset) -> Vec<Violation> 
                         });
                         break;
                     }
-                }
             }
         }
 
@@ -707,9 +646,9 @@ fn check_regulating_control_same_island(dataset: &CimDataset) -> Vec<Violation> 
             } else {
                 None
             };
-            if let Some(t_id) = term_id {
-                if let Some(tc_island) = term_to_island.get(&t_id) {
-                    if tc_island != &rc_island {
+            if let Some(t_id) = term_id
+                && let Some(tc_island) = term_to_island(&t_id)
+                    && tc_island != rc_island {
                         v.push(Violation {
                             object_id:   mrid.clone(),
                             rule_id:     "sm6002:RegulatingControl-point".into(),
@@ -721,8 +660,6 @@ fn check_regulating_control_same_island(dataset: &CimDataset) -> Vec<Violation> 
                             description: String::new(),
                         });
                     }
-                }
-            }
         }
     }
     v

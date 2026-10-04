@@ -28,7 +28,6 @@ dynamic-shapes = ["dep:cimoxide-schema", "cimoxide-structs/dynamic-schema"]
 cimoxide-structs = { workspace = true }
 cimoxide-decoder = { workspace = true }
 cimoxide-schema = { workspace = true, optional = true }
-regex       = "1"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

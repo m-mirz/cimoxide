@@ -181,7 +181,6 @@ dependencies = [
  "cimoxide-schema",
  "cimoxide-structs",
  "criterion",
- "regex",
 ]
 
 [[package]]
