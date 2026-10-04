@@ -4,7 +4,7 @@ This file provides guidance to AI coding agents (Claude Code, Codex, Cursor and 
 
 ## What This Project Does
 
-cimoxide is a Rust monorepo providing tooling for ENTSO-E CGMES (Common Information Model Exchange Standard) data used in power system modeling. It reads IEC 61970/61968 RDF/SHACL schemas, generates strongly-typed Rust structs and validation functions, and provides efficient RDF/XML deserialization.
+cimoxide is a Rust monorepo providing tooling for ENTSO-E CGMES (Common Information Model Exchange Standard) data used in power system modeling. It reads IEC 61970/61968 RDF/SHACL schemas, generates strongly-typed Rust structs and SHACL shape tables that one interpreter validates against, and provides efficient RDF/XML deserialization.
 
 ## Common Commands
 
@@ -70,14 +70,13 @@ Streaming XML parser that produces `CimDataset`:
   order after `merge` and violation order — is reproducible run to run. Core crates take
   no dependency for it; do not pull in crates that are only in `Cargo.lock` via oxigraph
 
-### `cimvalidation` — SHACL Validators (`cgmes_shapes.rs`, `nc_shapes.rs`, `nc_profiles.rs`, `generated_*.rs` are generated; do not hand-edit those)
+### `cimvalidation` — SHACL Validators (`cgmes_shapes.rs`, `nc_shapes.rs`, `nc_profiles.rs` are generated; do not hand-edit those)
 Both families validate through one interpreter, `bag.rs`, over a shape table:
 `cgmes_shapes.rs` (CGMES, read through the typed elements' `RdfBlock`s) and `nc_shapes.rs`.
-See "Shape tables" below. The old per-check generated validators (`generated_*.rs`, ~250k
-lines, 123 s to compile against 9.5 s without) are behind the off-by-default
-`generated-validators` feature, kept only for comparison in `examples/cgmes_ab.rs`.
+See "Shape tables" below. CGMES used to have ~250k lines of generated per-check
+validators (123 s to compile the crate, against 9.5 s now); they are gone.
 
-Generated: `src/cgmes_shapes.rs`, `src/nc_shapes.rs`, `src/nc_profiles.rs`, `src/generated_*.rs`. `src/sparql/` (hand-written reimplementations of the
+Generated: `src/cgmes_shapes.rs`, `src/nc_shapes.rs`, `src/nc_profiles.rs`. `src/sparql/` (hand-written reimplementations of the
 `sh:sparql` constraints), `helpers.rs`, `violation.rs`, `detect.rs` and `lib.rs` are
 hand-written. Entry points:
 - `validate_files(per_file, cfg)` — full two-phase run: per-file checks in parallel, then
@@ -116,7 +115,7 @@ write classes under namespaces they were not declared in).
 
 NC elements carry a `nc:` prefix on `type_name` and thus on `by_type` keys. `:` cannot
 occur in a CIM class name, so bare-name consumers are unaffected. NC supports decoding
-only: validation, encoding and SPARQL are CGMES-only, and the encoder skips NC elements
+and validation; encoding and SPARQL are CGMES-only, and the encoder skips NC elements
 rather than emit malformed XML.
 
 The two families must be imported into **separate** `CimSpecification`s —
@@ -162,17 +161,36 @@ concrete subclasses. The generated validators looked the literal class up and
 so checked nothing for those — e.g. SSH `IdentifiedObject.mRID-cardinality`
 (9,691 findings on RealGrid) and `Equipment.inService`.
 
-Beyond NC's constraints the IR has numeric ranges, `sh:lessThan(OrEquals)`,
-`sh:not [sh:class]`, sequence paths (`Path::Chain`, incl. inverse and
-`rdf:type` steps; a hop out of the dataset makes the result unknown and the
-checks silent) and node-level `sh:and`/`sh:or`/`sh:xone` (`ShapeDef::logic`,
-all-or-nothing: a branch the importer cannot fully represent skips the whole
-combination).
+Beyond NC's constraints the IR has numeric ranges, `sh:length`,
+`sh:lessThan(OrEquals)`, `sh:not [sh:class]`, sequence paths (`Path::Chain`,
+incl. inverse and `rdf:type` steps; stepping *from* an element absent from the
+dataset makes the result unknown and the checks silent, while a final
+`rdf:type` step yields the elements reached and class checks skip absent ones),
+node-level `sh:and`/`sh:or`/`sh:xone` (`ShapeDef::logic`; a branch may be
+negated — `[ sh:not X ]`; all-or-nothing: a branch the importer cannot fully
+represent skips the whole combination) and `sh:qualifiedValueShape` over a value
+list (`Constraint::QualifiedIn`). NCP's DatasetMetadata material implications,
+`sh:or ( [ sh:not dm:conformsToNCProfile ] [ P required ] )`, run through those.
 
-Measure CGMES changes with `examples/cgmes_ab.rs` (features `dynamic-shapes,
-generated-validators`): table vs generated, alternating rounds in one process,
-violation multisets compared per unit, `EXACT_TARGETS=1` to emulate the
-generated path's literal targets for a parity check.
+`sh:datatype` and `sh:nodeKind` are kept for both families: the interpreter
+reads the text as written, where a malformed number is real. `sh:in` values are
+keyed the way the decoder stores an `rdf:resource` — after the last `#`, else
+the whole IRI, with prefixed names expanded first.
+
+The interpreter walks element-major (each target once, every shape on its
+class) and reports a finding once per element and rule: a property shape shared
+by two node shapes reaches a subclass instance through both once abstract
+targets are expanded.
+
+The manifest tag `"COMMON"` (IdentifiedObject string lengths) runs on the merged
+dataset under `--common`. CGMES profile codes are checked before the NC index in
+`validate_profile_local`, so CGMES data never loads the NC table.
+
+To check a validation change, compare `cimcli validate --common --quality
+--format json` output before and after as multisets of `(object_id, rule_id,
+property)` across the CGMES test configurations — and on copies mutated to
+trigger the rules touched, since most real configurations violate few of them.
+Time with alternating before/after runs in the same session.
 
 The pieces:
 
@@ -180,26 +198,27 @@ The pieces:
   and (later) `cimvalidation` at runtime, the same split the RDFS parser uses
 - `cimvalidation/src/shapes.rs` — hand-written IR (`ShapeDef`, `PropShape`,
   `Check`, `Constraint`, `Path`)
-- `cimvalidation/src/nc_shapes.rs` — generated, 1,966 shapes / 14,842 checks
-- `cimvalidation/src/cgmes_shapes.rs` — generated, 844 shapes / 8,038 checks plus
+- `cimvalidation/src/nc_shapes.rs` — generated, 1,973 shapes / 14,842 checks
+- `cimvalidation/src/cgmes_shapes.rs` — generated, 850 shapes / 18,682 checks plus
   node-level logic
 - `cimvalidation/src/nc_profiles.rs` — generated, profile IRI → short code
 - `cimvalidation/src/bag.rs` — hand-written interpreter
 
-**The bag checks more than the generated path can, not less.** `sh:datatype`
-and `sh:nodeKind` are tautologies against an `f64` and real checks against a
-`FieldValue::Text` — 2,747 NCP constraints that `simplify` used to discard as
-"type-system guarantees", which is why that stage is now gated on
-`Family.typed`. `sh:closed` (823 shapes) is inexpressible against generated
-structs at all, because unknown properties are dropped at decode.
+**The table checks more than generated code could, not less.** `sh:datatype`
+and `sh:nodeKind` are tautologies against an `f64` and real checks against the
+text as written — `simplify` used to discard them as "type-system guarantees"
+and no longer does, for either family. `sh:closed` (823 NC shapes) is
+inexpressible against generated structs at all, because unknown properties are
+dropped at decode.
 
 Resolution happens once, when the table is built, never per element: target
 classes become family-qualified `by_type` keys with abstract classes expanded
 to concrete descendants, and paths become the field keys the decoder stores
 (the local XML name, prefix dropped).
 
-`sh:path ( nc:X.y rdf:type )` becomes `Path::RefType` — follow the association,
-read the referenced element's class. 170 of NCP's 178 chains are this, and
+`sh:path ( nc:X.y rdf:type )` is a two-step `Path::Chain` — follow the
+association, read the referenced element's class (the interpreter has a
+zero-allocation fast path for it). 170 of NCP's 178 chains are this, and
 their allowed lists name CGMES classes beside NC ones, so class resolution
 spans both families. This is the only place NC validation reaches across the
 family boundary, and it is safe precisely because it reads the referenced
@@ -225,8 +244,15 @@ code.
 `cimvalidation::shape_source` can build the shape table and profile index from
 a SHACL directory instead of using the generated ones, behind the
 `dynamic-shapes` feature (off by default; on for `cimoxide-cli` and
-`cimoxide-py`). Resolution: explicit `load_from` > `CIMOXIDE_SHACL_DIR` >
-generated. A bad path warns and falls back.
+`cimoxide-py`), for NC and CGMES alike. Resolution: explicit `load_from` >
+`CIMOXIDE_SHACL_DIR` > generated. A bad path warns and falls back.
+
+`CIMOXIDE_SHACL_DIR` may list several directories, separated as in `PATH`;
+`shape_source::family_of_dir` assigns each to the family whose files it holds
+(NC: a `Validation/` subdirectory; CGMES: files its manifest names), so an NC
+directory alone never makes CGMES try to load from it. CGMES classes are
+compiled structs, so a CGMES table from another release can name classes this
+build does not decode; shapes on those match nothing.
 
 The feature also enables `cimstructs/dynamic-schema`, because the shapes
 resolve against the class table: a shape table from one release and a class
@@ -257,17 +283,15 @@ re-measurement.
 **Not covered**, and reported as skips rather than silently dropped: NCP's 35
 `sh:sparql` constraints; the 119 `cim16:`/`cim17:` target classes (NC shapes on
 CGMES classes, whose NC attributes the decoder discards, so checking them would
-report absent values the XML carried); and three `sh:qualifiedValueShape`
-shapes reachable only through `sh:or ( [ sh:not <named shape> ] .. )` —
-material implication, which the IR has no way to express.
+report absent values the XML carried). One logical shape in
+`RemedialActionSchedule-AP-Con-Complex-SHACL.ttl` resolves but never runs: only
+the combined "ALL" manifest imports that file.
 
 
 ## Codegen Stability Tests
 
-`cimgen/tests/codegen.rs` contains five hash-based tests that detect unintended generator drift:
+`cimgen/tests/codegen.rs` contains four hash-based tests that detect unintended generator drift:
 - `cimstructs_codegen_stable` — Hashes regenerated struct output against a stored SHA-256
-- `cimvalidation_codegen_stable` — Same for the generated CGMES validators. Excludes
-  `nc_shapes.rs`, `nc_profiles.rs` and `cgmes_shapes.rs`, which land in the same directory
 - `cgmes_shapes_codegen_stable` — Same for the CGMES shape table, which validation runs
 - `nc_classes_codegen_stable` — Hashes the NC class table alone, so a CGMES-only change
   cannot mask an NC change
