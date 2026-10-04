@@ -125,14 +125,18 @@ pub fn validate_profile_shacl(dataset: &cimdecoder::CimDataset, profile: &str, c
 }
 
 /// The SHACL half of [`validate_crossprofile`]: every enabled profile's
-/// cross-profile rules, on the merged dataset.
+/// cross-profile rules on the merged dataset, plus the rules for every profile
+/// when `cfg.common`.
 pub fn validate_crossprofile_shacl(dataset: &cimdecoder::CimDataset, cfg: &Config) -> Vec<Violation> {
     let has = |p: &str| cfg.profiles.is_empty() || cfg.profiles.iter().any(|x| x == p);
-    let active: Vec<&shapes::ShapeDef> = cimschema_cross_profiles()
+    let mut active: Vec<&shapes::ShapeDef> = cimschema_cross_profiles()
         .iter()
         .filter(|p| has(p))
         .flat_map(|p| cgmes_tagged(&format!("X:{p}")).iter().copied())
         .collect();
+    if cfg.common {
+        active.extend_from_slice(cgmes_tagged("COMMON"));
+    }
     run_cgmes(dataset, &active)
 }
 

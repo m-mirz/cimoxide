@@ -18,7 +18,7 @@ use cimstructs::base::{FastMap, FastSet, FieldMap, FieldValue, GenericElement};
 
 use crate::helpers;
 use crate::shapes::{
-    AltBranch, Check, ClosedShape, Constraint, Logic, LogicOp, NodeKind, Path, PropShape, ShapeDef, Step,
+    AltBranch, Branch, Check, ClosedShape, Constraint, Logic, LogicOp, NodeKind, Path, PropShape, ShapeDef, Step,
     Target,
 };
 use crate::{Config, Violation};
@@ -89,8 +89,6 @@ struct Ctx<'a> {
 enum Kind {
     Text,
     Refs,
-    /// Class names, from a final `rdf:type` step.
-    Types,
 }
 
 /// The values a path yields for one element, as far as a constraint needs them.
@@ -213,7 +211,10 @@ fn number(v: &str) -> Option<f64> {
 
 fn resolve<'a>(ctx: &Ctx<'a>, el: &'a Fields, mrid: &'a str, path: &Path) -> Values<'a> {
     match path {
-        Path::Forward(field) | Path::RefType(field) => field_values(el, field),
+        Path::Forward(field) => field_values(el, field),
+        // `( X.y rdf:type )`: what the general walk below yields for it — the
+        // field's references, or its literal — without the allocations.
+        Path::Chain([Step::Forward(field), Step::Type]) => field_values(el, field),
         Path::Inverse(field) => Values::Count(ctx.reverse.count(mrid, field)),
         Path::Alternative(branches) => {
             // The union across branches. Only the count is well defined: the
@@ -236,8 +237,10 @@ fn resolve<'a>(ctx: &Ctx<'a>, el: &'a Fields, mrid: &'a str, path: &Path) -> Val
 ///
 /// Every element stepped *from* must be in the dataset and of this source,
 /// since its fields are read; otherwise the result is [`Values::Unknown`]. An
-/// inverse step never needs that — the reverse index holds what points here.
-/// A literal reached before the last step ends that branch of the walk.
+/// inverse step never needs that — the reverse index holds what points here,
+/// and neither does a final `rdf:type` step. A literal reached before the last
+/// step ends that branch of the walk, unless `rdf:type` follows: then it is
+/// the value, the way a one-step path would report it.
 fn chain<'a>(ctx: &Ctx<'a>, focus: &'a Fields, mrid: &'a str, steps: &[Step]) -> Values<'a> {
     let mut nodes: Vec<&'a str> = vec![mrid];
     for (i, step) in steps.iter().enumerate() {
@@ -263,12 +266,14 @@ fn chain<'a>(ctx: &Ctx<'a>, focus: &'a Fields, mrid: &'a str, steps: &[Step]) ->
                         None => {}
                     }
                 }
+                // A literal where the path continues to rdf:type is reported
+                // as the literal it is, so `sh:nodeKind sh:IRI` can flag it.
+                let before_type = matches!(steps.get(i + 1), Some(Step::Type));
+                if (last || before_type) && !texts.is_empty() {
+                    return Values::Chain(Kind::Text, texts);
+                }
                 if last {
-                    return if texts.is_empty() {
-                        Values::Chain(Kind::Refs, next)
-                    } else {
-                        Values::Chain(Kind::Text, texts)
-                    };
+                    return Values::Chain(Kind::Refs, next);
                 }
                 nodes = next;
             }
@@ -280,16 +285,10 @@ fn chain<'a>(ctx: &Ctx<'a>, focus: &'a Fields, mrid: &'a str, steps: &[Step]) ->
                 }
                 nodes = next;
             }
-            Step::Type => {
-                let mut types: Vec<&'a str> = Vec::with_capacity(nodes.len());
-                for &node in &nodes {
-                    match ctx.ds.entries.get(node) {
-                        Some(e) => types.push(e.element.type_name()),
-                        None => return Values::Unknown,
-                    }
-                }
-                return Values::Chain(Kind::Types, types);
-            }
+            // The values are the elements reached. Nothing is read from them,
+            // so they count even when absent; the class constraints a type
+            // path carries look up the ones that are present.
+            Step::Type => return Values::Chain(Kind::Refs, nodes),
         }
     }
     Values::Chain(Kind::Refs, nodes)
@@ -335,7 +334,7 @@ fn violation(mrid: &str, class: &str, property: &str, c: &Check) -> Violation {
 /// of the focus element the path starts from.
 fn path_label(path: &Path) -> &'static str {
     match path {
-        Path::Forward(f) | Path::RefType(f) | Path::Inverse(f) => f,
+        Path::Forward(f) | Path::Inverse(f) => f,
         Path::Alternative(branches) => match branches.first() {
             Some(AltBranch::Forward(f)) | Some(AltBranch::Inverse(f)) => f,
             None => "",
@@ -370,8 +369,8 @@ fn fails(ctx: &Ctx<'_>, el: &Fields, values: &Values<'_>, constraint: &Constrain
         // double-count one mistake.
         Constraint::Datatype(xsd) => values.any_text(|v| !datatype_ok(v, xsd)),
 
-        // An inverse or alternative path yields only a count and an rdf:type
-        // step only class names, so there is no node to inspect.
+        // An inverse or alternative path yields only a count, so there is no
+        // node to inspect.
         Constraint::NodeKind(kind) => match kind {
             NodeKind::Literal => values.is_refs() && values.count() != Some(0),
             NodeKind::Iri => values.is_text() && values.count() != Some(0),
@@ -389,14 +388,25 @@ fn fails(ctx: &Ctx<'_>, el: &Fields, values: &Values<'_>, constraint: &Constrain
 
         Constraint::MaxLength(n) => values.any_text(|v| v.chars().count() as u32 > *n),
         Constraint::MinLength(n) => values.any_text(|v| (v.chars().count() as u32) < *n),
+        Constraint::Length(n) => values.any_text(|v| v.chars().count() as u32 != *n),
 
-        Constraint::Class(allowed) | Constraint::RefClass(allowed) => match values {
-            // A chain that ends in rdf:type has the classes already.
-            Values::Chain(Kind::Types, types) => types.iter().any(|t| !allowed.contains(t)),
-            v => v.any_ref(|r| class_of(ctx, r).is_some_and(|t| !allowed.contains(&t))),
-        },
+        Constraint::Class(allowed) | Constraint::RefClass(allowed) => {
+            values.any_ref(|r| class_of(ctx, r).is_some_and(|t| !allowed.contains(&t)))
+        }
         Constraint::NotClass(forbidden) => {
             values.any_ref(|r| class_of(ctx, r).is_some_and(|t| forbidden.contains(&t)))
+        }
+        Constraint::QualifiedIn { allowed, min } => {
+            let mut n = 0u32;
+            values.any_text(|v| {
+                n += u32::from(allowed.contains(&v.trim()));
+                false
+            });
+            values.any_ref(|r| {
+                n += u32::from(allowed.contains(&r));
+                false
+            });
+            n < *min
         }
 
         Constraint::MinInclusive(b) => values.any_text(|v| number(v).is_some_and(|x| x < *b)),
@@ -429,17 +439,19 @@ fn check_prop<'a>(
 
 /// Does a [`Logic`] branch conform? `None` when a path in it left the
 /// dataset, so its conformance is not known.
-fn branch_conforms<'a>(ctx: &Ctx<'a>, el: &'a Fields, mrid: &'a str, branch: &[PropShape]) -> Option<bool> {
-    for prop in branch {
+fn branch_conforms<'a>(ctx: &Ctx<'a>, el: &'a Fields, mrid: &'a str, branch: &Branch) -> Option<bool> {
+    let mut holds = true;
+    for prop in branch.props {
         let values = resolve(ctx, el, mrid, &prop.path);
         if matches!(values, Values::Unknown) {
             return None;
         }
         if prop.checks.iter().any(|c| fails(ctx, el, &values, &c.constraint)) {
-            return Some(false);
+            holds = false;
+            break;
         }
     }
-    Some(true)
+    Some(holds != branch.negate)
 }
 
 /// Node-level `sh:and` / `sh:or` / `sh:xone`. Reported with the node shape's
@@ -625,7 +637,7 @@ pub fn validate_shapes(ds: &CimDataset, source: Source, active: &[&ShapeDef]) ->
         s.props
             .iter()
             .map(|p| &p.path)
-            .chain(s.logic.iter().flat_map(|l| l.branches.iter().flat_map(|b| b.iter().map(|p| &p.path))))
+            .chain(s.logic.iter().flat_map(|l| l.branches.iter().flat_map(|b| b.props.iter().map(|p| &p.path))))
     });
     for path in paths {
         match path {
@@ -638,7 +650,7 @@ pub fn validate_shapes(ds: &CimDataset, source: Source, active: &[&ShapeDef]) ->
                 Step::Inverse(f) => Some(*f),
                 _ => None,
             })),
-            Path::Forward(_) | Path::RefType(_) => {}
+            Path::Forward(_) => {}
         }
     }
     count_fields.sort_unstable();

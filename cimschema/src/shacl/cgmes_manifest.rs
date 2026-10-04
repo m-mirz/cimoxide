@@ -12,6 +12,8 @@
 //! * `"EQ!NS"` — the same, only when no SV is present (not solved)
 //! * `"X:SV"` — a cross-profile rule, run once on the merged dataset
 //! * `"HDR"` — a model header rule, run on every file
+//! * `"COMMON"` — a rule for every profile, run once on the merged dataset
+//!   when common checks are enabled
 //!
 //! A file absent from this list is not run. That covers the files whose every
 //! constraint is `sh:sparql` — those are implemented by hand in
@@ -20,6 +22,8 @@
 /// `(TTL file stem, tag)`. A file may carry several tags.
 pub const MANIFEST: &[(&str, &str)] = &[
     ("61970-552-Header-AP-Con-Simple-SHACL", "HDR"),
+    // IdentifiedObject string lengths, for every profile
+    ("61970-600-2_IdentifiedObjectCommon_AP-Con-Complex-SHACL", "COMMON"),
     // DL
     ("61970-301_DiagramLayout-AP-Con-Complex-NotSolvedMAS-SHACL", "DL!NS"),
     ("61970-301_DiagramLayout-AP-Con-Complex-SHACL", "DL"),

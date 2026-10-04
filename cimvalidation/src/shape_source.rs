@@ -75,7 +75,7 @@ mod dynamic {
     use cimschema::shacl::skip::SkipCollector;
 
     use crate::shapes::{
-        AltBranch, Check, ClosedShape, Constraint, Logic, LogicOp, NodeKind, Path as SPath,
+        AltBranch, Branch, Check, ClosedShape, Constraint, Logic, LogicOp, NodeKind, Path as SPath,
         PropShape, ShapeDef, Step, Target,
     };
 
@@ -430,7 +430,6 @@ mod dynamic {
         match p {
             r::Path::Forward(f) => SPath::Forward(i.intern(f)),
             r::Path::Inverse(f) => SPath::Inverse(i.intern(f)),
-            r::Path::RefType(f) => SPath::RefType(i.intern(f)),
             r::Path::Chain(steps) => SPath::Chain(Vec::leak(
                 steps
                     .iter()
@@ -487,6 +486,10 @@ mod dynamic {
             r::Constraint::LessThan(f) => Constraint::LessThan(i.intern(f)),
             r::Constraint::LessThanOrEquals(f) => Constraint::LessThanOrEquals(i.intern(f)),
             r::Constraint::NotClass(v) => Constraint::NotClass(i.intern_all(v)),
+            r::Constraint::Length(n) => Constraint::Length(*n),
+            r::Constraint::QualifiedIn { allowed, min } => {
+                Constraint::QualifiedIn { allowed: i.intern_all(allowed), min: *min }
+            }
         }
     }
 
@@ -500,7 +503,10 @@ mod dynamic {
             branches: Vec::leak(
                 l.branches
                     .iter()
-                    .map(|b| &*Vec::leak(b.iter().map(|p| prop(p, i)).collect::<Vec<_>>()))
+                    .map(|b| Branch {
+                        props: Vec::leak(b.props.iter().map(|p| prop(p, i)).collect::<Vec<_>>()),
+                        negate: b.negate,
+                    })
                     .collect::<Vec<_>>(),
             ),
             rule_id: i.intern(&l.rule_id),

@@ -817,15 +817,29 @@ fn extract_node_compound_constraints(
                 None => continue,
             };
             let mut branches: Vec<Vec<ConstraintInfo>> = Vec::new();
+            let mut negated: Vec<String> = Vec::new();
             let mut unsupported: Vec<String> = Vec::new();
             for item in items {
-                if let Some(bnode_id) = item.as_iri() {
-                    unsupported.extend(unsupported_branch_predicates(g, bnode_id));
-                    let branch = extract_branch_constraints(g, bnode_id);
-                    if !branch.is_empty() {
-                        branches.push(branch);
+                let Some(node) = item.as_iri() else { continue };
+                // `[ sh:not X ]`: the branch conforms when X does not.
+                let (target, negate) = match get_one(g, node, "sh:not").and_then(|v| v.as_iri()) {
+                    Some(x) => {
+                        unsupported.extend(
+                            unsupported_predicates(g, node, &["sh:not"]),
+                        );
+                        (x, true)
                     }
+                    None => (node, false),
+                };
+                let (branch, unsup) = shape_constraints(g, target);
+                unsupported.extend(unsup);
+                if branch.is_empty() {
+                    continue;
                 }
+                if negate {
+                    negated.push(branches.len().to_string());
+                }
+                branches.push(branch);
             }
             if branches.len() < 2 {
                 continue;
@@ -834,6 +848,7 @@ fn extract_node_compound_constraints(
             unsupported.dedup();
             let mut payload = HashMap::new();
             payload.insert("branches".to_string(), ShaclValue::Shapes(branches));
+            payload.insert(NEGATED.to_string(), ShaclValue::List(negated));
             payload.insert(UNSUPPORTED.to_string(), ShaclValue::List(unsupported));
             constraints.push(ConstraintInfo {
                 path: Vec::new(),
@@ -850,21 +865,70 @@ fn extract_node_compound_constraints(
     constraints
 }
 
-/// Predicates on a branch node that [`extract_branch_constraints`] neither
-/// turns into a constraint nor can safely ignore.
-fn unsupported_branch_predicates(g: &Graph, bnode_id: &str) -> Vec<String> {
+/// Predicates on a shape node, other than `also`, that a logical branch
+/// cannot carry: neither turned into a constraint nor safe to ignore.
+fn unsupported_predicates(g: &Graph, node: &str, also: &[&str]) -> Vec<String> {
     const UNDERSTOOD: &[&str] = &[
         "sh:path", "sh:minCount", "sh:maxCount", "sh:hasValue", "sh:in",
         // Annotations: no effect on conformance.
         RDF_TYPE, "sh:name", "sh:description", "sh:message", "sh:severity", "sh:order", "sh:group",
     ];
-    g.get(bnode_id)
+    g.get(node)
         .into_iter()
         .flatten()
         .map(|(p, _)| p.as_str())
-        .filter(|p| !UNDERSTOOD.contains(p))
+        .filter(|p| !UNDERSTOOD.contains(p) && !also.contains(p))
         .map(str::to_string)
         .collect()
+}
+
+/// Every constraint a logical branch's shape node states, and the predicates
+/// it uses that a branch cannot carry.
+///
+/// Covers a property shape's own path constraints, its `sh:qualifiedValueShape`
+/// (only a nested `sh:in` / `sh:hasValue`), and a node shape's nested
+/// `sh:property` shapes, each with its own path.
+fn shape_constraints(g: &Graph, node: &str) -> (Vec<ConstraintInfo>, Vec<String>) {
+    let mut constraints = extract_branch_constraints(g, node);
+    let mut unsupported = unsupported_predicates(
+        g,
+        node,
+        &["sh:property", "sh:qualifiedValueShape", "sh:qualifiedMinCount"],
+    );
+
+    if let Some(qmin) = get_one(g, node, "sh:qualifiedMinCount").and_then(|v| v.as_int()) {
+        match get_one(g, node, "sh:qualifiedValueShape").and_then(|v| v.as_iri()) {
+            Some(inner) => {
+                // The inner shape has no path of its own; it constrains the
+                // values of the outer one.
+                unsupported.extend(unsupported_predicates(g, inner, &[]));
+                let mut payload = HashMap::new();
+                payload.insert("qualifiedMinCount".to_string(), ShaclValue::Int(qmin));
+                payload.insert(
+                    "shape".to_string(),
+                    ShaclValue::Shapes(vec![extract_branch_constraints(g, inner)]),
+                );
+                constraints.push(ConstraintInfo {
+                    path: extract_path(g, node),
+                    severity: String::new(),
+                    message: String::new(),
+                    name: String::new(),
+                    description: String::new(),
+                    component: "sh:QualifiedMinCountConstraintComponent".to_string(),
+                    payload,
+                    rule_id: String::new(),
+                });
+            }
+            None => unsupported.push("sh:qualifiedMinCount".to_string()),
+        }
+    }
+
+    for prop in collect_iri_list(g, node, "sh:property") {
+        let (nested, unsup) = shape_constraints(g, &prop);
+        constraints.extend(nested);
+        unsupported.extend(unsup);
+    }
+    (constraints, unsupported)
 }
 
 /// Extract constraints from a single compound-shape branch blank node.

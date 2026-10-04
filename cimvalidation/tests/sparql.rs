@@ -341,9 +341,12 @@ fn sparql_dy_003_302() {
 #[test]
 fn sparql_common_001() {
     // Common CGMES rules: model header, UUID syntax, duplicate mRID, NaN, string lengths, EIC.
+    // The string-length and EIC rules are plain sh:maxLength / sh:length and run from the
+    // CGMES shape table, so this takes its cross-profile half too.
     let ds = common::load_dataset("../testdata/test_sparql_COMMON_001.xml");
     let cfg = Config { common: true, ..Default::default() };
-    let vs = validate(&ds, &cfg);
+    let mut vs = validate(&ds, &cfg);
+    vs.extend(cimvalidation::validate_crossprofile_shacl(&ds, &cfg));
     let by_id = common::violations_by_id(&vs);
     for id in &[
         "urn:uuid:header-1",

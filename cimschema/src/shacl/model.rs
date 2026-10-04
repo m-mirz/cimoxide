@@ -71,6 +71,11 @@ pub const LITERALS: &str = "literals";
 /// imported are weaker than the schema's, so the combination must not run.
 pub const UNSUPPORTED: &str = "unsupported";
 
+/// Payload key on node-level `sh:and` / `sh:or` / `sh:xone` constraints: the
+/// indices (as strings) of the branches written `[ sh:not X ]`, which conform
+/// when X does not.
+pub const NEGATED: &str = "negated";
+
 /// The target of a NodeShape (what objects it applies to).
 #[derive(Debug, Clone)]
 #[allow(dead_code)]

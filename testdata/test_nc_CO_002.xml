@@ -29,7 +29,16 @@
     <prov:wasGeneratedBy rdf:resource="http://energy.referencedata.eu/Process/1D"/>
     <dcat:startDate>2026-01-01T00:00:00Z</dcat:startDate>
     <dcat:version>1</dcat:version>
+    <dcterms:accessRights rdf:resource="http://energy.referencedata.eu/Confidentiality/RestrictedToTSOs"/>
+    <dcterms:issued>2026-01-01T00:00:00Z</dcterms:issued>
+    <dcat:keyword>CO</dcat:keyword>
+    <dcterms:requires rdf:resource="urn:uuid:00000000-0000-0000-0000-0000000000aa"/>
+    <dcterms:spatial rdf:resource="http://energy.referencedata.eu/EIC/10Y1001A1001A83F"/>
   </dcat:Dataset>
+
+  <!-- accessRights, issued, keyword, requires and spatial are required of any
+       dataset declaring conformance to an NC profile (DatasetMetadata's
+       sh:or ( [ sh:not dm:conformsToNCProfile ] [ ... sh:minCount 1 ] )). -->
 
   <!-- The series this version belongs to; isVersionOf must name a Dataset. -->
   <dcat:Dataset rdf:about="urn:uuid:00000000-0000-0000-0000-0000000000ff">
@@ -40,6 +49,11 @@
     <prov:wasGeneratedBy rdf:resource="http://energy.referencedata.eu/Process/1D"/>
     <dcat:startDate>2026-01-01T00:00:00Z</dcat:startDate>
     <dcat:version>1</dcat:version>
+    <dcterms:accessRights rdf:resource="http://energy.referencedata.eu/Confidentiality/RestrictedToTSOs"/>
+    <dcterms:issued>2026-01-01T00:00:00Z</dcterms:issued>
+    <dcat:keyword>CO</dcat:keyword>
+    <dcterms:requires rdf:resource="urn:uuid:00000000-0000-0000-0000-0000000000aa"/>
+    <dcterms:spatial rdf:resource="http://energy.referencedata.eu/EIC/10Y1001A1001A83F"/>
   </dcat:Dataset>
 
   <nc:OrdinaryContingency rdf:about="urn:uuid:11111111-1111-1111-1111-111111111111">

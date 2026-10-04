@@ -87,7 +87,6 @@ fn render_path(path: &Path, pool: &mut Pool) -> String {
     match path {
         Path::Forward(f) => format!("Path::Forward({})", pool.intern(f)),
         Path::Inverse(f) => format!("Path::Inverse({})", pool.intern(f)),
-        Path::RefType(f) => format!("Path::RefType({})", pool.intern(f)),
         Path::Chain(steps) => {
             let rendered: Vec<String> = steps
                 .iter()
@@ -118,6 +117,7 @@ fn render_constraint(c: &Constraint, pool: &mut Pool) -> String {
         Constraint::MaxCount(n) => format!("Constraint::MaxCount({n})"),
         Constraint::MaxLength(n) => format!("Constraint::MaxLength({n})"),
         Constraint::MinLength(n) => format!("Constraint::MinLength({n})"),
+        Constraint::Length(n) => format!("Constraint::Length({n})"),
         Constraint::Datatype(d) => format!("Constraint::Datatype({})", pool.intern(d)),
         Constraint::HasValue(v) => format!("Constraint::HasValue({})", pool.intern(v)),
         Constraint::NodeKind(k) => {
@@ -140,6 +140,9 @@ fn render_constraint(c: &Constraint, pool: &mut Pool) -> String {
             format!("Constraint::LessThanOrEquals({})", pool.intern(f))
         }
         Constraint::NotClass(v) => format!("Constraint::NotClass({})", pool.intern_list(v)),
+        Constraint::QualifiedIn { allowed, min } => {
+            format!("Constraint::QualifiedIn {{ allowed: {}, min: {min} }}", pool.intern_list(allowed))
+        }
     }
 }
 
@@ -171,8 +174,8 @@ fn render_logic(l: &Logic, pool: &mut Pool) -> String {
         .branches
         .iter()
         .map(|b| {
-            let props: Vec<String> = b.iter().map(|p| render_prop(p, pool)).collect();
-            format!("&[{}]", props.join(", "))
+            let props: Vec<String> = b.props.iter().map(|p| render_prop(p, pool)).collect();
+            format!("Branch {{ props: &[{}], negate: {} }}", props.join(", "), b.negate)
         })
         .collect();
     format!(
@@ -248,7 +251,7 @@ pub fn render_shapes(family_id: &str, shapes: &[ShapeDef]) -> String {
     writeln!(s).unwrap();
     writeln!(
         s,
-        "use crate::shapes::{{AltBranch, Check, ClosedShape, Constraint, Logic, LogicOp, NodeKind, Path, PropShape, ShapeDef, Step, Target}};"
+        "use crate::shapes::{{AltBranch, Branch, Check, ClosedShape, Constraint, Logic, LogicOp, NodeKind, Path, PropShape, ShapeDef, Step, Target}};"
     )
     .unwrap();
     writeln!(s).unwrap();

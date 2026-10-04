@@ -18,7 +18,7 @@ use std::collections::HashMap;
 
 use crate::family::Family;
 use crate::model::{CimSpecification, CimType};
-use crate::shacl::model::{ConstraintInfo, FileResults, ShapeInfo, LITERALS, UNSUPPORTED};
+use crate::shacl::model::{ConstraintInfo, FileResults, ShapeInfo, LITERALS, NEGATED, UNSUPPORTED};
 use crate::shacl::skip::SkipCollector;
 
 // ---------------------------------------------------------------------------
@@ -36,12 +36,9 @@ pub enum Path {
     Forward(String),
     Inverse(String),
     Alternative(Vec<AltBranch>),
-    /// `sh:path ( nc:X.y rdf:type )` — follow the association, then read the
-    /// referenced element's class.
-    RefType(String),
-    /// Any other sequence path, e.g. `( ^cim:Terminal.ConductingEquipment
-    /// cim:Terminal.phases )`. Kept apart from [`Path::RefType`], which is the
-    /// common two-step case and has the cheaper evaluation.
+    /// A sequence path, e.g. `( ^cim:Terminal.ConductingEquipment
+    /// cim:Terminal.phases )`, or `( nc:X.y rdf:type )` — 170 of NCP's 178
+    /// chains are that last form, follow the association and read the class.
     Chain(Vec<Step>),
 }
 
@@ -58,7 +55,6 @@ impl Path {
     /// Does the path end in `rdf:type`, so that its values are class names?
     pub fn yields_types(&self) -> bool {
         match self {
-            Path::RefType(_) => true,
             Path::Chain(steps) => matches!(steps.last(), Some(Step::Type)),
             _ => false,
         }
@@ -83,7 +79,8 @@ pub enum Constraint {
     HasValue(String),
     MaxLength(u32),
     MinLength(u32),
-    /// The referenced element's class, from `sh:in` on a [`Path::RefType`].
+    /// The referenced element's class, from `sh:in` on a path ending in
+    /// `rdf:type`.
     RefClass(Vec<String>),
     MinInclusive(f64),
     MaxInclusive(f64),
@@ -95,6 +92,19 @@ pub enum Constraint {
     /// `sh:not [ sh:class X ]` — the referenced element must *not* be an
     /// instance of these (already expanded) classes.
     NotClass(Vec<String>),
+    /// `sh:qualifiedValueShape [ sh:in (..) ]` with `sh:qualifiedMinCount` —
+    /// at least `min` values must be among `allowed`.
+    QualifiedIn { allowed: Vec<String>, min: u32 },
+    /// `sh:length` — exactly this many characters.
+    Length(u32),
+}
+
+/// One branch of a [`Logic`]: it conforms when none of its checks fail, or —
+/// for `[ sh:not X ]` — when at least one does.
+#[derive(Debug, Clone)]
+pub struct Branch {
+    pub props: Vec<PropShape>,
+    pub negate: bool,
 }
 
 /// How a node-level `sh:and` / `sh:or` / `sh:xone` combines its branches.
@@ -113,7 +123,7 @@ pub enum LogicOp {
 #[derive(Debug, Clone)]
 pub struct Logic {
     pub op: LogicOp,
-    pub branches: Vec<Vec<PropShape>>,
+    pub branches: Vec<Branch>,
     pub rule_id: String,
     pub name: String,
     pub message: String,
@@ -303,27 +313,40 @@ fn field_key(iri: &str) -> &str {
     iri.rsplit_once(':').map_or(iri, |(_, local)| local)
 }
 
-/// An enum or IRI value as the decoder stores it.
-///
-/// `rdf:resource` values keep only the fragment (the decoder's
-/// `strip_fragment`), so `cim:Kind.value` and `<http://…#Kind.value>` must both
-/// compare as `Kind.value`.
 /// An `sh:in` / `sh:hasValue` member as the decoder would store it: a string
-/// literal verbatim, an IRI as its fragment.
-fn value_key(c: &ConstraintInfo, v: &str) -> String {
+/// literal verbatim, an IRI as [`iri_key`] gives it.
+fn value_key(c: &ConstraintInfo, v: &str, prefixes: &HashMap<String, String>) -> String {
     let literal = c
         .payload
         .get(LITERALS)
         .and_then(|l| l.as_list())
         .is_some_and(|l| l.iter().any(|x| x == v));
-    if literal { v.to_string() } else { enum_fragment(v) }
+    if literal { v.to_string() } else { iri_key(v, prefixes) }
 }
 
-fn enum_fragment(v: &str) -> String {
-    let v = v.trim_start_matches('<').trim_end_matches('>');
-    match v.rsplit_once('#') {
-        Some((_, frag)) => frag.to_string(),
-        None => field_key(v).to_string(),
+/// An IRI the way the decoder stores an `rdf:resource` (its
+/// `strip_fragment`): the part after the last `#`, or the whole IRI when it
+/// has none.
+///
+/// A prefixed name is expanded through the file's prefixes first, so
+/// `cim:Kind.value` and `<http://…#Kind.value>` both come out as
+/// `Kind.value`, while `<https://ap.cim4.eu/Contingency/2.3>` — and a name in
+/// a namespace that ends in `/` — stays whole. An unknown prefix falls back to
+/// the local name.
+fn iri_key(v: &str, prefixes: &HashMap<String, String>) -> String {
+    let full = match v.strip_prefix('<') {
+        Some(inner) => inner.trim_end_matches('>').to_string(),
+        None => match v.split_once(':') {
+            Some((prefix, local)) => match prefixes.get(prefix) {
+                Some(ns) => format!("{ns}{local}"),
+                None => return local.to_string(),
+            },
+            None => v.to_string(),
+        },
+    };
+    match full.rfind('#') {
+        Some(i) => full[i + 1..].to_string(),
+        None => full,
     }
 }
 
@@ -521,10 +544,6 @@ fn resolve_path(segs: &[String]) -> Result<Path, &'static str> {
     match segs {
         [] => Err("shape has no resolvable path"),
         [one] => decode_path(one).ok_or("unsupported path form"),
-        // `( nc:X.y rdf:type )` — 170 of NCP's 178 chains.
-        [first, last] if last == "rdf:type" && !first.starts_with(['^', '|']) => {
-            Ok(Path::RefType(field_key(first).to_string()))
-        }
         _ => {
             let mut steps = Vec::with_capacity(segs.len());
             for (i, seg) in segs.iter().enumerate() {
@@ -578,8 +597,14 @@ fn resolve_logic(
         return skip("logical constraint without branches");
     };
 
-    let mut branches: Vec<Vec<PropShape>> = Vec::new();
-    for raw_branch in raw {
+    let negated: Vec<usize> = c
+        .payload
+        .get(NEGATED)
+        .and_then(|v| v.as_list())
+        .map(|l| l.iter().filter_map(|i| i.parse().ok()).collect())
+        .unwrap_or_default();
+    let mut branches: Vec<Branch> = Vec::new();
+    for (bi, raw_branch) in raw.iter().enumerate() {
         // One branch may constrain several paths; group by path.
         let mut props: Vec<PropShape> = Vec::new();
         for bc in raw_branch {
@@ -609,7 +634,7 @@ fn resolve_logic(
                 None => props.push(PropShape { path, checks: vec![check] }),
             }
         }
-        branches.push(props);
+        branches.push(Branch { props, negate: negated.contains(&bi) });
     }
     Some(Logic {
         op,
@@ -657,7 +682,7 @@ fn resolve_constraint(
     let int = |key: &str| c.payload.get(key).and_then(|v| v.as_int());
     let float = |key: &str| c.payload.get(key).and_then(|v| v.as_float());
 
-    // On a RefType path the values are class IRIs, so sh:in is a class
+    // On a path ending in rdf:type the values are class IRIs, so sh:in is a class
     // membership test rather than a literal comparison, and it has to resolve
     // across families.
     if is_ref_type {
@@ -722,6 +747,23 @@ fn resolve_constraint(
             let classes = r.any_classes(c.payload.get("classes")?.as_list()?, prefixes);
             (!classes.is_empty()).then_some(Constraint::Class(classes))
         }
+        // Only the one form the profiles use: a qualified shape that is a
+        // value list. Anything else in it is left unresolved.
+        "sh:QualifiedMinCountConstraintComponent" => {
+            let min = int("qualifiedMinCount")? as u32;
+            let inner = c.payload.get("shape")?.as_shapes()?.first()?;
+            let [ic] = inner.as_slice() else { return None };
+            let allowed: Vec<String> = match ic.component.as_str() {
+                "sh:InConstraintComponent" => {
+                    ic.payload.get("in")?.as_list()?.iter().map(|v| value_key(ic, v, prefixes)).collect()
+                }
+                "sh:HasValueConstraintComponent" => {
+                    vec![value_key(ic, ic.payload.get("hasValue")?.as_str()?, prefixes)]
+                }
+                _ => return None,
+            };
+            Some(Constraint::QualifiedIn { allowed, min })
+        }
         "sh:NotClassConstraintComponent" => {
             let cls = c.payload.get("class")?.as_str()?.to_string();
             let classes = r.any_classes(std::slice::from_ref(&cls), prefixes);
@@ -729,14 +771,15 @@ fn resolve_constraint(
         }
         "sh:InConstraintComponent" => {
             let values = c.payload.get("in")?.as_list()?;
-            Some(Constraint::In(values.iter().map(|v| value_key(c, v)).collect()))
+            Some(Constraint::In(values.iter().map(|v| value_key(c, v, prefixes)).collect()))
         }
         "sh:HasValueConstraintComponent" => {
             let v = c.payload.get("hasValue")?.as_str()?;
-            Some(Constraint::HasValue(value_key(c, v)))
+            Some(Constraint::HasValue(value_key(c, v, prefixes)))
         }
         "sh:MaxLengthConstraintComponent" => Some(Constraint::MaxLength(int("maxLength")? as u32)),
         "sh:MinLengthConstraintComponent" => Some(Constraint::MinLength(int("minLength")? as u32)),
+        "sh:LengthConstraintComponent" => Some(Constraint::Length(int("length")? as u32)),
         "sh:MinInclusiveConstraintComponent" => Some(Constraint::MinInclusive(float("minInclusive")?)),
         "sh:MaxInclusiveConstraintComponent" => Some(Constraint::MaxInclusive(float("maxInclusive")?)),
         "sh:MinExclusiveConstraintComponent" => Some(Constraint::MinExclusive(float("minExclusive")?)),

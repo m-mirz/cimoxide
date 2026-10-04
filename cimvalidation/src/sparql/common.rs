@@ -13,11 +13,12 @@ pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
     v
 }
 
-/// Fuses check_mrid_uniqueness, check_float_special_values, and
-/// check_identified_object_string_lengths — these all independently looped
-/// every dataset entry and called `.to_block()` on it (a per-type generated
-/// field-map conversion, not free), so three full redundant passes over the
+/// Fuses check_mrid_uniqueness and check_float_special_values — these both
+/// looped every dataset entry and called `.to_block()` on it (a per-type
+/// generated field-map conversion, not free), so the redundant passes over the
 /// whole dataset became one shared pass with one `.to_block()` call per entry.
+/// (The IdentifiedObject string-length rules that used to share this pass are
+/// plain `sh:maxLength`/`sh:length` now and run from the CGMES shape table.)
 fn check_per_entry_block_checks(dataset: &CimDataset) -> Vec<Violation> {
     // mRID → every (object, class) carrying it. Collected first and decided
     // after the pass: deciding during it reported whichever duplicate the map
@@ -74,59 +75,6 @@ fn check_per_entry_block_checks(dataset: &CimDataset) -> Vec<Violation> {
                     });
                 }
             }
-
-            // --- IdentifiedObject string lengths ---
-            match key.as_str() {
-                "IdentifiedObject.shortName" if s.len() > 12 => {
-                    v.push(Violation {
-                        object_id: id.clone(),
-                        rule_id:   "io:IdentifiedObject.shortName-stringLength".into(),
-                        name:      "C:301:EQ:IdentifiedObject.shortName:stringLength|C:301:EQBD:IdentifiedObject.shortName:stringLength||C:301:TP:IdentifiedObject.shortName:stringLength".into(),
-                        class:     class.clone(),
-                        property:  "IdentifiedObject.shortName".into(),
-                        message:   "String length is greater than 12 characters.".into(),
-                        severity:  "sh:Violation".into(),
-                        description: String::new(),
-                    });
-                }
-                "IdentifiedObject.energyIdentCodeEic" if !s.is_empty() && s.len() != 16 => {
-                    v.push(Violation {
-                        object_id: id.clone(),
-                        rule_id:   "io:IdentifiedObject.energyIdentCodeEic-stringLength".into(),
-                        name:      "C:301:EQ:IdentifiedObject.energyIdentCodeEic:stringLength|C:301:EQBD:IdentifiedObject.energyIdentCodeEic:stringLength|C:301:TP:IdentifiedObject.energyIdentCodeEic:stringLength".into(),
-                        class:     class.clone(),
-                        property:  "IdentifiedObject.energyIdentCodeEic".into(),
-                        message:   "String length is not 16 characters.".into(),
-                        severity:  "sh:Violation".into(),
-                        description: String::new(),
-                    });
-                }
-                "IdentifiedObject.name" if s.len() > 128 => {
-                    v.push(Violation {
-                        object_id: id.clone(),
-                        rule_id:   "io:IdentifiedObject.name-stringLength".into(),
-                        name:      "C:452:ALL:IdentifiedObject.name:stringLength|C:453:DL:IdentifiedObject.name:stringLength|C:456:TP:IdentifiedObject.name:stringLength|C:456:SV:IdentifiedObject.name:stringLength|C:457:DY:IdentifiedObject.name:stringLength|C:600:EQBD:IdentifiedObject.name:stringLength".into(),
-                        class:     class.clone(),
-                        property:  "IdentifiedObject.name".into(),
-                        message:   "String length is greater than 128 characters.".into(),
-                        severity:  "sh:Violation".into(),
-                        description: String::new(),
-                    });
-                }
-                "IdentifiedObject.description" if s.len() > 256 => {
-                    v.push(Violation {
-                        object_id: id.clone(),
-                        rule_id:   "io:IdentifiedObject.description-stringLength".into(),
-                        name:      "C:452:ALL:IdentifiedObject.description:stringLength|C:600:EQBD:IdentifiedObject.description:stringLength|C:457:DY:IdentifiedObject.description:stringLength|C:456:TP:IdentifiedObject.description:stringLength".into(),
-                        class:     class.clone(),
-                        property:  "IdentifiedObject.description".into(),
-                        message:   "String length is greater than 256 characters.".into(),
-                        severity:  "sh:Violation".into(),
-                        description: String::new(),
-                    });
-                }
-                _ => {}
-            }
         }
     }
 
@@ -171,14 +119,8 @@ fn may_fail_entry_checks(fields: &cimstructs::base::FieldMap) -> bool {
     let suspicious = |key: &str, s: &str| {
         let non_finite = s.bytes().any(|b| matches!(b, b'n' | b'N' | b'i' | b'I' | b'e' | b'E'))
             && s.trim().parse::<f64>().is_ok_and(|f| !f.is_finite());
-        let too_long = match key {
-            "IdentifiedObject.shortName" => s.len() > 12,
-            "IdentifiedObject.energyIdentCodeEic" => !s.is_empty() && s.len() != 16,
-            "IdentifiedObject.name" => s.len() > 128,
-            "IdentifiedObject.description" => s.len() > 256,
-            _ => false,
-        };
-        non_finite || too_long
+        let _ = key;
+        non_finite
     };
     fields.iter().any(|(key, val)| match val {
         cimstructs::base::FieldValue::Text(s) => suspicious(key, s),

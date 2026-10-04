@@ -313,3 +313,32 @@ fn the_conforming_fixture_validates_clean() {
     let v = validate_nc_profile(&ds, "CO", &Config::default());
     assert!(v.is_empty(), "{v:#?}");
 }
+
+/// DatasetMetadata states several requirements as material implication:
+/// `sh:or ( [ sh:not dm:conformsToNCProfile ] [ sh:path P ; sh:minCount 1 ] )`
+/// — a dataset declaring conformance to an NC profile must carry P.
+fn fixture_without(property: &str) -> String {
+    let xml = std::fs::read_to_string("../testdata/test_nc_CO_002.xml").expect("fixture");
+    xml.lines().filter(|l| !l.contains(property)).collect::<Vec<_>>().join("\n")
+}
+
+#[test]
+fn an_nc_dataset_missing_a_required_metadata_property_is_flagged() {
+    let ds = CimDataset::decode_str(&fixture_without("dcterms:spatial")).expect("decode");
+    let v = validate_nc_profile(&ds, "CO", &Config::default());
+    // Both dcat:Dataset elements lost it.
+    assert_eq!(by_name(&v, "spatial-NC-cardinality").len(), 2, "{v:#?}");
+    assert_eq!(v.len(), 2, "only the removed property should be reported: {v:#?}");
+}
+
+/// The other branch of the implication: without conformance to an NC profile
+/// the property is not required. Swapping the profile IRI also stops CO
+/// detection, so the CO shapes are run explicitly.
+#[test]
+fn the_requirement_applies_only_to_nc_profiles() {
+    let xml = fixture_without("dcterms:spatial")
+        .replace("https://ap.cim4.eu/Contingency/2.3", "https://example.invalid/NotAProfile/1.0");
+    let ds = CimDataset::decode_str(&xml).expect("decode");
+    let v = validate_nc_profile(&ds, "CO", &Config::default());
+    assert!(by_name(&v, "spatial-NC-cardinality").is_empty(), "{v:#?}");
+}
