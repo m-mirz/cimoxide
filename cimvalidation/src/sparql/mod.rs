@@ -55,11 +55,10 @@ pub fn validate_profile_local(dataset: &CimDataset, profile: &str, cfg: &Config)
                 violations.extend(ssh_not_solved_mas::validate(dataset));
             }
         }
-        "TP" => {
-            if cfg.not_solved {
+        "TP"
+            if cfg.not_solved => {
                 violations.extend(topology_not_solved_mas::validate(dataset));
             }
-        }
         "DY" => {
             violations.extend(dynamics::validate(dataset));
         }

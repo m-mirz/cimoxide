@@ -119,9 +119,9 @@ fn check_smtcr_model_type(dataset: &CimDataset) -> Vec<Violation> {
                     description: String::new(),
                 });
             }
-        } else if mt == SUBTRANS && rt == SALIENT_POLE {
-            if det.saturation_factor_q_axis.unwrap_or(0.0) != 0.0 ||
-               det.saturation_factor120q_axis.unwrap_or(0.0) != 0.0
+        } else if mt == SUBTRANS && rt == SALIENT_POLE
+            && (det.saturation_factor_q_axis.unwrap_or(0.0) != 0.0 ||
+               det.saturation_factor120q_axis.unwrap_or(0.0) != 0.0)
             {
                 v.push(Violation {
                     object_id:   mrid.clone(),
@@ -134,7 +134,6 @@ fn check_smtcr_model_type(dataset: &CimDataset) -> Vec<Violation> {
                     description: String::new(),
                 });
             }
-        }
     }
     v
 }
@@ -199,21 +198,19 @@ fn check_excitation_system_gains(dataset: &CimDataset) -> Vec<Violation> {
 
     for mrid in dataset.by_type.get("ExcAC8B").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::ExcAC8B>() {
-            if obj.kir.unwrap_or(0.0) == 0.0 && obj.kpr.unwrap_or(0.0) <= 0.0 {
+        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::ExcAC8B>()
+            && obj.kir.unwrap_or(0.0) == 0.0 && obj.kpr.unwrap_or(0.0) <= 0.0 {
                 v.push(dyn_viol(mrid, "dyu:ExcAC8B.kpr-valueRange", "C:302:DY:ExcAC8B.kpr:valueRange",
                     "ExcAC8B", "ExcAC8B.kpr", "The value negative or zero when ExcAC8B.kir = 0."));
             }
-        }
     }
     for mrid in dataset.by_type.get("ExcIEEEAC8B").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::ExcIEEEAC8B>() {
-            if obj.kir.unwrap_or(0.0) == 0.0 && obj.kpr.unwrap_or(0.0) <= 0.0 {
+        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::ExcIEEEAC8B>()
+            && obj.kir.unwrap_or(0.0) == 0.0 && obj.kpr.unwrap_or(0.0) <= 0.0 {
                 v.push(dyn_viol(mrid, "dyu:ExcIEEEAC8B.kpr-valueRange", "C:302:DY:ExcIEEEAC8B.kpr:valueRange",
                     "ExcIEEEAC8B", "ExcIEEEAC8B.kpr", "The value negative or zero when ExcIEEEAC8B.kir = 0."));
             }
-        }
     }
     for mrid in dataset.by_type.get("ExcIEEEAC7B").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
@@ -230,30 +227,27 @@ fn check_excitation_system_gains(dataset: &CimDataset) -> Vec<Violation> {
     }
     for mrid in dataset.by_type.get("ExcBBC").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::ExcBBC>() {
-            if obj.k.unwrap_or(0.0) == 0.0 {
+        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::ExcBBC>()
+            && obj.k.unwrap_or(0.0) == 0.0 {
                 v.push(dyn_viol(mrid, "dyu:ExcBBC.k-valueRange", "C:302:DY:ExcBBC.k:valueRange",
                     "ExcBBC", "ExcBBC.k", "The value is 0."));
             }
-        }
     }
     for mrid in dataset.by_type.get("ExcIEEEDC4B").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::ExcIEEEDC4B>() {
-            if obj.kd.unwrap_or(0.0) > 0.0 && obj.td.unwrap_or(0.0) <= 0.0 {
+        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::ExcIEEEDC4B>()
+            && obj.kd.unwrap_or(0.0) > 0.0 && obj.td.unwrap_or(0.0) <= 0.0 {
                 v.push(dyn_viol(mrid, "dyu:ExcIEEEDC4B.td-valueRange", "C:302:DY:ExcIEEEDC4B.td:valueRange",
                     "ExcIEEEDC4B", "ExcIEEEDC4B.td", "The value negative or zero when ExcIEEEDC4B.kd > 0."));
             }
-        }
     }
     for mrid in dataset.by_type.get("ExcSEXS").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::ExcSEXS>() {
-            if obj.tc.unwrap_or(0.0) > 0.0 && obj.kc.unwrap_or(0.0) <= 0.0 {
+        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::ExcSEXS>()
+            && obj.tc.unwrap_or(0.0) > 0.0 && obj.kc.unwrap_or(0.0) <= 0.0 {
                 v.push(dyn_viol(mrid, "dyu:ExcSEXS.kc-valueRange", "C:302:DY:ExcSEXS.kc:valueRange",
                     "ExcSEXS", "ExcSEXS.kc", "The value negative or zero when ExcSEXS.tc > 0."));
             }
-        }
     }
     v
 }
@@ -262,12 +256,11 @@ fn check_gov_steam_fv3_t5(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("GovSteamFV3").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::GovSteamFV3>() {
-            if obj.t5.unwrap_or(0.0) < 0.0 {
+        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::GovSteamFV3>()
+            && obj.t5.unwrap_or(0.0) < 0.0 {
                 v.push(dyn_viol(mrid, "dyu:GovSteamFV3.t5-valueRange", "C:302:DY:GovSteamFV3.t5:valueRange",
                     "GovSteamFV3", "GovSteamFV3.t5", "The value is negative."));
             }
-        }
     }
     v
 }
@@ -287,25 +280,21 @@ fn check_pss_input_signals(dataset: &CimDataset) -> Vec<Violation> {
 
     for mrid in dataset.by_type.get("Pss2ST").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::Pss2ST>() {
-            if let (Some(s1), Some(s2)) = (obj.input_signal1type.as_ref(), obj.input_signal2type.as_ref()) {
-                if s1.uri == s2.uri {
+        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::Pss2ST>()
+            && let (Some(s1), Some(s2)) = (obj.input_signal1type.as_ref(), obj.input_signal2type.as_ref())
+                && s1.uri == s2.uri {
                     v.push(dyn_viol(mrid, "dyu:Pss2ST-inputSignals", "C:302:DY:Pss2ST:inputSignals",
                         "Pss2ST", "Pss2ST.inputSignal1Type", "Input signal #1 and input signal #2 are not different."));
                 }
-            }
-        }
     }
     for mrid in dataset.by_type.get("PssWECC").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::PssWECC>() {
-            if let (Some(s1), Some(s2)) = (obj.input_signal1type.as_ref(), obj.input_signal2type.as_ref()) {
-                if s1.uri == s2.uri {
+        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::PssWECC>()
+            && let (Some(s1), Some(s2)) = (obj.input_signal1type.as_ref(), obj.input_signal2type.as_ref())
+                && s1.uri == s2.uri {
                     v.push(dyn_viol(mrid, "dyu:PssWECC-inputSignals", "C:302:DY:PssWECC:inputSignals",
                         "PssWECC", "PssWECC.inputSignal1Type", "Input signal #1 and input signal #2 are not different."));
                 }
-            }
-        }
     }
     v
 }
@@ -350,7 +339,7 @@ fn check_gov_hydro4_gain_points(dataset: &CimDataset) -> Vec<Violation> {
             ] {
                 if val != 0.0 {
                     v.push(dyn_viol(mrid, rule_id, name, "GovHydro4", &format!("GovHydro4.{prop}"),
-                        &format!("The value is not 0 when GovHydro4.model is simple.")));
+                        "The value is not 0 when GovHydro4.model is simple."));
                 }
             }
         } else if m == FRANCIS_PELTON || m == KAPLAN {
@@ -370,7 +359,7 @@ fn check_gov_hydro4_gain_points(dataset: &CimDataset) -> Vec<Violation> {
                 ] {
                     if val != 0.0 {
                         v.push(dyn_viol(mrid, rule_id, name, "GovHydro4", &format!("GovHydro4.{prop}"),
-                            &format!("The value is not 0 when GovHydro4.model is francisPelton.")));
+                            "The value is not 0 when GovHydro4.model is francisPelton."));
                     }
                 }
             }
@@ -444,9 +433,9 @@ fn check_load_static_model_attributes(dataset: &CimDataset) -> Vec<Violation> {
                     "LoadStatic", "LoadStatic.staticLoadModelType",
                     "Unnecessary properties defined for zIP1 model type."));
             }
-        } else if m == ZIP2 {
-            if f(obj.ep1)!=0.0 || f(obj.ep2)!=0.0 || f(obj.ep3)!=0.0 ||
-               f(obj.eq1)!=0.0 || f(obj.eq2)!=0.0 || f(obj.eq3)!=0.0
+        } else if m == ZIP2
+            && (f(obj.ep1)!=0.0 || f(obj.ep2)!=0.0 || f(obj.ep3)!=0.0 ||
+               f(obj.eq1)!=0.0 || f(obj.eq2)!=0.0 || f(obj.eq3)!=0.0)
             {
                 v.push(dyn_viol(mrid,
                     "dyu:LoadStatic.staticLoadModelType-zIP2",
@@ -454,7 +443,6 @@ fn check_load_static_model_attributes(dataset: &CimDataset) -> Vec<Violation> {
                     "LoadStatic", "LoadStatic.staticLoadModelType",
                     "Unnecessary properties defined for zIP2 model type."));
             }
-        }
     }
     v
 }

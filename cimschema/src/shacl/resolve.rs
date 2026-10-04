@@ -205,9 +205,11 @@ pub struct Resolver {
     any_concrete: HashMap<String, Vec<String>>,
 }
 
-fn class_maps(
-    spec: &CimSpecification,
-) -> (HashMap<(String, String), String>, HashMap<String, Vec<String>>) {
+/// `(namespace, local)` → qualified class name, and qualified class → its
+/// concrete descendants.
+type ClassMaps = (HashMap<(String, String), String>, HashMap<String, Vec<String>>);
+
+fn class_maps(spec: &CimSpecification) -> ClassMaps {
     let prefix = spec.family.type_prefix;
     let qualified = |t: &CimType| format!("{prefix}{}", t.id);
     let by_ns = spec

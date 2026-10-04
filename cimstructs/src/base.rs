@@ -98,7 +98,7 @@ pub enum FieldValue {
     ResourceList(Vec<String>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RdfBlock {
     /// Family-qualified type name, matching `CimElement::type_name`. Unique
     /// across families, so it is enough to re-dispatch a block on merge.
@@ -108,17 +108,6 @@ pub struct RdfBlock {
     /// Field names (local XML element name) that were assigned more than once
     /// within a single parsed element, indicating a MaxCount violation.
     pub duplicate_fields: FastSet<String>,
-}
-
-impl Default for RdfBlock {
-    fn default() -> Self {
-        Self {
-            type_name: String::new(),
-            mrid: String::new(),
-            fields: FieldMap::default(),
-            duplicate_fields: FastSet::default(),
-        }
-    }
 }
 
 impl RdfBlock {

@@ -24,13 +24,12 @@ fn build_terminals_by_equipment_seq(dataset: &CimDataset) -> HashMap<String, Has
     let mut map: HashMap<String, HashMap<i64, String>> = HashMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
-            if let Some(ce) = &term.conducting_equipment {
+        if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>()
+            && let Some(ce) = &term.conducting_equipment {
                 let eq_id = ce.mrid.trim_start_matches('#').to_string();
                 let seq = term.base.sequence_number.unwrap_or(0);
                 map.entry(eq_id).or_default().insert(seq, mrid.clone());
             }
-        }
     }
     map
 }
@@ -70,22 +69,21 @@ fn check_regulating_control_target_value_tap_changer(dataset: &CimDataset) -> Ve
     let mut rtc_by_tcc: HashMap<String, Vec<String>> = HashMap::default();
     for rtc_mrid in dataset.by_type.get("RatioTapChanger").into_iter().flatten() {
         let rtc_entry = &dataset.entries[rtc_mrid];
-        if let Some(rtc) = rtc_entry.element.as_any().downcast_ref::<cimstructs::RatioTapChanger>() {
-            if let Some(r) = &rtc.base.tap_changer_control {
+        if let Some(rtc) = rtc_entry.element.as_any().downcast_ref::<cimstructs::RatioTapChanger>()
+            && let Some(r) = &rtc.base.tap_changer_control {
                 let tcc_id = r.mrid.trim_start_matches('#').to_string();
                 rtc_by_tcc.entry(tcc_id).or_default().push(rtc_mrid.clone());
             }
-        }
     }
 
     // Collect all RCs with voltage mode enabled
-    for rc_mrid in dataset.by_type.get("RegulatingControl").into_iter().chain(dataset.by_type.get("TapChangerControl").into_iter()).flatten() {
+    for rc_mrid in dataset.by_type.get("RegulatingControl").into_iter().chain(dataset.by_type.get("TapChangerControl")).flatten() {
         let rc_entry = &dataset.entries[rc_mrid];
         let (mode_ok, enabled, target_value, terminal_ref) =
             if let Some(rc) = rc_entry.element.as_any().downcast_ref::<cimstructs::RegulatingControl>() {
-                (rc.mode.as_ref().map_or(false, |r| r.uri.ends_with(voltage_suffix)), rc.enabled.unwrap_or(false), rc.target_value.unwrap_or(0.0), rc.terminal.as_ref())
+                (rc.mode.as_ref().is_some_and(|r| r.uri.ends_with(voltage_suffix)), rc.enabled.unwrap_or(false), rc.target_value.unwrap_or(0.0), rc.terminal.as_ref())
             } else if let Some(tcc) = rc_entry.element.as_any().downcast_ref::<cimstructs::TapChangerControl>() {
-                (tcc.base.mode.as_ref().map_or(false, |r| r.uri.ends_with(voltage_suffix)), tcc.base.enabled.unwrap_or(false), tcc.base.target_value.unwrap_or(0.0), tcc.base.terminal.as_ref())
+                (tcc.base.mode.as_ref().is_some_and(|r| r.uri.ends_with(voltage_suffix)), tcc.base.enabled.unwrap_or(false), tcc.base.target_value.unwrap_or(0.0), tcc.base.terminal.as_ref())
             } else {
                 continue
             };
@@ -162,24 +160,22 @@ fn check_boundary_point_bppl(dataset: &CimDataset) -> Vec<Violation> {
     let mut bp_to_cn: HashMap<String, String> = HashMap::default();
     for mrid in dataset.by_type.get("BoundaryPoint").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(bp) = entry.element.as_any().downcast_ref::<cimstructs::BoundaryPoint>() {
-            if let Some(r) = &bp.connectivity_node {
+        if let Some(bp) = entry.element.as_any().downcast_ref::<cimstructs::BoundaryPoint>()
+            && let Some(r) = &bp.connectivity_node {
                 bp_to_cn.insert(mrid.clone(), r.mrid.trim_start_matches('#').to_string());
             }
-        }
     }
     // CN → set of terminal MRIDs
     let mut cn_terminals: HashMap<String, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
-            if let Some(r) = &term.connectivity_node {
+        if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>()
+            && let Some(r) = &term.connectivity_node {
                 cn_terminals.entry(r.mrid.trim_start_matches('#').to_string()).or_default().push(mrid.clone());
             }
-        }
     }
     let mut v = Vec::new();
-    for (_, cn_id) in &bp_to_cn {
+    for cn_id in bp_to_cn.values() {
         let mut has_eq_injection = false;
         let mut has_two_terminal = false;
         for term_mrid in cn_terminals.get(cn_id).into_iter().flatten() {
@@ -219,11 +215,10 @@ fn check_equivalent_injection_regulation_capability_not_hvdc(dataset: &CimDatase
     let mut cn_is_dc: HashMap<String, bool> = HashMap::default();
     for mrid in dataset.by_type.get("BoundaryPoint").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(bp) = entry.element.as_any().downcast_ref::<cimstructs::BoundaryPoint>() {
-            if let Some(r) = &bp.connectivity_node {
+        if let Some(bp) = entry.element.as_any().downcast_ref::<cimstructs::BoundaryPoint>()
+            && let Some(r) = &bp.connectivity_node {
                 cn_is_dc.insert(r.mrid.trim_start_matches('#').to_string(), bp.is_direct_current.unwrap_or(false));
             }
-        }
     }
     // Equipment MRID → true if it has at least one terminal connected to a non-HVDC
     // BoundaryPoint CN. Built once over all Terminals instead of rescanning them per
@@ -234,11 +229,10 @@ fn check_equivalent_injection_regulation_capability_not_hvdc(dataset: &CimDatase
         let eq_id = match &term.conducting_equipment { Some(r) => r.mrid.trim_start_matches('#').to_string(), None => continue };
         if let Some(cn) = &term.connectivity_node {
             let cn_id = cn.mrid.trim_start_matches('#');
-            if let Some(&is_dc) = cn_is_dc.get(cn_id) {
-                if !is_dc {
+            if let Some(&is_dc) = cn_is_dc.get(cn_id)
+                && !is_dc {
                     equip_non_hvdc_bp.insert(eq_id, true);
                 }
-            }
         }
     }
 
@@ -247,8 +241,8 @@ fn check_equivalent_injection_regulation_capability_not_hvdc(dataset: &CimDatase
         let ei_entry = &dataset.entries[ei_mrid];
         let ei = match ei_entry.element.as_any().downcast_ref::<cimstructs::EquivalentInjection>() { Some(e) => e, None => continue };
         let is_non_hvdc_bp = equip_non_hvdc_bp.contains_key(ei_mrid.as_str());
-        if is_non_hvdc_bp {
-            if ei.regulation_capability.unwrap_or(false) || ei.reactive_capability_curve.is_some() {
+        if is_non_hvdc_bp
+            && (ei.regulation_capability.unwrap_or(false) || ei.reactive_capability_curve.is_some()) {
                 v.push(Violation {
                     object_id: ei_mrid.clone(), rule_id: "eqn600:EquivalentInjection.regulationCapability-notHVDC".into(),
                     name: "C:600:EQ:EquivalentInjection.regulationCapability:notHvdc".into(), class: "EquivalentInjection".into(),
@@ -257,7 +251,6 @@ fn check_equivalent_injection_regulation_capability_not_hvdc(dataset: &CimDatase
                     severity: "sh:Violation".into(), description: String::new(),
                 });
             }
-        }
     }
     v
 }

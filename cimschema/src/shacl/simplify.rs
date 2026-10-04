@@ -125,8 +125,8 @@ fn simplify_constraints(
             // Rule 6: Convert sh:in with a single value to sh:HasValue.
             "sh:InConstraintComponent" => {
                 let values = c.payload.get("in").and_then(|v| v.as_list());
-                if let Some(vals) = values {
-                    if vals.len() == 1 {
+                if let Some(vals) = values
+                    && vals.len() == 1 {
                         let single = vals[0].clone();
                         let mut payload = std::collections::HashMap::new();
                         payload.insert("hasValue".to_string(), ShaclValue::Str(single));
@@ -140,7 +140,6 @@ fn simplify_constraints(
                         });
                         continue;
                     }
-                }
                 out.push(c);
             }
 

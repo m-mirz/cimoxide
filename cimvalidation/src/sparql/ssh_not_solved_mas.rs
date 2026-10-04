@@ -50,14 +50,13 @@ fn check_nonlinear_shunt_compensator_sections_valid(dataset: &CimDataset) -> Vec
     let mut point_sections: HashMap<String, cimstructs::base::FastSet<i64>> = HashMap::default();
     for mrid in dataset.by_type.get("NonlinearShuntCompensatorPoint").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(pt) = entry.element.as_any().downcast_ref::<cimstructs::NonlinearShuntCompensatorPoint>() {
-            if let Some(r) = &pt.nonlinear_shunt_compensator {
+        if let Some(pt) = entry.element.as_any().downcast_ref::<cimstructs::NonlinearShuntCompensatorPoint>()
+            && let Some(r) = &pt.nonlinear_shunt_compensator {
                 let nsc_id = r.mrid.trim_start_matches('#').to_string();
                 if let Some(sn) = pt.section_number {
                     point_sections.entry(nsc_id).or_default().insert(sn);
                 }
             }
-        }
     }
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("NonlinearShuntCompensator").into_iter().flatten() {
@@ -65,7 +64,7 @@ fn check_nonlinear_shunt_compensator_sections_valid(dataset: &CimDataset) -> Vec
         if let Some(nsc) = entry.element.as_any().downcast_ref::<cimstructs::NonlinearShuntCompensator>() {
             let section = nsc.base.sections.unwrap_or(0.0);
             let is_integer = section == section.floor() && !section.is_nan();
-            let valid = is_integer && point_sections.get(mrid).map_or(false, |s| s.contains(&(section as i64)));
+            let valid = is_integer && point_sections.get(mrid).is_some_and(|s| s.contains(&(section as i64)));
             if !valid {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "sshn301:ShuntCompensator.sections-valueNonLinear".into(),
@@ -134,19 +133,17 @@ fn check_regulating_control_power_factor_required_attrs(dataset: &CimDataset) ->
     };
     for mrid in dataset.by_type.get("RegulatingControl").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(rc) = entry.element.as_any().downcast_ref::<cimstructs::RegulatingControl>() {
-            if let Some(mode) = &rc.mode {
+        if let Some(rc) = entry.element.as_any().downcast_ref::<cimstructs::RegulatingControl>()
+            && let Some(mode) = &rc.mode {
                 check(mrid, "RegulatingControl", &mode.uri, rc.min_allowed_target_value.unwrap_or(0.0), rc.max_allowed_target_value.unwrap_or(0.0), &mut v);
             }
-        }
     }
     for mrid in dataset.by_type.get("TapChangerControl").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(tcc) = entry.element.as_any().downcast_ref::<cimstructs::TapChangerControl>() {
-            if let Some(mode) = &tcc.base.mode {
+        if let Some(tcc) = entry.element.as_any().downcast_ref::<cimstructs::TapChangerControl>()
+            && let Some(mode) = &tcc.base.mode {
                 check(mrid, "TapChangerControl", &mode.uri, tcc.base.min_allowed_target_value.unwrap_or(0.0), tcc.base.max_allowed_target_value.unwrap_or(0.0), &mut v);
             }
-        }
     }
     v
 }
@@ -236,19 +233,17 @@ fn check_cs_converter_target_angle_applicability(dataset: &CimDataset, for_alpha
     let mut rc_discrete: HashMap<String, bool> = HashMap::default();
     for mrid in dataset.by_type.get("RegulatingControl").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(rc) = entry.element.as_any().downcast_ref::<cimstructs::RegulatingControl>() {
-            if let Some(r) = &rc.terminal {
+        if let Some(rc) = entry.element.as_any().downcast_ref::<cimstructs::RegulatingControl>()
+            && let Some(r) = &rc.terminal {
                 rc_discrete.insert(r.mrid.trim_start_matches('#').to_string(), rc.discrete.unwrap_or(false));
             }
-        }
     }
     for mrid in dataset.by_type.get("TapChangerControl").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(tcc) = entry.element.as_any().downcast_ref::<cimstructs::TapChangerControl>() {
-            if let Some(r) = &tcc.base.terminal {
+        if let Some(tcc) = entry.element.as_any().downcast_ref::<cimstructs::TapChangerControl>()
+            && let Some(r) = &tcc.base.terminal {
                 rc_discrete.insert(r.mrid.trim_start_matches('#').to_string(), tcc.base.discrete.unwrap_or(false));
             }
-        }
     }
     let (rule_id, rule_name, prop, msg) = if for_alpha {
         ("sshn301:CsConverter.targetAlpha-applicability", "C:301:SSH:CsConverter.targetAlpha:applicability", "CsConverter.targetAlpha",
@@ -278,7 +273,7 @@ fn check_cs_converter_target_angle_applicability(dataset: &CimDataset, for_alpha
                 Some(t) => t, None => { emit(&mut v, mrid); continue; }
             };
             let eq_id = match &pcc_term.conducting_equipment { Some(r) => r.mrid.trim_start_matches('#').to_string(), None => { emit(&mut v, mrid); continue; } };
-            let is_pt = dataset.entries.get(&eq_id).map_or(false, |e| e.element.as_any().downcast_ref::<cimstructs::PowerTransformer>().is_some());
+            let is_pt = dataset.entries.get(&eq_id).is_some_and(|e| e.element.as_any().downcast_ref::<cimstructs::PowerTransformer>().is_some());
             if !is_pt { emit(&mut v, mrid); continue; }
             match rc_discrete.get(&pcc_term_id) {
                 Some(true) | None => emit(&mut v, mrid),
@@ -294,28 +289,26 @@ fn check_control_area_net_interchange_calculation(dataset: &CimDataset) -> Vec<V
     let mut cn_has_bp: cimstructs::base::FastSet<String> = cimstructs::base::FastSet::default();
     for mrid in dataset.by_type.get("BoundaryPoint").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(bp) = entry.element.as_any().downcast_ref::<cimstructs::BoundaryPoint>() {
-            if let Some(r) = &bp.connectivity_node {
+        if let Some(bp) = entry.element.as_any().downcast_ref::<cimstructs::BoundaryPoint>()
+            && let Some(r) = &bp.connectivity_node {
                 cn_has_bp.insert(r.mrid.trim_start_matches('#').to_string());
             }
-        }
     }
     let mut ca_terminals: HashMap<String, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("TieFlow").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(tf) = entry.element.as_any().downcast_ref::<cimstructs::TieFlow>() {
-            if let (Some(ca), Some(term)) = (&tf.control_area, &tf.terminal) {
+        if let Some(tf) = entry.element.as_any().downcast_ref::<cimstructs::TieFlow>()
+            && let (Some(ca), Some(term)) = (&tf.control_area, &tf.terminal) {
                 let ca_id = ca.mrid.trim_start_matches('#').to_string();
                 let term_id = term.mrid.trim_start_matches('#').to_string();
                 ca_terminals.entry(ca_id).or_default().push(term_id);
             }
-        }
     }
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("ControlArea").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(ca) = entry.element.as_any().downcast_ref::<cimstructs::ControlArea>() {
-            let is_interchange = ca.type_.as_ref().map_or(false, |r| r.uri == interchange_uri);
+            let is_interchange = ca.type_.as_ref().is_some_and(|r| r.uri == interchange_uri);
             let net_interchange = ca.net_interchange.unwrap_or(0.0);
             if !is_interchange || net_interchange == 0.0 { continue; }
             let mut sum = 0.0;

@@ -119,11 +119,10 @@ impl CimDataset {
         let new_type = element.type_name().to_string();
         if let Some(old) = self.entries.get(&mrid) {
             let old_type = old.element.type_name();
-            if old_type != new_type {
-                if let Some(v) = self.by_type.get_mut(old_type) {
+            if old_type != new_type
+                && let Some(v) = self.by_type.get_mut(old_type) {
                     v.retain(|m| m != &mrid);
                 }
-            }
         }
         let already_indexed = self
             .by_type
@@ -306,9 +305,7 @@ fn parse_rdf(
                             nested = Some(std::mem::replace(&mut scope, inner));
                         }
 
-                        current = match resolve(&scope, reg, e.name().as_ref())? {
-                            Some(entry) => {
-                                Some((
+                        current = resolve(&scope, reg, e.name().as_ref())?.map(|entry| (
                                     RdfBlock {
                                         type_name: entry.type_name.to_string(),
                                         mrid,
@@ -316,10 +313,7 @@ fn parse_rdf(
                                         duplicate_fields: Default::default(),
                                     },
                                     entry,
-                                ))
-                            }
-                            None => None,
-                        };
+                                ));
                     }
                     3 => {
                         if let Some((ref mut block, _)) = current {
@@ -356,8 +350,8 @@ fn parse_rdf(
                             None
                         };
                         let active = local_scope.as_ref().unwrap_or(&scope);
-                        if !mrid.is_empty() {
-                            if let Some(entry) = resolve(active, reg, e.name().as_ref())? {
+                        if !mrid.is_empty()
+                            && let Some(entry) = resolve(active, reg, e.name().as_ref())? {
                                 let block = RdfBlock {
                                     type_name: entry.type_name.to_string(),
                                     mrid: mrid.clone(),
@@ -368,45 +362,41 @@ fn parse_rdf(
                                 index(&mut ds.by_type, entry.type_name, mrid.clone());
                                 ds.entries.insert(mrid, CimEntry { element, block });
                             }
-                        }
                     }
                     2 => {
                         // Self-closing field element within the current type block.
-                        if let Some((ref mut block, _)) = current {
-                            if let Some(res) = find_resource(e.attributes())? {
+                        if let Some((ref mut block, _)) = current
+                            && let Some(res) = find_resource(e.attributes())? {
                                 let name = e.name();
                                 let (_, local_bytes) = split_qname(name.as_ref());
                                 let local = std::str::from_utf8(local_bytes)?;
                                 add_field(block, local, FieldValue::Resource(res));
                             }
-                        }
                     }
                     _ => {}
                 }
             }
 
             Ok(Event::Text(ref e)) => {
-                if depth == 3 {
-                    if let (Some((block, _)), Some(key)) = (&mut current, pending_key.take()) {
+                if depth == 3
+                    && let (Some((block, _)), Some(key)) = (&mut current, pending_key.take()) {
                         let text = e.unescape()?.trim().to_string();
                         if !text.is_empty() {
                             add_field(block, &key, FieldValue::Text(text));
                         }
                     }
-                }
             }
 
             Ok(Event::End(_)) => {
                 if depth == 2 {
                     pending_key = None;
-                    if let Some((block, entry)) = current.take() {
-                        if !block.mrid.is_empty() {
+                    if let Some((block, entry)) = current.take()
+                        && !block.mrid.is_empty() {
                             let element = entry.parse(&block);
                             index(&mut ds.by_type, entry.type_name, block.mrid.clone());
                             ds.entries
                                 .insert(block.mrid.clone(), CimEntry { element, block });
                         }
-                    }
                     if let Some(outer) = nested.take() {
                         scope = outer;
                     }

@@ -99,7 +99,7 @@ pub fn classify(e: &SkipEntry) -> &'static SkipCategory {
 // Reporting functions
 // ---------------------------------------------------------------------------
 
-pub fn accumulate_counts<'a>(counts: &mut HashMap<&'a str, usize>, entries: &[SkipEntry]) {
+pub fn accumulate_counts(counts: &mut HashMap<&str, usize>, entries: &[SkipEntry]) {
     for e in entries {
         *counts.entry(classify(e).label).or_insert(0) += 1;
     }

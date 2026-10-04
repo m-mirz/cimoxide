@@ -366,14 +366,12 @@ mod dynamic {
             .and_then(|p| p.file_name())
             .zip(Path::new(f.default_schema).parent().and_then(Path::parent).and_then(|p| p.file_name()))
             .is_some_and(|(a, b)| a == b)
-        {
-            if let Some(dir) = std::env::var_os(cimstructs::schema_source::RDFS_DIR_ENV) {
+            && let Some(dir) = std::env::var_os(cimstructs::schema_source::RDFS_DIR_ENV) {
                 return PathBuf::from(dir)
                     .join(file_name(f.default_schema))
                     .to_string_lossy()
                     .into_owned();
             }
-        }
 
         // `application-profiles-library/CGMES/RDFS/<glob>` → `<root>/CGMES/RDFS/<glob>`.
         let tail: Option<PathBuf> = Path::new(f.default_schema)

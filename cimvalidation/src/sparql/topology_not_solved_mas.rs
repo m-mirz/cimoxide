@@ -39,8 +39,7 @@ fn check_terminal_phases_consistency_topological_node(dataset: &CimDataset) -> V
 
                 let failed = if !val1.is_empty() && !val2.is_empty() {
                     if (val1 == ABCN || val1 == N) && val2 != ABCN && val2 != N { true }
-                    else if val1 == ABC && val2 != ABC { true }
-                    else { false }
+                    else { val1 == ABC && val2 != ABC }
                 } else if !val1.is_empty() && val2.is_empty() {
                     val1 == ABCN || val1 == N
                 } else {
@@ -120,12 +119,11 @@ fn check_switch_same_topological_node(dataset: &CimDataset) -> Vec<Violation> {
     let mut eq_terminals: HashMap<String, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
-            if let Some(ce_ref) = term.conducting_equipment.as_ref() {
+        if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>()
+            && let Some(ce_ref) = term.conducting_equipment.as_ref() {
                 eq_terminals.entry(ce_ref.mrid.trim_start_matches('#').to_string())
                     .or_default().push(mrid.clone());
             }
-        }
     }
 
     let mut v = Vec::new();

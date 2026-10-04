@@ -130,12 +130,12 @@ impl<'a> Lexer<'a> {
     fn skip_whitespace_and_comments(&mut self) {
         loop {
             // Skip whitespace
-            while self.peek().map_or(false, |c| c.is_ascii_whitespace()) {
+            while self.peek().is_some_and(|c| c.is_ascii_whitespace()) {
                 self.advance();
             }
             // Skip comment
             if self.peek() == Some(b'#') {
-                while self.peek().map_or(false, |c| c != b'\n') {
+                while self.peek().is_some_and(|c| c != b'\n') {
                     self.advance();
                 }
             } else {
@@ -147,7 +147,7 @@ impl<'a> Lexer<'a> {
     fn read_iri_ref(&mut self) -> String {
         self.advance(); // consume <
         let start = self.pos;
-        while self.peek().map_or(false, |c| c != b'>') {
+        while self.peek().is_some_and(|c| c != b'>') {
             self.advance();
         }
         let s = std::str::from_utf8(&self.src[start..self.pos]).unwrap_or("").to_string();
@@ -199,7 +199,7 @@ impl<'a> Lexer<'a> {
         self.advance(); // _
         self.advance(); // :
         let start = self.pos;
-        while self.peek().map_or(false, |c| !c.is_ascii_whitespace() && c != b',' && c != b';' && c != b'.' && c != b')') {
+        while self.peek().is_some_and(|c| !c.is_ascii_whitespace() && c != b',' && c != b';' && c != b'.' && c != b')') {
             self.advance();
         }
         std::str::from_utf8(&self.src[start..self.pos]).unwrap_or("").to_string()
@@ -250,7 +250,7 @@ impl<'a> Lexer<'a> {
         let mut is_float = false;
         while let Some(c) = self.peek() {
             if c.is_ascii_digit() { s.push(c as char); self.advance(); }
-            else if c == b'.' && self.peek2().map_or(false, |n| n.is_ascii_digit()) {
+            else if c == b'.' && self.peek2().is_some_and(|n| n.is_ascii_digit()) {
                 is_float = true; s.push('.'); self.advance();
             }
             else if c == b'e' || c == b'E' { is_float = true; s.push(c as char); self.advance(); }
@@ -280,7 +280,7 @@ impl<'a> Lexer<'a> {
                 self.advance(); // consume @
                 // Read the keyword part
                 let start = self.pos;
-                while self.peek().map_or(false, |c| c.is_ascii_alphabetic()) {
+                while self.peek().is_some_and(|c| c.is_ascii_alphabetic()) {
                     self.advance();
                 }
                 let kw = std::str::from_utf8(&self.src[start..self.pos]).unwrap_or("");
@@ -304,7 +304,7 @@ impl<'a> Lexer<'a> {
             b'^' => { self.advance(); Some(Token::At) } // treat lone ^ as skip
             b'-' | b'+' => {
                 let sign = self.advance().unwrap();
-                if self.peek().map_or(false, |c| c.is_ascii_digit()) {
+                if self.peek().is_some_and(|c| c.is_ascii_digit()) {
                     Some(self.read_number(sign))
                 } else {
                     // treat as prefixed name start (unusual)
@@ -635,7 +635,7 @@ fn extract_shapes(g: &Graph) -> Vec<ShapeInfo> {
         .filter(|s| {
             get_all(g, s, RDF_TYPE)
                 .iter()
-                .any(|v| v.as_iri().map_or(false, |i| i == SH_NODE_SHAPE))
+                .any(|v| v.as_iri() == Some(SH_NODE_SHAPE))
         })
         .cloned()
         .collect();
@@ -664,14 +664,13 @@ fn build_node_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
     // The individual is not in the schema, so the codegen will skip it — but
     // the simplify stage needs the target to report structural drops.
     for v in get_all(g, id, "sh:targetNode") {
-        if let Some(iri) = v.as_iri() {
-            if seen_targets.insert(iri.to_string()) {
+        if let Some(iri) = v.as_iri()
+            && seen_targets.insert(iri.to_string()) {
                 targets.push(TargetInfo {
                     kind: "targetNode".to_string(),
                     value: iri.to_string(),
                 });
             }
-        }
     }
 
     // sh:targetSubjectsOf / sh:targetObjectsOf target every subject/object of a given
@@ -984,8 +983,8 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
     // Confirm it's a PropertyShape (or unnamed shape with sh:path)
     let is_prop = get_all(g, id, RDF_TYPE)
         .iter()
-        .any(|v| v.as_iri().map_or(false, |i| i == SH_PROPERTY_SHAPE));
-    let has_path = g.get(id).map_or(false, |pairs| pairs.iter().any(|(p, _)| p == "sh:path"));
+        .any(|v| v.as_iri() == Some(SH_PROPERTY_SHAPE));
+    let has_path = g.get(id).is_some_and(|pairs| pairs.iter().any(|(p, _)| p == "sh:path"));
     if !is_prop && !has_path && !id.starts_with("_:") {
         return None;
     }
@@ -1280,7 +1279,7 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
                 .iter()
                 .filter_map(|item| item.as_iri())
                 .filter(|bnode_id| {
-                    g.get(*bnode_id).map_or(false, |pairs| {
+                    g.get(*bnode_id).is_some_and(|pairs| {
                         pairs.iter().any(|(p, _)| p == "sh:path")
                     })
                 })
@@ -1337,9 +1336,9 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
 
     // sh:not with sh:class inside → NotClassConstraintComponent
     for not_val in get_all(g, id, "sh:not") {
-        if let Some(bnode_id) = not_val.as_iri() {
-            if let Some(class_val) = get_one(g, bnode_id, "sh:class") {
-                if let Some(class) = class_val.as_iri() {
+        if let Some(bnode_id) = not_val.as_iri()
+            && let Some(class_val) = get_one(g, bnode_id, "sh:class")
+                && let Some(class) = class_val.as_iri() {
                     let mut payload = HashMap::new();
                     payload.insert("class".to_string(), ShaclValue::Str(class.to_string()));
                     constraints.push(ConstraintInfo {
@@ -1353,8 +1352,6 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
                         rule_id: id.to_string(),
                     });
                 }
-            }
-        }
     }
 
     // sh:sparql — emit a marker constraint so the codegen skip reporter can count it.
@@ -1375,8 +1372,8 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
     // sh:qualifiedValueShape + sh:qualifiedMinCount — "at least N of this
     // property's values satisfy the nested shape". NCP uses it only with a
     // nested sh:in, to assert conformance to one of a set of profile IRIs.
-    if let Some(qmin) = get_one(g, id, "sh:qualifiedMinCount").and_then(|v| v.as_int()) {
-        if let Some(shape_id) = get_one(g, id, "sh:qualifiedValueShape").and_then(|v| v.as_iri()) {
+    if let Some(qmin) = get_one(g, id, "sh:qualifiedMinCount").and_then(|v| v.as_int())
+        && let Some(shape_id) = get_one(g, id, "sh:qualifiedValueShape").and_then(|v| v.as_iri()) {
             // The nested shape carries no sh:path of its own; the outer
             // constraint's path is the one that applies.
             let branch = extract_branch_constraints(g, shape_id);
@@ -1396,7 +1393,6 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
                 });
             }
         }
-    }
 
     if constraints.is_empty() {
         return None;
@@ -1524,18 +1520,17 @@ fn nested_shape_ids(g: &Graph, id: &str) -> Vec<String> {
                         if let Some(bnode) = item.as_iri() {
                             let is_prop = get_all(g, bnode, RDF_TYPE)
                                 .iter()
-                                .any(|v| v.as_iri().map_or(false, |i| i == SH_PROPERTY_SHAPE));
+                                .any(|v| v.as_iri() == Some(SH_PROPERTY_SHAPE));
                             if is_prop {
                                 result.push(bnode.to_string());
                             }
                         }
                     }
                 }
-                RdfVal::Iri(bnode) => {
-                    if bnode.starts_with("_:") {
+                RdfVal::Iri(bnode)
+                    if bnode.starts_with("_:") => {
                         result.push(bnode.clone());
                     }
-                }
                 _ => {}
             }
         }

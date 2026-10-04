@@ -152,7 +152,7 @@ fn field_type(attr: &CimAttribute) -> String {
         }
         attr.lang_type.clone()
     } else if attr.is_enum_value {
-        format!("Option<super::base::UriRef>")
+        "Option<super::base::UriRef>".to_string()
     } else if attr.is_list {
         "Vec<super::base::MridRef>".to_string()
     } else {

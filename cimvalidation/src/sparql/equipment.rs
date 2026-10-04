@@ -103,12 +103,11 @@ fn build_pt_ends(dataset: &CimDataset) -> HashMap<String, Vec<String>> {
     let mut map: HashMap<String, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("PowerTransformerEnd").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(pte) = entry.element.as_any().downcast_ref::<cimstructs::PowerTransformerEnd>() {
-            if let Some(pt_ref) = &pte.power_transformer {
+        if let Some(pte) = entry.element.as_any().downcast_ref::<cimstructs::PowerTransformerEnd>()
+            && let Some(pt_ref) = &pte.power_transformer {
                 let pt_id = pt_ref.mrid.trim_start_matches('#').to_string();
                 map.entry(pt_id).or_default().push(mrid.clone());
             }
-        }
     }
     map
 }
@@ -120,13 +119,12 @@ fn check_acdcterminal_sequence_numbering(dataset: &CimDataset, terms: &Terminals
     }
     for mrid in dataset.by_type.get("DCTerminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(dct) = entry.element.as_any().downcast_ref::<cimstructs::DCTerminal>() {
-            if let Some(ce) = &dct.dc_conducting_equipment {
+        if let Some(dct) = entry.element.as_any().downcast_ref::<cimstructs::DCTerminal>()
+            && let Some(ce) = &dct.dc_conducting_equipment {
                 let eq_id = ce.mrid.trim_start_matches('#');
                 let sn = dct.base.base.sequence_number.unwrap_or(0);
                 equipment_sns.entry(eq_id).or_default().push(sn);
             }
-        }
     }
     let mut v = Vec::new();
     for (eq_id, sns) in &equipment_sns {
@@ -198,8 +196,8 @@ fn check_conducting_equipment_base_voltage_usage(dataset: &CimDataset) -> Vec<Vi
             Some(cimstructs::base::FieldValue::Resource(id)) => id.trim_start_matches('#').to_string(),
             _ => continue,
         };
-        if let Some(ec_entry) = dataset.entries.get(&ec_id) {
-            if ec_entry.element.type_name() == "VoltageLevel" {
+        if let Some(ec_entry) = dataset.entries.get(&ec_id)
+            && ec_entry.element.type_name() == "VoltageLevel" {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "equ:ConductingEquipment.BaseVoltage-usage".into(),
                     name: "C:301:EQ:ConductingEquipment.BaseVoltage:usage".into(), class: type_name.to_string(),
@@ -208,7 +206,6 @@ fn check_conducting_equipment_base_voltage_usage(dataset: &CimDataset) -> Vec<Vi
                     severity: "sh:Violation".into(), description: String::new(),
                 });
             }
-        }
     }
     v
 }
@@ -551,12 +548,11 @@ fn check_nonlinear_shunt_compensator_point_count(dataset: &CimDataset) -> Vec<Vi
     let mut point_count: HashMap<String, i64> = HashMap::default();
     for mrid in dataset.by_type.get("NonlinearShuntCompensatorPoint").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(pt) = entry.element.as_any().downcast_ref::<cimstructs::NonlinearShuntCompensatorPoint>() {
-            if let Some(r) = &pt.nonlinear_shunt_compensator {
+        if let Some(pt) = entry.element.as_any().downcast_ref::<cimstructs::NonlinearShuntCompensatorPoint>()
+            && let Some(r) = &pt.nonlinear_shunt_compensator {
                 let nsc_id = r.mrid.trim_start_matches('#').to_string();
                 *point_count.entry(nsc_id).or_default() += 1;
             }
-        }
     }
     let mut v = Vec::new();
     for (nsc_id, count) in &point_count {
@@ -614,7 +610,7 @@ fn check_phase_tap_changer_asymmetrical_winding_connection_angle(dataset: &CimDa
         let ptca = match entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerAsymmetrical>() { Some(p) => p, None => continue };
         let val = match ptca.winding_connection_angle { Some(w) => w, None => continue };
         let is_multiple_of_30 = (val as i64) % 30 == 0 && val == (val as i64) as f64;
-        let in_range = val >= -150.0 && val <= 150.0 && val != 0.0;
+        let in_range = (-150.0..=150.0).contains(&val) && val != 0.0;
         if !is_multiple_of_30 || !in_range {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "equ:PhaseTapChangerAsymmetrical.windingConnectionAngle-valueRange".into(),
@@ -649,8 +645,8 @@ fn check_power_transformer_end_rated_u_value_range(dataset: &CimDataset) -> Vec<
             if pte.base.end_number.unwrap_or(0) == 1 { end1_rated_u = pte.rated_u; }
             if ru > max_rated_u { max_rated_u = ru; }
         }
-        if let Some(e1u) = end1_rated_u {
-            if e1u < max_rated_u {
+        if let Some(e1u) = end1_rated_u
+            && e1u < max_rated_u {
                 v.push(Violation {
                     object_id: pt_id.clone(), rule_id: "equ:PowerTransformerEnd.ratedU-valueRange".into(),
                     name: "C:301:EQ:PowerTransformerEnd.ratedU:valueRange".into(), class: "PowerTransformer".into(),
@@ -659,7 +655,6 @@ fn check_power_transformer_end_rated_u_value_range(dataset: &CimDataset) -> Vec<
                     severity: "sh:Violation".into(), description: String::new(),
                 });
             }
-        }
     }
     v
 }
@@ -795,8 +790,8 @@ fn check_equipment_aggregate_not_used(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("EquivalentBranch").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(eb) = entry.element.as_any().downcast_ref::<cimstructs::EquivalentBranch>() {
-            if eb.base.base.base.aggregate.unwrap_or(false) {
+        if let Some(eb) = entry.element.as_any().downcast_ref::<cimstructs::EquivalentBranch>()
+            && eb.base.base.base.aggregate.unwrap_or(false) {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "equ:Equipment.aggregate-notUsed".into(),
                     name: "C:301:EQ:Equipment.aggregate:notUsed".into(), class: "EquivalentBranch".into(),
@@ -805,12 +800,11 @@ fn check_equipment_aggregate_not_used(dataset: &CimDataset) -> Vec<Violation> {
                     severity: "sh:Violation".into(), description: String::new(),
                 });
             }
-        }
     }
     for mrid in dataset.by_type.get("EquivalentShunt").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(es) = entry.element.as_any().downcast_ref::<cimstructs::EquivalentShunt>() {
-            if es.base.base.base.aggregate.unwrap_or(false) {
+        if let Some(es) = entry.element.as_any().downcast_ref::<cimstructs::EquivalentShunt>()
+            && es.base.base.base.aggregate.unwrap_or(false) {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "equ:Equipment.aggregate-notUsed".into(),
                     name: "C:301:EQ:Equipment.aggregate:notUsed".into(), class: "EquivalentShunt".into(),
@@ -819,12 +813,11 @@ fn check_equipment_aggregate_not_used(dataset: &CimDataset) -> Vec<Violation> {
                     severity: "sh:Violation".into(), description: String::new(),
                 });
             }
-        }
     }
     for mrid in dataset.by_type.get("EquivalentInjection").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(ei) = entry.element.as_any().downcast_ref::<cimstructs::EquivalentInjection>() {
-            if ei.base.base.base.aggregate.unwrap_or(false) {
+        if let Some(ei) = entry.element.as_any().downcast_ref::<cimstructs::EquivalentInjection>()
+            && ei.base.base.base.aggregate.unwrap_or(false) {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "equ:Equipment.aggregate-notUsed".into(),
                     name: "C:301:EQ:Equipment.aggregate:notUsed".into(), class: "EquivalentInjection".into(),
@@ -833,7 +826,6 @@ fn check_equipment_aggregate_not_used(dataset: &CimDataset) -> Vec<Violation> {
                     severity: "sh:Violation".into(), description: String::new(),
                 });
             }
-        }
     }
     v
 }
@@ -884,8 +876,8 @@ fn check_equivalent_injection_regulation_capability(dataset: &CimDataset) -> Vec
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("EquivalentInjection").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(ei) = entry.element.as_any().downcast_ref::<cimstructs::EquivalentInjection>() {
-            if ei.reactive_capability_curve.is_some() && !ei.regulation_capability.unwrap_or(false) {
+        if let Some(ei) = entry.element.as_any().downcast_ref::<cimstructs::EquivalentInjection>()
+            && ei.reactive_capability_curve.is_some() && !ei.regulation_capability.unwrap_or(false) {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "equ:EquivalentInjection.regulationCapability-associatedCurve".into(),
                     name: "C:301:EQ:EquivalentInjection.regulationCapability:associatedCurve".into(), class: "EquivalentInjection".into(),
@@ -894,7 +886,6 @@ fn check_equivalent_injection_regulation_capability(dataset: &CimDataset) -> Vec
                     severity: "sh:Violation".into(), description: String::new(),
                 });
             }
-        }
     }
     v
 }
@@ -975,11 +966,10 @@ fn check_dc_converter_unit_cs_converter_power_transformer(dataset: &CimDataset) 
     let mut container_has_pt: cimstructs::base::FastSet<String> = cimstructs::base::FastSet::default();
     for mrid in dataset.by_type.get("PowerTransformer").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(pt) = entry.element.as_any().downcast_ref::<cimstructs::PowerTransformer>() {
-            if let Some(r) = &pt.base.base.equipment_container {
+        if let Some(pt) = entry.element.as_any().downcast_ref::<cimstructs::PowerTransformer>()
+            && let Some(r) = &pt.base.base.equipment_container {
                 container_has_pt.insert(r.mrid.trim_start_matches('#').to_string());
             }
-        }
     }
     let mut reported: cimstructs::base::FastSet<String> = cimstructs::base::FastSet::default();
     let mut v = Vec::new();
@@ -1007,11 +997,10 @@ fn check_limit_kind_patl_number_of_limit_type(dataset: &CimDataset) -> Vec<Viola
     let mut patl_olts: HashMap<String, bool> = HashMap::default();
     for mrid in dataset.by_type.get("OperationalLimitType").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(olt) = entry.element.as_any().downcast_ref::<cimstructs::OperationalLimitType>() {
-            if olt.kind.as_ref().map(|r| r.mrid.as_str()) == Some(patl_uri) {
+        if let Some(olt) = entry.element.as_any().downcast_ref::<cimstructs::OperationalLimitType>()
+            && olt.kind.as_ref().map(|r| r.mrid.as_str()) == Some(patl_uri) {
                 patl_olts.insert(mrid.clone(), olt.is_infinite_duration.unwrap_or(false));
             }
-        }
     }
     if patl_olts.is_empty() { return Vec::new(); }
     let mut patl_counts: HashMap<String, HashMap<(String, String), i64>> = HashMap::default();
@@ -1030,11 +1019,10 @@ fn check_limit_kind_patl_number_of_limit_type(dataset: &CimDataset) -> Vec<Viola
     for limit_type in &["ApparentPowerLimit", "ActivePowerLimit", "CurrentLimit"] {
         for mrid in dataset.by_type.get(*limit_type).into_iter().flatten() {
             let entry = &dataset.entries[mrid];
-            if let Some((olt_id, set_id)) = get_olt_set(entry) {
-                if patl_olts.contains_key(&olt_id) {
+            if let Some((olt_id, set_id)) = get_olt_set(entry)
+                && patl_olts.contains_key(&olt_id) {
                     *patl_counts.entry(olt_id).or_default().entry((set_id, limit_type.to_string())).or_default() += 1;
                 }
-            }
         }
     }
     let mut v = Vec::new();
@@ -1060,11 +1048,10 @@ fn check_limit_kind_tc_duration(dataset: &CimDataset) -> Vec<Violation> {
     let mut tc_olts: HashMap<String, f64> = HashMap::default();
     for mrid in dataset.by_type.get("OperationalLimitType").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(olt) = entry.element.as_any().downcast_ref::<cimstructs::OperationalLimitType>() {
-            if olt.kind.as_ref().map(|r| r.mrid.as_str()) == Some(tc_uri) {
+        if let Some(olt) = entry.element.as_any().downcast_ref::<cimstructs::OperationalLimitType>()
+            && olt.kind.as_ref().map(|r| r.mrid.as_str()) == Some(tc_uri) {
                 tc_olts.insert(mrid.clone(), olt.acceptable_duration.unwrap_or(0.0));
             }
-        }
     }
     if tc_olts.is_empty() { return Vec::new(); }
     let mut counts_per_olt_set: HashMap<String, HashMap<String, i64>> = HashMap::default();
@@ -1106,11 +1093,10 @@ fn check_synchronous_machine_aggregate(dataset: &CimDataset) -> Vec<Violation> {
     let mut gu_sms: HashMap<String, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("SynchronousMachine").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(sm) = entry.element.as_any().downcast_ref::<cimstructs::SynchronousMachine>() {
-            if let Some(r) = &sm.base.generating_unit {
+        if let Some(sm) = entry.element.as_any().downcast_ref::<cimstructs::SynchronousMachine>()
+            && let Some(r) = &sm.base.generating_unit {
                 gu_sms.entry(r.mrid.trim_start_matches('#').to_string()).or_default().push(mrid.clone());
             }
-        }
     }
     let mut v = Vec::new();
     for (gu_id, sm_ids) in &gu_sms {
@@ -1136,11 +1122,10 @@ fn check_asynchronous_machine_aggregate(dataset: &CimDataset) -> Vec<Violation> 
     let mut gu_ams: HashMap<String, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("AsynchronousMachine").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(am) = entry.element.as_any().downcast_ref::<cimstructs::AsynchronousMachine>() {
-            if let Some(r) = &am.base.generating_unit {
+        if let Some(am) = entry.element.as_any().downcast_ref::<cimstructs::AsynchronousMachine>()
+            && let Some(r) = &am.base.generating_unit {
                 gu_ams.entry(r.mrid.trim_start_matches('#').to_string()).or_default().push(mrid.clone());
             }
-        }
     }
     let mut v = Vec::new();
     for (gu_id, am_ids) in &gu_ams {
@@ -1190,8 +1175,8 @@ fn check_static_var_compensator_control_mode(dataset: &CimDataset) -> Vec<Violat
         let svc = match entry.element.as_any().downcast_ref::<cimstructs::StaticVarCompensator>() { Some(s) => s, None => continue };
         if let Some(rc_ref) = &svc.base.regulating_control {
             let rc_id = rc_ref.mrid.trim_start_matches('#');
-            if let Some(rc) = dataset.entries.get(rc_id).and_then(|e| e.element.as_any().downcast_ref::<cimstructs::RegulatingControl>()) {
-                if let Some(mode) = &rc.mode {
+            if let Some(rc) = dataset.entries.get(rc_id).and_then(|e| e.element.as_any().downcast_ref::<cimstructs::RegulatingControl>())
+                && let Some(mode) = &rc.mode {
                     let uri = mode.uri.as_str();
                     if !uri.ends_with("voltage") && !uri.ends_with("reactivePower") {
                         v.push(Violation {
@@ -1203,7 +1188,6 @@ fn check_static_var_compensator_control_mode(dataset: &CimDataset) -> Vec<Violat
                         });
                     }
                 }
-            }
         }
         if svc.s_vc_control_mode.is_some() {
             v.push(Violation {
@@ -1320,12 +1304,11 @@ fn check_synchronous_machine_reactive_limits(dataset: &CimDataset) -> Vec<Violat
     let mut curve_cd: HashMap<String, Vec<(f64, f64)>> = HashMap::default();
     for mrid in dataset.by_type.get("CurveData").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(cd) = entry.element.as_any().downcast_ref::<cimstructs::CurveData>() {
-            if let Some(r) = &cd.curve {
+        if let Some(cd) = entry.element.as_any().downcast_ref::<cimstructs::CurveData>()
+            && let Some(r) = &cd.curve {
                 let c_id = r.mrid.trim_start_matches('#').to_string();
                 curve_cd.entry(c_id).or_default().push((cd.y1value.unwrap_or(0.0), cd.y2value.unwrap_or(0.0)));
             }
-        }
     }
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SynchronousMachine").into_iter().flatten() {
@@ -1364,8 +1347,8 @@ fn check_synchronous_machine_type_condenser(dataset: &CimDataset) -> Vec<Violati
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SynchronousMachine").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(sm) = entry.element.as_any().downcast_ref::<cimstructs::SynchronousMachine>() {
-            if sm.type_.as_ref().map(|r| r.uri.ends_with("condenser")).unwrap_or(false) && sm.base.generating_unit.is_some() {
+        if let Some(sm) = entry.element.as_any().downcast_ref::<cimstructs::SynchronousMachine>()
+            && sm.type_.as_ref().map(|r| r.uri.ends_with("condenser")).unwrap_or(false) && sm.base.generating_unit.is_some() {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "eq452:SynchronousMachine.type-condenser".into(),
                     name: "C:452:EQ:SynchronousMachine.type:condenser".into(), class: "SynchronousMachine".into(),
@@ -1374,7 +1357,6 @@ fn check_synchronous_machine_type_condenser(dataset: &CimDataset) -> Vec<Violati
                     severity: "sh:Info".into(), description: String::new(),
                 });
             }
-        }
     }
     v
 }
@@ -1383,11 +1365,10 @@ fn check_vs_capability_curve_count(dataset: &CimDataset) -> Vec<Violation> {
     let mut curve_count: HashMap<String, i64> = HashMap::default();
     for mrid in dataset.by_type.get("CurveData").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(cd) = entry.element.as_any().downcast_ref::<cimstructs::CurveData>() {
-            if let Some(r) = &cd.curve {
+        if let Some(cd) = entry.element.as_any().downcast_ref::<cimstructs::CurveData>()
+            && let Some(r) = &cd.curve {
                 *curve_count.entry(r.mrid.trim_start_matches('#').to_string()).or_default() += 1;
             }
-        }
     }
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("VsCapabilityCurve").into_iter().flatten() {
@@ -1410,8 +1391,8 @@ fn check_vs_capability_curve_y_values(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("CurveData").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(cd) = entry.element.as_any().downcast_ref::<cimstructs::CurveData>() {
-            if let Some(r) = &cd.curve {
+        if let Some(cd) = entry.element.as_any().downcast_ref::<cimstructs::CurveData>()
+            && let Some(r) = &cd.curve {
                 let c_id = r.mrid.trim_start_matches('#');
                 if vs_curves.contains(c_id) {
                     let y1 = cd.y1value.unwrap_or(0.0);
@@ -1427,7 +1408,6 @@ fn check_vs_capability_curve_y_values(dataset: &CimDataset) -> Vec<Violation> {
                     }
                 }
             }
-        }
     }
     v
 }
@@ -1475,12 +1455,11 @@ fn check_curve_data_reactive_capability_limits(dataset: &CimDataset) -> Vec<Viol
     let mut curve_rated_s: HashMap<String, f64> = HashMap::default();
     for mrid in dataset.by_type.get("SynchronousMachine").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(sm) = entry.element.as_any().downcast_ref::<cimstructs::SynchronousMachine>() {
-            if let Some(r) = &sm.initial_reactive_capability_curve {
+        if let Some(sm) = entry.element.as_any().downcast_ref::<cimstructs::SynchronousMachine>()
+            && let Some(r) = &sm.initial_reactive_capability_curve {
                 let c_id = r.mrid.trim_start_matches('#').to_string();
                 curve_rated_s.insert(c_id, sm.base.rated_s.unwrap_or(0.0));
             }
-        }
     }
     let rcc_set: cimstructs::base::FastSet<String> = dataset.by_type.get("ReactiveCapabilityCurve").into_iter().flatten().cloned().collect();
     let mut v = Vec::new();
@@ -1522,14 +1501,13 @@ fn check_curve_data_reactive_consistency(dataset: &CimDataset) -> Vec<Violation>
     let mut curve_points: HashMap<String, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("CurveData").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(cd) = entry.element.as_any().downcast_ref::<cimstructs::CurveData>() {
-            if let Some(r) = &cd.curve {
+        if let Some(cd) = entry.element.as_any().downcast_ref::<cimstructs::CurveData>()
+            && let Some(r) = &cd.curve {
                 let c_id = r.mrid.trim_start_matches('#').to_string();
                 if rcc_set.contains(&c_id) {
                     curve_points.entry(c_id).or_default().push(mrid.clone());
                 }
             }
-        }
     }
     let mut v = Vec::new();
     for (curve_id, point_ids) in &curve_points {
@@ -1566,11 +1544,10 @@ fn check_synchronous_machine_curve_x_value_consistency(dataset: &CimDataset) -> 
     let mut curve_xvals: HashMap<String, Vec<f64>> = HashMap::default();
     for mrid in dataset.by_type.get("CurveData").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(cd) = entry.element.as_any().downcast_ref::<cimstructs::CurveData>() {
-            if let Some(r) = &cd.curve {
+        if let Some(cd) = entry.element.as_any().downcast_ref::<cimstructs::CurveData>()
+            && let Some(r) = &cd.curve {
                 curve_xvals.entry(r.mrid.trim_start_matches('#').to_string()).or_default().push(cd.xvalue.unwrap_or(0.0));
             }
-        }
     }
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SynchronousMachine").into_iter().flatten() {
@@ -1619,14 +1596,13 @@ fn check_switch_connection(dataset: &CimDataset) -> Vec<Violation> {
     let mut switch_terms: HashMap<String, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
-            if let Some(ce) = &term.conducting_equipment {
+        if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>()
+            && let Some(ce) = &term.conducting_equipment {
                 let eq_id = ce.mrid.trim_start_matches('#');
                 if switch_ids.contains(eq_id) {
                     switch_terms.entry(eq_id.to_string()).or_default().push(mrid.clone());
                 }
             }
-        }
     }
     let mut v = Vec::new();
     for (eq_id, term_ids) in &switch_terms {
@@ -1661,11 +1637,10 @@ fn check_operational_limit_set_terminal(dataset: &CimDataset) -> Vec<Violation> 
     let mut aux_term_ids: HashSet<&str> = HashSet::default();
     for mrid in dataset.by_type.get("CurrentTransformer").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(ct) = entry.element.as_any().downcast_ref::<cimstructs::CurrentTransformer>() {
-            if let Some(r) = &ct.base.base.terminal {
+        if let Some(ct) = entry.element.as_any().downcast_ref::<cimstructs::CurrentTransformer>()
+            && let Some(r) = &ct.base.base.terminal {
                 aux_term_ids.insert(r.mrid.trim_start_matches('#'));
             }
-        }
     }
     // The terminal's equipment, read from the terminal itself rather than from
     // a map of every terminal in the dataset.
@@ -1707,21 +1682,19 @@ fn check_tap_changer_control_remote_q_control(dataset: &CimDataset) -> Vec<Viola
     let mut tcc_te: HashMap<String, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("RatioTapChanger").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(rtc) = entry.element.as_any().downcast_ref::<cimstructs::RatioTapChanger>() {
-            if let (Some(tcc_r), Some(te_r)) = (&rtc.base.tap_changer_control, &rtc.transformer_end) {
+        if let Some(rtc) = entry.element.as_any().downcast_ref::<cimstructs::RatioTapChanger>()
+            && let (Some(tcc_r), Some(te_r)) = (&rtc.base.tap_changer_control, &rtc.transformer_end) {
                 let tcc_id = tcc_r.mrid.trim_start_matches('#').to_string();
                 let te_id = te_r.mrid.trim_start_matches('#').to_string();
                 tcc_te.entry(tcc_id).or_default().push(te_id);
             }
-        }
     }
     for mrid in dataset.by_type.get("PhaseTapChangerAsymmetrical").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(ptc) = entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerAsymmetrical>() {
-            if let (Some(tcc_r), Some(te_r)) = (&ptc.base.base.base.tap_changer_control, &ptc.base.base.transformer_end) {
+        if let Some(ptc) = entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerAsymmetrical>()
+            && let (Some(tcc_r), Some(te_r)) = (&ptc.base.base.base.tap_changer_control, &ptc.base.base.transformer_end) {
                 tcc_te.entry(tcc_r.mrid.trim_start_matches('#').to_string()).or_default().push(te_r.mrid.trim_start_matches('#').to_string());
             }
-        }
     }
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("TapChangerControl").into_iter().flatten() {
@@ -1752,11 +1725,10 @@ fn check_reactive_capability_curve_x_value_unique(dataset: &CimDataset) -> Vec<V
     let mut curve_xvals: HashMap<String, Vec<f64>> = HashMap::default();
     for mrid in dataset.by_type.get("CurveData").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(cd) = entry.element.as_any().downcast_ref::<cimstructs::CurveData>() {
-            if let Some(r) = &cd.curve {
+        if let Some(cd) = entry.element.as_any().downcast_ref::<cimstructs::CurveData>()
+            && let Some(r) = &cd.curve {
                 curve_xvals.entry(r.mrid.trim_start_matches('#').to_string()).or_default().push(cd.xvalue.unwrap_or(0.0));
             }
-        }
     }
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("ReactiveCapabilityCurve").into_iter().flatten() {
@@ -1782,7 +1754,7 @@ fn check_reactive_capability_curve_x_value_unique(dataset: &CimDataset) -> Vec<V
 fn check_power_transformer_end_resistance_x_value(dataset: &CimDataset) -> Vec<Violation> {
     let pt_ends = build_pt_ends(dataset);
     let mut v = Vec::new();
-    for (_, end_ids) in &pt_ends {
+    for end_ids in pt_ends.values() {
         let n = end_ids.len();
         if n == 2 {
             for eid in end_ids {
@@ -1853,11 +1825,10 @@ fn check_hydro_generating_unit_energy_conversion_capability(dataset: &CimDataset
     let mut gu_sm: HashMap<String, String> = HashMap::default();
     for mrid in dataset.by_type.get("SynchronousMachine").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(sm) = entry.element.as_any().downcast_ref::<cimstructs::SynchronousMachine>() {
-            if let Some(r) = &sm.base.generating_unit {
+        if let Some(sm) = entry.element.as_any().downcast_ref::<cimstructs::SynchronousMachine>()
+            && let Some(r) = &sm.base.generating_unit {
                 gu_sm.insert(r.mrid.trim_start_matches('#').to_string(), mrid.clone());
             }
-        }
     }
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("HydroGeneratingUnit").into_iter().flatten() {
@@ -1892,8 +1863,8 @@ fn check_terminal_connection_same_node(_dataset: &CimDataset, terms: &Terminals)
     let mut v = Vec::new();
     for (eq_id, ts) in &terms.by_equipment {
         let [(_, t1), (_, t2)] = ts.as_slice() else { continue };
-        if let (Some(cn1), Some(cn2)) = (&t1.connectivity_node, &t2.connectivity_node) {
-            if cn1.mrid == cn2.mrid {
+        if let (Some(cn1), Some(cn2)) = (&t1.connectivity_node, &t2.connectivity_node)
+            && cn1.mrid == cn2.mrid {
                 v.push(Violation {
                     object_id: eq_id.to_string(), rule_id: "eq452:Terminal-connection".into(),
                     name: "C:452:EQ:Terminal:connection".into(), class: "ConductingEquipment".into(),
@@ -1902,7 +1873,6 @@ fn check_terminal_connection_same_node(_dataset: &CimDataset, terms: &Terminals)
                     severity: "sh:Violation".into(), description: String::new(),
                 });
             }
-        }
     }
     v
 }
@@ -1911,20 +1881,18 @@ fn check_reactive_capability_curve_reactive_count_p(dataset: &CimDataset) -> Vec
     let mut curve_sm: HashMap<String, String> = HashMap::default();
     for mrid in dataset.by_type.get("SynchronousMachine").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(sm) = entry.element.as_any().downcast_ref::<cimstructs::SynchronousMachine>() {
-            if let Some(r) = &sm.initial_reactive_capability_curve {
+        if let Some(sm) = entry.element.as_any().downcast_ref::<cimstructs::SynchronousMachine>()
+            && let Some(r) = &sm.initial_reactive_capability_curve {
                 curve_sm.insert(r.mrid.trim_start_matches('#').to_string(), mrid.clone());
             }
-        }
     }
     let mut curve_xcount: HashMap<String, usize> = HashMap::default();
     for mrid in dataset.by_type.get("CurveData").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(cd) = entry.element.as_any().downcast_ref::<cimstructs::CurveData>() {
-            if let Some(r) = &cd.curve {
+        if let Some(cd) = entry.element.as_any().downcast_ref::<cimstructs::CurveData>()
+            && let Some(r) = &cd.curve {
                 *curve_xcount.entry(r.mrid.trim_start_matches('#').to_string()).or_default() += 1;
             }
-        }
     }
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("ReactiveCapabilityCurve").into_iter().flatten() {
@@ -2016,43 +1984,38 @@ fn check_tap_changer_neutral_u_value_range(dataset: &CimDataset) -> Vec<Violatio
     };
     for mrid in dataset.by_type.get("RatioTapChanger").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(rtc) = entry.element.as_any().downcast_ref::<cimstructs::RatioTapChanger>() {
-            if let (Some(nu), Some(te_r)) = (rtc.base.neutral_u, &rtc.transformer_end) {
+        if let Some(rtc) = entry.element.as_any().downcast_ref::<cimstructs::RatioTapChanger>()
+            && let (Some(nu), Some(te_r)) = (rtc.base.neutral_u, &rtc.transformer_end) {
                 check(&mut v, mrid, nu, te_r.mrid.trim_start_matches('#'), "RatioTapChanger");
             }
-        }
     }
     for mrid in dataset.by_type.get("PhaseTapChangerAsymmetrical").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(ptc) = entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerAsymmetrical>() {
-            if let (Some(nu), Some(te_r)) = (ptc.base.base.base.neutral_u, &ptc.base.base.transformer_end) {
+        if let Some(ptc) = entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerAsymmetrical>()
+            && let (Some(nu), Some(te_r)) = (ptc.base.base.base.neutral_u, &ptc.base.base.transformer_end) {
                 check(&mut v, mrid, nu, te_r.mrid.trim_start_matches('#'), "PhaseTapChangerAsymmetrical");
             }
-        }
     }
     for mrid in dataset.by_type.get("PhaseTapChangerLinear").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(ptc) = entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerLinear>() {
-            if let (Some(nu), Some(te_r)) = (ptc.base.base.neutral_u, &ptc.base.transformer_end) {
+        if let Some(ptc) = entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerLinear>()
+            && let (Some(nu), Some(te_r)) = (ptc.base.base.neutral_u, &ptc.base.transformer_end) {
                 check(&mut v, mrid, nu, te_r.mrid.trim_start_matches('#'), "PhaseTapChangerLinear");
             }
-        }
     }
     for mrid in dataset.by_type.get("PhaseTapChangerSymmetrical").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(ptc) = entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerSymmetrical>() {
-            if let (Some(nu), Some(te_r)) = (ptc.base.base.base.neutral_u, &ptc.base.base.transformer_end) {
+        if let Some(ptc) = entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerSymmetrical>()
+            && let (Some(nu), Some(te_r)) = (ptc.base.base.base.neutral_u, &ptc.base.base.transformer_end) {
                 check(&mut v, mrid, nu, te_r.mrid.trim_start_matches('#'), "PhaseTapChangerSymmetrical");
             }
-        }
     }
     for mrid in dataset.by_type.get("PhaseTapChangerTabular").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(ptc) = entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerTabular>() {
-            if let (Some(nu), Some(te_r)) = (ptc.base.base.neutral_u, &ptc.base.transformer_end) {
+        if let Some(ptc) = entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerTabular>()
+            && let (Some(nu), Some(te_r)) = (ptc.base.base.neutral_u, &ptc.base.transformer_end) {
                 check(&mut v, mrid, nu, te_r.mrid.trim_start_matches('#'), "PhaseTapChangerTabular");
             }
-        }
     }
     v
 }

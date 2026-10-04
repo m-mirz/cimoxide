@@ -10,11 +10,10 @@ fn check_boundary_point_tie_flow(dataset: &CimDataset) -> Vec<Violation> {
     let mut terminal_has_tf: cimstructs::base::FastSet<String> = cimstructs::base::FastSet::default();
     for mrid in dataset.by_type.get("TieFlow").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(tf) = entry.element.as_any().downcast_ref::<cimstructs::TieFlow>() {
-            if let Some(term_ref) = tf.terminal.as_ref() {
+        if let Some(tf) = entry.element.as_any().downcast_ref::<cimstructs::TieFlow>()
+            && let Some(term_ref) = tf.terminal.as_ref() {
                 terminal_has_tf.insert(term_ref.mrid.trim_start_matches('#').to_string());
             }
-        }
     }
 
     // Build index: connectivity node MRID → true if any terminal at that CN has a TieFlow.
@@ -24,11 +23,10 @@ fn check_boundary_point_tie_flow(dataset: &CimDataset) -> Vec<Violation> {
         if !terminal_has_tf.contains(t_mrid) {
             continue;
         }
-        if let Some(term) = dataset.entries.get(t_mrid).and_then(|e| e.element.as_any().downcast_ref::<cimstructs::Terminal>()) {
-            if let Some(cn_ref) = term.connectivity_node.as_ref() {
+        if let Some(term) = dataset.entries.get(t_mrid).and_then(|e| e.element.as_any().downcast_ref::<cimstructs::Terminal>())
+            && let Some(cn_ref) = term.connectivity_node.as_ref() {
                 cn_has_tie_flow.insert(cn_ref.mrid.trim_start_matches('#').to_string());
             }
-        }
     }
 
     let mut v = Vec::new();

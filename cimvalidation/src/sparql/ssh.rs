@@ -24,8 +24,8 @@ fn check_energy_source_active_power_consumer(dataset: &CimDataset) -> Vec<Violat
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("EnergySource").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(es) = entry.element.as_any().downcast_ref::<cimstructs::EnergySource>() {
-            if es.active_power.unwrap_or(0.0) > 0.0 {
+        if let Some(es) = entry.element.as_any().downcast_ref::<cimstructs::EnergySource>()
+            && es.active_power.unwrap_or(0.0) > 0.0 {
                 v.push(Violation {
                     object_id:   mrid.clone(),
                     rule_id:     "sshu:EnergySource.activePower-consumer".into(),
@@ -37,7 +37,6 @@ fn check_energy_source_active_power_consumer(dataset: &CimDataset) -> Vec<Violat
                     description: String::new(),
                 });
             }
-        }
     }
     v
 }
@@ -62,19 +61,17 @@ fn check_regulating_control_target_deadband_applicability(dataset: &CimDataset) 
     };
     for mrid in dataset.by_type.get("RegulatingControl").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(rc) = entry.element.as_any().downcast_ref::<cimstructs::RegulatingControl>() {
-            if let Some(viol) = check(mrid, "RegulatingControl", rc.target_deadband.unwrap_or(0.0), rc.discrete.unwrap_or(false)) {
+        if let Some(rc) = entry.element.as_any().downcast_ref::<cimstructs::RegulatingControl>()
+            && let Some(viol) = check(mrid, "RegulatingControl", rc.target_deadband.unwrap_or(0.0), rc.discrete.unwrap_or(false)) {
                 v.push(viol);
             }
-        }
     }
     for mrid in dataset.by_type.get("TapChangerControl").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(tcc) = entry.element.as_any().downcast_ref::<cimstructs::TapChangerControl>() {
-            if let Some(viol) = check(mrid, "TapChangerControl", tcc.base.target_deadband.unwrap_or(0.0), tcc.base.discrete.unwrap_or(false)) {
+        if let Some(tcc) = entry.element.as_any().downcast_ref::<cimstructs::TapChangerControl>()
+            && let Some(viol) = check(mrid, "TapChangerControl", tcc.base.target_deadband.unwrap_or(0.0), tcc.base.discrete.unwrap_or(false)) {
                 v.push(viol);
             }
-        }
     }
     v
 }
@@ -177,33 +174,33 @@ fn check_vs_converter_p_pcc_control(dataset: &CimDataset) -> Vec<Violation> {
             let droopcomp = vsc.droop_compensation.unwrap_or(0.0);
             let phase_pcc = vsc.target_phase_pcc.unwrap_or(0.0);
             let (rule_id, name, msg): (&str, &str, Option<&str>) =
-                if ctrl == &format!("{prefix}pPccAndUdcDroop") {
+                if ctrl == format!("{prefix}pPccAndUdcDroop") {
                     ("sshu:VsConverter.pPccControl-targetValuepPccAndUdcDroop",
                      "C:301:SSH:VsPpccControlKind.pPccAndUdcDroop:targetValuepPccAndUdcDroop",
                      if ppcc == 0.0 || udc == 0.0 || droop == 0.0 {
                          Some("One or all among ACDCConverter.targetPpcc, ACDCConverter.targetUdc and VsConverter.droop are not provided for VsPpccControlKind.pPccAndUdcDroop.")
                      } else { None })
-                } else if ctrl == &format!("{prefix}pPccAndUdcDroopWithCompensation") {
+                } else if ctrl == format!("{prefix}pPccAndUdcDroopWithCompensation") {
                     ("sshu:VsConverter.pPccControl-targetValuepPccAndUdcDroopWithCompensation",
                      "C:301:SSH:VsPpccControlKind.pPccAndUdcDroopWithCompensation:targetValuepPccAndUdcDroopWithCompensation",
                      if ppcc == 0.0 || udc == 0.0 || droop == 0.0 || droopcomp == 0.0 {
                          Some("One or all among ACDCConverter.targetPpcc, ACDCConverter.targetUdc, VsConverter.droop and VsConverter.droopCompensation are not provided for VsPpccControlKind.pPccAndUdcDroopWithCompensation.")
                      } else { None })
-                } else if ctrl == &format!("{prefix}pPccAndUdcDroopPilot") {
+                } else if ctrl == format!("{prefix}pPccAndUdcDroopPilot") {
                     ("sshu:VsConverter.pPccControl-targetValuepPccAndUdcDroopPilot",
                      "C:301:SSH:VsPpccControlKind.pPccAndUdcDroopPilot:targetValuepPccAndUdcDroopPilot",
                      if ppcc == 0.0 || udc == 0.0 || droop == 0.0 {
                          Some("One or all among ACDCConverter.targetPpcc, ACDCConverter.targetUdc and VsConverter.droop are not provided for VsPpccControlKind.pPccAndUdcDroopPilot.")
                      } else { None })
-                } else if ctrl == &format!("{prefix}udc") {
+                } else if ctrl == format!("{prefix}udc") {
                     ("sshu:VsConverter.pPccControl-targetValueUdc",
                      "C:301:SSH:VsPpccControlKind.udc:targetValueUdc",
                      if udc == 0.0 { Some("ACDCConverter.targetUdc is not provided for VsPpccControlKind.udc.") } else { None })
-                } else if ctrl == &format!("{prefix}pPcc") {
+                } else if ctrl == format!("{prefix}pPcc") {
                     ("sshu:VsConverter.pPccControl-targetValuePpcc",
                      "C:301:SSH:VsPpccControlKind.pPcc:targetValuePpcc",
                      if ppcc == 0.0 { Some("ACDCConverter.targetPpcc is not provided for VsPpccControlKind.pPcc.") } else { None })
-                } else if ctrl == &format!("{prefix}phasePcc") {
+                } else if ctrl == format!("{prefix}phasePcc") {
                     ("sshu:VsConverter.pPccControl-targetValuephasePcc",
                      "C:301:SSH:VsPpccControlKind.phasePcc:targetValuephasePcc",
                      if phase_pcc == 0.0 { Some("VsConverter.targetPhasePcc is not provided for VsPpccControlKind.phasePcc.") } else { None })
@@ -234,21 +231,21 @@ fn check_vs_converter_q_pcc_control(dataset: &CimDataset) -> Vec<Violation> {
             let qpcc      = vsc.target_qpcc.unwrap_or(0.0);
             let upcc      = vsc.target_upcc.unwrap_or(0.0);
             let (rule_id, name, msg): (&str, &str, Option<&str>) =
-                if ctrl == &format!("{prefix}powerFactorPcc") {
+                if ctrl == format!("{prefix}powerFactorPcc") {
                     ("sshu:VsConverter.qPccControl-targetValuepowerFactorPcc",
                      "C:301:SSH:VsQpccControlKind.powerFactorPcc:targetValuepowerFactorPcc",
                      if pf == 0.0 { Some("VsConverter.targetPowerFactorPcc is not provided for VsQpccControlKind.powerFactorPcc.") } else { None })
-                } else if ctrl == &format!("{prefix}pulseWidthModulation") {
+                } else if ctrl == format!("{prefix}pulseWidthModulation") {
                     ("sshu:VsConverter.qPccControl-targetValuepulseWidthModulation",
                      "C:301:SSH:VsQpccControlKind.pulseWidthModulation:targetValuepulseWidthModulation",
                      if pwm == 0.0 || phase_pcc == 0.0 {
                          Some("VsConverter.targetPWMfactor and/or VsConverter.targetPhasePcc are not provided for VsQpccControlKind.pulseWidthModulation.")
                      } else { None })
-                } else if ctrl == &format!("{prefix}reactivePcc") {
+                } else if ctrl == format!("{prefix}reactivePcc") {
                     ("sshu:VsConverter.qPccControl-targetValuereactivePcc",
                      "C:301:SSH:VsQpccControlKind.reactivePcc:targetValuereactivePcc",
                      if qpcc == 0.0 { Some("VsConverter.targetQpcc is not provided for VsQpccControlKind.reactivePcc.") } else { None })
-                } else if ctrl == &format!("{prefix}voltagePcc") {
+                } else if ctrl == format!("{prefix}voltagePcc") {
                     ("sshu:VsConverter.qPccControl-targetValuevoltagePcc",
                      "C:301:SSH:VsQpccControlKind.voltagePcc:targetValuevoltagePcc",
                      if upcc == 0.0 { Some("VsConverter.targetUpcc is not provided for VsQpccControlKind.voltagePcc.") } else { None })
@@ -270,8 +267,8 @@ fn check_energy_source_pq(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("EnergySource").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(es) = entry.element.as_any().downcast_ref::<cimstructs::EnergySource>() {
-            if es.voltage_angle.unwrap_or(0.0) != 0.0 || es.voltage_magnitude.unwrap_or(0.0) != 0.0 {
+        if let Some(es) = entry.element.as_any().downcast_ref::<cimstructs::EnergySource>()
+            && (es.voltage_angle.unwrap_or(0.0) != 0.0 || es.voltage_magnitude.unwrap_or(0.0) != 0.0) {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "ssh456:EnergySource-EnergySourcePQ".into(),
                     name: "C:456:SSH:EnergySource:EnergySourcePQ".into(), class: "EnergySource".into(),
@@ -280,7 +277,6 @@ fn check_energy_source_pq(dataset: &CimDataset) -> Vec<Violation> {
                     severity: "sh:Warning".into(), description: String::new(),
                 });
             }
-        }
     }
     v
 }
@@ -324,11 +320,10 @@ pub(super) fn check_generating_unit_single_active_power_slack(dataset: &CimDatas
             let ca_id = match &cagu.control_area { Some(r) => r.mrid.trim_start_matches('#').to_string(), None => continue };
             let gu_id = match &cagu.generating_unit { Some(r) => r.mrid.trim_start_matches('#').to_string(), None => continue };
             let gu_entry = match dataset.entries.get(&gu_id) { Some(e) => e, None => continue };
-            if let Some(gu) = gu_entry.element.as_any().downcast_ref::<cimstructs::GeneratingUnit>() {
-                if gu.normal_pf.unwrap_or(0.0) > 0.0 {
+            if let Some(gu) = gu_entry.element.as_any().downcast_ref::<cimstructs::GeneratingUnit>()
+                && gu.normal_pf.unwrap_or(0.0) > 0.0 {
                     ca_slacks.entry(ca_id).or_default().push(gu_id);
                 }
-            }
         }
     }
     let mut v = Vec::new();
@@ -426,14 +421,13 @@ pub(super) fn check_rotating_machine_curve_limits(dataset: &CimDataset) -> Vec<V
     let mut curve_points: HashMap<String, Vec<(f64, f64, f64)>> = HashMap::default();
     for cd_mrid in dataset.by_type.get("CurveData").into_iter().flatten() {
         let cd_entry = &dataset.entries[cd_mrid];
-        if let Some(cd) = cd_entry.element.as_any().downcast_ref::<cimstructs::CurveData>() {
-            if let Some(r) = &cd.curve {
+        if let Some(cd) = cd_entry.element.as_any().downcast_ref::<cimstructs::CurveData>()
+            && let Some(r) = &cd.curve {
                 let curve_id = r.mrid.trim_start_matches('#').to_string();
                 curve_points.entry(curve_id).or_default().push((
                     cd.xvalue.unwrap_or(0.0), cd.y1value.unwrap_or(0.0), cd.y2value.unwrap_or(0.0),
                 ));
             }
-        }
     }
 
     let mut v = Vec::new();
@@ -490,9 +484,9 @@ pub(super) fn check_regulating_control_target_value_positive(dataset: &CimDatase
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("RegulatingControl").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(rc) = entry.element.as_any().downcast_ref::<cimstructs::RegulatingControl>() {
-            if rc.mode.as_ref().map_or(false, |r| r.uri.ends_with("voltage")) {
-                if rc.target_value.unwrap_or(0.0) <= 0.0 {
+        if let Some(rc) = entry.element.as_any().downcast_ref::<cimstructs::RegulatingControl>()
+            && rc.mode.as_ref().is_some_and(|r| r.uri.ends_with("voltage"))
+                && rc.target_value.unwrap_or(0.0) <= 0.0 {
                     v.push(Violation {
                         object_id: mrid.clone(), rule_id: "sshn456:RegulatingControl.targetValue-value".into(),
                         name: "C:456:SSH:RegulatingControl.targetValue:value".into(), class: "RegulatingControl".into(),
@@ -501,8 +495,6 @@ pub(super) fn check_regulating_control_target_value_positive(dataset: &CimDatase
                         severity: "sh:Violation".into(), description: String::new(),
                     });
                 }
-            }
-        }
     }
     v
 }

@@ -41,16 +41,16 @@ pub mod nc_profiles;
 /// feature is on and a directory was supplied, otherwise the generated one.
 pub fn nc_shapes() -> &'static [shapes::ShapeDef] {
     static R: std::sync::OnceLock<&'static [shapes::ShapeDef]> = std::sync::OnceLock::new();
-    *R.get_or_init(|| shape_source::resolve("nc", nc_shapes::SHAPES))
+    R.get_or_init(|| shape_source::resolve("nc", nc_shapes::SHAPES))
 }
+
+/// Profile IRI → short code, and every short code.
+pub type ProfileIndex = (&'static [(&'static str, &'static str)], &'static [&'static str]);
 
 /// The NC profile index in force. Loaded together with the shapes, since an
 /// index and a table from different releases would run the wrong rules.
-pub fn nc_profile_index() -> (&'static [(&'static str, &'static str)], &'static [&'static str]) {
-    static R: std::sync::OnceLock<(
-        &'static [(&'static str, &'static str)],
-        &'static [&'static str],
-    )> = std::sync::OnceLock::new();
+pub fn nc_profile_index() -> ProfileIndex {
+    static R: std::sync::OnceLock<ProfileIndex> = std::sync::OnceLock::new();
     *R.get_or_init(|| {
         shape_source::resolve_profiles("nc", nc_profiles::PROFILE_IRIS, nc_profiles::PROFILES)
     })
@@ -82,7 +82,7 @@ pub mod cgmes_shapes;
 /// feature is on and a directory was supplied, otherwise the generated one.
 pub fn cgmes_shapes() -> &'static [shapes::ShapeDef] {
     static R: std::sync::OnceLock<&'static [shapes::ShapeDef]> = std::sync::OnceLock::new();
-    *R.get_or_init(|| shape_source::resolve("cgmes", cgmes_shapes::SHAPES))
+    R.get_or_init(|| shape_source::resolve("cgmes", cgmes_shapes::SHAPES))
 }
 
 /// The CGMES shapes carrying one manifest tag, indexed once per process.

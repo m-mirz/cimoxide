@@ -154,7 +154,7 @@ fn sparql_sv_solved_002_angle_ref() {
     assert!(by_id.get("SM.BAD.NODE").map_or(0, |v| v.len()) >= 1,
         "SM.BAD.NODE: expected violation, got none");
     assert!(
-        by_id.get("global").map_or(false, |vs| vs.iter().any(|v| v.message.contains("Multiple machines"))),
+        by_id.get("global").is_some_and(|vs| vs.iter().any(|v| v.message.contains("Multiple machines"))),
         "global: expected violation for duplicate priority 1 machines, got: {:?}", by_id.get("global")
     );
     assert!(by_id.get("TN.OTHER").map_or(0, |v| v.len()) >= 1,
