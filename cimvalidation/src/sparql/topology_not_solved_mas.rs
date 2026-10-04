@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use cimstructs::base::FastMap as HashMap;
 use cimdecoder::CimDataset;
 use crate::Violation;
 
@@ -16,7 +16,7 @@ fn check_terminal_phases_consistency_topological_node(dataset: &CimDataset) -> V
     const ABC:  &str = "PhaseCode.ABC";
 
     // Group terminals by topological node
-    let mut node_terminals: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    let mut node_terminals: HashMap<String, Vec<(String, String)>> = HashMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         let term = match entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
@@ -117,7 +117,7 @@ macro_rules! check_switch_retained {
 
 fn check_switch_same_topological_node(dataset: &CimDataset) -> Vec<Violation> {
     // Build index: equipment MRID → [terminal MRIDs]
-    let mut eq_terminals: HashMap<String, Vec<String>> = HashMap::new();
+    let mut eq_terminals: HashMap<String, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
@@ -145,7 +145,7 @@ fn check_switch_same_topological_node(dataset: &CimDataset) -> Vec<Violation> {
 
 fn check_terminal_exch8_topological_node(dataset: &CimDataset) -> Vec<Violation> {
     // Collect all terminal MRIDs referenced by any RegulatingControl
-    let mut rc_terminals: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut rc_terminals: cimstructs::base::FastSet<String> = cimstructs::base::FastSet::default();
     for type_name in &["RegulatingControl", "TapChangerControl"] {
         for mrid in dataset.by_type.get(*type_name).into_iter().flatten() {
             let entry = &dataset.entries[mrid];

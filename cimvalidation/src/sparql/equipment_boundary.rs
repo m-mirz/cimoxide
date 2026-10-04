@@ -7,7 +7,7 @@ pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
 
 fn check_boundary_point_tie_flow(dataset: &CimDataset) -> Vec<Violation> {
     // Build index: terminal MRID → has tie flow
-    let mut terminal_has_tf: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut terminal_has_tf: cimstructs::base::FastSet<String> = cimstructs::base::FastSet::default();
     for mrid in dataset.by_type.get("TieFlow").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(tf) = entry.element.as_any().downcast_ref::<cimstructs::TieFlow>() {
@@ -19,7 +19,7 @@ fn check_boundary_point_tie_flow(dataset: &CimDataset) -> Vec<Violation> {
 
     // Build index: connectivity node MRID → true if any terminal at that CN has a TieFlow.
     // Built once over all Terminals instead of rescanning them per BoundaryPoint below.
-    let mut cn_has_tie_flow: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut cn_has_tie_flow: cimstructs::base::FastSet<String> = cimstructs::base::FastSet::default();
     for t_mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         if !terminal_has_tf.contains(t_mrid) {
             continue;

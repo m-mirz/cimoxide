@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use cimstructs::base::FastMap as HashMap;
 use cimdecoder::CimDataset;
 use crate::Violation;
 
@@ -316,8 +316,8 @@ pub(super) fn check_synchronous_machine_operating_mode_match(dataset: &CimDatase
 }
 
 pub(super) fn check_generating_unit_single_active_power_slack(dataset: &CimDataset) -> Vec<Violation> {
-    use std::collections::HashMap;
-    let mut ca_slacks: HashMap<String, Vec<String>> = HashMap::new();
+    use cimstructs::base::FastMap as HashMap;
+    let mut ca_slacks: HashMap<String, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("ControlAreaGeneratingUnit").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(cagu) = entry.element.as_any().downcast_ref::<cimstructs::ControlAreaGeneratingUnit>() {
@@ -423,7 +423,7 @@ pub(super) fn check_equivalent_injection_limits(dataset: &CimDataset) -> Vec<Vio
 pub(super) fn check_rotating_machine_curve_limits(dataset: &CimDataset) -> Vec<Violation> {
     // Curve MRID → (x, y1, y2) points. Built once instead of rescanning all CurveData per
     // SynchronousMachine below.
-    let mut curve_points: HashMap<String, Vec<(f64, f64, f64)>> = HashMap::new();
+    let mut curve_points: HashMap<String, Vec<(f64, f64, f64)>> = HashMap::default();
     for cd_mrid in dataset.by_type.get("CurveData").into_iter().flatten() {
         let cd_entry = &dataset.entries[cd_mrid];
         if let Some(cd) = cd_entry.element.as_any().downcast_ref::<cimstructs::CurveData>() {

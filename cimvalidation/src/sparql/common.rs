@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use cimstructs::base::FastMap as HashMap;
 use cimdecoder::CimDataset;
 use crate::Violation;
 
@@ -23,16 +23,33 @@ fn check_per_entry_block_checks(dataset: &CimDataset) -> Vec<Violation> {
     // after the pass: deciding during it reported whichever duplicate the map
     // iteration reached second, which with a randomly seeded hasher changed
     // from run to run.
-    let mut by_mrid: HashMap<String, Vec<(&String, String)>> = HashMap::new();
+    let mut by_mrid: HashMap<String, Vec<(&String, String, &cimdecoder::CimEntry)>> = HashMap::default();
     let mut v = Vec::new();
     for (id, entry) in &dataset.entries {
+        // Fast path. These checks read the struct's view of the element
+        // (`to_block`), and building it for every element was most of this
+        // pass's time. The decoder's block holds every value that view does,
+        // as written, so if nothing in it could fail a check, nothing in the
+        // struct's view can either. Only elements with a candidate pay for
+        // `to_block` and the exact checks below.
+        if !entry.block.type_name.is_empty() && !may_fail_entry_checks(&entry.block.fields) {
+            if let Some(cimstructs::base::FieldValue::Text(m_rid)) = entry.block.fields.get("IdentifiedObject.mRID") {
+                if !m_rid.is_empty() {
+                    // Unconfirmed: re-read through `to_block` if it turns out
+                    // to be a duplicate, below.
+                    by_mrid.entry(m_rid.clone()).or_default().push((id, entry.element.type_name().to_string(), entry));
+                }
+            }
+            continue;
+        }
+
         let block = entry.element.to_block();
         let class = &block.type_name;
 
         // --- mRID uniqueness (all600:All-GENC1), collected ---
         if let Some(cimstructs::base::FieldValue::Text(m_rid)) = block.fields.get("IdentifiedObject.mRID") {
             if !m_rid.is_empty() {
-                by_mrid.entry(m_rid.clone()).or_default().push((id, class.clone()));
+                by_mrid.entry(m_rid.clone()).or_default().push((id, class.clone(), entry));
             }
         }
 
@@ -116,9 +133,18 @@ fn check_per_entry_block_checks(dataset: &CimDataset) -> Vec<Violation> {
     // --- mRID uniqueness (all600:All-GENC1), decided ---
     // The smallest object id counts as the original and every other one is
     // reported, so the result does not depend on iteration order.
-    for owners in by_mrid.values_mut().filter(|o| o.len() > 1) {
-        owners.sort_unstable();
-        for (id, class) in owners.drain(1..) {
+    for (m_rid, owners) in by_mrid.iter_mut().filter(|(_, o)| o.len() > 1) {
+        // Duplicates are rare, so confirm each owner against the struct's
+        // view, which is what decides here; the fast path read the raw block.
+        owners.retain(|(_, _, entry)| {
+            matches!(entry.element.to_block().fields.get("IdentifiedObject.mRID"),
+                Some(cimstructs::base::FieldValue::Text(m)) if m == m_rid)
+        });
+        if owners.len() < 2 {
+            continue;
+        }
+        owners.sort_unstable_by(|a, b| a.0.cmp(b.0));
+        for (id, class, _) in owners.drain(1..) {
             v.push(Violation {
                 object_id: id.clone(),
                 rule_id:   "all600:All-GENC1".into(),
@@ -132,6 +158,34 @@ fn check_per_entry_block_checks(dataset: &CimDataset) -> Vec<Violation> {
         }
     }
     v
+}
+
+/// Could any value in this raw field map fail one of the per-entry checks?
+///
+/// A superset test: every text value the struct's view holds is in the raw map
+/// as written (the last of a repeated one included), and a typed float is the
+/// raw text parsed the same way. A float is only non-finite for `nan`/`inf`
+/// spellings or an overflowing exponent, so the byte scan skips the parse for
+/// almost every value.
+fn may_fail_entry_checks(fields: &cimstructs::base::FieldMap) -> bool {
+    let suspicious = |key: &str, s: &str| {
+        let non_finite = s.bytes().any(|b| matches!(b, b'n' | b'N' | b'i' | b'I' | b'e' | b'E'))
+            && s.trim().parse::<f64>().is_ok_and(|f| !f.is_finite());
+        let too_long = match key {
+            "IdentifiedObject.shortName" => s.len() > 12,
+            "IdentifiedObject.energyIdentCodeEic" => !s.is_empty() && s.len() != 16,
+            "IdentifiedObject.name" => s.len() > 128,
+            "IdentifiedObject.description" => s.len() > 256,
+            _ => false,
+        };
+        non_finite || too_long
+    };
+    fields.iter().any(|(key, val)| match val {
+        cimstructs::base::FieldValue::Text(s) => suspicious(key, s),
+        // A repeated value: the struct keeps one of them, so any could matter.
+        cimstructs::base::FieldValue::TextList(vs) => vs.iter().any(|s| suspicious(key, s)),
+        _ => false,
+    })
 }
 
 fn check_id_uuid(dataset: &CimDataset) -> Vec<Violation> {

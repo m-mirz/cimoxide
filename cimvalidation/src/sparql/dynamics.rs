@@ -151,7 +151,7 @@ macro_rules! check_gov_mwbase {
                     Some(r) => r.mrid.trim_start_matches('#').to_string(), None => continue,
                 };
                 let smd_entry = match $dataset.entries.get(&smd_id) { Some(e) => e, None => continue };
-                let smd_block = smd_entry.element.to_block();
+                let smd_block = $crate::sparql::block_of(smd_entry);
                 let sm_id = match smd_block.fields.get("SynchronousMachineDynamics.SynchronousMachine") {
                     Some(FieldValue::Resource(s)) => s.trim_start_matches('#').to_string(),
                     _ => continue,

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use cimstructs::base::FastMap as HashMap;
 use cimdecoder::CimDataset;
 use crate::Violation;
 
@@ -21,7 +21,7 @@ fn terminal_nominal_voltage(dataset: &CimDataset, term: &cimstructs::Terminal) -
 }
 
 fn build_terminals_by_equipment_seq(dataset: &CimDataset) -> HashMap<String, HashMap<i64, String>> {
-    let mut map: HashMap<String, HashMap<i64, String>> = HashMap::new();
+    let mut map: HashMap<String, HashMap<i64, String>> = HashMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
@@ -67,7 +67,7 @@ fn check_regulating_control_target_value_tap_changer(dataset: &CimDataset) -> Ve
 
     // TapChangerControl MRID → RatioTapChangers referencing it. Built once instead of
     // rescanning all RatioTapChanger per RegulatingControl/TapChangerControl below.
-    let mut rtc_by_tcc: HashMap<String, Vec<String>> = HashMap::new();
+    let mut rtc_by_tcc: HashMap<String, Vec<String>> = HashMap::default();
     for rtc_mrid in dataset.by_type.get("RatioTapChanger").into_iter().flatten() {
         let rtc_entry = &dataset.entries[rtc_mrid];
         if let Some(rtc) = rtc_entry.element.as_any().downcast_ref::<cimstructs::RatioTapChanger>() {
@@ -159,7 +159,7 @@ fn check_ac_line_segment_base_voltage_diff(dataset: &CimDataset) -> Vec<Violatio
 
 fn check_boundary_point_bppl(dataset: &CimDataset) -> Vec<Violation> {
     // BoundaryPoint → ConnectivityNode
-    let mut bp_to_cn: HashMap<String, String> = HashMap::new();
+    let mut bp_to_cn: HashMap<String, String> = HashMap::default();
     for mrid in dataset.by_type.get("BoundaryPoint").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(bp) = entry.element.as_any().downcast_ref::<cimstructs::BoundaryPoint>() {
@@ -169,7 +169,7 @@ fn check_boundary_point_bppl(dataset: &CimDataset) -> Vec<Violation> {
         }
     }
     // CN → set of terminal MRIDs
-    let mut cn_terminals: HashMap<String, Vec<String>> = HashMap::new();
+    let mut cn_terminals: HashMap<String, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
@@ -216,7 +216,7 @@ fn check_boundary_point_bppl(dataset: &CimDataset) -> Vec<Violation> {
 
 fn check_equivalent_injection_regulation_capability_not_hvdc(dataset: &CimDataset) -> Vec<Violation> {
     // CN → BoundaryPoint DC flag
-    let mut cn_is_dc: HashMap<String, bool> = HashMap::new();
+    let mut cn_is_dc: HashMap<String, bool> = HashMap::default();
     for mrid in dataset.by_type.get("BoundaryPoint").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(bp) = entry.element.as_any().downcast_ref::<cimstructs::BoundaryPoint>() {
@@ -228,7 +228,7 @@ fn check_equivalent_injection_regulation_capability_not_hvdc(dataset: &CimDatase
     // Equipment MRID → true if it has at least one terminal connected to a non-HVDC
     // BoundaryPoint CN. Built once over all Terminals instead of rescanning them per
     // EquivalentInjection below.
-    let mut equip_non_hvdc_bp: HashMap<String, bool> = HashMap::new();
+    let mut equip_non_hvdc_bp: HashMap<String, bool> = HashMap::default();
     for term_mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let term = match dataset.entries.get(term_mrid).and_then(|e| e.element.as_any().downcast_ref::<cimstructs::Terminal>()) { Some(t) => t, None => continue };
         let eq_id = match &term.conducting_equipment { Some(r) => r.mrid.trim_start_matches('#').to_string(), None => continue };

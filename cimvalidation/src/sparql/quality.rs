@@ -1,8 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use cimstructs::base::{FastMap as HashMap, FastSet as HashSet};
 use cimdecoder::CimDataset;
 use crate::Violation;
 
-pub fn check_base_voltage_in_eqbd_impl(dataset: &CimDataset, eqbd_bv_ids: &HashSet<String>) -> Vec<Violation> {
+pub fn check_base_voltage_in_eqbd_impl(dataset: &CimDataset, eqbd_bv_ids: &std::collections::HashSet<String>) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("BaseVoltage").into_iter().flatten() {
         if eqbd_bv_ids.contains(mrid.as_str()) { continue; }
@@ -98,7 +98,7 @@ fn check_no_shunt_compensators(dataset: &CimDataset) -> Vec<Violation> {
 }
 
 fn check_substation_has_no_voltage_levels(dataset: &CimDataset) -> Vec<Violation> {
-    let mut has_vl: HashSet<String> = HashSet::new();
+    let mut has_vl: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("VoltageLevel").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(vl) = entry.element.as_any().downcast_ref::<cimstructs::VoltageLevel>() {
@@ -107,7 +107,7 @@ fn check_substation_has_no_voltage_levels(dataset: &CimDataset) -> Vec<Violation
             }
         }
     }
-    let mut has_cn: HashSet<String> = HashSet::new();
+    let mut has_cn: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("ConnectivityNode").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(cn) = entry.element.as_any().downcast_ref::<cimstructs::ConnectivityNode>() {
@@ -134,7 +134,7 @@ fn check_substation_has_no_voltage_levels(dataset: &CimDataset) -> Vec<Violation
 }
 
 fn check_control_area_has_no_children(dataset: &CimDataset) -> Vec<Violation> {
-    let mut has_cagu: HashSet<String> = HashSet::new();
+    let mut has_cagu: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("ControlAreaGeneratingUnit").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(cagu) = entry.element.as_any().downcast_ref::<cimstructs::ControlAreaGeneratingUnit>() {
@@ -143,7 +143,7 @@ fn check_control_area_has_no_children(dataset: &CimDataset) -> Vec<Violation> {
             }
         }
     }
-    let mut has_tf: HashSet<String> = HashSet::new();
+    let mut has_tf: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("TieFlow").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(tf) = entry.element.as_any().downcast_ref::<cimstructs::TieFlow>() {
@@ -171,7 +171,7 @@ fn check_control_area_has_no_children(dataset: &CimDataset) -> Vec<Violation> {
 
 fn check_no_locations_for_conductors(dataset: &CimDataset) -> Vec<Violation> {
     if count_by_type(dataset, "Location") == 0 { return Vec::new(); }
-    let mut covered: HashSet<String> = HashSet::new();
+    let mut covered: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("Location").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(loc) = entry.element.as_any().downcast_ref::<cimstructs::Location>() {
@@ -240,7 +240,7 @@ fn check_ac_line_segment_xr_ratio(dataset: &CimDataset) -> Vec<Violation> {
 }
 
 fn check_base_voltage_duplicate_nominal_voltage(dataset: &CimDataset) -> Vec<Violation> {
-    let mut by_voltage: HashMap<u64, Vec<String>> = HashMap::new();
+    let mut by_voltage: HashMap<u64, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("BaseVoltage").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(bv) = entry.element.as_any().downcast_ref::<cimstructs::BaseVoltage>() {
@@ -270,7 +270,7 @@ fn check_base_voltage_duplicate_nominal_voltage(dataset: &CimDataset) -> Vec<Vio
 }
 
 fn check_power_transformer_ends_same_nominal_voltage(dataset: &CimDataset) -> Vec<Violation> {
-    let mut ends_by_pt: HashMap<String, Vec<f64>> = HashMap::new();
+    let mut ends_by_pt: HashMap<String, Vec<f64>> = HashMap::default();
     for mrid in dataset.by_type.get("PowerTransformerEnd").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(end) = entry.element.as_any().downcast_ref::<cimstructs::PowerTransformerEnd>() {
@@ -302,7 +302,7 @@ fn check_power_transformer_ends_same_nominal_voltage(dataset: &CimDataset) -> Ve
 }
 
 fn check_connectivity_node_open_ended(dataset: &CimDataset) -> Vec<Violation> {
-    let mut count: HashMap<String, usize> = HashMap::new();
+    let mut count: HashMap<String, usize> = HashMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
@@ -336,7 +336,7 @@ fn check_disconnector_cross_voltage_level(dataset: &CimDataset) -> Vec<Violation
     let voltage_level_ids: HashSet<&str> = dataset.by_type.get("VoltageLevel").into_iter().flatten().map(|s| s.as_str()).collect();
 
     // CN → VoltageLevel MRID (only CNs whose container is a VoltageLevel)
-    let mut cn_vl: HashMap<String, String> = HashMap::new();
+    let mut cn_vl: HashMap<String, String> = HashMap::default();
     for mrid in dataset.by_type.get("ConnectivityNode").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(cn) = entry.element.as_any().downcast_ref::<cimstructs::ConnectivityNode>() {
@@ -349,7 +349,7 @@ fn check_disconnector_cross_voltage_level(dataset: &CimDataset) -> Vec<Violation
         }
     }
     // Equipment → terminal's CN VoltageLevel IDs
-    let mut terms_by_equip: HashMap<String, Vec<String>> = HashMap::new();
+    let mut terms_by_equip: HashMap<String, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
@@ -368,7 +368,7 @@ fn check_disconnector_cross_voltage_level(dataset: &CimDataset) -> Vec<Violation
             Some(c) if c.len() >= 2 => c,
             _ => continue,
         };
-        let mut vl_ids: HashSet<String> = HashSet::new();
+        let mut vl_ids: HashSet<String> = HashSet::default();
         for cn_id in cns {
             if let Some(vl) = cn_vl.get(cn_id) {
                 vl_ids.insert(vl.clone());
@@ -392,7 +392,7 @@ fn check_disconnector_cross_voltage_level(dataset: &CimDataset) -> Vec<Violation
 
 fn check_conform_load_cross_container(dataset: &CimDataset) -> Vec<Violation> {
     // CN → container ID
-    let mut cn_container: HashMap<String, String> = HashMap::new();
+    let mut cn_container: HashMap<String, String> = HashMap::default();
     for mrid in dataset.by_type.get("ConnectivityNode").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(cn) = entry.element.as_any().downcast_ref::<cimstructs::ConnectivityNode>() {
@@ -402,7 +402,7 @@ fn check_conform_load_cross_container(dataset: &CimDataset) -> Vec<Violation> {
         }
     }
     // Equipment → terminal list
-    let mut terms_by_equip: HashMap<String, Vec<String>> = HashMap::new();
+    let mut terms_by_equip: HashMap<String, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
@@ -478,7 +478,7 @@ fn check_regulating_control_target_voltage_mismatch(dataset: &CimDataset) -> Vec
     const DEV_WARN: f64 = 0.10;
 
     // CN → nominal voltage: CN → VoltageLevel → BaseVoltage
-    let mut cn_nominal_kv: HashMap<String, f64> = HashMap::new();
+    let mut cn_nominal_kv: HashMap<String, f64> = HashMap::default();
     for cn_mrid in dataset.by_type.get("ConnectivityNode").into_iter().flatten() {
         let entry = &dataset.entries[cn_mrid];
         let cn = match entry.element.as_any().downcast_ref::<cimstructs::ConnectivityNode>() { Some(c) => c, None => continue };
@@ -490,7 +490,7 @@ fn check_regulating_control_target_voltage_mismatch(dataset: &CimDataset) -> Vec
         cn_nominal_kv.insert(cn_mrid.clone(), nominal);
     }
     // Terminal → CN
-    let mut term_cn: HashMap<String, String> = HashMap::new();
+    let mut term_cn: HashMap<String, String> = HashMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {

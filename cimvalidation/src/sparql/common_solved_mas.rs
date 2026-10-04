@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use cimstructs::base::{FastMap as HashMap, FastSet as HashSet};
 use cimdecoder::CimDataset;
 use crate::Violation;
 
@@ -18,7 +18,7 @@ pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
 }
 
 fn build_tn_to_island(dataset: &CimDataset) -> HashMap<String, String> {
-    let mut map = HashMap::new();
+    let mut map = HashMap::default();
     for mrid in dataset.by_type.get("TopologicalIsland").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(island) = entry.element.as_any().downcast_ref::<cimstructs::TopologicalIsland>() {
@@ -31,7 +31,7 @@ fn build_tn_to_island(dataset: &CimDataset) -> HashMap<String, String> {
 }
 
 fn check_angle_reference(dataset: &CimDataset) -> Vec<Violation> {
-    let mut angle_ref_tns: HashSet<String> = HashSet::new();
+    let mut angle_ref_tns: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("TopologicalIsland").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(island) = entry.element.as_any().downcast_ref::<cimstructs::TopologicalIsland>() {
@@ -75,7 +75,7 @@ fn check_angle_reference(dataset: &CimDataset) -> Vec<Violation> {
     }
 
     // Build terminal → TN map for SM terminals
-    let mut sm_term_tns: HashMap<String, Vec<String>> = HashMap::new();
+    let mut sm_term_tns: HashMap<String, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
@@ -106,9 +106,32 @@ fn check_angle_reference(dataset: &CimDataset) -> Vec<Violation> {
     v
 }
 
+/// A reference that names a CIM object this dataset does not hold.
+fn is_dangling(dataset: &CimDataset, target: &str) -> bool {
+    let target_id = target.trim_start_matches('#');
+    if target_id.is_empty() {
+        return false;
+    }
+    let is_cim_id = target.starts_with("urn:uuid:") || target.contains("#_") || target.ends_with('#');
+    is_cim_id && !dataset.entries.contains_key(target_id)
+}
+
 fn check_dangling_references(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for (id, entry) in &dataset.entries {
+        // The rule reads the struct's view of the element (`to_block`), and
+        // building it for every element was most of its time. The struct's
+        // references are the raw block's, copied unchanged, so an element
+        // with no dangling reference in its raw block has none in that view.
+        if !entry.block.type_name.is_empty()
+            && !entry.block.fields.values().any(|val| match val {
+                cimstructs::base::FieldValue::Resource(r) => is_dangling(dataset, r),
+                cimstructs::base::FieldValue::ResourceList(rs) => rs.iter().any(|r| is_dangling(dataset, r)),
+                _ => false,
+            })
+        {
+            continue;
+        }
         let block = entry.element.to_block();
         for (field, val) in &block.fields {
             let refs: Vec<&str> = match val {
@@ -118,12 +141,7 @@ fn check_dangling_references(dataset: &CimDataset) -> Vec<Violation> {
             };
             for target in refs {
                 let target_id = target.trim_start_matches('#');
-                if target_id.is_empty() { continue; }
-                let is_cim_id = target.starts_with("urn:uuid:")
-                    || target.contains("#_")
-                    || target.ends_with('#');
-                if !is_cim_id { continue; }
-                if !dataset.entries.contains_key(target_id) {
+                if is_dangling(dataset, target) {
                     v.push(Violation {
                         object_id:   id.clone(),
                         rule_id:     "sm600:All-DanglingReferences".into(),
@@ -146,7 +164,7 @@ fn check_state_variables_instantiated(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
 
     // 1. SvVoltage for each TN in island
-    let mut tn_has_sv_voltage: HashSet<String> = HashSet::new();
+    let mut tn_has_sv_voltage: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("SvVoltage").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(svv) = entry.element.as_any().downcast_ref::<cimstructs::SvVoltage>() {
@@ -171,8 +189,8 @@ fn check_state_variables_instantiated(dataset: &CimDataset) -> Vec<Violation> {
     }
 
     // Terminal → TN index
-    let mut term_tns: HashMap<String, String> = HashMap::new();
-    let mut equip_tns: HashMap<String, Vec<String>> = HashMap::new();
+    let mut term_tns: HashMap<String, String> = HashMap::default();
+    let mut equip_tns: HashMap<String, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
@@ -188,7 +206,7 @@ fn check_state_variables_instantiated(dataset: &CimDataset) -> Vec<Violation> {
     }
 
     // 2. SvSwitch for energized retained switches
-    let mut sw_has_sv_switch: HashSet<String> = HashSet::new();
+    let mut sw_has_sv_switch: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("SvSwitch").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(svsw) = entry.element.as_any().downcast_ref::<cimstructs::SvSwitch>() {
@@ -220,7 +238,7 @@ fn check_state_variables_instantiated(dataset: &CimDataset) -> Vec<Violation> {
     }
 
     // 3. SvStatus for all energized ConductingEquipment
-    let mut ce_has_sv_status: HashSet<String> = HashSet::new();
+    let mut ce_has_sv_status: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("SvStatus").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(svs) = entry.element.as_any().downcast_ref::<cimstructs::SvStatus>() {
@@ -251,7 +269,7 @@ fn check_state_variables_instantiated(dataset: &CimDataset) -> Vec<Violation> {
 
 fn check_regulating_control_contradictory(dataset: &CimDataset) -> Vec<Violation> {
     // group by (termID, modeURI) → Vec<(rc_id, target_value)>
-    let mut groups: HashMap<(String, String), Vec<(String, f64)>> = HashMap::new();
+    let mut groups: HashMap<(String, String), Vec<(String, f64)>> = HashMap::default();
     for mrid in dataset.by_type.get("RegulatingControl").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         let rc = match entry.element.as_any().downcast_ref::<cimstructs::RegulatingControl>() { Some(r) => r, None => continue };
@@ -287,7 +305,7 @@ fn check_regulating_control_contradictory(dataset: &CimDataset) -> Vec<Violation
 
 fn check_sv_shunt_compensator_sections_sync(dataset: &CimDataset) -> Vec<Violation> {
     // SvStatus lookup: CE id → in_service
-    let mut sv_status_in_service: HashMap<String, bool> = HashMap::new();
+    let mut sv_status_in_service: HashMap<String, bool> = HashMap::default();
     for mrid in dataset.by_type.get("SvStatus").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(svs) = entry.element.as_any().downcast_ref::<cimstructs::SvStatus>() {
@@ -405,7 +423,7 @@ fn get_tap_changer_info(entry: &cimdecoder::CimEntry) -> Option<(bool, Option<St
 fn check_sv_status_instance(dataset: &CimDataset) -> Vec<Violation> {
     let tn_to_island = build_tn_to_island(dataset);
 
-    let mut equip_tns: HashMap<String, Vec<String>> = HashMap::new();
+    let mut equip_tns: HashMap<String, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
@@ -417,7 +435,7 @@ fn check_sv_status_instance(dataset: &CimDataset) -> Vec<Violation> {
             }
         }
     }
-    let mut ce_has_sv_status: HashSet<String> = HashSet::new();
+    let mut ce_has_sv_status: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("SvStatus").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(svs) = entry.element.as_any().downcast_ref::<cimstructs::SvStatus>() {
@@ -455,7 +473,7 @@ fn check_sv_status_instance(dataset: &CimDataset) -> Vec<Violation> {
 
 fn check_sv_shunt_compensator_sections_instance(dataset: &CimDataset) -> Vec<Violation> {
     let tn_to_island = build_tn_to_island(dataset);
-    let mut equip_tns: HashMap<String, Vec<String>> = HashMap::new();
+    let mut equip_tns: HashMap<String, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
@@ -467,7 +485,7 @@ fn check_sv_shunt_compensator_sections_instance(dataset: &CimDataset) -> Vec<Vio
             }
         }
     }
-    let mut sc_has_sv: HashSet<String> = HashSet::new();
+    let mut sc_has_sv: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("SvShuntCompensatorSections").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(svsc) = entry.element.as_any().downcast_ref::<cimstructs::SvShuntCompensatorSections>() {
@@ -502,7 +520,7 @@ fn check_sv_tap_step_instance(dataset: &CimDataset) -> Vec<Violation> {
     let tn_to_island = build_tn_to_island(dataset);
 
     // TapChanger → energized via TransformerEnd → Terminal → TN
-    let mut te_terminal: HashMap<String, String> = HashMap::new();
+    let mut te_terminal: HashMap<String, String> = HashMap::default();
     for type_name in &["PowerTransformerEnd"] {
         for mrid in dataset.by_type.get(*type_name).into_iter().flatten() {
             let entry = &dataset.entries[mrid];
@@ -513,7 +531,7 @@ fn check_sv_tap_step_instance(dataset: &CimDataset) -> Vec<Violation> {
             }
         }
     }
-    let mut term_tn: HashMap<String, String> = HashMap::new();
+    let mut term_tn: HashMap<String, String> = HashMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
@@ -529,7 +547,7 @@ fn check_sv_tap_step_instance(dataset: &CimDataset) -> Vec<Violation> {
         tn_to_island.contains_key(tn_id)
     };
 
-    let mut tc_has_sv: HashSet<String> = HashSet::new();
+    let mut tc_has_sv: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("SvTapStep").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(svts) = entry.element.as_any().downcast_ref::<cimstructs::SvTapStep>() {
@@ -582,7 +600,7 @@ fn check_sv_tap_step_instance(dataset: &CimDataset) -> Vec<Violation> {
 fn check_regulating_control_same_island(dataset: &CimDataset) -> Vec<Violation> {
     let tn_to_island = build_tn_to_island(dataset);
     // Terminal → island
-    let mut term_to_island: HashMap<String, String> = HashMap::new();
+    let mut term_to_island: HashMap<String, String> = HashMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
@@ -595,7 +613,7 @@ fn check_regulating_control_same_island(dataset: &CimDataset) -> Vec<Violation> 
         }
     }
     // Equipment → terminal list
-    let mut equip_terms: HashMap<String, Vec<String>> = HashMap::new();
+    let mut equip_terms: HashMap<String, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
@@ -608,7 +626,7 @@ fn check_regulating_control_same_island(dataset: &CimDataset) -> Vec<Violation> 
 
     // RegulatingControl MRID → SynchronousMachines referencing it. Built once instead of
     // rescanning all SynchronousMachine per RegulatingControl below.
-    let mut rc_to_sm: HashMap<String, Vec<String>> = HashMap::new();
+    let mut rc_to_sm: HashMap<String, Vec<String>> = HashMap::default();
     for sm_mrid in dataset.by_type.get("SynchronousMachine").into_iter().flatten() {
         let sm_entry = &dataset.entries[sm_mrid];
         if let Some(sm) = sm_entry.element.as_any().downcast_ref::<cimstructs::SynchronousMachine>() {
@@ -624,7 +642,7 @@ fn check_regulating_control_same_island(dataset: &CimDataset) -> Vec<Violation> 
     // below.
     let tc_types = ["RatioTapChanger", "PhaseTapChangerLinear", "PhaseTapChangerSymmetrical",
                     "PhaseTapChangerAsymmetrical", "PhaseTapChangerTabular"];
-    let mut tcc_to_tc: HashMap<String, Vec<(String, &'static str, Option<String>)>> = HashMap::new();
+    let mut tcc_to_tc: HashMap<String, Vec<(String, &'static str, Option<String>)>> = HashMap::default();
     for tc_type in &tc_types {
         for tc_mrid in dataset.by_type.get(*tc_type).into_iter().flatten() {
             let tc_entry = &dataset.entries[tc_mrid];

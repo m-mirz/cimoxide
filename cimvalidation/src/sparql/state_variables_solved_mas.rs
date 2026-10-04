@@ -179,7 +179,7 @@ const SWITCH_TYPES: &[&str] = &[
 
 fn check_sv_switch_instance(dataset: &CimDataset) -> Vec<Violation> {
     // Build a set of switch MRIDs that have an SvSwitch
-    let mut covered: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut covered: cimstructs::base::FastSet<String> = cimstructs::base::FastSet::default();
     for mrid in dataset.by_type.get("SvSwitch").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::SvSwitch>() {
@@ -218,48 +218,48 @@ const INJECTION_TYPES: &[&str] = &[
 
 fn check_sv_power_flow_instance(dataset: &CimDataset) -> Vec<Violation> {
     // Build in-service equipment set from SvStatus
-    let mut in_service: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut in_service: cimstructs::base::FastSet<&str> = cimstructs::base::FastSet::default();
     for mrid in dataset.by_type.get("SvStatus").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::SvStatus>() {
             if obj.in_service.unwrap_or(false) {
                 if let Some(ce_ref) = obj.conducting_equipment.as_ref() {
-                    in_service.insert(ce_ref.mrid.trim_start_matches('#').to_string());
+                    in_service.insert(ce_ref.mrid.trim_start_matches('#'));
                 }
             }
         }
     }
 
     // Build set of TN MRIDs that are in a topological island
-    let mut tn_in_island: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut tn_in_island: cimstructs::base::FastSet<&str> = cimstructs::base::FastSet::default();
     for mrid in dataset.by_type.get("TopologicalIsland").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(island) = entry.element.as_any().downcast_ref::<cimstructs::TopologicalIsland>() {
             for tn_ref in &island.topological_nodes {
-                tn_in_island.insert(tn_ref.mrid.trim_start_matches('#').to_string());
+                tn_in_island.insert(tn_ref.mrid.trim_start_matches('#'));
             }
         }
     }
 
     // Build terminal index: equipment_id → terminal MRIDs
-    let mut eq_terminals: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut eq_terminals: cimstructs::base::FastMap<&str, Vec<&str>> = cimstructs::base::FastMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
             if let Some(ce_ref) = term.conducting_equipment.as_ref() {
-                eq_terminals.entry(ce_ref.mrid.trim_start_matches('#').to_string())
-                    .or_default().push(mrid.clone());
+                eq_terminals.entry(ce_ref.mrid.trim_start_matches('#'))
+                    .or_default().push(mrid);
             }
         }
     }
 
     // Build set of terminal MRIDs that have an SvPowerFlow
-    let mut terminals_with_svpf: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut terminals_with_svpf: cimstructs::base::FastSet<&str> = cimstructs::base::FastSet::default();
     for mrid in dataset.by_type.get("SvPowerFlow").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::SvPowerFlow>() {
             if let Some(t_ref) = obj.terminal.as_ref() {
-                terminals_with_svpf.insert(t_ref.mrid.trim_start_matches('#').to_string());
+                terminals_with_svpf.insert(t_ref.mrid.trim_start_matches('#'));
             }
         }
     }
@@ -267,12 +267,12 @@ fn check_sv_power_flow_instance(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for type_name in INJECTION_TYPES {
         for mrid in dataset.by_type.get(*type_name).into_iter().flatten() {
-            if !in_service.contains(mrid) { continue; }
+            if !in_service.contains(mrid.as_str()) { continue; }
 
             // Check if energized: at least one terminal connected to an island TN
-            let energized = eq_terminals.get(mrid).map_or(false, |terms| {
+            let energized = eq_terminals.get(mrid.as_str()).map_or(false, |terms| {
                 terms.iter().any(|t_mrid| {
-                    dataset.entries.get(t_mrid)
+                    dataset.entries.get(*t_mrid)
                         .and_then(|e| e.element.as_any().downcast_ref::<cimstructs::Terminal>())
                         .and_then(|t| t.topological_node.as_ref())
                         .map_or(false, |tn_ref| tn_in_island.contains(tn_ref.mrid.trim_start_matches('#')))
@@ -280,7 +280,7 @@ fn check_sv_power_flow_instance(dataset: &CimDataset) -> Vec<Violation> {
             });
             if !energized { continue; }
 
-            let has_svpf = eq_terminals.get(mrid).map_or(false, |terms| {
+            let has_svpf = eq_terminals.get(mrid.as_str()).map_or(false, |terms| {
                 terms.iter().any(|t_mrid| terminals_with_svpf.contains(t_mrid))
             });
             if !has_svpf {
@@ -437,7 +437,7 @@ fn check_sv_voltage_operational_limits(dataset: &CimDataset) -> Vec<Violation> {
 
     // TopologicalNode -> terminals connected to it (via Terminal.TopologicalNode directly,
     // same convention as check_sv_power_flow_instance above).
-    let mut tn_terminals: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut tn_terminals: cimstructs::base::FastMap<String, Vec<String>> = cimstructs::base::FastMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>() {
@@ -449,7 +449,7 @@ fn check_sv_voltage_operational_limits(dataset: &CimDataset) -> Vec<Violation> {
     }
 
     // OperationalLimitSet -> terminal.
-    let mut ols_terminal: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut ols_terminal: cimstructs::base::FastMap<String, String> = cimstructs::base::FastMap::default();
     for mrid in dataset.by_type.get("OperationalLimitSet").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(ols) = entry.element.as_any().downcast_ref::<cimstructs::OperationalLimitSet>() {
@@ -460,7 +460,7 @@ fn check_sv_voltage_operational_limits(dataset: &CimDataset) -> Vec<Violation> {
     }
 
     // OperationalLimitType -> direction.
-    let mut olt_direction: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut olt_direction: cimstructs::base::FastMap<String, String> = cimstructs::base::FastMap::default();
     for mrid in dataset.by_type.get("OperationalLimitType").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(olt) = entry.element.as_any().downcast_ref::<cimstructs::OperationalLimitType>() {
@@ -471,8 +471,8 @@ fn check_sv_voltage_operational_limits(dataset: &CimDataset) -> Vec<Violation> {
     }
 
     // terminal_id -> (max high VoltageLimit.value, min low VoltageLimit.value)
-    let mut terminal_vhigh: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
-    let mut terminal_vlow: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    let mut terminal_vhigh: cimstructs::base::FastMap<String, f64> = cimstructs::base::FastMap::default();
+    let mut terminal_vlow: cimstructs::base::FastMap<String, f64> = cimstructs::base::FastMap::default();
     for mrid in dataset.by_type.get("VoltageLimit").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         let vl = match entry.element.as_any().downcast_ref::<cimstructs::VoltageLimit>() { Some(o) => o, None => continue };

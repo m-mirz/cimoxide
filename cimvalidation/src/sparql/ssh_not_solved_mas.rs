@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use cimstructs::base::FastMap as HashMap;
 use cimdecoder::CimDataset;
 use crate::Violation;
 use super::ssh;
@@ -47,7 +47,7 @@ fn check_linear_shunt_compensator_sections_range(dataset: &CimDataset) -> Vec<Vi
 }
 
 fn check_nonlinear_shunt_compensator_sections_valid(dataset: &CimDataset) -> Vec<Violation> {
-    let mut point_sections: HashMap<String, std::collections::HashSet<i64>> = HashMap::new();
+    let mut point_sections: HashMap<String, cimstructs::base::FastSet<i64>> = HashMap::default();
     for mrid in dataset.by_type.get("NonlinearShuntCompensatorPoint").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(pt) = entry.element.as_any().downcast_ref::<cimstructs::NonlinearShuntCompensatorPoint>() {
@@ -152,7 +152,7 @@ fn check_regulating_control_power_factor_required_attrs(dataset: &CimDataset) ->
 }
 
 fn check_tap_changer_step_integer(dataset: &CimDataset) -> Vec<Violation> {
-    let mut tcc_discrete_enabled: HashMap<String, (bool, bool)> = HashMap::new();
+    let mut tcc_discrete_enabled: HashMap<String, (bool, bool)> = HashMap::default();
     for mrid in dataset.by_type.get("TapChangerControl").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(tcc) = entry.element.as_any().downcast_ref::<cimstructs::TapChangerControl>() {
@@ -233,7 +233,7 @@ fn check_cs_converter_target_angle_applicability(dataset: &CimDataset, for_alpha
     let inverter   = "CsOperatingModeKind.inverter";
     let rectifier  = "CsOperatingModeKind.rectifier";
     // terminalID → RC.discrete
-    let mut rc_discrete: HashMap<String, bool> = HashMap::new();
+    let mut rc_discrete: HashMap<String, bool> = HashMap::default();
     for mrid in dataset.by_type.get("RegulatingControl").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(rc) = entry.element.as_any().downcast_ref::<cimstructs::RegulatingControl>() {
@@ -291,7 +291,7 @@ fn check_cs_converter_target_angle_applicability(dataset: &CimDataset, for_alpha
 
 fn check_control_area_net_interchange_calculation(dataset: &CimDataset) -> Vec<Violation> {
     let interchange_uri = "ControlAreaTypeKind.Interchange";
-    let mut cn_has_bp: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut cn_has_bp: cimstructs::base::FastSet<String> = cimstructs::base::FastSet::default();
     for mrid in dataset.by_type.get("BoundaryPoint").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(bp) = entry.element.as_any().downcast_ref::<cimstructs::BoundaryPoint>() {
@@ -300,7 +300,7 @@ fn check_control_area_net_interchange_calculation(dataset: &CimDataset) -> Vec<V
             }
         }
     }
-    let mut ca_terminals: HashMap<String, Vec<String>> = HashMap::new();
+    let mut ca_terminals: HashMap<String, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("TieFlow").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(tf) = entry.element.as_any().downcast_ref::<cimstructs::TieFlow>() {
