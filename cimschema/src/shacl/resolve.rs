@@ -545,6 +545,13 @@ fn resolve_prop(
 fn resolve_path(segs: &[String]) -> Result<Path, &'static str> {
     match segs {
         [] => Err("shape has no resolvable path"),
+        // `sh:targetNode cim:X` with `[ sh:inversePath rdf:type ]` counts the
+        // instances of class X: the focus node is the class, not an element,
+        // which the table has no way to say. CGMES's three such rules are
+        // written by hand.
+        [one] if one == "^rdf:type" => {
+            Err("instance count of a class (`[ sh:inversePath rdf:type ]`), written by hand")
+        }
         [one] => decode_path(one).ok_or("unsupported path form"),
         _ => {
             let mut steps = Vec::with_capacity(segs.len());

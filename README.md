@@ -208,8 +208,8 @@ can be ruled out. One pass over the fields any active shape asks about took that
 to 6.3 ms, the CO profile from 47.4 to 40.8 ms, and all 18 profiles from 469 to
 290 ms. Measured twice, in independent A/Bs, agreeing to within a point.
 
-CGMES now validates the same way: its shapes are a table (`cgmes_shapes.rs`, 850 shapes,
-18,682 checks) run by the same interpreter, replacing ~250,000 lines of generated per-check
+CGMES now validates the same way: its shapes are a table (`cgmes_shapes.rs`, 849 shapes,
+18,681 checks) run by the same interpreter, replacing ~250,000 lines of generated per-check
 functions. On RealGrid (189,000 elements) `cimcli validate` went from 2,304 ms to about
 1,530 ms while checking more, and `cimoxide-validation` compiles in 9.5 s instead of
 123.5 s. The interpreter walks element-major — each target element once, with every shape
@@ -559,7 +559,7 @@ fields; validation now reads the text as written, so both are kept.
 ### Skipped constraints
 
 Some constraints are not in the shape table. The table below summarises the categories and
-counts as reported by `cargo run -p cimoxide-gen -- --skip-report`. Its total (194) matches
+counts as reported by `cargo run -p cimoxide-gen -- --skip-report`. Its total (196) matches
 the "SHACL Rules by Profile" table's `Skipped` column below exactly, since both sum the same
 `skip::SkipCollector`-deduped entries — just grouped differently (by reason here, by CGMES
 profile group there). Every category is either handled by an alternative method
@@ -569,10 +569,11 @@ fix, or not observable after decoding.
 | Count | Category | Reason |
 |------:|---------|--------|
 | 178 | SPARQL-derived constraints | `sh:sparql` constraints and `sh:target SPARQLTarget` targets both require evaluating an arbitrary SPARQL query at runtime, so both have a hand-written implementation instead (see "SPARQL Check Coverage" below). `cimsparql` provides an evaluator (see ["SPARQL"](#sparql) above), but validation is deliberately not wired to it. This is not the same count as the 186 in "SPARQL Check Coverage": this one is every distinct `(property, component, sh:name)` skip entry, deduped per TTL file and not split on `sh:name`'s `\|`-joined compound values. |
+| 2 | Instance count of a class | `sh:targetNode cim:X` with `[ sh:inversePath rdf:type ]` counts the instances of class X: the focus node is the class itself, which the table cannot express. Both such rules, `eq600:GeographicalRegion-EQ__4` and `sv456:TopologicalIsland-instance`, are hand-written, as is `all600:All-HGEN2`, which counts file headers the same way. |
 | 6 | Target class not defined by the schema | Upstream defects: `cim:GovHydroIEEE1` (no such class), `cim:TextDiagramObjectDiagramObject` (two names run together), and node shapes whose "target class" is a rule label rather than a CIM class (`cim:AngleReference`, `cim:AllGeneratingUnit`, `cim:SubstationCount`, `cim:FloatSpecialValues`/`IDuniqueness`/`IDchecks`) — the latter all back `sh:sparql` rules that are hand-written. |
 | 3 | Value list or class that does not resolve | Upstream defects: `cim:CSConverter` (should be `cim:CsConverter`) in two `CSCDynamics.CSConverter-valueType` shapes, and the empty `sh:in ()` on `Measurement.Terminal-valueType`. |
 | 7 | `sh:nodeKind` on a compound-datatype or `rdf:type` path | `sh:nodeKind sh:BlankNode` on GL's compound `Location.mainAddress` paths and on difference-model header paths: blank-node-ness is not visible after decoding. The class half of each GL rule (`sh:in ( cim:Status )` on the `rdf:type` step, etc.) is checked. |
-| **194** | **Total** | |
+| **196** | **Total** | |
 
 #### Comparing with cimgo
 
@@ -644,7 +645,7 @@ number of non-`sh:sparql` SHACL constraints CGMES defines for that profile group
 independent of either tool's capability. Every TTL file is counted, whether or not the
 manifest runs it.
 
-The table checks 98.4% of these constraints; the rest are the 194 skips above.
+The table checks 98.4% of these constraints; the rest are the 196 skips above.
 
 `--rule-report` also prints a per-file breakdown ("=== Per-File Rule Counts ===", one
 `PERFILE\t<name>\t<checks>\t<skipped>\t<total>` line per TTL file) in the same format cimgo's
@@ -654,16 +655,16 @@ cimgo.log | sort > b; awk -F'\t' '{print $2, $5}' a | diff - <(awk -F'\t' '{prin
 
 | Profile Group | Checks | Skipped | Total |
 |---------------|-------:|--------:|------:|
-| Equipment (EQ) | 1136 | 65 | 1201 |
+| Equipment (EQ) | 1135 | 66 | 1201 |
 | Steady State Hypothesis (SSH) | 226 | 39 | 265 |
 | Dynamics (DY) | 9770 | 43 | 9813 |
-| State Variables (SV) | 131 | 11 | 142 |
+| State Variables (SV) | 130 | 12 | 142 |
 | Short Circuit (SC) | 326 | 7 | 333 |
 | Common / AllProfiles | 161 | 23 | 184 |
 | Topology (TP) | 45 | 3 | 48 |
 | DiagramLayout (DL) | 87 | 1 | 88 |
 | Operation (OP) | 193 | 2 | 195 |
-| **Total** | **12075** | **194** | **12269** |
+| **Total** | **12073** | **196** | **12269** |
 
 ### SPARQL Check Coverage
 

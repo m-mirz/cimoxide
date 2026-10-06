@@ -25,18 +25,7 @@ pub struct SkipCategory {
 }
 
 static SKIP_CATEGORIES: &[SkipCategory] = &[
-    // Simplified — dropped in `cimschema::shacl::simplify` before resolution,
-    // because the typed decoding already guarantees them.
-    SkipCategory {
-        label: "`sh:nodeKind` simplified (type-system guarantee)",
-        section: "simplified",
-        match_fn: |e| e.reason.starts_with("NodeKind") && e.reason.contains("structurally satisfied"),
-    },
-    SkipCategory {
-        label: "`sh:datatype` simplified (native Rust type)",
-        section: "simplified",
-        match_fn: |e| e.reason.contains("Datatype structurally satisfied"),
-    },
+    // Simplified — dropped in `cimschema::shacl::simplify` before resolution.
     SkipCategory {
         label: "`sh:minCount=0` vacuously true",
         section: "simplified",
@@ -48,6 +37,11 @@ static SKIP_CATEGORIES: &[SkipCategory] = &[
         label: "SPARQL-derived constraints (hand-written in cimvalidation/src/sparql)",
         section: "sparql",
         match_fn: |e| e.component == "sh:SPARQLConstraintComponent" || e.component == "sparqlTarget",
+    },
+    SkipCategory {
+        label: "instance count of a class, `[ sh:inversePath rdf:type ]` (hand-written in cimvalidation/src/sparql)",
+        section: "sparql",
+        match_fn: |e| e.reason.starts_with("instance count of a class"),
     },
     // Upstream defects: names the schema does not define.
     SkipCategory {
@@ -69,11 +63,6 @@ static SKIP_CATEGORIES: &[SkipCategory] = &[
         label: "`sh:nodeKind` on a compound-datatype or `rdf:type` path",
         section: "unsupported",
         match_fn: |e| e.component == "sh:NodeKindConstraintComponent" && e.reason.contains("not supported"),
-    },
-    SkipCategory {
-        label: "`sh:length` (checked by hand in sparql/common.rs)",
-        section: "unsupported",
-        match_fn: |e| e.component == "sh:LengthConstraintComponent",
     },
     SkipCategory {
         label: "path or logical-combination form not supported",

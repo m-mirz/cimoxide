@@ -182,6 +182,10 @@ class) and reports a finding once per element and rule: a property shape shared
 by two node shapes reaches a subclass instance through both once abstract
 targets are expanded.
 
+`sh:targetNode cim:X` with `[ sh:inversePath rdf:type ]` counts the instances
+of class X — the focus node is the class, not an element — so the resolver
+skips that path and the rules using it are hand-written (`sparql/`).
+
 The manifest tag `"COMMON"` (IdentifiedObject string lengths) runs on the merged
 dataset under `--common`. CGMES profile codes are checked before the NC index in
 `validate_profile_local`, so CGMES data never loads the NC table.

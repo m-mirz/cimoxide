@@ -519,3 +519,21 @@ fn sparql_eq_004_enum_valued_rules() {
     assert_eq!(count("VL.OK", vl), 0, "{vs:#?}");
     assert_eq!(count("VL.BAD", vl), 1, "{vs:#?}");
 }
+
+#[test]
+fn sparql_eq_geographical_region_count() {
+    // eq600:GeographicalRegion-EQ__4: at most one GeographicalRegion per EQ instance.
+    let xml = |regions: &str| format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/CIM100#">
+{regions}
+</rdf:RDF>"#);
+    let region = |id: &str| format!(r#"<cim:GeographicalRegion rdf:ID="{id}"><cim:IdentifiedObject.name>{id}</cim:IdentifiedObject.name></cim:GeographicalRegion>"#);
+    let cfg = Config { profiles: vec!["EQ".into()], ..Default::default() };
+    let count = |xml: String| {
+        let ds = cimdecoder::CimDataset::decode_str(&xml).expect("decode");
+        validate(&ds, &cfg).iter().filter(|v| v.rule_id == "eq600:GeographicalRegion-EQ__4").count()
+    };
+    assert_eq!(count(xml(&region("_GR1"))), 0);
+    assert_eq!(count(xml(&(region("_GR1") + &region("_GR2")))), 1);
+}

@@ -127,7 +127,7 @@ fn cgmes_shapes_codegen_stable() {
     let mut h = Sha256::new();
     h.update(std::fs::read(shacl_out.join("cgmes_shapes.rs")).unwrap());
     let hash: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
-    assert_eq!(hash, "bdd77e3162b2839f855542704599566b8520552a6eadfe99738348bd3426b951", "CGMES shape table drifted — rerun to update hash");
+    assert_eq!(hash, "554dc2b20a97850653cae56a50436f4dd3a1ea04cb49c6489e99b1e979170409", "CGMES shape table drifted — rerun to update hash");
 }
 
 /// Hashes the NC class table on its own, so a CGMES-only change cannot mask an

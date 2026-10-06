@@ -28,6 +28,7 @@ pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
     v.extend(check_connectivity_node_terminal_phases_consistency(dataset, &terms));
     v.extend(check_equipment_aggregate_not_used(dataset));
     v.extend(check_equivalent_branch_r21_usage(dataset));
+    v.extend(check_geographical_region_count(dataset));
     v.extend(check_equivalent_branch_x21_usage(dataset));
     v.extend(check_equivalent_injection_regulation_capability(dataset));
     v.extend(check_generating_unit_nominal_p(dataset));
@@ -784,6 +785,26 @@ fn check_connectivity_node_terminal_phases_consistency(_dataset: &CimDataset, te
         }
     }
     v
+}
+
+/// eq600:GeographicalRegion-EQ__4: `sh:targetNode cim:GeographicalRegion` with
+/// `[ sh:inversePath rdf:type ] ; sh:maxCount 1` — at most one region per EQ
+/// instance. The focus node is the class itself, which the shape table cannot
+/// express, so this is written by hand like the other instance counts.
+fn check_geographical_region_count(dataset: &CimDataset) -> Vec<Violation> {
+    if dataset.by_type.get("GeographicalRegion").map_or(0, |v| v.len()) <= 1 {
+        return Vec::new();
+    }
+    vec![Violation {
+        object_id:   "global".into(),
+        rule_id:     "eq600:GeographicalRegion-EQ__4".into(),
+        name:        "C:600:EQ:GeographicalRegion:EQ__4".into(),
+        class:       "GeographicalRegion".into(),
+        property:    "rdf:type".into(),
+        message:     "Muliple GeographicalRegion-s are present.".into(),
+        severity:    "sh:Violation".into(),
+        description: String::new(),
+    }]
 }
 
 fn check_equipment_aggregate_not_used(dataset: &CimDataset) -> Vec<Violation> {
