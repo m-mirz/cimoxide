@@ -441,12 +441,16 @@ fn render_lib(ids: &[String], bag_modules: &[String]) -> String {
     writeln!(s).unwrap();
     writeln!(s, "pub mod base;").unwrap();
     writeln!(s, "pub mod constants;").unwrap();
+    writeln!(s, "pub mod convert;").unwrap();
+    writeln!(s, "pub mod decode;").unwrap();
     writeln!(s, "pub mod profile_meta;").unwrap();
     writeln!(s, "pub mod registry;").unwrap();
     writeln!(s, "pub mod schema_source;").unwrap();
     for m in bag_modules {
         writeln!(s, "pub mod {m};").unwrap();
     }
+    writeln!(s).unwrap();
+    writeln!(s, "pub use decode::{{CimDataset, CimEntry}};").unwrap();
     writeln!(s).unwrap();
 
     // Collect unique IDs (struct/enum/alias files may share names in edge cases)

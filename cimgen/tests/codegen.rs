@@ -49,9 +49,9 @@ fn collect(base: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) {
 }
 
 #[test]
-fn cimstructs_codegen_stable() {
+fn cimmodel_codegen_stable() {
     let root = workspace_root();
-    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("cimstructs");
+    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("cimmodel");
     let _ = std::fs::remove_dir_all(&out);
     std::fs::create_dir_all(&out).unwrap();
 
@@ -66,7 +66,7 @@ fn cimstructs_codegen_stable() {
     assert!(status.success(), "cimgen exited with failure");
 
     let hash = hash_dir(&out);
-    assert_eq!(hash, "f5aac603a2ae326cdf6e2679057101c64adb0c6d3a648947f756d0f02103db78", "cimstructs output drifted — rerun to update hash");
+    assert_eq!(hash, "ddecee9a07c717aa1dd4a46921ea2843a850b1601c6e962ec0531062fa4245c0", "cimmodel output drifted — rerun to update hash");
 }
 
 /// Hashes the NC shape table on its own, for the same reason
@@ -76,7 +76,7 @@ fn cimstructs_codegen_stable() {
 #[test]
 fn nc_shapes_codegen_stable() {
     let root = workspace_root();
-    let structs_out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("cimstructs-ncshapes");
+    let structs_out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("cimmodel-ncshapes");
     let shacl_out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("cimvalidation-ncshapes");
     let _ = std::fs::remove_dir_all(&structs_out);
     let _ = std::fs::remove_dir_all(&shacl_out);
@@ -106,7 +106,7 @@ fn nc_shapes_codegen_stable() {
 #[test]
 fn cgmes_shapes_codegen_stable() {
     let root = workspace_root();
-    let structs_out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("cimstructs-cgmesshapes");
+    let structs_out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("cimmodel-cgmesshapes");
     let shacl_out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("cimvalidation-cgmesshapes");
     let _ = std::fs::remove_dir_all(&structs_out);
     let _ = std::fs::remove_dir_all(&shacl_out);
@@ -137,7 +137,7 @@ fn cgmes_shapes_codegen_stable() {
 #[test]
 fn nc_classes_codegen_stable() {
     let root = workspace_root();
-    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("cimstructs-nc");
+    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("cimmodel-nc");
     let _ = std::fs::remove_dir_all(&out);
     std::fs::create_dir_all(&out).unwrap();
 

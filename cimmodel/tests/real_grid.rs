@@ -1,5 +1,5 @@
 use std::path::Path;
-use cimdecoder::CimDataset;
+use cimmodel::CimDataset;
 
 const BASE: &str = "../CGMES-Test-Configurations/v3.0/RealGrid/RealGrid-Merged";
 

@@ -93,10 +93,8 @@ dependencies = [
 name = "cimoxide"
 version = "0.3.3"
 dependencies = [
- "cimoxide-convert",
- "cimoxide-decoder",
+ "cimoxide-model",
  "cimoxide-sparql",
- "cimoxide-structs",
  "cimoxide-validation",
 ]
 
@@ -104,32 +102,11 @@ dependencies = [
 name = "cimoxide-cli"
 version = "0.3.3"
 dependencies = [
- "cimoxide-convert",
- "cimoxide-decoder",
+ "cimoxide-model",
  "cimoxide-sparql",
- "cimoxide-structs",
  "cimoxide-validation",
  "quick-xml",
  "serde_json",
-]
-
-[[package]]
-name = "cimoxide-convert"
-version = "0.3.3"
-dependencies = [
- "cimoxide-decoder",
- "cimoxide-structs",
- "serde_json",
- "sha1",
-]
-
-[[package]]
-name = "cimoxide-decoder"
-version = "0.3.3"
-dependencies = [
- "cimoxide-structs",
- "criterion",
- "quick-xml",
 ]
 
 [[package]]
@@ -145,6 +122,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cimoxide-model"
+version = "0.3.3"
+dependencies = [
+ "cimoxide-schema",
+ "criterion",
+ "quick-xml",
+ "serde",
+ "serde_json",
+ "sha1",
+]
+
+[[package]]
 name = "cimoxide-schema"
 version = "0.3.3"
 dependencies = [
@@ -156,20 +145,9 @@ dependencies = [
 name = "cimoxide-sparql"
 version = "0.3.3"
 dependencies = [
- "cimoxide-decoder",
- "cimoxide-structs",
+ "cimoxide-model",
  "criterion",
  "oxigraph",
- "serde_json",
-]
-
-[[package]]
-name = "cimoxide-structs"
-version = "0.3.3"
-dependencies = [
- "cimoxide-schema",
- "criterion",
- "serde",
  "serde_json",
 ]
 
@@ -177,9 +155,8 @@ dependencies = [
 name = "cimoxide-validation"
 version = "0.3.3"
 dependencies = [
- "cimoxide-decoder",
+ "cimoxide-model",
  "cimoxide-schema",
- "cimoxide-structs",
  "criterion",
 ]
 

@@ -1,10 +1,10 @@
 //! SPARQL 1.1 querying over a decoded CGMES dataset.
 //!
-//! [`CimStore`] materialises a [`cimdecoder::CimDataset`] into an in-memory RDF store and
+//! [`CimStore`] materialises a [`cimmodel::CimDataset`] into an in-memory RDF store and
 //! runs SPARQL against it:
 //!
 //! ```no_run
-//! use cimdecoder::CimDataset;
+//! use cimmodel::CimDataset;
 //! use cimsparql::{CimStore, QueryResults};
 //!
 //! let ds = CimDataset::decode_file(std::path::Path::new("MicroGrid_EQ.xml"))?;
@@ -26,7 +26,7 @@ pub mod format;
 pub mod iri;
 pub mod triples;
 
-use cimdecoder::CimDataset;
+use cimmodel::CimDataset;
 use oxigraph::sparql::SparqlEvaluator;
 use oxigraph::store::Store;
 

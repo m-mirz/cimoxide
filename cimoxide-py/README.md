@@ -177,8 +177,8 @@ pytest tests/
 ## Development
 
 This package is built from the [`cimoxide`](https://github.com/m-mirz/cimoxide) monorepo,
-where `cimoxide-py` lives alongside the Rust crates it binds (`cimdecoder`, `cimstructs`,
-`cimvalidation`, `cimconvert`). To build it from source:
+where `cimoxide-py` lives alongside the Rust crates it binds (`cimmodel`, `cimvalidation`,
+`cimsparql`). To build it from source:
 
 ```bash
 # for ubuntu

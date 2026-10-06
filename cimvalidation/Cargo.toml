@@ -19,14 +19,13 @@ default = []
 # it pulls a TTL parser and an RDFS import, which the crates depending on
 # cimvalidation for its types have no use for.
 #
-# Enables cimstructs' dynamic-schema too, because the shapes resolve against
+# Enables cimmodel's dynamic-schema too, because the shapes resolve against
 # the class table: a shape table built from one release and a class table from
 # another would disagree about what a class is.
-dynamic-shapes = ["dep:cimoxide-schema", "cimoxide-structs/dynamic-schema"]
+dynamic-shapes = ["dep:cimoxide-schema", "cimoxide-model/dynamic-schema"]
 
 [dependencies]
-cimoxide-structs = { workspace = true }
-cimoxide-decoder = { workspace = true }
+cimoxide-model = { workspace = true }
 cimoxide-schema = { workspace = true, optional = true }
 
 [dev-dependencies]

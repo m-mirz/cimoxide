@@ -1,4 +1,4 @@
-use cimdecoder::CimDataset;
+use cimmodel::CimDataset;
 use crate::Violation;
 
 pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
@@ -15,7 +15,7 @@ fn check_cs_converter_state_value_range(dataset: &CimDataset) -> Vec<Violation> 
 
     for mrid in dataset.by_type.get("CsConverter").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let obj = match entry.element.as_any().downcast_ref::<cimstructs::CsConverter>() {
+        let obj = match entry.element.as_any().downcast_ref::<cimmodel::CsConverter>() {
             Some(o) => o, None => continue,
         };
         let mode = match obj.operating_mode.as_ref() { Some(r) => r.uri.as_str(), None => continue };

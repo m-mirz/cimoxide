@@ -6,15 +6,15 @@
 //! `sh:nodeKind` — are real, and `sh:closed` becomes answerable at all.
 //!
 //! Which elements a run reads is a [`Source`]: NC shapes read property bags,
-//! CGMES shapes read typed elements through the [`cimdecoder::CimEntry::block`]
+//! CGMES shapes read typed elements through the [`cimmodel::CimEntry::block`]
 //! the decoder keeps beside every struct. The block holds every field the XML
 //! carried, which is what lets one interpreter serve both. It is gone after
 //! `CimDataset::drop_blocks()`, so a typed element must be validated before
 //! that.
 
 
-use cimdecoder::{CimDataset, CimEntry};
-use cimstructs::base::{FastMap, FastSet, FieldMap, FieldValue, GenericElement};
+use cimmodel::{CimDataset, CimEntry};
+use cimmodel::base::{FastMap, FastSet, FieldMap, FieldValue, GenericElement};
 
 use crate::helpers;
 use crate::par::{par_concat, par_map, runs, threads_for};

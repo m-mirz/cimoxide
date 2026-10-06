@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use cimdecoder::CimDataset;
+use cimmodel::CimDataset;
 use cimsparql::{CimStore, GraphOptions, QueryResults};
 
 fn repo_root() -> PathBuf {
@@ -106,7 +106,7 @@ fn literals_are_typed_numerically() {
             ds.entries[*m]
                 .element
                 .as_any()
-                .downcast_ref::<cimstructs::ACLineSegment>()
+                .downcast_ref::<cimmodel::ACLineSegment>()
                 .and_then(|a| a.r)
                 .is_some_and(|r| r > 0.1)
         })
@@ -148,7 +148,7 @@ fn association_traversal() {
     let via_structs: HashSet<String> = ds.by_type["Terminal"]
         .iter()
         .filter_map(|m| {
-            ds.entries[m].element.as_any().downcast_ref::<cimstructs::Terminal>()
+            ds.entries[m].element.as_any().downcast_ref::<cimmodel::Terminal>()
         })
         .filter_map(|t| t.conducting_equipment.as_ref())
         .map(|r| r.mrid.trim_start_matches('#').to_string())
@@ -277,7 +277,7 @@ fn entsoe_sparql_constraint_shape() {
             ds.entries[*m]
                 .element
                 .as_any()
-                .downcast_ref::<cimstructs::ACLineSegment>()
+                .downcast_ref::<cimmodel::ACLineSegment>()
                 .is_some_and(|a| a.base.base.base.aggregate.is_some())
         })
         .map(|m| cimsparql::iri::mrid_to_iri(m))

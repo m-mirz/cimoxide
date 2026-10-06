@@ -1,6 +1,6 @@
 //! Loading the NC and CGMES shape tables from SHACL at runtime.
 //!
-//! Unlike `cimstructs`' equivalent, there is no second implementation to guard
+//! Unlike `cimmodel`'s equivalent, there is no second implementation to guard
 //! against: the generator and this loader both call
 //! `cimschema::shacl::resolve`, so they cannot resolve differently. What these
 //! tests check is the part that *is* duplicated — rendering the resolved model

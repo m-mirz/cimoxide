@@ -3,11 +3,11 @@ use std::error::Error;
 use std::fmt::Write as FmtWrite;
 use std::sync::OnceLock;
 
-use cimdecoder::CimDataset;
-use cimstructs::base::{FieldValue, RdfBlock};
-use cimstructs::constants::CIM_NAMESPACES;
-use cimstructs::profile_meta::{ATTR_ORIGINS, ATTR_RDF, PROFILE_URIS, TYPE_NS, TYPE_ORIGINS};
-use cimstructs::registry::json_registry;
+use crate::CimDataset;
+use crate::base::{FieldValue, RdfBlock};
+use crate::constants::CIM_NAMESPACES;
+use crate::profile_meta::{ATTR_ORIGINS, ATTR_RDF, PROFILE_URIS, TYPE_NS, TYPE_ORIGINS};
+use crate::registry::json_registry;
 
 /// Prefix for a class or attribute absent from the generated tables — a third-party
 /// extension, or a CIM version skew between the data and the schema it was generated from.

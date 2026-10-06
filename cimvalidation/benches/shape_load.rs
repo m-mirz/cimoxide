@@ -56,7 +56,7 @@ fn bench(c: &mut Criterion) {
 
     // 2. Resolution against the class table, with parsing hoisted out. Needs
     //    the NC spec, which is itself a 3.65 MB RDFS parse — measured by
-    //    cimstructs' schema_load bench, not repeated here.
+    //    cimmodel's schema_load bench, not repeated here.
     let spec = cimschema::import::import_schema_files(
         &root()
             .join("application-profiles-library/NCP/RDFS/*-AP-Voc-RDFS2020.rdf")

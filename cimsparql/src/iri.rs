@@ -4,12 +4,12 @@
 //! `strip_fragment()` drops the IRI base, so `RdfBlock.fields` keys are bare
 //! `IdentifiedObject.name` strings and `rdf:resource` targets have lost their namespace.
 //! Everything needed to put that back is in the `TYPE_NS` / `ATTR_RDF` tables that `cimgen`
-//! emits into `cimstructs::profile_meta`; this module is the lookup layer over them.
+//! emits into `cimmodel::profile_meta`; this module is the lookup layer over them.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use cimstructs::profile_meta::{ATTR_RDF, TYPE_NS};
+use cimmodel::profile_meta::{ATTR_RDF, TYPE_NS};
 
 /// Base for identifiers that are neither absolute IRIs nor UUIDs. Nothing in the CGMES test
 /// configurations hits this, but `rdf:ID` is not required to be a UUID.
@@ -139,7 +139,7 @@ pub fn mrid_to_iri(mrid: &str) -> String {
 ///
 /// `urn:uuid:X` is ambiguous on its own — the decoder may hold it as `_X` or as `X` — so
 /// membership in `entries` picks the right one.
-pub fn iri_to_mrid(iri: &str, ds: &cimdecoder::CimDataset) -> Option<String> {
+pub fn iri_to_mrid(iri: &str, ds: &cimmodel::CimDataset) -> Option<String> {
     if let Some(rest) = iri.strip_prefix(LOCAL_BASE) {
         return ds.entries.contains_key(rest).then(|| rest.to_string());
     }
@@ -164,7 +164,7 @@ pub fn iri_to_mrid(iri: &str, ds: &cimdecoder::CimDataset) -> Option<String> {
 /// plain reference holding a fragment-stripped `LimitKind.patl`. A value that names no entry
 /// in the dataset but does match a known `Type.value` is that case, and the class namespace
 /// rebuilds the IRI the decoder discarded.
-pub fn reference_iri(value: &str, ds: &cimdecoder::CimDataset) -> String {
+pub fn reference_iri(value: &str, ds: &cimmodel::CimDataset) -> String {
     if !ds.entries.contains_key(value)
         && let Some((type_name, _)) = value.split_once('.')
         && let Some(ns) = type_namespace(type_name)
@@ -179,7 +179,7 @@ pub fn sparql_prefixes() -> &'static [(&'static str, &'static str)] {
     static P: OnceLock<Vec<(&'static str, &'static str)>> = OnceLock::new();
     P.get_or_init(|| {
         let mut v: Vec<(&'static str, &'static str)> =
-            cimstructs::constants::CIM_NAMESPACES.to_vec();
+            cimmodel::constants::CIM_NAMESPACES.to_vec();
         v.push(("xsd", "http://www.w3.org/2001/XMLSchema#"));
         v
     })

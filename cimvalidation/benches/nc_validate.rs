@@ -14,8 +14,8 @@
 
 use std::fmt::Write;
 
-use cimdecoder::CimDataset;
-use cimstructs::base::{AttrKind, ClassDef};
+use cimmodel::CimDataset;
+use cimmodel::base::{AttrKind, ClassDef};
 use cimvalidation::{validate_nc_profile, Config};
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 
@@ -60,7 +60,7 @@ fn co_target_classes() -> Vec<&'static str> {
 /// once already.
 fn co_document(n: usize) -> String {
     let targets = co_target_classes();
-    let classes: Vec<&ClassDef> = cimstructs::nc_classes::CLASSES
+    let classes: Vec<&ClassDef> = cimmodel::nc_classes::CLASSES
         .iter()
         .filter(|c| c.concrete && prefix_for(c.ns).is_some())
         .filter(|c| targets.contains(&c.qualified))

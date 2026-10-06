@@ -3,8 +3,8 @@
 
 use std::path::Path;
 
-use cimstructs::base::ClassDef;
-use cimstructs::schema_source;
+use cimmodel::base::ClassDef;
+use cimmodel::schema_source;
 
 fn rdfs_dir() -> &'static Path {
     Path::new("../application-profiles-library/NCP/RDFS")
@@ -15,7 +15,7 @@ fn rdfs_dir() -> &'static Path {
 #[test]
 fn runtime_table_matches_generated() {
     let dynamic: &[ClassDef] = schema_source::load_table("nc", rdfs_dir()).unwrap();
-    let generated: &[ClassDef] = cimstructs::nc_classes::CLASSES;
+    let generated: &[ClassDef] = cimmodel::nc_classes::CLASSES;
 
     assert_eq!(
         dynamic.len(),

@@ -1,5 +1,5 @@
-use cimstructs::base::FastMap as HashMap;
-use cimdecoder::CimDataset;
+use cimmodel::base::FastMap as HashMap;
+use cimmodel::CimDataset;
 use crate::Violation;
 
 pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
@@ -24,7 +24,7 @@ fn check_energy_source_active_power_consumer(dataset: &CimDataset) -> Vec<Violat
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("EnergySource").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(es) = entry.element.as_any().downcast_ref::<cimstructs::EnergySource>()
+        if let Some(es) = entry.element.as_any().downcast_ref::<cimmodel::EnergySource>()
             && es.active_power.unwrap_or(0.0) > 0.0 {
                 v.push(Violation {
                     object_id:   mrid.clone(),
@@ -61,14 +61,14 @@ fn check_regulating_control_target_deadband_applicability(dataset: &CimDataset) 
     };
     for mrid in dataset.by_type.get("RegulatingControl").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(rc) = entry.element.as_any().downcast_ref::<cimstructs::RegulatingControl>()
+        if let Some(rc) = entry.element.as_any().downcast_ref::<cimmodel::RegulatingControl>()
             && let Some(viol) = check(mrid, "RegulatingControl", rc.target_deadband.unwrap_or(0.0), rc.discrete.unwrap_or(false)) {
                 v.push(viol);
             }
     }
     for mrid in dataset.by_type.get("TapChangerControl").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(tcc) = entry.element.as_any().downcast_ref::<cimstructs::TapChangerControl>()
+        if let Some(tcc) = entry.element.as_any().downcast_ref::<cimmodel::TapChangerControl>()
             && let Some(viol) = check(mrid, "TapChangerControl", tcc.base.target_deadband.unwrap_or(0.0), tcc.base.discrete.unwrap_or(false)) {
                 v.push(viol);
             }
@@ -82,7 +82,7 @@ fn check_cs_converter_value_range(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("CsConverter").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(csc) = entry.element.as_any().downcast_ref::<cimstructs::CsConverter>() {
+        if let Some(csc) = entry.element.as_any().downcast_ref::<cimmodel::CsConverter>() {
             let mode = match &csc.operating_mode { Some(r) => r.uri.as_str(), None => continue };
             if mode == rectifier {
                 if csc.max_alpha.unwrap_or(0.0) > 18.0 {
@@ -135,7 +135,7 @@ fn check_cs_converter_p_pcc_control(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("CsConverter").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(csc) = entry.element.as_any().downcast_ref::<cimstructs::CsConverter>() {
+        if let Some(csc) = entry.element.as_any().downcast_ref::<cimmodel::CsConverter>() {
             let ctrl = match &csc.p_pcc_control { Some(r) => r.uri.as_str(), None => continue };
             if ctrl == dc_current && csc.target_idc.unwrap_or(0.0) == 0.0 {
                 v.push(Violation { object_id: mrid.clone(), rule_id: "sshu:CsConverter.pPccControl-targetValueIdc".into(),
@@ -166,7 +166,7 @@ fn check_vs_converter_p_pcc_control(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("VsConverter").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(vsc) = entry.element.as_any().downcast_ref::<cimstructs::VsConverter>() {
+        if let Some(vsc) = entry.element.as_any().downcast_ref::<cimmodel::VsConverter>() {
             let ctrl = match &vsc.p_pcc_control { Some(r) => r.uri.as_str(), None => continue };
             let ppcc      = vsc.base.target_ppcc.unwrap_or(0.0);
             let udc       = vsc.base.target_udc.unwrap_or(0.0);
@@ -223,7 +223,7 @@ fn check_vs_converter_q_pcc_control(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("VsConverter").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(vsc) = entry.element.as_any().downcast_ref::<cimstructs::VsConverter>() {
+        if let Some(vsc) = entry.element.as_any().downcast_ref::<cimmodel::VsConverter>() {
             let ctrl = match &vsc.q_pcc_control { Some(r) => r.uri.as_str(), None => continue };
             let pf        = vsc.target_power_factor_pcc.unwrap_or(0.0);
             let pwm       = vsc.target_pw_mfactor.unwrap_or(0.0);
@@ -267,7 +267,7 @@ fn check_energy_source_pq(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("EnergySource").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(es) = entry.element.as_any().downcast_ref::<cimstructs::EnergySource>()
+        if let Some(es) = entry.element.as_any().downcast_ref::<cimmodel::EnergySource>()
             && (es.voltage_angle.unwrap_or(0.0) != 0.0 || es.voltage_magnitude.unwrap_or(0.0) != 0.0) {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "ssh456:EnergySource-EnergySourcePQ".into(),
@@ -285,7 +285,7 @@ pub(super) fn check_synchronous_machine_operating_mode_match(dataset: &CimDatase
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SynchronousMachine").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(sm) = entry.element.as_any().downcast_ref::<cimstructs::SynchronousMachine>() {
+        if let Some(sm) = entry.element.as_any().downcast_ref::<cimmodel::SynchronousMachine>() {
             let mode = match &sm.operating_mode { Some(r) => r.uri.as_str(), None => continue };
             let kind = match &sm.type_ { Some(r) => r.uri.as_str(), None => continue };
             let valid = if mode.ends_with("motor") {
@@ -312,15 +312,15 @@ pub(super) fn check_synchronous_machine_operating_mode_match(dataset: &CimDatase
 }
 
 pub(super) fn check_generating_unit_single_active_power_slack(dataset: &CimDataset) -> Vec<Violation> {
-    use cimstructs::base::FastMap as HashMap;
+    use cimmodel::base::FastMap as HashMap;
     let mut ca_slacks: HashMap<String, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("ControlAreaGeneratingUnit").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(cagu) = entry.element.as_any().downcast_ref::<cimstructs::ControlAreaGeneratingUnit>() {
+        if let Some(cagu) = entry.element.as_any().downcast_ref::<cimmodel::ControlAreaGeneratingUnit>() {
             let ca_id = match &cagu.control_area { Some(r) => r.mrid.trim_start_matches('#').to_string(), None => continue };
             let gu_id = match &cagu.generating_unit { Some(r) => r.mrid.trim_start_matches('#').to_string(), None => continue };
             let gu_entry = match dataset.entries.get(&gu_id) { Some(e) => e, None => continue };
-            if let Some(gu) = gu_entry.element.as_any().downcast_ref::<cimstructs::GeneratingUnit>()
+            if let Some(gu) = gu_entry.element.as_any().downcast_ref::<cimmodel::GeneratingUnit>()
                 && gu.normal_pf.unwrap_or(0.0) > 0.0 {
                     ca_slacks.entry(ca_id).or_default().push(gu_id);
                 }
@@ -345,7 +345,7 @@ pub(super) fn check_external_network_injection_limits(dataset: &CimDataset) -> V
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("ExternalNetworkInjection").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(eni) = entry.element.as_any().downcast_ref::<cimstructs::ExternalNetworkInjection>() {
+        if let Some(eni) = entry.element.as_any().downcast_ref::<cimmodel::ExternalNetworkInjection>() {
             if !eni.base.base.base.base.in_service.unwrap_or(false) { continue; }
             let p = eni.p.unwrap_or(0.0);
             let neg_p = if p == 0.0 { 0.0 } else { -p };
@@ -382,7 +382,7 @@ pub(super) fn check_equivalent_injection_limits(dataset: &CimDataset) -> Vec<Vio
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("EquivalentInjection").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(ei) = entry.element.as_any().downcast_ref::<cimstructs::EquivalentInjection>() {
+        if let Some(ei) = entry.element.as_any().downcast_ref::<cimmodel::EquivalentInjection>() {
             if !ei.base.base.base.in_service.unwrap_or(false) { continue; }
             let p = ei.p.unwrap_or(0.0);
             let neg_p = if p == 0.0 { 0.0 } else { -p };
@@ -421,7 +421,7 @@ pub(super) fn check_rotating_machine_curve_limits(dataset: &CimDataset) -> Vec<V
     let mut curve_points: HashMap<String, Vec<(f64, f64, f64)>> = HashMap::default();
     for cd_mrid in dataset.by_type.get("CurveData").into_iter().flatten() {
         let cd_entry = &dataset.entries[cd_mrid];
-        if let Some(cd) = cd_entry.element.as_any().downcast_ref::<cimstructs::CurveData>()
+        if let Some(cd) = cd_entry.element.as_any().downcast_ref::<cimmodel::CurveData>()
             && let Some(r) = &cd.curve {
                 let curve_id = r.mrid.trim_start_matches('#').to_string();
                 curve_points.entry(curve_id).or_default().push((
@@ -433,7 +433,7 @@ pub(super) fn check_rotating_machine_curve_limits(dataset: &CimDataset) -> Vec<V
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SynchronousMachine").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(sm) = entry.element.as_any().downcast_ref::<cimstructs::SynchronousMachine>() {
+        if let Some(sm) = entry.element.as_any().downcast_ref::<cimmodel::SynchronousMachine>() {
             if !sm.base.base.base.base.base.in_service.unwrap_or(false) { continue; }
             let rcc_id = match &sm.initial_reactive_capability_curve {
                 Some(r) => r.mrid.trim_start_matches('#').to_string(),
@@ -484,7 +484,7 @@ pub(super) fn check_regulating_control_target_value_positive(dataset: &CimDatase
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("RegulatingControl").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(rc) = entry.element.as_any().downcast_ref::<cimstructs::RegulatingControl>()
+        if let Some(rc) = entry.element.as_any().downcast_ref::<cimmodel::RegulatingControl>()
             && rc.mode.as_ref().is_some_and(|r| r.uri.ends_with("voltage"))
                 && rc.target_value.unwrap_or(0.0) <= 0.0 {
                     v.push(Violation {

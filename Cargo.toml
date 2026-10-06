@@ -1,5 +1,5 @@
 [workspace]
-members = ["cimoxide", "cimgen", "cimschema", "cimstructs", "cimdecoder", "cimvalidation", "cimconvert", "cimsparql", "cimoxide-cli"]
+members = ["cimoxide", "cimgen", "cimschema", "cimmodel", "cimvalidation", "cimsparql", "cimoxide-cli"]
 exclude = ["cimoxide-py"]
 resolver = "2"
 
@@ -18,8 +18,6 @@ categories = ["science", "parsing"]
 # (used by crates.io once published) — a path-only dependency cannot be published.
 [workspace.dependencies]
 cimoxide-schema = { path = "cimschema", version = "0.3.3" }
-cimoxide-structs = { path = "cimstructs", version = "0.3.3" }
-cimoxide-decoder = { path = "cimdecoder", version = "0.3.3" }
+cimoxide-model = { path = "cimmodel", version = "0.3.3" }
 cimoxide-validation = { path = "cimvalidation", version = "0.3.3" }
-cimoxide-convert = { path = "cimconvert", version = "0.3.3" }
 cimoxide-sparql = { path = "cimsparql", version = "0.3.3" }

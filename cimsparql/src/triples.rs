@@ -2,8 +2,8 @@
 
 use std::collections::HashSet;
 
-use cimdecoder::CimDataset;
-use cimstructs::base::{FieldValue, RdfBlock};
+use cimmodel::CimDataset;
+use cimmodel::base::{FieldValue, RdfBlock};
 use oxigraph::model::{GraphName, Literal, NamedNode, NamedNodeRef, Quad, Term};
 
 use crate::iri;

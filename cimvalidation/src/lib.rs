@@ -62,7 +62,7 @@ pub fn nc_profile_index() -> ProfileIndex {
 /// Separate from `validate_profile_local` so a caller can drive it with an
 /// explicit profile code, without depending on header detection.
 pub fn validate_nc_profile(
-    dataset: &cimdecoder::CimDataset,
+    dataset: &cimmodel::CimDataset,
     profile: &str,
     cfg: &Config,
 ) -> Vec<Violation> {
@@ -102,21 +102,21 @@ fn cgmes_tagged(tag: &str) -> &'static [&'static shapes::ShapeDef] {
     idx.get(tag).map_or(&[], Vec::as_slice)
 }
 
-fn run_cgmes(dataset: &cimdecoder::CimDataset, active: &[&shapes::ShapeDef]) -> Vec<Violation> {
+fn run_cgmes(dataset: &cimmodel::CimDataset, active: &[&shapes::ShapeDef]) -> Vec<Violation> {
     bag::validate_shapes(dataset, bag::Source::Typed, active)
 }
 
 // ── public two-phase API ───────────────────────────────────────────────────
 
 /// Phase 1 — header: validate FullModel/DifferenceModel rules for a single file's dataset.
-pub fn validate_header(dataset: &cimdecoder::CimDataset, _cfg: &Config) -> Vec<Violation> {
+pub fn validate_header(dataset: &cimmodel::CimDataset, _cfg: &Config) -> Vec<Violation> {
     run_cgmes(dataset, cgmes_tagged("HDR"))
 }
 
 /// The SHACL half of [`validate_profile_local`] for one CGMES profile: its
 /// local rules, plus its not-solved rules when `cfg.not_solved`. Without the
 /// hand-written `sparql` rules or the `cfg.profiles` filter.
-pub fn validate_profile_shacl(dataset: &cimdecoder::CimDataset, profile: &str, cfg: &Config) -> Vec<Violation> {
+pub fn validate_profile_shacl(dataset: &cimmodel::CimDataset, profile: &str, cfg: &Config) -> Vec<Violation> {
     let mut active: Vec<&shapes::ShapeDef> = cgmes_tagged(profile).to_vec();
     if cfg.not_solved {
         active.extend_from_slice(cgmes_tagged(&format!("{profile}!NS")));
@@ -128,7 +128,7 @@ pub fn validate_profile_shacl(dataset: &cimdecoder::CimDataset, profile: &str, c
 /// The SHACL half of [`validate_crossprofile`]: every enabled profile's
 /// cross-profile rules on the merged dataset, plus the rules for every profile
 /// when `cfg.common`.
-pub fn validate_crossprofile_shacl(dataset: &cimdecoder::CimDataset, cfg: &Config) -> Vec<Violation> {
+pub fn validate_crossprofile_shacl(dataset: &cimmodel::CimDataset, cfg: &Config) -> Vec<Violation> {
     let has = |p: &str| cfg.profiles.is_empty() || cfg.profiles.iter().any(|x| x == p);
     let mut active: Vec<&shapes::ShapeDef> = cimschema_cross_profiles()
         .iter()
@@ -159,7 +159,7 @@ fn cimschema_cross_profiles() -> &'static [&'static str] {
 /// must reflect the full set of files, not just this file). If `cfg.profiles` is non-empty
 /// and does not include `profile`, returns an empty vec — this filter applies to both the
 /// SHACL and SPARQL checks.
-pub fn validate_profile_local(dataset: &cimdecoder::CimDataset, profile: &str, cfg: &Config) -> Vec<Violation> {
+pub fn validate_profile_local(dataset: &cimmodel::CimDataset, profile: &str, cfg: &Config) -> Vec<Violation> {
     if !cfg.profiles.is_empty() && !cfg.profiles.iter().any(|p| p == profile) {
         return Vec::new();
     }
@@ -181,7 +181,7 @@ pub fn validate_profile_local(dataset: &cimdecoder::CimDataset, profile: &str, c
 ///
 /// The two halves run concurrently; the SPARQL half spreads its rule groups
 /// over threads of its own.
-pub fn validate_crossprofile(dataset: &cimdecoder::CimDataset, cfg: &Config) -> Vec<Violation> {
+pub fn validate_crossprofile(dataset: &cimmodel::CimDataset, cfg: &Config) -> Vec<Violation> {
     let (mut v, sparql) = std::thread::scope(|s| {
         let sparql = s.spawn(|| sparql::validate_crossprofile(dataset, cfg));
         let shacl = validate_crossprofile_shacl(dataset, cfg);
@@ -194,7 +194,7 @@ pub fn validate_crossprofile(dataset: &cimdecoder::CimDataset, cfg: &Config) -> 
 /// Build a combined `Config` by auto-detecting profiles/solved-state across all files,
 /// then applying explicit overrides (each `None`/default leaves the detected value).
 pub fn combined_config(
-    per_file: &[cimdecoder::CimDataset],
+    per_file: &[cimmodel::CimDataset],
     profiles: Option<Vec<String>>,
     solved: Option<bool>,
     common: bool,
@@ -224,7 +224,7 @@ pub fn combined_config(
 /// in parallel, then crossprofile checks on the merged dataset, then apply rule silencing.
 ///
 /// Consumes `per_file` since it merges them into one dataset for phase 2.
-pub fn validate_files(per_file: Vec<cimdecoder::CimDataset>, cfg: &Config) -> Vec<Violation> {
+pub fn validate_files(per_file: Vec<cimmodel::CimDataset>, cfg: &Config) -> Vec<Violation> {
     let mut violations: Vec<Violation> = std::thread::scope(|s| {
         per_file
             .iter()
@@ -245,7 +245,7 @@ pub fn validate_files(per_file: Vec<cimdecoder::CimDataset>, cfg: &Config) -> Ve
             .collect()
     });
 
-    let mut merged = cimdecoder::CimDataset::new();
+    let mut merged = cimmodel::CimDataset::new();
     for ds in per_file {
         merged.merge(ds);
     }

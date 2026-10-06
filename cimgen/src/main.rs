@@ -6,7 +6,7 @@ use cimschema as schema;
 
 use std::path::Path;
 
-const DEFAULT_OUTPUT: &str = "cimstructs/src";
+const DEFAULT_OUTPUT: &str = "cimmodel/src";
 const DEFAULT_SHACL: &str =
     "application-profiles-library/CGMES/SHACL/*.ttl";
 const DEFAULT_NC_SHACL: &str = "application-profiles-library/NCP/SHACL/*.ttl";

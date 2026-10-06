@@ -1,5 +1,5 @@
-use cimstructs::base::FastMap as HashMap;
-use cimdecoder::CimDataset;
+use cimmodel::base::FastMap as HashMap;
+use cimmodel::CimDataset;
 use crate::Violation;
 
 pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
@@ -30,14 +30,14 @@ fn check_per_entry_block_checks(dataset: &CimDataset) -> Vec<Violation> {
     // mRIDs are keyed on the text as stored (borrowed; owned only for the rare
     // element that takes the `to_block` path), with the class as the static
     // name: cloning both for every element was most of this pass's time.
-    type Owner<'a> = (&'a String, &'static str, &'a cimdecoder::CimEntry);
+    type Owner<'a> = (&'a String, &'static str, &'a cimmodel::CimEntry);
     type Candidate<'a> = (Cow<'a, str>, Owner<'a>);
 
     let threads = crate::par::threads_for(dataset.entries.len());
     let bucket_of = |m_rid: &str| {
-        (cimstructs::base::FastBuildHasher::default().hash_one(m_rid) % threads as u64) as usize
+        (cimmodel::base::FastBuildHasher::default().hash_one(m_rid) % threads as u64) as usize
     };
-    let all: Vec<(&String, &cimdecoder::CimEntry)> = dataset.entries.iter().collect();
+    let all: Vec<(&String, &cimmodel::CimEntry)> = dataset.entries.iter().collect();
     let parts = crate::par::par_map(&crate::par::runs(&all, threads, |_| 1), |run| {
         let mut v = Vec::new();
         let mut buckets: Vec<Vec<Candidate<'_>>> = (0..threads).map(|_| Vec::new()).collect();
@@ -52,7 +52,7 @@ fn check_per_entry_block_checks(dataset: &CimDataset) -> Vec<Violation> {
             // struct's view can either. Only elements with a candidate pay for
             // `to_block` and the exact checks below.
             if !entry.block.type_name.is_empty() && !may_fail_entry_checks(&entry.block.fields) {
-                if let Some(cimstructs::base::FieldValue::Text(m_rid)) = entry.block.fields.get("IdentifiedObject.mRID")
+                if let Some(cimmodel::base::FieldValue::Text(m_rid)) = entry.block.fields.get("IdentifiedObject.mRID")
                     && !m_rid.is_empty() {
                         // Unconfirmed: re-read through `to_block` if it turns out
                         // to be a duplicate, below.
@@ -65,14 +65,14 @@ fn check_per_entry_block_checks(dataset: &CimDataset) -> Vec<Violation> {
             let class = &block.type_name;
 
             // --- mRID uniqueness (all600:All-GENC1), collected ---
-            if let Some(cimstructs::base::FieldValue::Text(m_rid)) = block.fields.get("IdentifiedObject.mRID")
+            if let Some(cimmodel::base::FieldValue::Text(m_rid)) = block.fields.get("IdentifiedObject.mRID")
                 && !m_rid.is_empty() {
                     buckets[bucket_of(m_rid)].push((Cow::Owned(m_rid.clone()), (id, entry.element.type_name(), entry)));
                 }
 
             for (key, val) in &block.fields {
                 let s = match val {
-                    cimstructs::base::FieldValue::Text(s) => s,
+                    cimmodel::base::FieldValue::Text(s) => s,
                     _ => continue,
                 };
 
@@ -132,7 +132,7 @@ fn check_per_entry_block_checks(dataset: &CimDataset) -> Vec<Violation> {
                 // read the raw block.
                 owners.retain(|(_, _, entry)| {
                     matches!(entry.element.to_block().fields.get("IdentifiedObject.mRID"),
-                        Some(cimstructs::base::FieldValue::Text(m)) if m.as_str() == m_rid.as_ref())
+                        Some(cimmodel::base::FieldValue::Text(m)) if m.as_str() == m_rid.as_ref())
                 });
                 if owners.len() < 2 {
                     continue;
@@ -168,7 +168,7 @@ fn check_per_entry_block_checks(dataset: &CimDataset) -> Vec<Violation> {
 /// raw text parsed the same way. A float is only non-finite for `nan`/`inf`
 /// spellings or an overflowing exponent, so the byte scan skips the parse for
 /// almost every value.
-fn may_fail_entry_checks(fields: &cimstructs::base::FieldMap) -> bool {
+fn may_fail_entry_checks(fields: &cimmodel::base::FieldMap) -> bool {
     // Only `nan` / `inf` / `infinity` spellings, or a number that overflows
     // — which needs an exponent or an absurd digit count — parse as
     // non-finite. Anything else, a name above all, is ruled out from its first
@@ -184,9 +184,9 @@ fn may_fail_entry_checks(fields: &cimstructs::base::FieldMap) -> bool {
         candidate && t.parse::<f64>().is_ok_and(|f| !f.is_finite())
     };
     fields.values().any(|val| match val {
-        cimstructs::base::FieldValue::Text(s) => non_finite(s),
+        cimmodel::base::FieldValue::Text(s) => non_finite(s),
         // A repeated value: the struct keeps one of them, so any could matter.
-        cimstructs::base::FieldValue::TextList(vs) => vs.iter().any(|s| non_finite(s)),
+        cimmodel::base::FieldValue::TextList(vs) => vs.iter().any(|s| non_finite(s)),
         _ => false,
     })
 }
@@ -202,7 +202,7 @@ fn is_uuid(s: &str) -> bool {
 }
 
 /// GENC4 for one element: its ID must be a UUID.
-fn id_uuid_violation(id: &str, entry: &cimdecoder::CimEntry) -> Option<Violation> {
+fn id_uuid_violation(id: &str, entry: &cimmodel::CimEntry) -> Option<Violation> {
     // Extract clean ID
     let clean_id: &str = if id.contains("#_") {
         id.split("#_").nth(1).unwrap_or("")
@@ -237,7 +237,7 @@ fn id_uuid_violation(id: &str, entry: &cimdecoder::CimEntry) -> Option<Violation
 
 /// GENC5 for one element: a non-URN ID starts with `_` and is at most 60
 /// characters.
-fn id_deprecated_violation(id: &str, entry: &cimdecoder::CimEntry) -> Option<Violation> {
+fn id_deprecated_violation(id: &str, entry: &cimmodel::CimEntry) -> Option<Violation> {
     if id.starts_with("urn:uuid:") { return None; }
     let second_part: &str = if id.contains("#_") {
         id.split("#_").nth(1).unwrap_or("")
@@ -264,9 +264,9 @@ fn check_model_date_time_utc(dataset: &CimDataset) -> Vec<Violation> {
     for type_name in &["FullModel", "DifferenceModel"] {
         for mrid in dataset.by_type.get(*type_name).into_iter().flatten() {
             let entry = &dataset.entries[mrid];
-            let model_base = if let Some(fm) = entry.element.as_any().downcast_ref::<cimstructs::FullModel>() {
+            let model_base = if let Some(fm) = entry.element.as_any().downcast_ref::<cimmodel::FullModel>() {
                 Some(&fm.base)
-            } else { entry.element.as_any().downcast_ref::<cimstructs::DifferenceModel>().map(|dm| &dm.base) };
+            } else { entry.element.as_any().downcast_ref::<cimmodel::DifferenceModel>().map(|dm| &dm.base) };
             if let Some(m) = model_base {
                 if !m.created.is_empty() && !m.created.ends_with('Z') {
                     v.push(Violation {
@@ -303,9 +303,9 @@ fn check_modeling_authority_set_not_empty(dataset: &CimDataset) -> Vec<Violation
     for type_name in &["FullModel", "DifferenceModel"] {
         for mrid in dataset.by_type.get(*type_name).into_iter().flatten() {
             let entry = &dataset.entries[mrid];
-            let mas = if let Some(fm) = entry.element.as_any().downcast_ref::<cimstructs::FullModel>() {
+            let mas = if let Some(fm) = entry.element.as_any().downcast_ref::<cimmodel::FullModel>() {
                 fm.base.modeling_authority_set.trim().to_string()
-            } else if let Some(dm) = entry.element.as_any().downcast_ref::<cimstructs::DifferenceModel>() {
+            } else if let Some(dm) = entry.element.as_any().downcast_ref::<cimmodel::DifferenceModel>() {
                 dm.base.modeling_authority_set.trim().to_string()
             } else {
                 continue

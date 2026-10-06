@@ -45,16 +45,18 @@ cimoxide-cli query --query "SELECT ..." | --file <query.rq>
 | Crate | Description |
 |---|---|
 | `cimgen` | Code generator — reads ENTSO-E RDF/SHACL schemas and emits Rust source |
-| `cimstructs` | **Generated.** Typed Rust structs for every CGMES class, plus the NC class table (see "Profile families" below) |
+| `cimmodel` | The data model: **generated** typed structs for every CGMES class and the NC class table (see "Profile families" below); the hand-written decoder (`decode.rs`, `CimDataset`), which reads CGMES and NC RDF/XML and resolves classes by XML namespace; and the hand-written JSON/RDF-XML conversion (`convert.rs`: `dataset_to_json`, `dataset_to_xml`, `dataset_to_xml_for_profile`) |
+| `cimschema` | RDFS and SHACL parser, shared by `cimgen` at build time and the runtime loaders |
 | `cimvalidation` | SHACL validation for both families through one interpreter (`bag.rs`) over **generated** shape tables (`src/cgmes_shapes.rs`, `src/nc_shapes.rs`); `src/sparql/` is hand-written (the `sh:sparql` constraints, see "SHACL Validation" below) |
-| `cimdecoder` | Deserialises CGMES and NC RDF/XML into `cimstructs` types, resolving classes by XML namespace |
-| `cimconvert` | Hand-written JSON/RDF-XML conversion logic (`dataset_to_json`, `dataset_to_xml`, `dataset_to_xml_for_profile`), shared by `cimoxide-cli` and `cimoxide-py` |
 | `cimsparql` | SPARQL 1.1 querying over a decoded dataset, backed by an in-memory oxigraph store (see "SPARQL" below) |
+| `cimoxide` | Facade re-exporting `cimmodel` (as `model`), `cimvalidation` and `cimsparql` under one dependency |
 | `cimoxide-cli` | `cimoxide-cli` binary — import/convert/validate over the command line |
 | `cimoxide-py` | Python bindings (PyO3) exposing decode/convert/validate as a `cimoxide` package; built with `maturin`, excluded from the Cargo workspace |
 
-`cimstructs/` is fully generated — do not hand-edit it. In `cimvalidation/`, only
-`cgmes_shapes.rs`, `nc_shapes.rs` and `nc_profiles.rs` are generated; everything else
+In `cimmodel/src/`, everything but `base.rs`, `schema_source.rs`, `decode.rs` and
+`convert.rs` is generated — do not hand-edit it. The decoder and converter used to be the
+crates `cimoxide-decoder` and `cimoxide-convert`, and the model `cimoxide-structs`; those
+stay on crates.io at 0.3.x. In `cimvalidation/`, only `cgmes_shapes.rs`, `nc_shapes.rs` and `nc_profiles.rs` are generated; everything else
 (`src/sparql/`, `bag.rs`, `shapes.rs`, `helpers.rs`, `violation.rs`, `detect.rs`, `lib.rs`)
 is hand-written.
 
@@ -96,7 +98,7 @@ ties that the namespace already breaks. They key off a `nc:` prefix:
 let ds = CimDataset::decode_file(Path::new("contingencies.xml"))?;
 for mrid in &ds.by_type["nc:OrdinaryContingency"] {
     let c = ds.entries[mrid].element.as_any()
-        .downcast_ref::<cimstructs::base::GenericElement>().unwrap();
+        .downcast_ref::<cimmodel::base::GenericElement>().unwrap();
     println!("{} {:?}", mrid, c.get_str("IdentifiedObject.name"));
 }
 ```
@@ -114,7 +116,7 @@ profile version is a data load rather than a recompile:
 CIMOXIDE_RDFS_DIR=application-profiles-library/NCP/RDFS cimcli import model.xml
 ```
 
-Resolution is explicit `cimstructs::schema_source::load_from` > `CIMOXIDE_RDFS_DIR`
+Resolution is explicit `cimmodel::schema_source::load_from` > `CIMOXIDE_RDFS_DIR`
 > the generated table. A directory that is missing or fails to parse warns,
 naming the glob it tried, and falls back to the generated table. In library
 crates this lives behind the `dynamic-schema` feature, off by default, so
@@ -255,7 +257,7 @@ cargo build -v
 # Run all tests (requires submodules)
 cargo test
 
-# Regenerate cimstructs and cimvalidation from schema files
+# Regenerate cimmodel and cimvalidation from schema files
 cargo run -p cimoxide-gen
 ```
 
@@ -267,7 +269,7 @@ e.g. `cargo run -p cimoxide-gen -- --verbose --rule-report`.
 | Flag | Default | Effect |
 |---|---|---|
 | `--schema <glob>` | `application-profiles-library/CGMES/RDFS/61970-600-2_*-AP-Voc-RDFS2020.rdf` | RDF/RDFS schema files to import |
-| `--output <dir>` | `cimstructs/src` | struct output directory |
+| `--output <dir>` | `cimmodel/src` | struct output directory |
 | `--shacl <glob>` | `application-profiles-library/CGMES/SHACL/*.ttl` | SHACL TTL files to import |
 | `--shacl-output <dir>` | `cimvalidation/src` | shape table output directory (`cgmes_shapes.rs`, `nc_shapes.rs`, `nc_profiles.rs`) |
 | `--python-stubs-output <dir>` | `cimoxide-py/python/cimoxide` | `.pyi` type stub output directory |
@@ -288,19 +290,19 @@ entirely if passed as the very last argument with no value following.
 | `make all` | `generate` + `build` + `test` |
 | `make python-dev` | `maturin develop --release` in `cimoxide-py` (local editable install) |
 | `make python-build` | `maturin build --release` in `cimoxide-py` (build a distributable wheel) |
-| `make clean` | `cargo clean`, plus remove generated `cimstructs`/`cimvalidation` files (keeps `base.rs`) |
+| `make clean` | `cargo clean`, plus remove generated `cimmodel`/`cimvalidation` files (keeps the hand-written ones) |
 
 ## Benchmarks
 
 ```bash
 # Run all benchmarks
-cargo bench -p cimoxide-decoder
+cargo bench -p cimoxide-model
 
 # Run a specific group (e.g. the import benchmark)
-cargo bench -p cimoxide-decoder --bench real_grid -- import
+cargo bench -p cimoxide-model --bench real_grid -- import
 ```
 
-Benchmarks are in `cimdecoder/benches/real_grid.rs` and use the RealGrid test dataset
+Benchmarks are in `cimmodel/benches/real_grid.rs` and use the RealGrid test dataset
 from the `CGMES-Test-Configurations` submodule (must be initialised). The `import`
 group measures `decode_files_parallel` with real file paths, matching what
 `cimoxide-cli import` does. Add debug symbols to get useful flamegraphs:
@@ -316,7 +318,7 @@ debug = true
 `cimgen/tests/codegen.rs` contains four hash-based tests that detect unintended drift in
 the generated output:
 
-- `cimstructs_codegen_stable` — runs the RDF struct generator and hashes `cimstructs/src/`
+- `cimmodel_codegen_stable` — runs the RDF struct generator and hashes the generated part of `cimmodel/src/`
 - `nc_classes_codegen_stable` — hashes the NC class table on its own
 - `cgmes_shapes_codegen_stable` — hashes the CGMES shape table (`cimvalidation/src/cgmes_shapes.rs`)
 - `nc_shapes_codegen_stable` — hashes the NC shape table (`cimvalidation/src/nc_shapes.rs`)
@@ -349,7 +351,7 @@ the stored hashes:
 ```rust
 use cimsparql::{CimStore, QueryResults};
 
-let ds = cimdecoder::CimDataset::decode_files(&paths)?;
+let ds = cimmodel::CimDataset::decode_files(&paths)?;
 let store = CimStore::from_dataset(&ds)?;
 
 if let QueryResults::Solutions(solutions) = store.query(
@@ -386,7 +388,7 @@ nothing.
 default feature is `rocksdb`, which requires `oxrocksdb-sys` and a C++ toolchain. Disabled,
 the dependency tree is pure Rust and `Store::new()` is the in-memory store.
 
-`cimsparql` is a separate crate rather than a feature on `cimdecoder`, so none of the crates
+`cimsparql` is a separate crate rather than a feature on `cimmodel`, so none of the crates
 `gridoxide` consumes as a git dependency gain an optional-dependency edge. `cimoxide-cli` and
 `cimoxide-py` depend on it behind a `sparql` feature that is **on by default**; build with
 `--no-default-features` to drop it.
@@ -396,7 +398,7 @@ the dependency tree is pure Rust and `Store::new()` is the in-memory store.
 The decoder is namespace-blind by construction: `local_name()` drops the XML prefix and
 `strip_fragment()` drops the IRI base, so `RdfBlock.fields` keys are bare
 `IdentifiedObject.name` strings and every value is an untyped `FieldValue::Text`. Two tables
-generated into `cimstructs/src/profile_meta.rs` put that back:
+generated into `cimmodel/src/profile_meta.rs` put that back:
 
 | Table | Contents |
 |---|---|
@@ -405,7 +407,7 @@ generated into `cimstructs/src/profile_meta.rs` put that back:
 
 This is what keeps `eu:` attributes out of the `cim:` namespace — a single `eu:BoundaryPoint`
 carries both `eu:BoundaryPoint.toEndName` and `cim:IdentifiedObject.description`, and they
-must land in different namespaces. `cimconvert`'s XML writer reads the same two tables on the
+must land in different namespaces. The converter's XML writer (`cimmodel::convert`) reads the same two tables on the
 way out (see ["RDF/XML export"](#rdfxml-export) below).
 
 Other mapping rules:
@@ -460,7 +462,7 @@ field maps at the cost of the predicates the typed structs do not model.
 
 ## RDF/XML export
 
-`cimconvert` writes CGMES RDF/XML, either as a flat dump (`dataset_to_xml`) or split per
+`cimmodel::convert` writes CGMES RDF/XML, either as a flat dump (`dataset_to_xml`) or split per
 profile (`dataset_to_xml_for_profile`, `cimcli convert --to xml --profile EQ,SSH`).
 
 ### Namespaces
@@ -631,7 +633,7 @@ reflect that generator's limits rather than the shape table's.
 |------------------|--------|
 | `C:301:OP:AccumulatorValue.value:valueRange` | `sh:minExclusive` on `cim:AccumulatorValue.value` — field removed in CGMES 3.0 |
 
-**Non-existent target class** — one property shape in `61970-600-2_Dynamics-AP-Con-Complex-InverseAssociation-SHACL.ttl` lists `cim:GovHydroIEEE1` in its `sh:targetClass` alongside several real classes. No such class exists in the CIM standard or in `cimstructs`; `cimgen` silently skips it when resolving concrete target classes.
+**Non-existent target class** — one property shape in `61970-600-2_Dynamics-AP-Con-Complex-InverseAssociation-SHACL.ttl` lists `cim:GovHydroIEEE1` in its `sh:targetClass` alongside several real classes. No such class exists in the CIM standard or in `cimmodel`; `cimgen` silently skips it when resolving concrete target classes.
 
 **Empty `sh:in` list** — one property shape in `61970-600-2_Operation-AP-Con-Simple-SHACL.ttl` has `sh:in ()` (reported as one entry covering all 4 concrete target classes):
 

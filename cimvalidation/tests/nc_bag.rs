@@ -7,7 +7,7 @@
 //! rule that runs and matches nothing rather than a compile error. So the clean
 //! case is the baseline and every other test names the rule it expects.
 
-use cimdecoder::CimDataset;
+use cimmodel::CimDataset;
 use cimvalidation::{validate_nc_profile, Config, Violation};
 
 /// A conforming Contingency dataset: a contingency, the contingency element

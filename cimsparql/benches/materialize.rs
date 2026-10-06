@@ -1,6 +1,6 @@
 //! Cost of turning a decoded dataset into a queryable RDF graph.
 //!
-//! Methodology follows `cimdecoder/benches/real_grid.rs`: the dataset is decoded once
+//! Methodology follows `cimmodel/benches/real_grid.rs`: the dataset is decoded once
 //! outside the timed loop, so only quad generation and store loading are measured.
 //!
 //! Materialisation holds the graph *in addition to* the typed structs and `RdfBlock`s it was
@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use cimdecoder::CimDataset;
+use cimmodel::CimDataset;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
 use cimsparql::{CimStore, GraphOptions, Stats, quads};

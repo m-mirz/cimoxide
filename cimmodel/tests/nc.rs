@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
-use cimdecoder::CimDataset;
-use cimstructs::base::{CimElement, GenericElement};
+use cimmodel::CimDataset;
+use cimmodel::base::{CimElement, GenericElement};
 
 fn nc_fixture() -> CimDataset {
     CimDataset::decode_file(Path::new("../testdata/test_nc_CO_001.xml")).unwrap()
@@ -72,7 +72,7 @@ fn nc_inherits_across_namespaces() {
     // NCP namespace.
     let def = bag(&ds, CONTINGENCY).class_def();
     let super_idx = def.super_class.expect("OrdinaryContingency has a super class");
-    let parent = &cimstructs::nc_classes::CLASSES[super_idx];
+    let parent = &cimmodel::nc_classes::CLASSES[super_idx];
     assert_eq!(parent.local, "Contingency");
     assert_eq!(parent.ns, "https://cim.ucaiug.io/ns#");
 }
@@ -87,7 +87,7 @@ fn nc_equipment_is_not_cgmes_equipment() {
 
     // ...and the CGMES struct of the same bare name is a different type with a
     // different namespace.
-    let cgmes = cimstructs::Equipment::default();
+    let cgmes = cimmodel::Equipment::default();
     assert_eq!(cgmes.type_name(), "Equipment");
     assert_eq!(cgmes.type_ns(), "http://iec.ch/TC57/CIM100#");
 }

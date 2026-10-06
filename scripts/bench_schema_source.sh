@@ -73,10 +73,10 @@ echo
 if [ "$skip_decode" -eq 0 ]; then
 	echo "=== 1. decode throughput (criterion A/B, back to back) ==="
 	echo "--- baseline: generated table ---"
-	env -u CIMOXIDE_RDFS_DIR cargo bench -p cimoxide-decoder --bench nc_decode -- \
+	env -u CIMOXIDE_RDFS_DIR cargo bench -p cimoxide-model --features dynamic-schema --bench nc_decode -- \
 		--save-baseline generated 2>&1 | grep -E 'time:|thrpt:' || true
 	echo "--- comparison: RDFS-loaded table ---"
-	CIMOXIDE_RDFS_DIR="$rdfs_dir" cargo bench -p cimoxide-decoder --bench nc_decode -- \
+	CIMOXIDE_RDFS_DIR="$rdfs_dir" cargo bench -p cimoxide-model --features dynamic-schema --bench nc_decode -- \
 		--baseline generated 2>&1 | grep -E 'time:|thrpt:|change:|Performance|No change' || true
 	echo
 fi

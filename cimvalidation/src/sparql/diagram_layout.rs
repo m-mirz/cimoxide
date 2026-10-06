@@ -1,4 +1,4 @@
-use cimdecoder::CimDataset;
+use cimmodel::CimDataset;
 use crate::Violation;
 
 pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
@@ -16,9 +16,9 @@ fn check_diagram_object_identified_object_type(dataset: &CimDataset) -> Vec<Viol
     for type_name in &["DiagramObject", "TextDiagramObject"] {
         for mrid in dataset.by_type.get(*type_name).into_iter().flatten() {
             let entry = &dataset.entries[mrid];
-            let id_obj_ref = if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::DiagramObject>() {
+            let id_obj_ref = if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::DiagramObject>() {
                 o.identified_object_.as_ref()
-            } else if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::TextDiagramObject>() {
+            } else if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::TextDiagramObject>() {
                 o.base.identified_object_.as_ref()
             } else {
                 continue;

@@ -3,8 +3,8 @@ use std::path::Path;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 
-use cimstructs::base::{CimElement, FastMap, FieldValue, RdfBlock, TypeEntry, TypeRegistry};
-use cimstructs::registry;
+use crate::base::{CimElement, FastMap, FieldValue, RdfBlock, TypeEntry, TypeRegistry};
+use crate::registry;
 
 pub struct CimEntry {
     pub element: Box<dyn CimElement>,

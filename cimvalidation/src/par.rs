@@ -57,8 +57,8 @@ pub(crate) fn par_concat<T: Sync, R: Send>(runs: &[&[T]], f: impl Fn(&[T]) -> Ve
 /// Run independent rule groups over one dataset on their own threads, and
 /// concatenate their results in the order given.
 pub(crate) fn par_groups(
-    dataset: &cimdecoder::CimDataset,
-    groups: &[fn(&cimdecoder::CimDataset) -> Vec<crate::Violation>],
+    dataset: &cimmodel::CimDataset,
+    groups: &[fn(&cimmodel::CimDataset) -> Vec<crate::Violation>],
 ) -> Vec<crate::Violation> {
     std::thread::scope(|s| {
         let handles: Vec<_> = groups.iter().map(|g| s.spawn(move || g(dataset))).collect();

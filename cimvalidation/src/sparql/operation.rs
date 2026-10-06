@@ -1,4 +1,4 @@
-use cimdecoder::CimDataset;
+use cimmodel::CimDataset;
 use crate::Violation;
 
 pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
@@ -7,27 +7,27 @@ pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
 
 const MEASUREMENT_TYPES: &[&str] = &["Measurement", "Analog", "Discrete", "Accumulator", "StringMeasurement"];
 
-fn get_measurement_fields(entry: &cimdecoder::CimEntry) -> Option<(&str, Option<&str>, Option<&str>)> {
-    fn from_m(m: &cimstructs::Measurement) -> Option<(&str, Option<&str>, Option<&str>)> {
+fn get_measurement_fields(entry: &cimmodel::CimEntry) -> Option<(&str, Option<&str>, Option<&str>)> {
+    fn from_m(m: &cimmodel::Measurement) -> Option<(&str, Option<&str>, Option<&str>)> {
         Some((
             m.measurement_type.as_str(),
             m.power_system_resource.as_ref().map(|r| r.mrid.as_str()),
             m.terminal.as_ref().map(|r| r.mrid.as_str()),
         ))
     }
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::Measurement>() {
+    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::Measurement>() {
         return from_m(o);
     }
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::Analog>() {
+    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::Analog>() {
         return from_m(&o.base);
     }
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::Discrete>() {
+    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::Discrete>() {
         return from_m(&o.base);
     }
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::Accumulator>() {
+    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::Accumulator>() {
         return from_m(&o.base);
     }
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::StringMeasurement>() {
+    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::StringMeasurement>() {
         return from_m(&o.base);
     }
     None
@@ -81,7 +81,7 @@ fn check_measurement_terminal_required_cases(dataset: &CimDataset) -> Vec<Violat
 
             // Verify terminal belongs to the PSR
             let term_belongs = dataset.entries.get(term_mrid)
-                .and_then(|e| e.element.as_any().downcast_ref::<cimstructs::Terminal>())
+                .and_then(|e| e.element.as_any().downcast_ref::<cimmodel::Terminal>())
                 .and_then(|t| t.conducting_equipment.as_ref())
                 .map_or(false, |ce| ce.mrid.trim_start_matches('#') == psr_id);
 

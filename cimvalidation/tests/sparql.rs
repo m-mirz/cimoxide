@@ -3,7 +3,7 @@ mod common;
 use cimvalidation::Config;
 use cimvalidation::Violation;
 
-fn validate(ds: &cimdecoder::CimDataset, cfg: &Config) -> Vec<Violation> {
+fn validate(ds: &cimmodel::CimDataset, cfg: &Config) -> Vec<Violation> {
     let mut v = Vec::new();
     for profile in &cfg.profiles {
         v.extend(cimvalidation::sparql::validate_profile_local(ds, profile, cfg));
@@ -412,7 +412,7 @@ fn sparql_eq_002_6002() {
 #[test]
 fn quality_001_rc_target_voltage_mismatch() {
     // quality:RegulatingControl.targetVoltageMismatch — regression test for a bug where the
-    // mode comparison used a full CIM100 namespace URI constant, but cimdecoder strips every
+    // mode comparison used a full CIM100 namespace URI constant, but the decoder strips every
     // rdf:resource down to its bare local name, so the check never fired.
     let ds = common::load_dataset("../testdata/test_quality_001.xml");
     let cfg = Config { quality: true, ..Default::default() };
@@ -531,7 +531,7 @@ fn sparql_eq_geographical_region_count() {
     let region = |id: &str| format!(r#"<cim:GeographicalRegion rdf:ID="{id}"><cim:IdentifiedObject.name>{id}</cim:IdentifiedObject.name></cim:GeographicalRegion>"#);
     let cfg = Config { profiles: vec!["EQ".into()], ..Default::default() };
     let count = |xml: String| {
-        let ds = cimdecoder::CimDataset::decode_str(&xml).expect("decode");
+        let ds = cimmodel::CimDataset::decode_str(&xml).expect("decode");
         validate(&ds, &cfg).iter().filter(|v| v.rule_id == "eq600:GeographicalRegion-EQ__4").count()
     };
     assert_eq!(count(xml(&region("_GR1"))), 0);

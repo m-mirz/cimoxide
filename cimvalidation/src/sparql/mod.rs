@@ -16,8 +16,8 @@ pub mod operation;
 pub mod prof10;
 pub mod quality;
 
-use cimdecoder::{CimDataset, CimEntry};
-use cimstructs::base::RdfBlock;
+use cimmodel::{CimDataset, CimEntry};
+use cimmodel::base::RdfBlock;
 use crate::{Config, Violation};
 
 /// An element's fields, for reading one named attribute.

@@ -1,4 +1,4 @@
-use cimdecoder::CimDataset;
+use cimmodel::CimDataset;
 use crate::Violation;
 
 pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
@@ -14,7 +14,7 @@ fn check_series_compensator_varistor_usage(dataset: &CimDataset) -> Vec<Violatio
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SeriesCompensator").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let obj = match entry.element.as_any().downcast_ref::<cimstructs::SeriesCompensator>() {
+        let obj = match entry.element.as_any().downcast_ref::<cimmodel::SeriesCompensator>() {
             Some(o) => o, None => continue,
         };
         if !obj.varistor_present.unwrap_or(false) {
@@ -51,7 +51,7 @@ fn check_transformer_end_grounding(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("PowerTransformerEnd").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let obj = match entry.element.as_any().downcast_ref::<cimstructs::PowerTransformerEnd>() {
+        let obj = match entry.element.as_any().downcast_ref::<cimmodel::PowerTransformerEnd>() {
             Some(o) => o, None => continue,
         };
         if obj.base.grounded.unwrap_or(false) {
@@ -76,7 +76,7 @@ fn check_synchronous_machine_earthing(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SynchronousMachine").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let obj = match entry.element.as_any().downcast_ref::<cimstructs::SynchronousMachine>() {
+        let obj = match entry.element.as_any().downcast_ref::<cimmodel::SynchronousMachine>() {
             Some(o) => o, None => continue,
         };
         if obj.earthing.unwrap_or(false) {
@@ -101,7 +101,7 @@ fn check_series_compensator_varistor_required(dataset: &CimDataset) -> Vec<Viola
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SeriesCompensator").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let obj = match entry.element.as_any().downcast_ref::<cimstructs::SeriesCompensator>() {
+        let obj = match entry.element.as_any().downcast_ref::<cimmodel::SeriesCompensator>() {
             Some(o) => o, None => continue,
         };
         if obj.varistor_present.unwrap_or(false) {

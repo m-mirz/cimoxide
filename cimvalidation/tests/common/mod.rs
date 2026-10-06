@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
-use cimdecoder::CimDataset;
+use cimmodel::CimDataset;
 use cimvalidation::Violation;
 
 #[allow(dead_code)]

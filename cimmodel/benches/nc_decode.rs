@@ -11,8 +11,8 @@
 
 use std::fmt::Write;
 
-use cimdecoder::CimDataset;
-use cimstructs::base::{AttrKind, ClassDef};
+use cimmodel::CimDataset;
+use cimmodel::base::{AttrKind, ClassDef};
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 
 const ELEMENTS: usize = 50_000;
@@ -36,7 +36,7 @@ fn prefix_for(ns: &str) -> Option<&'static str> {
 /// Built from the *generated* table deliberately, so both halves of the A/B
 /// decode byte-identical input.
 fn nc_document(n: usize) -> String {
-    let classes: Vec<&ClassDef> = cimstructs::nc_classes::CLASSES
+    let classes: Vec<&ClassDef> = cimmodel::nc_classes::CLASSES
         .iter()
         .filter(|c| c.concrete && prefix_for(c.ns).is_some())
         .filter(|c| {

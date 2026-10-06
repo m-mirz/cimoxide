@@ -1,4 +1,4 @@
-use cimdecoder::CimDataset;
+use cimmodel::CimDataset;
 use crate::Config;
 
 const PROF_EQ:   &str = "http://iec.ch/TC57/ns/CIM/CoreEquipment-EU/3.0";
@@ -31,9 +31,9 @@ fn uri_to_short_name(uri: &str) -> Option<&'static str> {
 fn collect_profiles_from_type(dataset: &CimDataset, type_name: &str, seen: &mut std::collections::HashSet<&'static str>) {
     for mrid in dataset.by_type.get(type_name).into_iter().flatten() {
         let entry = match dataset.entries.get(mrid) { Some(e) => e, None => continue };
-        let profiles: &[String] = if let Some(fm) = entry.element.as_any().downcast_ref::<cimstructs::FullModel>() {
+        let profiles: &[String] = if let Some(fm) = entry.element.as_any().downcast_ref::<cimmodel::FullModel>() {
             &fm.base.profile
-        } else if let Some(dm) = entry.element.as_any().downcast_ref::<cimstructs::DifferenceModel>() {
+        } else if let Some(dm) = entry.element.as_any().downcast_ref::<cimmodel::DifferenceModel>() {
             &dm.base.profile
         } else {
             continue;
@@ -87,7 +87,7 @@ pub fn detect_nc_profiles(dataset: &CimDataset) -> Vec<String> {
             let Some(el) = entry
                 .element
                 .as_any()
-                .downcast_ref::<cimstructs::base::GenericElement>()
+                .downcast_ref::<cimmodel::base::GenericElement>()
             else {
                 continue;
             };

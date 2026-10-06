@@ -1,5 +1,5 @@
 use std::path::Path;
-use cimdecoder::CimDataset;
+use cimmodel::CimDataset;
 
 #[test]
 fn decode_small_file() {
@@ -56,7 +56,7 @@ fn repeated_text_field_keeps_all_values() {
     let fm = ds.entries[fm_mrid]
         .element
         .as_any()
-        .downcast_ref::<cimstructs::FullModel>()
+        .downcast_ref::<cimmodel::FullModel>()
         .expect("FullModel downcast");
     assert_eq!(
         fm.base.profile,

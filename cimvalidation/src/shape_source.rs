@@ -21,7 +21,7 @@
 //! table **with a warning**. Silently validating against a stale profile
 //! because a path had a typo is the worst outcome available here.
 //!
-//! This mirrors [`cimstructs::schema_source`] closely enough that the two
+//! This mirrors [`cimmodel::schema_source`] closely enough that the two
 //! should be read side by side. The one difference that matters: there, the
 //! generator and the loader build the table by separate code paths and a test
 //! compares them. Here both call `cimschema::shacl::resolve`, so there is no
@@ -150,7 +150,7 @@ mod dynamic {
     /// first validation: the table is memoized, so afterwards this returns
     /// [`ShapeError::TooLate`] rather than being quietly ignored.
     ///
-    /// As in `cimstructs::schema_source`, the guard is best-effort — there is a
+    /// As in `cimmodel::schema_source`, the guard is best-effort — there is a
     /// narrow race between the check and the insert — and is documented rather
     /// than locked, because the contract is "call before validating".
     pub fn load_from(family_id: &str, dir: &Path) -> Result<(), ShapeError> {
@@ -258,7 +258,7 @@ mod dynamic {
     /// Read and intern one family's shapes and profile index.
     ///
     /// The shapes resolve against the family's RDFS, which
-    /// `cimstructs::schema_source` already knows how to find: a shape naming a
+    /// `cimmodel::schema_source` already knows how to find: a shape naming a
     /// class this workspace has no schema for cannot be checked, so the two
     /// have to agree on what the family contains.
     fn load(family: &'static Family, dir: &Path) -> Result<Loaded, ShapeError> {
@@ -366,7 +366,7 @@ mod dynamic {
             .and_then(|p| p.file_name())
             .zip(Path::new(f.default_schema).parent().and_then(Path::parent).and_then(|p| p.file_name()))
             .is_some_and(|(a, b)| a == b)
-            && let Some(dir) = std::env::var_os(cimstructs::schema_source::RDFS_DIR_ENV) {
+            && let Some(dir) = std::env::var_os(cimmodel::schema_source::RDFS_DIR_ENV) {
                 return PathBuf::from(dir)
                     .join(file_name(f.default_schema))
                     .to_string_lossy()

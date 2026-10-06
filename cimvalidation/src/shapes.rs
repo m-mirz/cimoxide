@@ -3,11 +3,11 @@
 //! CGMES validation is generated code: one function per check, each
 //! downcasting to a concrete struct and reading a typed field. NC classes have
 //! no struct to downcast to — they decode into
-//! [`cimstructs::base::GenericElement`] property bags — so there is nothing for
+//! [`cimmodel::base::GenericElement`] property bags — so there is nothing for
 //! that strategy to generate against.
 //!
 //! So the shapes become data and [`crate::bag`] interprets them, the same way
-//! NC classes became [`cimstructs::base::ClassDef`] rows interpreted by the
+//! NC classes became [`cimmodel::base::ClassDef`] rows interpreted by the
 //! decoder. `cimgen` emits the table into `nc_shapes.rs`; with the
 //! `dynamic-shapes` feature it can be built from the SHACL TTL files at
 //! runtime instead.
@@ -20,7 +20,7 @@
 /// Where a property shape's values come from.
 ///
 /// Field keys are the local XML element name with the prefix stripped, which
-/// is exactly what the decoder puts in [`cimstructs::base::RdfBlock::fields`].
+/// is exactly what the decoder puts in [`cimmodel::base::RdfBlock::fields`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Path {
     /// A field on the element itself.

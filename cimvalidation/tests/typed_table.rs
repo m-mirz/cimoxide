@@ -10,7 +10,7 @@
 //! has to reproduce them: a range or comparison is only checked when the value
 //! is present and parses as a number.
 
-use cimdecoder::CimDataset;
+use cimmodel::CimDataset;
 use cimvalidation::bag::{validate_shapes, Source};
 use cimvalidation::shapes::{Check, Constraint, Path, PropShape, ShapeDef, Target};
 use cimvalidation::Violation;

@@ -10,10 +10,8 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-cimoxide-structs    = { workspace = true }
-cimoxide-decoder    = { workspace = true }
+cimoxide-model      = { workspace = true }
 cimoxide-validation = { workspace = true }
-cimoxide-convert    = { workspace = true }
 cimoxide-sparql     = { workspace = true, optional = true }
 
 [features]

@@ -1,5 +1,5 @@
-use cimstructs::base::FieldValue;
-use cimdecoder::CimDataset;
+use cimmodel::base::FieldValue;
+use cimmodel::CimDataset;
 use crate::Violation;
 
 pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
@@ -24,7 +24,7 @@ macro_rules! check_exc_smd_type {
     ($v:expr, $dataset:expr, $($T:ident),+) => {$(
         for mrid in $dataset.by_type.get(stringify!($T)).into_iter().flatten() {
             let entry = &$dataset.entries[mrid];
-            if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::$T>() {
+            if let Some(obj) = entry.element.as_any().downcast_ref::<cimmodel::$T>() {
                 if let Some(smd_ref) = obj.base.synchronous_machine_dynamics.as_ref() {
                     let target_id = smd_ref.mrid.trim_start_matches('#');
                     let is_simplified = $dataset.entries.get(target_id)
@@ -75,7 +75,7 @@ fn check_smtcr_model_type(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SynchronousMachineTimeConstantReactance").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let obj = match entry.element.as_any().downcast_ref::<cimstructs::SynchronousMachineTimeConstantReactance>() {
+        let obj = match entry.element.as_any().downcast_ref::<cimmodel::SynchronousMachineTimeConstantReactance>() {
             Some(o) => o, None => continue,
         };
         let mt = match obj.model_type.as_ref() { Some(r) => r.uri.as_str(), None => continue };
@@ -144,7 +144,7 @@ macro_rules! check_gov_mwbase {
     ($v:expr, $dataset:expr, $($T:ident),+) => {$(
         for mrid in $dataset.by_type.get(stringify!($T)).into_iter().flatten() {
             let entry = &$dataset.entries[mrid];
-            if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::$T>() {
+            if let Some(obj) = entry.element.as_any().downcast_ref::<cimmodel::$T>() {
                 let mwbase = match obj.mwbase { Some(v) if v != 0.0 => v, _ => continue };
                 let smd_id = match obj.base.synchronous_machine_dynamics.as_ref() {
                     Some(r) => r.mrid.trim_start_matches('#').to_string(), None => continue,
@@ -156,7 +156,7 @@ macro_rules! check_gov_mwbase {
                     _ => continue,
                 };
                 let sm = match $dataset.entries.get(&sm_id)
-                    .and_then(|e| e.element.as_any().downcast_ref::<cimstructs::SynchronousMachine>())
+                    .and_then(|e| e.element.as_any().downcast_ref::<cimmodel::SynchronousMachine>())
                 { Some(o) => o, None => continue };
                 let rated_pf = sm.base.rated_power_factor.unwrap_or(0.0);
                 let rated_s  = sm.base.rated_s.unwrap_or(0.0);
@@ -198,7 +198,7 @@ fn check_excitation_system_gains(dataset: &CimDataset) -> Vec<Violation> {
 
     for mrid in dataset.by_type.get("ExcAC8B").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::ExcAC8B>()
+        if let Some(obj) = entry.element.as_any().downcast_ref::<cimmodel::ExcAC8B>()
             && obj.kir.unwrap_or(0.0) == 0.0 && obj.kpr.unwrap_or(0.0) <= 0.0 {
                 v.push(dyn_viol(mrid, "dyu:ExcAC8B.kpr-valueRange", "C:302:DY:ExcAC8B.kpr:valueRange",
                     "ExcAC8B", "ExcAC8B.kpr", "The value negative or zero when ExcAC8B.kir = 0."));
@@ -206,7 +206,7 @@ fn check_excitation_system_gains(dataset: &CimDataset) -> Vec<Violation> {
     }
     for mrid in dataset.by_type.get("ExcIEEEAC8B").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::ExcIEEEAC8B>()
+        if let Some(obj) = entry.element.as_any().downcast_ref::<cimmodel::ExcIEEEAC8B>()
             && obj.kir.unwrap_or(0.0) == 0.0 && obj.kpr.unwrap_or(0.0) <= 0.0 {
                 v.push(dyn_viol(mrid, "dyu:ExcIEEEAC8B.kpr-valueRange", "C:302:DY:ExcIEEEAC8B.kpr:valueRange",
                     "ExcIEEEAC8B", "ExcIEEEAC8B.kpr", "The value negative or zero when ExcIEEEAC8B.kir = 0."));
@@ -214,7 +214,7 @@ fn check_excitation_system_gains(dataset: &CimDataset) -> Vec<Violation> {
     }
     for mrid in dataset.by_type.get("ExcIEEEAC7B").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::ExcIEEEAC7B>() {
+        if let Some(obj) = entry.element.as_any().downcast_ref::<cimmodel::ExcIEEEAC7B>() {
             if obj.kia.unwrap_or(0.0) == 0.0 && obj.kpa.unwrap_or(0.0) <= 0.0 {
                 v.push(dyn_viol(mrid, "dyu:ExcIEEEAC7B.kpa-valueRange", "C:302:DY:ExcIEEEAC7B.kpa:valueRange",
                     "ExcIEEEAC7B", "ExcIEEEAC7B.kpa", "The value negative or zero when ExcIEEEAC7B.kia = 0."));
@@ -227,7 +227,7 @@ fn check_excitation_system_gains(dataset: &CimDataset) -> Vec<Violation> {
     }
     for mrid in dataset.by_type.get("ExcBBC").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::ExcBBC>()
+        if let Some(obj) = entry.element.as_any().downcast_ref::<cimmodel::ExcBBC>()
             && obj.k.unwrap_or(0.0) == 0.0 {
                 v.push(dyn_viol(mrid, "dyu:ExcBBC.k-valueRange", "C:302:DY:ExcBBC.k:valueRange",
                     "ExcBBC", "ExcBBC.k", "The value is 0."));
@@ -235,7 +235,7 @@ fn check_excitation_system_gains(dataset: &CimDataset) -> Vec<Violation> {
     }
     for mrid in dataset.by_type.get("ExcIEEEDC4B").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::ExcIEEEDC4B>()
+        if let Some(obj) = entry.element.as_any().downcast_ref::<cimmodel::ExcIEEEDC4B>()
             && obj.kd.unwrap_or(0.0) > 0.0 && obj.td.unwrap_or(0.0) <= 0.0 {
                 v.push(dyn_viol(mrid, "dyu:ExcIEEEDC4B.td-valueRange", "C:302:DY:ExcIEEEDC4B.td:valueRange",
                     "ExcIEEEDC4B", "ExcIEEEDC4B.td", "The value negative or zero when ExcIEEEDC4B.kd > 0."));
@@ -243,7 +243,7 @@ fn check_excitation_system_gains(dataset: &CimDataset) -> Vec<Violation> {
     }
     for mrid in dataset.by_type.get("ExcSEXS").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::ExcSEXS>()
+        if let Some(obj) = entry.element.as_any().downcast_ref::<cimmodel::ExcSEXS>()
             && obj.tc.unwrap_or(0.0) > 0.0 && obj.kc.unwrap_or(0.0) <= 0.0 {
                 v.push(dyn_viol(mrid, "dyu:ExcSEXS.kc-valueRange", "C:302:DY:ExcSEXS.kc:valueRange",
                     "ExcSEXS", "ExcSEXS.kc", "The value negative or zero when ExcSEXS.tc > 0."));
@@ -256,7 +256,7 @@ fn check_gov_steam_fv3_t5(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("GovSteamFV3").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::GovSteamFV3>()
+        if let Some(obj) = entry.element.as_any().downcast_ref::<cimmodel::GovSteamFV3>()
             && obj.t5.unwrap_or(0.0) < 0.0 {
                 v.push(dyn_viol(mrid, "dyu:GovSteamFV3.t5-valueRange", "C:302:DY:GovSteamFV3.t5:valueRange",
                     "GovSteamFV3", "GovSteamFV3.t5", "The value is negative."));
@@ -280,7 +280,7 @@ fn check_pss_input_signals(dataset: &CimDataset) -> Vec<Violation> {
 
     for mrid in dataset.by_type.get("Pss2ST").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::Pss2ST>()
+        if let Some(obj) = entry.element.as_any().downcast_ref::<cimmodel::Pss2ST>()
             && let (Some(s1), Some(s2)) = (obj.input_signal1type.as_ref(), obj.input_signal2type.as_ref())
                 && s1.uri == s2.uri {
                     v.push(dyn_viol(mrid, "dyu:Pss2ST-inputSignals", "C:302:DY:Pss2ST:inputSignals",
@@ -289,7 +289,7 @@ fn check_pss_input_signals(dataset: &CimDataset) -> Vec<Violation> {
     }
     for mrid in dataset.by_type.get("PssWECC").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::PssWECC>()
+        if let Some(obj) = entry.element.as_any().downcast_ref::<cimmodel::PssWECC>()
             && let (Some(s1), Some(s2)) = (obj.input_signal1type.as_ref(), obj.input_signal2type.as_ref())
                 && s1.uri == s2.uri {
                     v.push(dyn_viol(mrid, "dyu:PssWECC-inputSignals", "C:302:DY:PssWECC:inputSignals",
@@ -309,7 +309,7 @@ fn check_gov_hydro4_gain_points(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("GovHydro4").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let obj = match entry.element.as_any().downcast_ref::<cimstructs::GovHydro4>() {
+        let obj = match entry.element.as_any().downcast_ref::<cimmodel::GovHydro4>() {
             Some(o) => o, None => continue,
         };
         let m = match obj.model.as_ref() { Some(r) => r.uri.as_str(), None => continue };
@@ -396,7 +396,7 @@ fn check_load_static_model_attributes(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("LoadStatic").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let obj = match entry.element.as_any().downcast_ref::<cimstructs::LoadStatic>() {
+        let obj = match entry.element.as_any().downcast_ref::<cimmodel::LoadStatic>() {
             Some(o) => o, None => continue,
         };
         let m = match obj.static_load_model_type.as_ref() { Some(r) => r.uri.as_str(), None => continue };
@@ -453,7 +453,7 @@ macro_rules! check_sat {
     ($v:expr, $dataset:expr, $T:ident, $sf_path:expr, $sf120_path:expr) => {
         for mrid in $dataset.by_type.get(stringify!($T)).into_iter().flatten() {
             let entry = &$dataset.entries[mrid];
-            if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::$T>() {
+            if let Some(obj) = entry.element.as_any().downcast_ref::<cimmodel::$T>() {
                 let sf   = $sf_path(obj);
                 let sf120 = $sf120_path(obj);
                 if let (Some(s1), Some(s2)) = (sf, sf120) {
@@ -478,26 +478,26 @@ macro_rules! check_sat {
 fn check_rotating_machine_saturation(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     check_sat!(v, dataset, SynchronousMachineTimeConstantReactance,
-        |o: &cimstructs::SynchronousMachineTimeConstantReactance| o.base.base.base.saturation_factor,
-        |o: &cimstructs::SynchronousMachineTimeConstantReactance| o.base.base.base.saturation_factor120);
+        |o: &cimmodel::SynchronousMachineTimeConstantReactance| o.base.base.base.saturation_factor,
+        |o: &cimmodel::SynchronousMachineTimeConstantReactance| o.base.base.base.saturation_factor120);
     check_sat!(v, dataset, SynchronousMachineEquivalentCircuit,
-        |o: &cimstructs::SynchronousMachineEquivalentCircuit| o.base.base.base.saturation_factor,
-        |o: &cimstructs::SynchronousMachineEquivalentCircuit| o.base.base.base.saturation_factor120);
+        |o: &cimmodel::SynchronousMachineEquivalentCircuit| o.base.base.base.saturation_factor,
+        |o: &cimmodel::SynchronousMachineEquivalentCircuit| o.base.base.base.saturation_factor120);
     check_sat!(v, dataset, SynchronousMachineSimplified,
-        |o: &cimstructs::SynchronousMachineSimplified| o.base.base.saturation_factor,
-        |o: &cimstructs::SynchronousMachineSimplified| o.base.base.saturation_factor120);
+        |o: &cimmodel::SynchronousMachineSimplified| o.base.base.saturation_factor,
+        |o: &cimmodel::SynchronousMachineSimplified| o.base.base.saturation_factor120);
     check_sat!(v, dataset, SynchronousMachineUserDefined,
-        |o: &cimstructs::SynchronousMachineUserDefined| o.base.base.saturation_factor,
-        |o: &cimstructs::SynchronousMachineUserDefined| o.base.base.saturation_factor120);
+        |o: &cimmodel::SynchronousMachineUserDefined| o.base.base.saturation_factor,
+        |o: &cimmodel::SynchronousMachineUserDefined| o.base.base.saturation_factor120);
     check_sat!(v, dataset, AsynchronousMachineEquivalentCircuit,
-        |o: &cimstructs::AsynchronousMachineEquivalentCircuit| o.base.base.saturation_factor,
-        |o: &cimstructs::AsynchronousMachineEquivalentCircuit| o.base.base.saturation_factor120);
+        |o: &cimmodel::AsynchronousMachineEquivalentCircuit| o.base.base.saturation_factor,
+        |o: &cimmodel::AsynchronousMachineEquivalentCircuit| o.base.base.saturation_factor120);
     check_sat!(v, dataset, AsynchronousMachineTimeConstantReactance,
-        |o: &cimstructs::AsynchronousMachineTimeConstantReactance| o.base.base.saturation_factor,
-        |o: &cimstructs::AsynchronousMachineTimeConstantReactance| o.base.base.saturation_factor120);
+        |o: &cimmodel::AsynchronousMachineTimeConstantReactance| o.base.base.saturation_factor,
+        |o: &cimmodel::AsynchronousMachineTimeConstantReactance| o.base.base.saturation_factor120);
     check_sat!(v, dataset, AsynchronousMachineUserDefined,
-        |o: &cimstructs::AsynchronousMachineUserDefined| o.base.base.saturation_factor,
-        |o: &cimstructs::AsynchronousMachineUserDefined| o.base.base.saturation_factor120);
+        |o: &cimmodel::AsynchronousMachineUserDefined| o.base.base.saturation_factor,
+        |o: &cimmodel::AsynchronousMachineUserDefined| o.base.base.saturation_factor120);
     v
 }
 
@@ -507,7 +507,7 @@ fn check_synchronous_machine_simplified_attributes(dataset: &CimDataset) -> Vec<
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SynchronousMachineSimplified").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let obj = match entry.element.as_any().downcast_ref::<cimstructs::SynchronousMachineSimplified>() {
+        let obj = match entry.element.as_any().downcast_ref::<cimmodel::SynchronousMachineSimplified>() {
             Some(o) => o, None => continue,
         };
         if obj.base.base.saturation_factor.unwrap_or(0.0) != 0.0 ||
@@ -536,7 +536,7 @@ fn check_dynamics_associations(dataset: &CimDataset) -> Vec<Violation> {
         ($($T:ident),+) => {$(
             for mrid in dataset.by_type.get(stringify!($T)).into_iter().flatten() {
                 let entry = &dataset.entries[mrid];
-                if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::$T>() {
+                if let Some(obj) = entry.element.as_any().downcast_ref::<cimmodel::$T>() {
                     if obj.base.synchronous_machine_dynamics.is_none() && obj.base.asynchronous_machine_dynamics.is_none() {
                         v.push(Violation {
                             object_id:   mrid.clone(),
@@ -564,7 +564,7 @@ fn check_dynamics_associations(dataset: &CimDataset) -> Vec<Violation> {
         ($($T:ident),+) => {$(
             for mrid in dataset.by_type.get(stringify!($T)).into_iter().flatten() {
                 let entry = &dataset.entries[mrid];
-                if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::$T>() {
+                if let Some(obj) = entry.element.as_any().downcast_ref::<cimmodel::$T>() {
                     if obj.base.synchronous_machine_dynamics.is_none() && obj.base.asynchronous_machine_dynamics.is_none() {
                         v.push(Violation {
                             object_id:   mrid.clone(),

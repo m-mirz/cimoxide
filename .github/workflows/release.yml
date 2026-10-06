@@ -39,7 +39,7 @@ jobs:
           key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-release-
 
-      - name: Generate cimstructs and cimvalidation
+      - name: Generate cimmodel and cimvalidation
         run: make generate
 
       - name: Build

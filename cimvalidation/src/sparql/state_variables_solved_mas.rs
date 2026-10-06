@@ -1,6 +1,6 @@
-use cimdecoder::{CimDataset, CimEntry};
+use cimmodel::{CimDataset, CimEntry};
 use crate::Violation;
-use cimstructs::base::CimElement;
+use cimmodel::base::CimElement;
 
 pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
@@ -17,32 +17,32 @@ pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
 }
 
 fn tc_low_high(entry: &CimEntry) -> Option<(i64, i64)> {
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::RatioTapChanger>() {
+    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::RatioTapChanger>() {
         return Some((o.base.low_step?, o.base.high_step?));
     }
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerLinear>() {
+    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::PhaseTapChangerLinear>() {
         return Some((o.base.base.low_step?, o.base.base.high_step?));
     }
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerTabular>() {
+    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::PhaseTapChangerTabular>() {
         return Some((o.base.base.low_step?, o.base.base.high_step?));
     }
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerNonLinear>() {
+    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::PhaseTapChangerNonLinear>() {
         return Some((o.base.base.low_step?, o.base.base.high_step?));
     }
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerAsymmetrical>() {
+    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::PhaseTapChangerAsymmetrical>() {
         return Some((o.base.base.base.low_step?, o.base.base.base.high_step?));
     }
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerSymmetrical>() {
+    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::PhaseTapChangerSymmetrical>() {
         return Some((o.base.base.base.low_step?, o.base.base.base.high_step?));
     }
     None
 }
 
 fn rc_discrete_enabled(entry: &CimEntry) -> (bool, bool) {
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::RegulatingControl>() {
+    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::RegulatingControl>() {
         return (o.discrete.unwrap_or(false), o.enabled.unwrap_or(false));
     }
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::TapChangerControl>() {
+    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::TapChangerControl>() {
         return (o.base.discrete.unwrap_or(false), o.base.enabled.unwrap_or(false));
     }
     (false, false)
@@ -52,7 +52,7 @@ fn check_sv_tap_step_position_range(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SvTapStep").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let obj = match entry.element.as_any().downcast_ref::<cimstructs::SvTapStep>() {
+        let obj = match entry.element.as_any().downcast_ref::<cimmodel::SvTapStep>() {
             Some(o) => o, None => continue,
         };
         let pos = match obj.position { Some(p) => p, None => continue };
@@ -80,7 +80,7 @@ fn check_sv_tap_step_position_integer(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SvTapStep").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let obj = match entry.element.as_any().downcast_ref::<cimstructs::SvTapStep>() {
+        let obj = match entry.element.as_any().downcast_ref::<cimmodel::SvTapStep>() {
             Some(o) => o, None => continue,
         };
         let pos = match obj.position { Some(p) => p, None => continue };
@@ -108,33 +108,33 @@ fn check_sv_tap_step_position_integer(dataset: &CimDataset) -> Vec<Violation> {
     v
 }
 
-fn tap_changer_control_ref(entry: &CimEntry) -> Option<&cimstructs::base::MridRef> {
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::RatioTapChanger>() {
+fn tap_changer_control_ref(entry: &CimEntry) -> Option<&cimmodel::base::MridRef> {
+    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::RatioTapChanger>() {
         return o.base.tap_changer_control.as_ref();
     }
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerLinear>() {
+    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::PhaseTapChangerLinear>() {
         return o.base.base.tap_changer_control.as_ref();
     }
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerTabular>() {
+    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::PhaseTapChangerTabular>() {
         return o.base.base.tap_changer_control.as_ref();
     }
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerNonLinear>() {
+    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::PhaseTapChangerNonLinear>() {
         return o.base.base.tap_changer_control.as_ref();
     }
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerAsymmetrical>() {
+    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::PhaseTapChangerAsymmetrical>() {
         return o.base.base.base.tap_changer_control.as_ref();
     }
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::PhaseTapChangerSymmetrical>() {
+    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::PhaseTapChangerSymmetrical>() {
         return o.base.base.base.tap_changer_control.as_ref();
     }
     None
 }
 
-fn shunt_compensator_regulating_control_ref(entry: &CimEntry) -> Option<&cimstructs::base::MridRef> {
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::LinearShuntCompensator>() {
+fn shunt_compensator_regulating_control_ref(entry: &CimEntry) -> Option<&cimmodel::base::MridRef> {
+    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::LinearShuntCompensator>() {
         return o.base.base.regulating_control.as_ref();
     }
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::NonlinearShuntCompensator>() {
+    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::NonlinearShuntCompensator>() {
         return o.base.base.regulating_control.as_ref();
     }
     None
@@ -144,7 +144,7 @@ fn check_sv_shunt_compensator_sections_integer(dataset: &CimDataset) -> Vec<Viol
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SvShuntCompensatorSections").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let obj = match entry.element.as_any().downcast_ref::<cimstructs::SvShuntCompensatorSections>() {
+        let obj = match entry.element.as_any().downcast_ref::<cimmodel::SvShuntCompensatorSections>() {
             Some(o) => o, None => continue,
         };
         let sections = match obj.sections { Some(s) => s, None => continue };
@@ -179,10 +179,10 @@ const SWITCH_TYPES: &[&str] = &[
 
 fn check_sv_switch_instance(dataset: &CimDataset) -> Vec<Violation> {
     // Build a set of switch MRIDs that have an SvSwitch
-    let mut covered: cimstructs::base::FastSet<String> = cimstructs::base::FastSet::default();
+    let mut covered: cimmodel::base::FastSet<String> = cimmodel::base::FastSet::default();
     for mrid in dataset.by_type.get("SvSwitch").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::SvSwitch>()
+        if let Some(obj) = entry.element.as_any().downcast_ref::<cimmodel::SvSwitch>()
             && let Some(sw_ref) = obj.switch.as_ref() {
                 covered.insert(sw_ref.mrid.trim_start_matches('#').to_string());
             }
@@ -217,10 +217,10 @@ const INJECTION_TYPES: &[&str] = &[
 
 fn check_sv_power_flow_instance(dataset: &CimDataset) -> Vec<Violation> {
     // Build in-service equipment set from SvStatus
-    let mut in_service: cimstructs::base::FastSet<&str> = cimstructs::base::FastSet::default();
+    let mut in_service: cimmodel::base::FastSet<&str> = cimmodel::base::FastSet::default();
     for mrid in dataset.by_type.get("SvStatus").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::SvStatus>()
+        if let Some(obj) = entry.element.as_any().downcast_ref::<cimmodel::SvStatus>()
             && obj.in_service.unwrap_or(false)
                 && let Some(ce_ref) = obj.conducting_equipment.as_ref() {
                     in_service.insert(ce_ref.mrid.trim_start_matches('#'));
@@ -228,10 +228,10 @@ fn check_sv_power_flow_instance(dataset: &CimDataset) -> Vec<Violation> {
     }
 
     // Build set of TN MRIDs that are in a topological island
-    let mut tn_in_island: cimstructs::base::FastSet<&str> = cimstructs::base::FastSet::default();
+    let mut tn_in_island: cimmodel::base::FastSet<&str> = cimmodel::base::FastSet::default();
     for mrid in dataset.by_type.get("TopologicalIsland").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(island) = entry.element.as_any().downcast_ref::<cimstructs::TopologicalIsland>() {
+        if let Some(island) = entry.element.as_any().downcast_ref::<cimmodel::TopologicalIsland>() {
             for tn_ref in &island.topological_nodes {
                 tn_in_island.insert(tn_ref.mrid.trim_start_matches('#'));
             }
@@ -239,10 +239,10 @@ fn check_sv_power_flow_instance(dataset: &CimDataset) -> Vec<Violation> {
     }
 
     // Build terminal index: equipment_id → terminal MRIDs
-    let mut eq_terminals: cimstructs::base::FastMap<&str, Vec<&str>> = cimstructs::base::FastMap::default();
+    let mut eq_terminals: cimmodel::base::FastMap<&str, Vec<&str>> = cimmodel::base::FastMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>()
+        if let Some(term) = entry.element.as_any().downcast_ref::<cimmodel::Terminal>()
             && let Some(ce_ref) = term.conducting_equipment.as_ref() {
                 eq_terminals.entry(ce_ref.mrid.trim_start_matches('#'))
                     .or_default().push(mrid);
@@ -250,10 +250,10 @@ fn check_sv_power_flow_instance(dataset: &CimDataset) -> Vec<Violation> {
     }
 
     // Build set of terminal MRIDs that have an SvPowerFlow
-    let mut terminals_with_svpf: cimstructs::base::FastSet<&str> = cimstructs::base::FastSet::default();
+    let mut terminals_with_svpf: cimmodel::base::FastSet<&str> = cimmodel::base::FastSet::default();
     for mrid in dataset.by_type.get("SvPowerFlow").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(obj) = entry.element.as_any().downcast_ref::<cimstructs::SvPowerFlow>()
+        if let Some(obj) = entry.element.as_any().downcast_ref::<cimmodel::SvPowerFlow>()
             && let Some(t_ref) = obj.terminal.as_ref() {
                 terminals_with_svpf.insert(t_ref.mrid.trim_start_matches('#'));
             }
@@ -268,7 +268,7 @@ fn check_sv_power_flow_instance(dataset: &CimDataset) -> Vec<Violation> {
             let energized = eq_terminals.get(mrid.as_str()).is_some_and(|terms| {
                 terms.iter().any(|t_mrid| {
                     dataset.entries.get(*t_mrid)
-                        .and_then(|e| e.element.as_any().downcast_ref::<cimstructs::Terminal>())
+                        .and_then(|e| e.element.as_any().downcast_ref::<cimmodel::Terminal>())
                         .and_then(|t| t.topological_node.as_ref())
                         .is_some_and(|tn_ref| tn_in_island.contains(tn_ref.mrid.trim_start_matches('#')))
                 })
@@ -299,20 +299,20 @@ fn check_sv_power_flow_p_limits(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SvPowerFlow").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let svpf = match entry.element.as_any().downcast_ref::<cimstructs::SvPowerFlow>() {
+        let svpf = match entry.element.as_any().downcast_ref::<cimmodel::SvPowerFlow>() {
             Some(o) => o, None => continue,
         };
         let p = match svpf.p { Some(p) => p, None => continue };
         let term_id = match svpf.terminal.as_ref() { Some(r) => r.mrid.trim_start_matches('#').to_string(), None => continue };
-        let term = match dataset.entries.get(&term_id).and_then(|e| e.element.as_any().downcast_ref::<cimstructs::Terminal>()) {
+        let term = match dataset.entries.get(&term_id).and_then(|e| e.element.as_any().downcast_ref::<cimmodel::Terminal>()) {
             Some(t) => t, None => continue,
         };
         let eq_id = match term.conducting_equipment.as_ref() { Some(r) => r.mrid.trim_start_matches('#').to_string(), None => continue };
-        let sm = match dataset.entries.get(&eq_id).and_then(|e| e.element.as_any().downcast_ref::<cimstructs::SynchronousMachine>()) {
+        let sm = match dataset.entries.get(&eq_id).and_then(|e| e.element.as_any().downcast_ref::<cimmodel::SynchronousMachine>()) {
             Some(o) => o, None => continue,
         };
         let gu_id = match sm.base.generating_unit.as_ref() { Some(r) => r.mrid.trim_start_matches('#').to_string(), None => continue };
-        let gu = match dataset.entries.get(&gu_id).and_then(|e| e.element.as_any().downcast_ref::<cimstructs::GeneratingUnit>()) {
+        let gu = match dataset.entries.get(&gu_id).and_then(|e| e.element.as_any().downcast_ref::<cimmodel::GeneratingUnit>()) {
             Some(o) => o, None => continue,
         };
         let min_p = match gu.min_operating_p { Some(v) => v, None => continue };
@@ -338,16 +338,16 @@ fn check_sv_power_flow_q_limits(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SvPowerFlow").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let svpf = match entry.element.as_any().downcast_ref::<cimstructs::SvPowerFlow>() {
+        let svpf = match entry.element.as_any().downcast_ref::<cimmodel::SvPowerFlow>() {
             Some(o) => o, None => continue,
         };
         let q = match svpf.q { Some(q) => q, None => continue };
         let term_id = match svpf.terminal.as_ref() { Some(r) => r.mrid.trim_start_matches('#').to_string(), None => continue };
-        let term = match dataset.entries.get(&term_id).and_then(|e| e.element.as_any().downcast_ref::<cimstructs::Terminal>()) {
+        let term = match dataset.entries.get(&term_id).and_then(|e| e.element.as_any().downcast_ref::<cimmodel::Terminal>()) {
             Some(t) => t, None => continue,
         };
         let eq_id = match term.conducting_equipment.as_ref() { Some(r) => r.mrid.trim_start_matches('#').to_string(), None => continue };
-        let sm = match dataset.entries.get(&eq_id).and_then(|e| e.element.as_any().downcast_ref::<cimstructs::SynchronousMachine>()) {
+        let sm = match dataset.entries.get(&eq_id).and_then(|e| e.element.as_any().downcast_ref::<cimmodel::SynchronousMachine>()) {
             Some(o) => o, None => continue,
         };
 
@@ -362,7 +362,7 @@ fn check_sv_power_flow_q_limits(dataset: &CimDataset) -> Vec<Violation> {
             let mut found = false;
             for cd_mrid in dataset.by_type.get("CurveData").into_iter().flatten() {
                 let cd_entry = &dataset.entries[cd_mrid];
-                if let Some(cd) = cd_entry.element.as_any().downcast_ref::<cimstructs::CurveData>()
+                if let Some(cd) = cd_entry.element.as_any().downcast_ref::<cimmodel::CurveData>()
                     && cd.curve.as_ref().is_some_and(|r| r.mrid.trim_start_matches('#') == rcc_id) {
                         if let Some(y1) = cd.y1value { y1_min = y1_min.min(y1); found = true; }
                         if let Some(y2) = cd.y2value { y2_max = y2_max.max(y2); }
@@ -395,16 +395,16 @@ fn check_sv_voltage_limits(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SvVoltage").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let svv = match entry.element.as_any().downcast_ref::<cimstructs::SvVoltage>() {
+        let svv = match entry.element.as_any().downcast_ref::<cimmodel::SvVoltage>() {
             Some(o) => o, None => continue,
         };
         let volt = match svv.v { Some(v) => v, None => continue };
         let tn_id = match svv.topological_node.as_ref() { Some(r) => r.mrid.trim_start_matches('#').to_string(), None => continue };
-        let tn = match dataset.entries.get(&tn_id).and_then(|e| e.element.as_any().downcast_ref::<cimstructs::TopologicalNode>()) {
+        let tn = match dataset.entries.get(&tn_id).and_then(|e| e.element.as_any().downcast_ref::<cimmodel::TopologicalNode>()) {
             Some(o) => o, None => continue,
         };
         let bv_id = match tn.base_voltage.as_ref() { Some(r) => r.mrid.trim_start_matches('#').to_string(), None => continue };
-        let bv = match dataset.entries.get(&bv_id).and_then(|e| e.element.as_any().downcast_ref::<cimstructs::BaseVoltage>()) {
+        let bv = match dataset.entries.get(&bv_id).and_then(|e| e.element.as_any().downcast_ref::<cimmodel::BaseVoltage>()) {
             Some(o) => o, None => continue,
         };
         let nom_v = match bv.nominal_voltage { Some(n) if n != 0.0 => n, _ => continue };
@@ -431,10 +431,10 @@ fn check_sv_voltage_operational_limits(dataset: &CimDataset) -> Vec<Violation> {
 
     // TopologicalNode -> terminals connected to it (via Terminal.TopologicalNode directly,
     // same convention as check_sv_power_flow_instance above).
-    let mut tn_terminals: cimstructs::base::FastMap<String, Vec<String>> = cimstructs::base::FastMap::default();
+    let mut tn_terminals: cimmodel::base::FastMap<String, Vec<String>> = cimmodel::base::FastMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(term) = entry.element.as_any().downcast_ref::<cimstructs::Terminal>()
+        if let Some(term) = entry.element.as_any().downcast_ref::<cimmodel::Terminal>()
             && let Some(tn_ref) = term.topological_node.as_ref() {
                 tn_terminals.entry(tn_ref.mrid.trim_start_matches('#').to_string())
                     .or_default().push(mrid.clone());
@@ -442,31 +442,31 @@ fn check_sv_voltage_operational_limits(dataset: &CimDataset) -> Vec<Violation> {
     }
 
     // OperationalLimitSet -> terminal.
-    let mut ols_terminal: cimstructs::base::FastMap<String, String> = cimstructs::base::FastMap::default();
+    let mut ols_terminal: cimmodel::base::FastMap<String, String> = cimmodel::base::FastMap::default();
     for mrid in dataset.by_type.get("OperationalLimitSet").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(ols) = entry.element.as_any().downcast_ref::<cimstructs::OperationalLimitSet>()
+        if let Some(ols) = entry.element.as_any().downcast_ref::<cimmodel::OperationalLimitSet>()
             && let Some(term_ref) = ols.terminal.as_ref() {
                 ols_terminal.insert(mrid.clone(), term_ref.mrid.trim_start_matches('#').to_string());
             }
     }
 
     // OperationalLimitType -> direction.
-    let mut olt_direction: cimstructs::base::FastMap<String, String> = cimstructs::base::FastMap::default();
+    let mut olt_direction: cimmodel::base::FastMap<String, String> = cimmodel::base::FastMap::default();
     for mrid in dataset.by_type.get("OperationalLimitType").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(olt) = entry.element.as_any().downcast_ref::<cimstructs::OperationalLimitType>()
+        if let Some(olt) = entry.element.as_any().downcast_ref::<cimmodel::OperationalLimitType>()
             && let Some(dir) = olt.direction.as_ref() {
                 olt_direction.insert(mrid.clone(), dir.uri.clone());
             }
     }
 
     // terminal_id -> (max high VoltageLimit.value, min low VoltageLimit.value)
-    let mut terminal_vhigh: cimstructs::base::FastMap<String, f64> = cimstructs::base::FastMap::default();
-    let mut terminal_vlow: cimstructs::base::FastMap<String, f64> = cimstructs::base::FastMap::default();
+    let mut terminal_vhigh: cimmodel::base::FastMap<String, f64> = cimmodel::base::FastMap::default();
+    let mut terminal_vlow: cimmodel::base::FastMap<String, f64> = cimmodel::base::FastMap::default();
     for mrid in dataset.by_type.get("VoltageLimit").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let vl = match entry.element.as_any().downcast_ref::<cimstructs::VoltageLimit>() { Some(o) => o, None => continue };
+        let vl = match entry.element.as_any().downcast_ref::<cimmodel::VoltageLimit>() { Some(o) => o, None => continue };
         let value = match vl.value { Some(v) => v, None => continue };
         let ols_id = match vl.base.operational_limit_set.as_ref() { Some(r) => r.mrid.trim_start_matches('#'), None => continue };
         let term_id = match ols_terminal.get(ols_id) { Some(t) => t, None => continue };
@@ -487,7 +487,7 @@ fn check_sv_voltage_operational_limits(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SvVoltage").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let svv = match entry.element.as_any().downcast_ref::<cimstructs::SvVoltage>() { Some(o) => o, None => continue };
+        let svv = match entry.element.as_any().downcast_ref::<cimmodel::SvVoltage>() { Some(o) => o, None => continue };
         let volt = match svv.v { Some(v) => v, None => continue };
         let tn_id = match svv.topological_node.as_ref() { Some(r) => r.mrid.trim_start_matches('#'), None => continue };
         let terms = match tn_terminals.get(tn_id) { Some(t) => t, None => continue };

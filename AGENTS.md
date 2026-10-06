@@ -17,15 +17,15 @@ cargo test
 
 # Run tests for a specific crate
 cargo test -p cimoxide-gen
-cargo test -p cimoxide-decoder
+cargo test -p cimoxide-model
 
 # Run a single test by name
-cargo test -p cimoxide-gen --test codegen cimstructs_codegen_stable
+cargo test -p cimoxide-gen --test codegen cimmodel_codegen_stable
 
 # Run benchmarks
-cargo bench -p cimoxide-decoder
+cargo bench -p cimoxide-model
 
-# Regenerate cimstructs and cimvalidation from schemas
+# Regenerate cimmodel and cimvalidation from schemas
 cargo run -p cimoxide-gen
 ```
 
@@ -42,7 +42,7 @@ git submodule update --init --recursive
 
 ## Crate Architecture
 
-**Data flow**: RDF/SHACL schemas → `cimgen` (code generator) → `cimstructs` + `cimvalidation` (generated) ← `cimdecoder` (deserializer)
+**Data flow**: RDF/SHACL schemas → `cimgen` (code generator) → `cimmodel` (structs, decoder, converter) + `cimvalidation` (shape tables)
 
 ### `cimgen` — Code Generator CLI
 Parses RDF schema files and SHACL TTL constraint files, then generates Rust code. Key modules:
@@ -50,25 +50,32 @@ Parses RDF schema files and SHACL TTL constraint files, then generates Rust code
 - `generator/rust_gen.rs` — Emits struct definitions
 - `shacl/` — SHACL TTL parsing, constraint model, and validation code generation
 
-### `cimstructs` — Generated Typed Structs (do not hand-edit)
-Contains one file per CGMES class. Core files in `src/`:
+### `cimmodel` — Data Model, Decoder and Converter
+One crate for CIM data and its RDF/XML in both directions. The generated part is one
+file per CGMES class plus the tables below (do not hand-edit); `base.rs`,
+`schema_source.rs`, `decode.rs` and `convert.rs` are hand-written, and `.gitignore` and
+`make clean` list them as exceptions — add any new hand-written module there too.
+`lib.rs` is generated: `rust_gen.rs`'s `render_lib` declares the hand-written modules.
+Up to 0.3.3 this was three crates, `cimoxide-structs`, `cimoxide-decoder` and
+`cimoxide-convert`; those stay on crates.io at 0.3.x. Core files in `src/`:
 - `base.rs` — hand-written. Traits `CimElement`, `RdfBlock`, `FieldValue`, `MridRef`;
   the `TypeRegistry`; and `ClassDef`/`AttrDef`/`GenericElement` for property-bag families
 - `registry.rs` — `TYPE_ROWS` keyed by `(namespace, local name)`, plus a bare-name
   fallback table and the legacy `registry()`
 - `constants.rs` — CGMES version constants
 - `nc_classes.rs` — the NC family's 596-class table (generated)
-
-### `cimdecoder` — RDF/XML Deserializer
-Streaming XML parser that produces `CimDataset`:
-- `CimDataset::decode_file(path)` / `decode_files(paths)` / `decode_str(content)` — Entry points
-- `CimDataset::merge(other)` — Combine multiple datasets (re-parses conflicts)
-- `CimDataset::drop_blocks()` — Free `RdfBlock` memory after final merge
-- `CimDataset { entries: FastMap<mrid, CimEntry>, by_type: FastMap<type_name, Vec<mrid>> }`
-- `FastMap`/`FieldMap` (in `cimstructs::base`) use a hand-written Fx-style hasher instead of
-  SipHash: −12% decode. It has a fixed seed, so map iteration — and therefore `by_type`
-  order after `merge` and violation order — is reproducible run to run. Core crates take
-  no dependency for it; do not pull in crates that are only in `Cargo.lock` via oxigraph
+- `decode.rs` — hand-written streaming XML parser that produces `CimDataset`
+  (re-exported at the crate root with `CimEntry`):
+  - `CimDataset::decode_file(path)` / `decode_files(paths)` / `decode_str(content)` — Entry points
+  - `CimDataset::merge(other)` — Combine multiple datasets (re-parses conflicts)
+  - `CimDataset::drop_blocks()` — Free `RdfBlock` memory after final merge
+  - `CimDataset { entries: FastMap<mrid, CimEntry>, by_type: FastMap<type_name, Vec<mrid>> }`
+  - `FastMap`/`FieldMap` (in `cimmodel::base`) use a hand-written Fx-style hasher instead of
+    SipHash: −12% decode. It has a fixed seed, so map iteration — and therefore `by_type`
+    order after `merge` and violation order — is reproducible run to run. Core crates take
+    no dependency for it; do not pull in crates that are only in `Cargo.lock` via oxigraph
+- `convert.rs` — hand-written JSON and RDF/XML export (`dataset_to_json`, `dataset_to_xml`,
+  `dataset_to_xml_for_profile`), used by `cimoxide-cli` and `cimoxide-py`
 
 ### `cimvalidation` — SHACL Validators (`cgmes_shapes.rs`, `nc_shapes.rs`, `nc_profiles.rs` are generated; do not hand-edit those)
 Both families validate through one interpreter, `bag.rs`, over a shape table:
@@ -94,7 +101,7 @@ Materialises a `CimDataset` into an in-memory oxigraph store (`default-features 
 no RocksDB/C++ toolchain) and queries it:
 - `CimStore::from_dataset(&ds)` / `from_dataset_with(&ds, &GraphOptions)` / `.query(sparql)`
 - `quads(&ds, &opts, &mut stats)` streams quads without a store
-- Relies on the `TYPE_NS` / `ATTR_RDF` tables `cimgen` emits into `cimstructs`, which are the
+- Relies on the `TYPE_NS` / `ATTR_RDF` tables `cimgen` emits into `cimmodel`, which are the
   only runtime source of per-attribute IRIs — the decoder resolves an element's class by
   namespace but keeps field keys as bare `Class.attr`
 - `cimoxide-cli` (`cimcli query`) and `cimoxide-py` (`dataset.query(...)`) depend on it
@@ -124,17 +131,17 @@ bind `cim` and `base` differently.
 
 ### Loading the NC table from RDFS
 
-`cimstructs::schema_source` can build the NC class table from RDFS at runtime
+`cimmodel::schema_source` can build the NC class table from RDFS at runtime
 instead of using the generated one, behind the `dynamic-schema` feature (off by
 default; on for `cimoxide-cli` and `cimoxide-py`). Resolution: explicit
 `load_from` > `CIMOXIDE_RDFS_DIR` > generated table.
 
 The parser lives in `cimschema/` (package `cimoxide-schema`) so both `cimgen`
-at build time and `cimstructs` at runtime use the same code. `postprocess` is
+at build time and `cimmodel` at runtime use the same code. `postprocess` is
 **not** optional for either: attribute classification, profile origins and
 namespace fill-in all happen there.
 
-`cimstructs/tests/dynamic_schema.rs` compares the runtime table against the
+`cimmodel/tests/dynamic_schema.rs` compares the runtime table against the
 generated one field by field. The two are built by separate code paths — the
 loader in `schema_source.rs` and `classes_gen.rs` in cimgen — and nothing else
 stops them drifting.
@@ -279,7 +286,7 @@ directory alone never makes CGMES try to load from it. CGMES classes are
 compiled structs, so a CGMES table from another release can name classes this
 build does not decode; shapes on those match nothing.
 
-The feature also enables `cimstructs/dynamic-schema`, because the shapes
+The feature also enables `cimmodel/dynamic-schema`, because the shapes
 resolve against the class table: a shape table from one release and a class
 table from another would disagree about what a class is. The RDFS is found
 beside the SHACL directory (`<dir>/../RDFS`, the way `PROF` is), so a load is
@@ -316,7 +323,7 @@ the combined "ALL" manifest imports that file.
 ## Codegen Stability Tests
 
 `cimgen/tests/codegen.rs` contains four hash-based tests that detect unintended generator drift:
-- `cimstructs_codegen_stable` — Hashes regenerated struct output against a stored SHA-256
+- `cimmodel_codegen_stable` — Hashes regenerated struct output against a stored SHA-256
 - `cgmes_shapes_codegen_stable` — Same for the CGMES shape table, which validation runs
 - `nc_classes_codegen_stable` — Hashes the NC class table alone, so a CGMES-only change
   cannot mask an NC change
@@ -339,10 +346,8 @@ the family is recognisable in the registry. `cargo -p` takes the package name.
 |---|---|
 | `cimoxide/` | `cimoxide` — facade re-exporting the crates below |
 | `cimgen/` | `cimoxide-gen` (binary stays `cimgen`) |
-| `cimstructs/` | `cimoxide-structs` |
-| `cimdecoder/` | `cimoxide-decoder` |
+| `cimmodel/` | `cimoxide-model` |
 | `cimvalidation/` | `cimoxide-validation` |
-| `cimconvert/` | `cimoxide-convert` |
 | `cimsparql/` | `cimoxide-sparql` |
 | `cimoxide-cli/` | `cimoxide-cli` (binary `cimcli`) |
 

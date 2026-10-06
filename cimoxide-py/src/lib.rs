@@ -4,7 +4,7 @@ use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use cimdecoder::{CimDataset, CimEntry};
+use cimmodel::{CimDataset, CimEntry};
 
 fn map_err<E: std::fmt::Display>(e: E) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
@@ -203,7 +203,7 @@ impl PyCimDataset {
             .and_then(|v| v.as_str())
             .ok_or_else(|| PyValueError::new_err("element dict missing \"_type\" key"))?
             .to_string();
-        let reg = cimstructs::registry::json_registry();
+        let reg = cimmodel::registry::json_registry();
         let ctor = reg
             .get(type_name.as_str())
             .ok_or_else(|| PyValueError::new_err(format!("unknown CIM type \"{type_name}\"")))?;
@@ -307,7 +307,7 @@ impl PyCimDataset {
     /// synthetic header is generated.
     fn to_xml_for_profile(&self, profile: &str) -> PyResult<String> {
         let ds = self.lock()?;
-        cimconvert::dataset_to_xml_for_profile(&ds, profile).map_err(map_err)
+        cimmodel::convert::dataset_to_xml_for_profile(&ds, profile).map_err(map_err)
     }
 
     /// Run a SPARQL 1.1 query over this dataset.
@@ -385,7 +385,7 @@ impl PyCimDataset {
         let dir_path = Path::new(dir);
         std::fs::create_dir_all(dir_path).map_err(map_err)?;
         for profile in &profiles {
-            let xml = cimconvert::dataset_to_xml_for_profile(&ds, profile).map_err(map_err)?;
+            let xml = cimmodel::convert::dataset_to_xml_for_profile(&ds, profile).map_err(map_err)?;
             let path = dir_path.join(format!("{profile}.xml"));
             std::fs::write(&path, &xml).map_err(map_err)?;
         }

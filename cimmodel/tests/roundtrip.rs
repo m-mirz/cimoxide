@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use cimdecoder::CimDataset;
-use cimconvert::{dataset_from_json, dataset_to_json, dataset_to_xml, dataset_to_xml_for_profile};
+use cimmodel::CimDataset;
+use cimmodel::convert::{dataset_from_json, dataset_to_json, dataset_to_xml, dataset_to_xml_for_profile};
 
 fn test_xml_path() -> &'static Path {
     Path::new("../testdata/test_003.xml")
@@ -447,7 +447,7 @@ fn enum_values_are_absolute_iris() {
 fn eqbd_exports_its_elements() {
     let ds = decode_eqbd();
     let xml = dataset_to_xml_for_profile(&ds, "EQBD").expect("to_xml_for_profile failed");
-    let ds2 = cimdecoder::CimDataset::decode_str(&xml).expect("re-decode failed");
+    let ds2 = cimmodel::CimDataset::decode_str(&xml).expect("re-decode failed");
 
     assert_eq!(
         ds2.entries.len(),
@@ -477,7 +477,7 @@ fn every_profile_round_trips_its_own_file() {
         let path = base.join(format!("FullGrid_{profile}.xml"));
         let ds = CimDataset::decode_file(&path).expect("decode failed");
         let xml = dataset_to_xml_for_profile(&ds, profile).expect("encode failed");
-        let ds2 = cimdecoder::CimDataset::decode_str(&xml).expect("re-decode failed");
+        let ds2 = cimmodel::CimDataset::decode_str(&xml).expect("re-decode failed");
         assert_eq!(
             ds2.entries.len(),
             ds.entries.len(),
