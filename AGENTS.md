@@ -182,9 +182,12 @@ class) and reports a finding once per element and rule: a property shape shared
 by two node shapes reaches a subclass instance through both once abstract
 targets are expanded.
 
-`sh:targetNode cim:X` with `[ sh:inversePath rdf:type ]` counts the instances
-of class X — the focus node is the class, not an element — so the resolver
-skips that path and the rules using it are hand-written (`sparql/`).
+A finding's `property` is the path's first field key, written `^Field` when
+that step is inverse, as SHACL writes it: `^Terminal.ConductingEquipment` on a
+Switch means the terminals pointing at it. `sh:targetNode cim:X` with
+`[ sh:inversePath rdf:type ]` counts the instances of class X — the focus node
+is the class, not an element — so the resolver skips that path and the rules
+using it are hand-written (`sparql/`), labelled `^rdf:type`.
 
 The manifest tag `"COMMON"` (IdentifiedObject string lengths) runs on the merged
 dataset under `--common`. CGMES profile codes are checked before the NC index in
@@ -203,7 +206,7 @@ The pieces:
 - `cimvalidation/src/shapes.rs` — hand-written IR (`ShapeDef`, `PropShape`,
   `Check`, `Constraint`, `Path`)
 - `cimvalidation/src/nc_shapes.rs` — generated, 1,973 shapes / 14,842 checks
-- `cimvalidation/src/cgmes_shapes.rs` — generated, 850 shapes / 18,682 checks plus
+- `cimvalidation/src/cgmes_shapes.rs` — generated, 849 shapes / 18,681 checks plus
   node-level logic
 - `cimvalidation/src/nc_profiles.rs` — generated, profile IRI → short code
 - `cimvalidation/src/bag.rs` — hand-written interpreter

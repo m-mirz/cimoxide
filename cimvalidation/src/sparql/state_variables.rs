@@ -61,7 +61,7 @@ fn check_topological_island_count(dataset: &CimDataset) -> Vec<Violation> {
             rule_id:     "sv456:TopologicalIsland-instance".into(),
             name:        "C:456:SV:TopologicalIsland:instance".into(),
             class:       "TopologicalIsland".into(),
-            property:    "rdf:type".into(),
+            property:    "^rdf:type".into(),
             message:     "No TopologicalIsland instantiated.".into(),
             severity:    "sh:Violation".into(),
             description: String::new(),

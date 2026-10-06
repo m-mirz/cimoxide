@@ -800,7 +800,7 @@ fn check_geographical_region_count(dataset: &CimDataset) -> Vec<Violation> {
         rule_id:     "eq600:GeographicalRegion-EQ__4".into(),
         name:        "C:600:EQ:GeographicalRegion:EQ__4".into(),
         class:       "GeographicalRegion".into(),
-        property:    "rdf:type".into(),
+        property:    "^rdf:type".into(),
         message:     "Muliple GeographicalRegion-s are present.".into(),
         severity:    "sh:Violation".into(),
         description: String::new(),

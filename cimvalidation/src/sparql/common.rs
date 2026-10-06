@@ -307,7 +307,7 @@ fn check_file_header_exists(dataset: &CimDataset) -> Vec<Violation> {
         rule_id:   "all600:All-HGEN2".into(),
         name:      "C:600:ALL:NA:HGEN2".into(),
         class:     "FullModel".into(),
-        property:  "rdf:type".into(),
+        property:  "^rdf:type".into(),
         message:   "File header is missing.".into(),
         severity:  "sh:Violation".into(),
         description: String::new(),

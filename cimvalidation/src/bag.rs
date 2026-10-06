@@ -306,16 +306,23 @@ fn violation(mrid: &str, class: &str, property: &str, c: &Check) -> Violation {
 
 /// A path's field key, for the `property` column of a violation: the property
 /// of the focus element the path starts from.
-fn path_label(path: &Path) -> &'static str {
+fn path_label(path: &Path) -> std::borrow::Cow<'static, str> {
+    use std::borrow::Cow;
+    // An inverse step reads as SHACL writes it: `^Terminal.ConductingEquipment`
+    // on a Switch means the terminals pointing at it, not an attribute of its own.
+    let inverse = |f: &str| Cow::Owned(format!("^{f}"));
     match path {
-        Path::Forward(f) | Path::Inverse(f) => f,
+        Path::Forward(f) => Cow::Borrowed(f),
+        Path::Inverse(f) => inverse(f),
         Path::Alternative(branches) => match branches.first() {
-            Some(AltBranch::Forward(f)) | Some(AltBranch::Inverse(f)) => f,
-            None => "",
+            Some(AltBranch::Forward(f)) => Cow::Borrowed(f),
+            Some(AltBranch::Inverse(f)) => inverse(f),
+            None => Cow::Borrowed(""),
         },
         Path::Chain(steps) => match steps.first() {
-            Some(Step::Forward(f)) | Some(Step::Inverse(f)) => f,
-            _ => "",
+            Some(Step::Forward(f)) => Cow::Borrowed(f),
+            Some(Step::Inverse(f)) => inverse(f),
+            _ => Cow::Borrowed(""),
         },
     }
 }
@@ -408,7 +415,7 @@ fn check_prop<'a>(
     let values = resolve(ctx, el, mrid, &prop.path);
     for c in prop.checks {
         if fails(ctx, el, &values, &c.constraint) {
-            out.push(violation(mrid, class, path_label(&prop.path), c));
+            out.push(violation(mrid, class, &path_label(&prop.path), c));
         }
     }
 }
