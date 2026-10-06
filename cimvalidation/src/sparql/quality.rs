@@ -23,22 +23,24 @@ pub fn check_base_voltage_in_eqbd_impl(dataset: &CimDataset, eqbd_bv_ids: &std::
     v
 }
 
+/// The rules are independent, so they run on their own threads; results are
+/// joined in the order listed.
 pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
-    let mut v = Vec::new();
-    v.extend(check_no_tap_changer_controls(dataset));
-    v.extend(check_no_regulating_controls(dataset));
-    v.extend(check_no_shunt_compensators(dataset));
-    v.extend(check_substation_has_no_voltage_levels(dataset));
-    v.extend(check_control_area_has_no_children(dataset));
-    v.extend(check_no_locations_for_conductors(dataset));
-    v.extend(check_ac_line_segment_xr_ratio(dataset));
-    v.extend(check_base_voltage_duplicate_nominal_voltage(dataset));
-    v.extend(check_power_transformer_ends_same_nominal_voltage(dataset));
-    v.extend(check_connectivity_node_open_ended(dataset));
-    v.extend(check_disconnector_cross_voltage_level(dataset));
-    v.extend(check_conform_load_cross_container(dataset));
-    v.extend(check_regulating_control_target_voltage_mismatch(dataset));
-    v
+    crate::par::par_groups(dataset, &[
+        check_no_tap_changer_controls,
+        check_no_regulating_controls,
+        check_no_shunt_compensators,
+        check_substation_has_no_voltage_levels,
+        check_control_area_has_no_children,
+        check_no_locations_for_conductors,
+        check_ac_line_segment_xr_ratio,
+        check_base_voltage_duplicate_nominal_voltage,
+        check_power_transformer_ends_same_nominal_voltage,
+        check_connectivity_node_open_ended,
+        check_disconnector_cross_voltage_level,
+        check_conform_load_cross_container,
+        check_regulating_control_target_voltage_mismatch,
+    ])
 }
 
 fn count_by_type(dataset: &CimDataset, type_name: &str) -> usize {

@@ -211,8 +211,8 @@ to 6.3 ms, the CO profile from 47.4 to 40.8 ms, and all 18 profiles from 469 to
 CGMES now validates the same way: its shapes are a table (`cgmes_shapes.rs`, 849 shapes,
 18,681 checks) run by the same interpreter, replacing ~250,000 lines of generated per-check
 functions. On RealGrid (189,000 elements) `cimcli validate` went from 2,304 ms to about
-1,530 ms while checking more, and `cimoxide-validation` compiles in 9.5 s instead of
-123.5 s. The interpreter walks element-major — each target element once, with every shape
+1,370 ms while checking more (1,435 ms with `--common --quality`), and `cimoxide-validation`
+compiles in 9.5 s instead of 123.5 s. The interpreter walks element-major — each target element once, with every shape
 that targets its class — because reaching an element's fields is the cost of a check, not
 the comparison itself.
 

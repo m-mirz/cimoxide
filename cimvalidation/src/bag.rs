@@ -17,6 +17,7 @@ use cimdecoder::{CimDataset, CimEntry};
 use cimstructs::base::{FastMap, FastSet, FieldMap, FieldValue, GenericElement};
 
 use crate::helpers;
+use crate::par::{par_concat, par_map, runs, threads_for};
 use crate::shapes::{
     AltBranch, Branch, Check, ClosedShape, Constraint, Logic, LogicOp, NodeKind, Path, PropShape, ShapeDef, Step,
     Target,
@@ -557,29 +558,56 @@ fn build_indexes<'a>(
     list_fields: &[&'static str],
     subject_fields: &[&'static str],
 ) -> (ReverseIndex<'a>, FastMap<&'static str, Vec<Resolved<'a>>>) {
-    let mut reverse = ReverseIndex::default();
-    let mut subjects: FastMap<&'static str, Vec<Resolved<'a>>> =
-        subject_fields.iter().map(|f| (*f, Vec::new())).collect();
     if count_fields.is_empty() && list_fields.is_empty() && subject_fields.is_empty() {
-        return (reverse, subjects);
+        return (ReverseIndex::default(), FastMap::default());
     }
-    for (mrid, entry) in &ds.entries {
-        let Some(f) = source.fields(entry) else { continue };
-        for field in count_fields {
-            for target in refs_of(f, field) {
-                *reverse.counts.entry((target.as_str(), *field)).or_insert(0) += 1;
+    type Partial<'a> = (ReverseIndex<'a>, FastMap<&'static str, Vec<Resolved<'a>>>);
+    let index = |entries: &mut dyn Iterator<Item = (&'a String, &'a CimEntry)>| -> Partial<'a> {
+        let mut reverse = ReverseIndex::default();
+        let mut subjects: FastMap<&'static str, Vec<Resolved<'a>>> =
+            subject_fields.iter().map(|f| (*f, Vec::new())).collect();
+        for (mrid, entry) in entries {
+            let Some(f) = source.fields(entry) else { continue };
+            for field in count_fields {
+                for target in refs_of(f, field) {
+                    *reverse.counts.entry((target.as_str(), *field)).or_insert(0) += 1;
+                }
+            }
+            for field in list_fields {
+                for target in refs_of(f, field) {
+                    reverse.sources.entry((target.as_str(), *field)).or_default().push(mrid);
+                }
+            }
+            for field in subject_fields {
+                if f.contains_key(*field) {
+                    let r = Resolved { mrid, class: entry.element.type_name(), fields: f };
+                    subjects.get_mut(field).expect("seeded above").push(r);
+                }
             }
         }
-        for field in list_fields {
-            for target in refs_of(f, field) {
-                reverse.sources.entry((target.as_str(), *field)).or_default().push(mrid);
-            }
+        (reverse, subjects)
+    };
+
+    let threads = threads_for(ds.entries.len());
+    if threads == 1 {
+        return index(&mut ds.entries.iter());
+    }
+    // One pass split into contiguous runs of the map's own order, each indexed
+    // on its own thread, then merged in run order: the lists come out exactly
+    // as the single pass builds them.
+    let all: Vec<(&'a String, &'a CimEntry)> = ds.entries.iter().collect();
+    let parts: Vec<Partial<'a>> = par_map(&runs(&all, threads, |_| 1), |run| index(&mut run.iter().copied()));
+    let mut parts = parts.into_iter();
+    let (mut reverse, mut subjects) = parts.next().expect("at least one run");
+    for (r, subj) in parts {
+        for (k, n) in r.counts {
+            *reverse.counts.entry(k).or_insert(0) += n;
         }
-        for field in subject_fields {
-            if f.contains_key(*field) {
-                let r = Resolved { mrid, class: entry.element.type_name(), fields: f };
-                subjects.get_mut(field).expect("seeded above").push(r);
-            }
+        for (k, list) in r.sources {
+            reverse.sources.entry(k).or_default().extend(list);
+        }
+        for (field, list) in subj {
+            subjects.get_mut(field).expect("seeded above").extend(list);
         }
     }
     (reverse, subjects)
@@ -672,6 +700,9 @@ pub fn validate_profile(
 ///
 /// If a target is a typed element whose block was dropped: there is nothing
 /// left to read, and skipping it would report the element as valid.
+/// Elements per slice of a class's targets, the unit of work a thread takes.
+const SLICE: usize = 2048;
+
 pub fn validate_shapes(ds: &CimDataset, source: Source, active: &[&ShapeDef]) -> Vec<Violation> {
     if active.is_empty() {
         return Vec::new();
@@ -756,30 +787,59 @@ pub fn validate_shapes(ds: &CimDataset, source: Source, active: &[&ShapeDef]) ->
         }
     }
 
-    let mut by_class: FastMap<&'static str, Vec<Resolved>> = FastMap::default();
-    let mut out = Vec::new();
-    for (class, shapes) in &by_class_shapes {
-        let targets = by_class.entry(class).or_insert_with(|| {
+    // The class-targeted walk is most of the work, and it is memory-bound:
+    // each element costs a cache miss into its own field map, which threads
+    // overlap well. Each class's elements are cut into slices, and the slices,
+    // in order, are dealt out to threads in contiguous runs of about equal
+    // size. Concatenating the runs in order gives exactly the sequential
+    // result, order included.
+    let work: Vec<(&[&ShapeDef], &[String])> = by_class_shapes
+        .iter()
+        .flat_map(|(class, shapes)| {
             ds.by_type
                 .get(*class)
-                .into_iter()
-                .flatten()
-                .filter_map(|mrid| resolve_target(ds, source, mrid))
-                .collect()
-        });
-        for t in targets.iter() {
-            for shape in shapes {
-                run_shape(&ctx, shape, t, &mut out);
+                .map_or(&[][..], Vec::as_slice)
+                .chunks(SLICE)
+                .map(move |mrids| (shapes.as_slice(), mrids))
+        })
+        .collect();
+    let total: usize = work.iter().map(|(_, m)| m.len()).sum();
+    let mut out = par_concat(&runs(&work, threads_for(total), |(_, m)| m.len()), |items| {
+        let mut out = Vec::new();
+        for (shapes, mrids) in items {
+            for t in mrids.iter().filter_map(|mrid| resolve_target(ds, source, mrid)) {
+                for shape in *shapes {
+                    run_shape(&ctx, shape, &t, &mut out);
+                }
             }
         }
-    }
-    for (field, shapes) in &by_subject_shapes {
-        for t in subjects.get(field).map_or(&[][..], Vec::as_slice) {
-            for shape in shapes {
-                run_shape(&ctx, shape, t, &mut out);
+        out
+    });
+
+    // The same for `sh:targetSubjectsOf`, whose targets the index pass found.
+    let work: Vec<(&[&ShapeDef], &[Resolved])> = by_subject_shapes
+        .iter()
+        .flat_map(|(field, shapes)| {
+            subjects
+                .get(field)
+                .map_or(&[][..], Vec::as_slice)
+                .chunks(SLICE)
+                .map(move |targets| (shapes.as_slice(), targets))
+        })
+        .collect();
+    let total: usize = work.iter().map(|(_, t)| t.len()).sum();
+    out.extend(par_concat(&runs(&work, threads_for(total), |(_, t)| t.len()), |items| {
+        let mut out = Vec::new();
+        for (shapes, targets) in items {
+            for t in *targets {
+                for shape in *shapes {
+                    run_shape(&ctx, shape, t, &mut out);
+                }
             }
         }
-    }
+        out
+    }));
+    let mut by_class: FastMap<&'static str, Vec<Resolved>> = FastMap::default();
     for shape in mixed {
         for t in targets_of(ds, source, shape, &subjects, &mut by_class) {
             run_shape(&ctx, shape, &t, &mut out);

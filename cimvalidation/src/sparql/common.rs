@@ -18,117 +18,146 @@ pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
 /// rules that used to share this pass are plain `sh:maxLength`/`sh:length`
 /// now and run from the CGMES shape table.)
 fn check_per_entry_block_checks(dataset: &CimDataset) -> Vec<Violation> {
-    // mRID → every (object, class) carrying it. Collected first and decided
-    // after the pass: deciding during it reported whichever duplicate the map
-    // iteration reached second, which with a randomly seeded hasher changed
-    // from run to run.
+    use std::borrow::Cow;
+    use std::hash::BuildHasher;
+
+    // Each element is checked on its own except for mRID uniqueness, so the
+    // walk is split into runs of elements on their own threads. Each run also
+    // sorts its elements' mRIDs into buckets by hash; a duplicate always lands
+    // in one bucket, so the buckets are then decided independently, again on
+    // threads.
     //
-    // Keyed on the mRID text as stored (borrowed; owned only for the rare
+    // mRIDs are keyed on the text as stored (borrowed; owned only for the rare
     // element that takes the `to_block` path), with the class as the static
     // name: cloning both for every element was most of this pass's time.
-    //
+    type Owner<'a> = (&'a String, &'static str, &'a cimdecoder::CimEntry);
+    type Candidate<'a> = (Cow<'a, str>, Owner<'a>);
+
+    let threads = crate::par::threads_for(dataset.entries.len());
+    let bucket_of = |m_rid: &str| {
+        (cimstructs::base::FastBuildHasher::default().hash_one(m_rid) % threads as u64) as usize
+    };
+    let all: Vec<(&String, &cimdecoder::CimEntry)> = dataset.entries.iter().collect();
+    let parts = crate::par::par_map(&crate::par::runs(&all, threads, |_| 1), |run| {
+        let mut v = Vec::new();
+        let mut buckets: Vec<Vec<Candidate<'_>>> = (0..threads).map(|_| Vec::new()).collect();
+        for &(id, entry) in run {
+            v.extend(id_uuid_violation(id, entry));
+            v.extend(id_deprecated_violation(id, entry));
+
+            // Fast path. These checks read the struct's view of the element
+            // (`to_block`), and building it for every element was most of this
+            // pass's time. The decoder's block holds every value that view does,
+            // as written, so if nothing in it could fail a check, nothing in the
+            // struct's view can either. Only elements with a candidate pay for
+            // `to_block` and the exact checks below.
+            if !entry.block.type_name.is_empty() && !may_fail_entry_checks(&entry.block.fields) {
+                if let Some(cimstructs::base::FieldValue::Text(m_rid)) = entry.block.fields.get("IdentifiedObject.mRID")
+                    && !m_rid.is_empty() {
+                        // Unconfirmed: re-read through `to_block` if it turns out
+                        // to be a duplicate, below.
+                        buckets[bucket_of(m_rid)].push((Cow::Borrowed(m_rid.as_str()), (id, entry.element.type_name(), entry)));
+                    }
+                continue;
+            }
+
+            let block = entry.element.to_block();
+            let class = &block.type_name;
+
+            // --- mRID uniqueness (all600:All-GENC1), collected ---
+            if let Some(cimstructs::base::FieldValue::Text(m_rid)) = block.fields.get("IdentifiedObject.mRID")
+                && !m_rid.is_empty() {
+                    buckets[bucket_of(m_rid)].push((Cow::Owned(m_rid.clone()), (id, entry.element.type_name(), entry)));
+                }
+
+            for (key, val) in &block.fields {
+                let s = match val {
+                    cimstructs::base::FieldValue::Text(s) => s,
+                    _ => continue,
+                };
+
+                // --- float special values (all600:Float-specialValues) ---
+                if let Ok(f) = s.trim().parse::<f64>()
+                    && (f.is_nan() || f.is_infinite()) {
+                        v.push(Violation {
+                            object_id: id.clone(),
+                            rule_id:   "all600:Float-specialValues".into(),
+                            name:      "C:301:ALL:Float:specialValues".into(),
+                            class:     class.clone(),
+                            property:  key.clone(),
+                            message:   "INF or NaN used in an attribute defined as float.".into(),
+                            severity:  "sh:Violation".into(),
+                            description: String::new(),
+                        });
+                    }
+            }
+        }
+        (v, buckets)
+    });
+
+    let mut v = Vec::new();
+    let mut by_bucket: Vec<Vec<Vec<Candidate<'_>>>> = (0..threads).map(|_| Vec::new()).collect();
+    for (part_v, buckets) in parts {
+        v.extend(part_v);
+        for (b, list) in buckets.into_iter().enumerate() {
+            by_bucket[b].push(list);
+        }
+    }
+
+    // --- mRID uniqueness (all600:All-GENC1), decided per bucket ---
     // The first owner of each mRID is kept inline and a list allocated only
     // when a second turns up: duplicates are rare, and a list per mRID was an
     // allocation per element.
-    type Owner<'a> = (&'a String, &'static str, &'a cimdecoder::CimEntry);
-    let mut first: HashMap<std::borrow::Cow<'_, str>, Owner<'_>> = HashMap::default();
-    let mut by_mrid: HashMap<std::borrow::Cow<'_, str>, Vec<Owner<'_>>> = HashMap::default();
-    fn collect<'a>(
-        first: &mut HashMap<std::borrow::Cow<'a, str>, Owner<'a>>,
-        by_mrid: &mut HashMap<std::borrow::Cow<'a, str>, Vec<Owner<'a>>>,
-        m_rid: std::borrow::Cow<'a, str>,
-        owner: Owner<'a>,
-    ) {
-        match first.entry(m_rid) {
-            std::collections::hash_map::Entry::Occupied(o) => {
-                by_mrid.entry(o.key().clone()).or_insert_with(|| vec![*o.get()]).push(owner);
-            }
-            std::collections::hash_map::Entry::Vacant(slot) => {
-                slot.insert(owner);
-            }
-        }
-    }
-    let mut v = Vec::new();
-    for (id, entry) in &dataset.entries {
-        v.extend(id_uuid_violation(id, entry));
-        v.extend(id_deprecated_violation(id, entry));
-
-        // Fast path. These checks read the struct's view of the element
-        // (`to_block`), and building it for every element was most of this
-        // pass's time. The decoder's block holds every value that view does,
-        // as written, so if nothing in it could fail a check, nothing in the
-        // struct's view can either. Only elements with a candidate pay for
-        // `to_block` and the exact checks below.
-        if !entry.block.type_name.is_empty() && !may_fail_entry_checks(&entry.block.fields) {
-            if let Some(cimstructs::base::FieldValue::Text(m_rid)) = entry.block.fields.get("IdentifiedObject.mRID")
-                && !m_rid.is_empty() {
-                    // Unconfirmed: re-read through `to_block` if it turns out
-                    // to be a duplicate, below.
-                    collect(&mut first, &mut by_mrid, std::borrow::Cow::Borrowed(m_rid.as_str()), (id, entry.element.type_name(), entry));
+    let mut genc1 = crate::par::par_concat(&crate::par::runs(&by_bucket, threads, |_| 1), |buckets| {
+        let mut out = Vec::new();
+        for lists in buckets {
+            let mut first: HashMap<&Cow<'_, str>, Owner<'_>> = HashMap::default();
+            let mut by_mrid: HashMap<&Cow<'_, str>, Vec<Owner<'_>>> = HashMap::default();
+            for (m_rid, owner) in lists.iter().flatten() {
+                match first.entry(m_rid) {
+                    std::collections::hash_map::Entry::Occupied(o) => {
+                        by_mrid.entry(*o.key()).or_insert_with(|| vec![*o.get()]).push(*owner);
+                    }
+                    std::collections::hash_map::Entry::Vacant(slot) => {
+                        slot.insert(*owner);
+                    }
                 }
-            continue;
-        }
-
-        let block = entry.element.to_block();
-        let class = &block.type_name;
-
-        // --- mRID uniqueness (all600:All-GENC1), collected ---
-        if let Some(cimstructs::base::FieldValue::Text(m_rid)) = block.fields.get("IdentifiedObject.mRID")
-            && !m_rid.is_empty() {
-                collect(&mut first, &mut by_mrid, std::borrow::Cow::Owned(m_rid.clone()), (id, entry.element.type_name(), entry));
             }
-
-        for (key, val) in &block.fields {
-            let s = match val {
-                cimstructs::base::FieldValue::Text(s) => s,
-                _ => continue,
-            };
-
-            // --- float special values (all600:Float-specialValues) ---
-            if let Ok(f) = s.trim().parse::<f64>()
-                && (f.is_nan() || f.is_infinite()) {
-                    v.push(Violation {
+            // The smallest object id counts as the original and every other
+            // one is reported, so the result does not depend on iteration
+            // order.
+            for (m_rid, owners) in by_mrid.iter_mut() {
+                // Duplicates are rare, so confirm each owner against the
+                // struct's view, which is what decides here; the fast path
+                // read the raw block.
+                owners.retain(|(_, _, entry)| {
+                    matches!(entry.element.to_block().fields.get("IdentifiedObject.mRID"),
+                        Some(cimstructs::base::FieldValue::Text(m)) if m.as_str() == m_rid.as_ref())
+                });
+                if owners.len() < 2 {
+                    continue;
+                }
+                owners.sort_unstable_by(|a, b| a.0.cmp(b.0));
+                for (id, class, _) in owners.drain(1..) {
+                    out.push(Violation {
                         object_id: id.clone(),
-                        rule_id:   "all600:Float-specialValues".into(),
-                        name:      "C:301:ALL:Float:specialValues".into(),
-                        class:     class.clone(),
-                        property:  key.clone(),
-                        message:   "INF or NaN used in an attribute defined as float.".into(),
+                        rule_id:   "all600:All-GENC1".into(),
+                        name:      "C:600:ALL:NA:GENC1".into(),
+                        class:     class.to_string(),
+                        property:  "IdentifiedObject.mRID".into(),
+                        message:   "Not a unique identifier.".into(),
                         severity:  "sh:Violation".into(),
                         description: String::new(),
                     });
                 }
+            }
         }
-    }
-
-    drop(first);
-    // --- mRID uniqueness (all600:All-GENC1), decided ---
-    // The smallest object id counts as the original and every other one is
-    // reported, so the result does not depend on iteration order.
-    for (m_rid, owners) in by_mrid.iter_mut().filter(|(_, o)| o.len() > 1) {
-        // Duplicates are rare, so confirm each owner against the struct's
-        // view, which is what decides here; the fast path read the raw block.
-        owners.retain(|(_, _, entry)| {
-            matches!(entry.element.to_block().fields.get("IdentifiedObject.mRID"),
-                Some(cimstructs::base::FieldValue::Text(m)) if m.as_str() == m_rid.as_ref())
-        });
-        if owners.len() < 2 {
-            continue;
-        }
-        owners.sort_unstable_by(|a, b| a.0.cmp(b.0));
-        for (id, class, _) in owners.drain(1..) {
-            v.push(Violation {
-                object_id: id.clone(),
-                rule_id:   "all600:All-GENC1".into(),
-                name:      "C:600:ALL:NA:GENC1".into(),
-                class:     class.to_string(),
-                property:  "IdentifiedObject.mRID".into(),
-                message:   "Not a unique identifier.".into(),
-                severity:  "sh:Violation".into(),
-                description: String::new(),
-            });
-        }
-    }
+        out
+    });
+    // Which bucket an mRID lands in depends on the thread count; sorting keeps
+    // the output the same on every machine.
+    genc1.sort_unstable_by(|a, b| a.object_id.cmp(&b.object_id));
+    v.extend(genc1);
     v
 }
 

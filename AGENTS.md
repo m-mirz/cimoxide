@@ -196,6 +196,17 @@ Switch means the terminals pointing at it. `sh:targetNode cim:X` with
 is the class, not an element — so the resolver skips that path and the rules
 using it are hand-written (`sparql/`), labelled `^rdf:type`.
 
+Walks over a large dataset run on threads (`std::thread::scope`, no
+dependency; `cimvalidation/src/par.rs`): the interpreter's class and subject
+walks and its index pass, the per-element SPARQL walks, and the independent
+SPARQL rule groups. Validation is memory-bound, a cache miss per element, and
+threads overlap those. Work is cut into contiguous runs whose results are
+concatenated in run order, so the output is byte-identical to a single thread
+(GENC1's findings are sorted, since its hash buckets depend on the thread
+count). Below 20,000 elements a walk stays on one thread, so unit tests on
+small fixtures do not exercise the split — compare `cimcli` output on the real
+configurations for that.
+
 The manifest tag `"COMMON"` (IdentifiedObject string lengths) runs on the merged
 dataset under `--common`. CGMES profile codes are checked before the NC index in
 `validate_profile_local`, so CGMES data never loads the NC table.

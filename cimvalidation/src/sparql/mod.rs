@@ -93,21 +93,22 @@ pub fn validate_profile_local(dataset: &CimDataset, profile: &str, cfg: &Config)
 }
 
 /// Cross-profile SPARQL checks that require the fully merged dataset.
+///
+/// The rule groups are independent reads of the same dataset, each a walk
+/// over much of it, so they run on their own threads. Results are joined in a
+/// fixed order, so the output does not depend on scheduling.
 pub fn validate_crossprofile(dataset: &CimDataset, cfg: &Config) -> Vec<Violation> {
-    let mut violations: Vec<Violation> = Vec::new();
-
+    type Group = fn(&CimDataset) -> Vec<Violation>;
+    let mut groups: Vec<Group> = Vec::new();
     if cfg.common {
-        violations.extend(common::validate(dataset));
+        groups.push(common::validate);
         if cfg.solved {
-            violations.extend(common_solved_mas::validate(dataset));
+            groups.push(common_solved_mas::validate);
         }
     }
-
     if cfg.quality {
-        violations.extend(quality::validate(dataset));
+        groups.push(quality::validate);
     }
-
-    violations.extend(prof10::validate(dataset));
-
-    violations
+    groups.push(prof10::validate);
+    crate::par::par_groups(dataset, &groups)
 }

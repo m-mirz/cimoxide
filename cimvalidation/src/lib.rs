@@ -26,6 +26,7 @@ pub struct Config {
 }
 
 pub mod helpers;
+mod par;
 
 // ── property-bag families ──────────────────────────────────────────────────
 //
@@ -177,12 +178,18 @@ pub fn validate_profile_local(dataset: &cimdecoder::CimDataset, profile: &str, c
 
 
 /// Phase 2 — crossprofile: run crossprofile SHACL + cross-profile SPARQL on the merged dataset.
+///
+/// The two halves run concurrently; the SPARQL half spreads its rule groups
+/// over threads of its own.
 pub fn validate_crossprofile(dataset: &cimdecoder::CimDataset, cfg: &Config) -> Vec<Violation> {
-    let mut v = validate_crossprofile_shacl(dataset, cfg);
-    v.extend(sparql::validate_crossprofile(dataset, cfg));
+    let (mut v, sparql) = std::thread::scope(|s| {
+        let sparql = s.spawn(|| sparql::validate_crossprofile(dataset, cfg));
+        let shacl = validate_crossprofile_shacl(dataset, cfg);
+        (shacl, sparql.join().expect("validation thread panicked"))
+    });
+    v.extend(sparql);
     v
 }
-
 
 /// Build a combined `Config` by auto-detecting profiles/solved-state across all files,
 /// then applying explicit overrides (each `None`/default leaves the detected value).

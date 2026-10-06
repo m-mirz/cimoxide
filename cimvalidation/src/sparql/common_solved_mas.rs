@@ -2,20 +2,38 @@ use cimstructs::base::{FastMap as HashMap, FastSet as HashSet};
 use cimdecoder::CimDataset;
 use crate::Violation;
 
+/// The rules are independent, so they run on their own threads: those that
+/// need the topology once it is built, the rest meanwhile. Results are joined
+/// in the order listed.
 pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
-    let topo = Topology::build(dataset);
-    let mut v = Vec::new();
-    v.extend(check_angle_reference(dataset, &topo));
-    v.extend(check_dangling_references(dataset));
-    v.extend(check_sv_tap_step_position_sync(dataset));
-    v.extend(check_sv_shunt_compensator_sections_sync(dataset));
-    v.extend(check_state_variables_instantiated(dataset, &topo));
-    v.extend(check_sv_status_instance(dataset, &topo));
-    v.extend(check_sv_shunt_compensator_sections_instance(dataset, &topo));
-    v.extend(check_sv_tap_step_instance(dataset, &topo));
-    v.extend(check_regulating_control_contradictory(dataset));
-    v.extend(check_regulating_control_same_island(dataset, &topo));
-    v
+    type Plain = fn(&CimDataset) -> Vec<Violation>;
+    type OnTopology = fn(&CimDataset, &Topology) -> Vec<Violation>;
+    const PLAIN: &[Plain] = &[
+        check_dangling_references,
+        check_sv_tap_step_position_sync,
+        check_sv_shunt_compensator_sections_sync,
+        check_regulating_control_contradictory,
+    ];
+    const ON_TOPOLOGY: &[OnTopology] = &[
+        check_angle_reference,
+        check_state_variables_instantiated,
+        check_sv_status_instance,
+        check_sv_shunt_compensator_sections_instance,
+        check_sv_tap_step_instance,
+        check_regulating_control_same_island,
+    ];
+    // Outside the scope, so the threads can borrow it.
+    let built = std::sync::OnceLock::new();
+    std::thread::scope(|s| {
+        let plain: Vec<_> = PLAIN.iter().map(|f| s.spawn(move || f(dataset))).collect();
+        let topo = built.get_or_init(|| Topology::build(dataset));
+        let on_topology: Vec<_> = ON_TOPOLOGY.iter().map(|f| s.spawn(move || f(dataset, topo))).collect();
+        on_topology
+            .into_iter()
+            .chain(plain)
+            .flat_map(|h| h.join().expect("validation thread panicked"))
+            .collect()
+    })
 }
 
 /// Islands and terminals, built once per [`validate`] call.
@@ -145,8 +163,15 @@ fn is_dangling(dataset: &CimDataset, target: &str) -> bool {
 }
 
 fn check_dangling_references(dataset: &CimDataset) -> Vec<Violation> {
+    // A walk over every element, split into runs on their own threads.
+    let all: Vec<(&String, &cimdecoder::CimEntry)> = dataset.entries.iter().collect();
+    let threads = crate::par::threads_for(all.len());
+    crate::par::par_concat(&crate::par::runs(&all, threads, |_| 1), |run| dangling_in(dataset, run))
+}
+
+fn dangling_in(dataset: &CimDataset, run: &[(&String, &cimdecoder::CimEntry)]) -> Vec<Violation> {
     let mut v = Vec::new();
-    for (id, entry) in &dataset.entries {
+    for &(id, entry) in run {
         // The rule reads the struct's view of the element (`to_block`), and
         // building it for every element was most of its time. The struct's
         // references are the raw block's, copied unchanged, so an element
