@@ -525,8 +525,15 @@ decoded dataset — the same interpreter and table format the NC family uses. Wh
 applies to which profile, and when (not solved, cross-profile, header), is written out in
 `cimschema/src/shacl/cgmes_manifest.rs`, since CGMES ships no per-profile manifests.
 
-Targets follow SHACL: an abstract `sh:targetClass` applies to all its concrete subclasses,
-and a finding is reported once even when a property shape reaches an element through more
+Targets follow SHACL: an abstract `sh:targetClass` applies to all its concrete subclasses.
+One consequence: the SSH rule `IdentifiedObject.mRID-cardinality` targets `cim:Equipment`
+and now applies to every piece of equipment in an SSH file. Most SSH files in the ENTSO-E
+test configurations leave `IdentifiedObject.mRID` out (18,761 findings on RealGrid), while the
+SSH vocabulary and SHACL require it exactly once. cimoxide reports it as written. Note that
+its rule id, `ido:IdentifiedObject.mRID-cardinality`, is shared by every profile, so
+`--silence` would hide a missing mRID in EQ as well.
+
+A finding is reported once even when a property shape reaches an element through more
 than one node shape. `sh:datatype` and `sh:nodeKind` are checked: the interpreter reads the
 text as written, so a malformed number or a literal where a reference belongs is reported
 rather than silently dropped by typed decoding. The IdentifiedObject string-length rules

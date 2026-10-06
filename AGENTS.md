@@ -159,7 +159,14 @@ writes the file → tag mapping out (`"EQ"`, `"SSH!NS"` for not-solved,
 CGMES targets follow SHACL: an abstract `sh:targetClass` expands to its
 concrete subclasses. The generated validators looked the literal class up and
 so checked nothing for those — e.g. SSH `IdentifiedObject.mRID-cardinality`
-(9,691 findings on RealGrid) and `Equipment.inService`.
+and `Equipment.inService`.
+
+The SSH mRID rule is kept as written on purpose. It fires on every Equipment
+element of nearly every SSH test configuration (18,761 on RealGrid), which
+leaves the attribute out; the SSH vocabulary says `1..1` and the SHACL agrees.
+Do not skip or downgrade it. Its rule id `ido:IdentifiedObject.mRID-cardinality`
+is shared by all ten profiles' constraint files, so `--silence` hides it in EQ
+too.
 
 Beyond NC's constraints the IR has numeric ranges, `sh:length`,
 `sh:lessThan(OrEquals)`, `sh:not [sh:class]`, sequence paths (`Path::Chain`,
