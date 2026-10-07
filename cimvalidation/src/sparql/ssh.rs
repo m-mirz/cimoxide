@@ -86,7 +86,10 @@ fn check_cs_converter_value_range(dataset: &CimDataset) -> Vec<Violation> {
         if let Some(csc) = Fields::of_class(entry, "CsConverter") {
             let mode = match csc.enumeration("CsConverter.operatingMode") { Some(r) => r, None => continue };
             if mode == rectifier {
-                if csc.f64("CsConverter.maxAlpha").unwrap_or(0.0) > 18.0 {
+                // As the SPARQL: a bound value is required, and an absent
+                // maximum leaves only the lower bound (`?value > ?max` is an
+                // error, so false, when ?max is unbound).
+                if csc.f64("CsConverter.maxAlpha").is_some_and(|max| max > 18.0) {
                     v.push(Violation {
                         object_id: mrid.clone(), rule_id: "sshu:CsConverter.maxAlpha-valueRangeTypical".into(),
                         name: "C:301:EQ:CsConverter.maxAlpha:valueRangeTypical".into(), class: "CsConverter".into(),
@@ -94,9 +97,9 @@ fn check_cs_converter_value_range(dataset: &CimDataset) -> Vec<Violation> {
                         severity: "sh:Warning".into(), description: String::new(),
                     });
                 }
-                let min_a = csc.f64("CsConverter.minAlpha").unwrap_or(0.0);
-                let max_a = csc.f64("CsConverter.maxAlpha").unwrap_or(0.0);
-                if min_a < 10.0 || min_a > max_a {
+                if let Some(min_a) = csc.f64("CsConverter.minAlpha")
+                    && (min_a < 10.0 || csc.f64("CsConverter.maxAlpha").is_some_and(|max_a| min_a > max_a))
+                {
                     v.push(Violation {
                         object_id: mrid.clone(), rule_id: "sshu:CsConverter.minAlpha-valueRangeTypical".into(),
                         name: "C:301:SV:CsConverter.minAlpha:valueRangeTypical".into(), class: "CsConverter".into(),
@@ -105,7 +108,7 @@ fn check_cs_converter_value_range(dataset: &CimDataset) -> Vec<Violation> {
                     });
                 }
             } else if mode == inverter {
-                if csc.f64("CsConverter.maxGamma").unwrap_or(0.0) > 20.0 {
+                if csc.f64("CsConverter.maxGamma").is_some_and(|max| max > 20.0) {
                     v.push(Violation {
                         object_id: mrid.clone(), rule_id: "sshu:CsConverter.maxGamma-valueRangeTypical".into(),
                         name: "C:301:EQ:CsConverter.maxGamma:valueRangeTypical".into(), class: "CsConverter".into(),
@@ -113,9 +116,9 @@ fn check_cs_converter_value_range(dataset: &CimDataset) -> Vec<Violation> {
                         severity: "sh:Warning".into(), description: String::new(),
                     });
                 }
-                let min_g = csc.f64("CsConverter.minGamma").unwrap_or(0.0);
-                let max_g = csc.f64("CsConverter.maxGamma").unwrap_or(0.0);
-                if min_g < 17.0 || min_g > max_g {
+                if let Some(min_g) = csc.f64("CsConverter.minGamma")
+                    && (min_g < 17.0 || csc.f64("CsConverter.maxGamma").is_some_and(|max_g| min_g > max_g))
+                {
                     v.push(Violation {
                         object_id: mrid.clone(), rule_id: "sshu:CsConverter.minGamma-valueRangeTypical".into(),
                         name: "C:301:SV:CsConverter.minGamma:valueRangeTypical".into(), class: "CsConverter".into(),

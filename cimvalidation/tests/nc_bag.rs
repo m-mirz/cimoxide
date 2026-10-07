@@ -254,6 +254,32 @@ fn the_shape_table_is_populated() {
     assert!(checks > 10_000, "only {checks} checks");
 }
 
+/// The APL writes one closed `AllowedProperties` shape per class. A subclass
+/// with its own is held to that list alone: held to its superclass's as well,
+/// every property it adds would be reported — `PinTerminal.kind` against
+/// `GateInputPin`'s list, which relicapgrid's data showed.
+#[test]
+fn a_closed_shape_leaves_subclasses_with_their_own_to_them() {
+    use cimvalidation::shapes::Target;
+    let classes_of = |rule: &str| -> Vec<&'static str> {
+        let shape = cimvalidation::nc_shapes::SHAPES
+            .iter()
+            .find(|s| s.closed.as_ref().is_some_and(|c| c.rule_id == rule))
+            .unwrap_or_else(|| panic!("no closed shape {rule}"));
+        shape
+            .targets
+            .iter()
+            .flat_map(|t| match t {
+                Target::Class(c) => c.to_vec(),
+                _ => Vec::new(),
+            })
+            .collect()
+    };
+    let gate = classes_of("er:GateInputPin-AllowedProperties");
+    assert!(!gate.contains(&"nc:PinTerminal") && !gate.contains(&"nc:PinDCTerminal"), "{gate:?}");
+    assert!(classes_of("er:PinTerminal-AllowedProperties").contains(&"nc:PinTerminal"));
+}
+
 // ── profile detection ──────────────────────────────────────────────────────
 
 /// CGMES announces its profiles in an `md:FullModel` header. NC uses DCAT: a

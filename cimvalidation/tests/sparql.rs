@@ -537,3 +537,51 @@ fn sparql_eq_geographical_region_count() {
     assert_eq!(count(xml(&region("_GR1"))), 0);
     assert_eq!(count(xml(&(region("_GR1") + &region("_GR2")))), 1);
 }
+
+/// One CsConverter in `operatingMode`, carrying `fields`, validated as `profile`.
+fn cs_converter(profile: &str, mode: &str, fields: &str) -> Vec<Violation> {
+    let xml = format!(
+        r##"<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/CIM100#">
+  <cim:CsConverter rdf:ID="_CSC">
+    <cim:CsConverter.operatingMode rdf:resource="http://iec.ch/TC57/CIM100#CsOperatingModeKind.{mode}"/>
+{fields}  </cim:CsConverter>
+</rdf:RDF>"##
+    );
+    let ds = cimmodel::CimDataset::decode_str(&xml).unwrap();
+    let cfg = Config { profiles: vec![profile.into()], ..Default::default() };
+    validate(&ds, &cfg).into_iter().filter(|v| v.rule_id.contains("valueRangeTypical")).collect()
+}
+
+fn rules(v: &[Violation]) -> Vec<&str> {
+    let mut r: Vec<&str> = v.iter().map(|v| v.rule_id.split_once(':').unwrap().1).collect();
+    r.sort_unstable();
+    r
+}
+
+/// The SPARQL binds `$this $PATH ?value`, so an absent angle is not a
+/// violation, and `?value > ?max` with `?max` unbound is false, so an absent
+/// maximum leaves only the lower bound. Both used to read as 0.
+#[test]
+fn cs_converter_angle_ranges_ignore_absent_values() {
+    assert!(cs_converter("SSH", "rectifier", "").is_empty());
+    assert!(cs_converter("SSH", "inverter", "").is_empty());
+    assert!(cs_converter("SV", "rectifier", "").is_empty());
+    assert!(cs_converter("SV", "inverter", "").is_empty());
+    let field = |name: &str, v: &str| format!("    <cim:CsConverter.{name}>{v}</cim:CsConverter.{name}>\n");
+
+    // Present and in range, no maximum.
+    assert!(cs_converter("SSH", "rectifier", &field("minAlpha", "10")).is_empty());
+    assert!(cs_converter("SSH", "inverter", &field("minGamma", "17")).is_empty());
+    // Below the lower bound, no maximum.
+    assert_eq!(rules(&cs_converter("SSH", "rectifier", &field("minAlpha", "5"))), ["CsConverter.minAlpha-valueRangeTypical"]);
+    // Above the maximum given.
+    let v = cs_converter("SSH", "rectifier", &(field("minAlpha", "15") + &field("maxAlpha", "12")));
+    assert_eq!(rules(&v), ["CsConverter.minAlpha-valueRangeTypical"]);
+    let v = cs_converter("SSH", "inverter", &(field("minGamma", "18") + &field("maxGamma", "25")));
+    assert_eq!(rules(&v), ["CsConverter.maxGamma-valueRangeTypical"]);
+    // The state variables.
+    assert!(cs_converter("SV", "rectifier", &field("alpha", "15")).is_empty());
+    assert_eq!(rules(&cs_converter("SV", "rectifier", &field("alpha", "90"))), ["CsConverter.alpha-valueRangeTypical"]);
+    assert_eq!(rules(&cs_converter("SV", "inverter", &field("gamma", "5"))), ["CsConverter.gamma-valueRangeTypical"]);
+}

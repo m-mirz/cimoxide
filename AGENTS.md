@@ -114,7 +114,11 @@ hand-written. Entry points:
   structs once held — last value of a repeated scalar, `true` only for the text `true`,
   numbers parsed into the attribute's own type, a single-valued reference written twice is
   absent — and the key is the attribute's declaring class (`Equipment.inService` on a
-  Breaker). Three rules (float special values and mRID uniqueness in `common.rs`, dangling
+  Breaker). An absent value is not a value: the SPARQL binds `$this $PATH ?value`
+  and `?x > ?max` is false when `?max` is unbound, so a rule must not default a
+  missing number to 0 — the CsConverter angle ranges did, and fired on every
+  rectifier and inverter in SSH files, whose limits are EQ attributes. About 170
+  `unwrap_or(0.0)` calls remain in `sparql/`; each is suspect. Three rules (float special values and mRID uniqueness in `common.rs`, dangling
   references in `common_solved_mas.rs`) read `sparql::view`, which rebuilds the structs'
   view — declared attributes only, in their typed form, iterated in the order a struct's
   map produced — from the class table and `profile_meta::ATTR_RDF`
@@ -219,6 +223,15 @@ list (`Constraint::QualifiedIn`). NCP's DatasetMetadata material implications,
 reads the text as written, where a malformed number is real. `sh:in` values are
 keyed the way the decoder stores an `rdf:resource` — after the last `#`, else
 the whole IRI, with prefixed names expanded first.
+
+`sh:closed` is the one exception to that expansion. The APL writes one closed
+`AllowedProperties` shape per class, listing its properties with inherited
+ones, so a closed shape governs its class's concrete descendants *except* those
+below a class with a closed shape of its own in the same file
+(`Resolver::closed_concrete`); otherwise every property a subclass adds would be
+reported against its superclass's list (`PinTerminal.kind` against
+`GateInputPin`). A closed shape that also carries checks would be split in two so
+the checks keep the full targets; none in the APL does.
 
 The interpreter walks element-major (each target once, every shape on its
 class) and reports a finding once per element and rule: a property shape shared

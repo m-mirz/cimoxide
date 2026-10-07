@@ -22,8 +22,9 @@ fn check_cs_converter_state_value_range(dataset: &CimDataset) -> Vec<Violation> 
         let mode = match obj.enumeration("CsConverter.operatingMode") { Some(r) => r, None => continue };
 
         if mode == RECTIFIER {
-            let alpha = obj.f64("CsConverter.alpha").unwrap_or(0.0);
-            if !(10.0..=18.0).contains(&alpha) {
+            // The SPARQL binds `$this $PATH ?value`: an absent value is not
+            // a violation.
+            if obj.f64("CsConverter.alpha").is_some_and(|alpha| !(10.0..=18.0).contains(&alpha)) {
                 v.push(Violation {
                     object_id:   mrid.clone(),
                     rule_id:     "svu:CsConverter.alpha-valueRangeTypical".into(),
@@ -35,20 +36,19 @@ fn check_cs_converter_state_value_range(dataset: &CimDataset) -> Vec<Violation> 
                     description: String::new(),
                 });
             }
-        } else if mode == INVERTER {
-            let gamma = obj.f64("CsConverter.gamma").unwrap_or(0.0);
-            if !(17.0..=20.0).contains(&gamma) {
-                v.push(Violation {
-                    object_id:   mrid.clone(),
-                    rule_id:     "svu:CsConverter.gamma-valueRangeTypical".into(),
-                    name:        "C:301:SV:CsConverter.gamma:valueRangeTypical".into(),
-                    class:       "CsConverter".into(),
-                    property:    "CsConverter.gamma".into(),
-                    message:     "The gamma value is outside typical range (17-20 degrees) for an inverter.".into(),
-                    severity:    "sh:Warning".into(),
-                    description: String::new(),
-                });
-            }
+        } else if mode == INVERTER
+            && obj.f64("CsConverter.gamma").is_some_and(|gamma| !(17.0..=20.0).contains(&gamma))
+        {
+            v.push(Violation {
+                object_id:   mrid.clone(),
+                rule_id:     "svu:CsConverter.gamma-valueRangeTypical".into(),
+                name:        "C:301:SV:CsConverter.gamma:valueRangeTypical".into(),
+                class:       "CsConverter".into(),
+                property:    "CsConverter.gamma".into(),
+                message:     "The gamma value is outside typical range (17-20 degrees) for an inverter.".into(),
+                severity:    "sh:Warning".into(),
+                description: String::new(),
+            });
         }
     }
     v

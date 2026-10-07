@@ -14,7 +14,7 @@
 //! because the element trait and the violation types demand it, and converting
 //! between the two is mechanical and total — an omission is a compile error.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::family::Family;
 use crate::model::{CimSpecification, CimType};
@@ -203,6 +203,8 @@ pub struct Resolver {
     /// be either — `Element::type_name` answers for both.
     any_family: HashMap<(String, String), String>,
     any_concrete: HashMap<String, Vec<String>>,
+    /// Qualified class → itself and its ancestors, this family only.
+    ancestors: HashMap<String, Vec<String>>,
 }
 
 /// `(namespace, local)` → qualified class name, and qualified class → its
@@ -263,7 +265,46 @@ impl Resolver {
             v.sort();
             v.dedup();
         }
-        Self { by_ns, concrete_of, any_family, any_concrete }
+        let prefix = spec.family.type_prefix;
+        let ancestors = spec
+            .types
+            .values()
+            .map(|t| {
+                let mut chain = Vec::new();
+                let mut cursor = Some(t);
+                // Bounded for the same reason as in `class_maps`.
+                while let Some(c) = cursor.filter(|_| chain.len() < 64) {
+                    chain.push(format!("{prefix}{}", c.id));
+                    cursor = spec.types.get(&c.super_type);
+                }
+                (format!("{prefix}{}", t.id), chain)
+            })
+            .collect();
+        Self { by_ns, concrete_of, any_family, any_concrete, ancestors }
+    }
+
+    /// The concrete classes a `sh:closed` shape on `target` governs: `target`'s
+    /// concrete descendants, less those below a class with a closed shape of
+    /// its own (`closed_classes`).
+    ///
+    /// The APL writes one closed `AllowedProperties` shape per class, listing
+    /// that class's properties, inherited ones included. A subclass with its
+    /// own is held to its own list; held to the superclass's as well, every
+    /// property the subclass adds would be reported. A subclass without one
+    /// still falls under the superclass's, as SHACL's class targets have it.
+    fn closed_concrete(&self, target: &str, closed_classes: &HashSet<String>) -> Vec<String> {
+        let below_target = |c: &String| {
+            c != target && self.ancestors.get(c).is_some_and(|a| a.iter().any(|x| x == target))
+        };
+        self.concrete(target)
+            .iter()
+            .filter(|d| {
+                !self.ancestors.get(*d).is_some_and(|chain| {
+                    chain.iter().any(|a| closed_classes.contains(a) && below_target(a))
+                })
+            })
+            .cloned()
+            .collect()
     }
 
     /// Resolve a simplified IRI to this family's qualified class name.
@@ -377,8 +418,17 @@ pub fn resolve_shapes(
                 continue;
             }
         };
+        // Classes this file gives a closed shape of their own.
+        let closed_classes: HashSet<String> = fr
+            .shapes
+            .iter()
+            .filter(|shape| shape.closed.is_some())
+            .flat_map(|shape| &shape.targets)
+            .filter(|t| t.kind == "targetClass")
+            .filter_map(|t| r.class(&t.value, &fr.prefixes).cloned())
+            .collect();
         for shape in &fr.shapes {
-            if let Some(def) = resolve_shape(shape, fr, &profiles, &r, collector, &mut stats) {
+            for def in resolve_shape(shape, fr, &profiles, &r, &closed_classes, collector, &mut stats) {
                 stats.shapes += 1;
                 out.push(def);
             }
@@ -392,10 +442,13 @@ fn resolve_shape(
     fr: &FileResults,
     profiles: &[String],
     r: &Resolver,
+    closed_classes: &HashSet<String>,
     collector: &mut SkipCollector,
     stats: &mut Stats,
-) -> Option<ShapeDef> {
+) -> Vec<ShapeDef> {
     let mut targets: Vec<Target> = Vec::new();
+    // The same, narrowed for the shape's `sh:closed` check.
+    let mut closed_targets: Vec<Target> = Vec::new();
     let mut target_classes: Vec<String> = Vec::new();
 
     for t in &shape.targets {
@@ -410,6 +463,12 @@ fn resolve_shape(
                     }
                     target_classes.push(q.clone());
                     targets.push(Target::Class(concrete.to_vec()));
+                    if shape.closed.is_some() {
+                        let narrowed = r.closed_concrete(q, closed_classes);
+                        if !narrowed.is_empty() {
+                            closed_targets.push(Target::Class(narrowed));
+                        }
+                    }
                 }
                 None => {
                     // The cim16:/cim17: targets land here: NC shapes on CGMES
@@ -424,6 +483,7 @@ fn resolve_shape(
             },
             "targetSubjectsOf" => {
                 targets.push(Target::SubjectsOf(field_key(&t.value).to_string()));
+                closed_targets.push(Target::SubjectsOf(field_key(&t.value).to_string()));
             }
             other => {
                 collector.push(&t.value, "", other, &shape.name,
@@ -432,7 +492,7 @@ fn resolve_shape(
         }
     }
     if targets.is_empty() {
-        return None;
+        return Vec::new();
     }
 
     let class_label = target_classes.first().cloned().unwrap_or_default();
@@ -466,18 +526,34 @@ fn resolve_shape(
     stats.logic += logic.len();
 
     if props.is_empty() && closed.is_none() && logic.is_empty() {
-        return None;
+        return Vec::new();
     }
     stats.props += props.len();
 
-    Some(ShapeDef {
+    let def = |targets, props, closed, logic| ShapeDef {
         targets,
         props,
         closed,
         logic,
         profiles: profiles.to_vec(),
         file: fr.file_name.clone(),
-    })
+    };
+    match closed {
+        None => vec![def(targets, props, None, logic)],
+        // The closed check runs on the narrowed targets; any other check on
+        // the shape keeps the full ones, so a closed shape that also carries
+        // constraints becomes two.
+        Some(closed) => {
+            let mut out = Vec::new();
+            if !props.is_empty() || !logic.is_empty() {
+                out.push(def(targets, props, None, logic));
+            }
+            if !closed_targets.is_empty() {
+                out.push(def(closed_targets, Vec::new(), Some(closed), Vec::new()));
+            }
+            out
+        }
+    }
 }
 
 fn resolve_prop(

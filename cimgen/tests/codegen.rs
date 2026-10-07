@@ -99,7 +99,7 @@ fn nc_shapes_codegen_stable() {
     // The profile index decides which of the shapes run.
     h.update(std::fs::read(shacl_out.join("nc_profiles.rs")).unwrap());
     let hash: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
-    assert_eq!(hash, "787cf5f4083d16f6debc9cee6bb68ededcafbf6d801b07c7afbee5ae8ecc5fb3", "NC shape table drifted — rerun to update hash");
+    assert_eq!(hash, "6bea991bb856040fdd94aadf2be1778ca4cd52b7a3c82fdcd87654e9b92f77be", "NC shape table drifted — rerun to update hash");
 }
 
 /// Hashes the CGMES shape table on its own: it replaced the generated
