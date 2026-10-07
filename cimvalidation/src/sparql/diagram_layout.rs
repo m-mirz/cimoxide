@@ -20,7 +20,7 @@ fn check_diagram_object_identified_object_type(dataset: &CimDataset) -> Vec<Viol
             let Some(o) = Fields::of_class(entry, type_name) else { continue };
             let Some(id_obj_ref) = o.reference("DiagramObject.IdentifiedObject") else { continue };
             let target_id = id_obj_ref.trim_start_matches('#');
-            let target_type = match dataset.entries.get(target_id).map(|e| e.element.type_name()) {
+            let target_type = match dataset.entries.get(target_id).map(|e| e.type_name()) {
                 Some(t) => t, None => continue,
             };
             if DISALLOWED_TYPES.contains(&target_type) {

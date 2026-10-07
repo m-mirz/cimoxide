@@ -59,7 +59,7 @@ fn type_index_parity() {
 }
 
 /// The decoder drops XML prefixes, so `cim:` and `eu:` attributes of the same element are
-/// indistinguishable in `RdfBlock.fields`. `ATTR_RDF` is what puts them back; if it
+/// indistinguishable in `Element::fields`. `ATTR_RDF` is what puts them back; if it
 /// regresses, every `eu:` predicate silently moves into the `cim:` namespace.
 #[test]
 fn namespace_fidelity() {
@@ -103,12 +103,7 @@ fn literals_are_typed_numerically() {
         .unwrap()
         .iter()
         .filter(|m| {
-            ds.entries[*m]
-                .element
-                .as_any()
-                .downcast_ref::<cimmodel::ACLineSegment>()
-                .and_then(|a| a.r)
-                .is_some_and(|r| r > 0.1)
+            ds.entries[*m].get_f64("ACLineSegment.r").is_some_and(|r| r > 0.1)
         })
         .count();
     assert!(expected > 0 && expected < ds.by_type["ACLineSegment"].len(), "need a mixed fixture");
@@ -145,19 +140,16 @@ fn association_traversal() {
     .collect();
 
     let lines: HashSet<&String> = ds.by_type["ACLineSegment"].iter().collect();
-    let via_structs: HashSet<String> = ds.by_type["Terminal"]
+    let via_fields: HashSet<String> = ds.by_type["Terminal"]
         .iter()
-        .filter_map(|m| {
-            ds.entries[m].element.as_any().downcast_ref::<cimmodel::Terminal>()
-        })
-        .filter_map(|t| t.conducting_equipment.as_ref())
-        .map(|r| r.mrid.trim_start_matches('#').to_string())
+        .filter_map(|m| ds.entries[m].get_ref("Terminal.ConductingEquipment"))
+        .map(|r| r.trim_start_matches('#').to_string())
         .filter(|m| lines.contains(m))
         .map(|m| cimsparql::iri::mrid_to_iri(&m))
         .collect();
 
-    assert!(!via_structs.is_empty());
-    assert_eq!(via_sparql, via_structs);
+    assert!(!via_fields.is_empty());
+    assert_eq!(via_sparql, via_fields);
 }
 
 /// Enum values arrive fragment-stripped (`UnitSymbol.W`); the enum namespace must rebuild
@@ -274,38 +266,12 @@ fn entsoe_sparql_constraint_shape() {
     let expected: HashSet<String> = ds.by_type["ACLineSegment"]
         .iter()
         .filter(|m| {
-            ds.entries[*m]
-                .element
-                .as_any()
-                .downcast_ref::<cimmodel::ACLineSegment>()
-                .is_some_and(|a| a.base.base.base.aggregate.is_some())
+            ds.entries[*m].get("Equipment.aggregate").is_some()
         })
         .map(|m| cimsparql::iri::mrid_to_iri(m))
         .collect();
     assert!(!expected.is_empty(), "fixture should have ACLineSegments carrying the attribute");
     assert_eq!(flagged, expected);
-}
-
-/// `drop_blocks()` frees the lossless field maps; materialisation must fall back to
-/// `CimElement::to_block()` rather than producing an empty graph.
-#[test]
-fn works_after_drop_blocks() {
-    let mut ds = full_grid(&["FullGrid_EQ.xml"]);
-    let before = CimStore::from_dataset(&ds).unwrap().len().unwrap();
-
-    ds.drop_blocks();
-    let store = CimStore::from_dataset(&ds).unwrap();
-    assert_eq!(store.stats().rebuilt_blocks, ds.entries.len());
-
-    let after = store.len().unwrap();
-    assert!(after > 0);
-    // The typed structs cannot round-trip predicates they never modelled, so the rebuilt
-    // graph is a subset — but it must still answer the same type query.
-    assert!(after <= before);
-    assert_eq!(
-        column(&store, "SELECT ?s WHERE { ?s a cim:ACLineSegment }", "s").len(),
-        ds.by_type["ACLineSegment"].len()
-    );
 }
 
 /// Scoping is the main lever on memory for large datasets.

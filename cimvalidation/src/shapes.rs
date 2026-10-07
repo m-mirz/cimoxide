@@ -1,16 +1,11 @@
-//! The shape table a property-bag family is validated against.
+//! The shape table both families are validated against.
 //!
-//! CGMES validation is generated code: one function per check, each
-//! downcasting to a concrete struct and reading a typed field. NC classes have
-//! no struct to downcast to — they decode into
-//! [`cimmodel::base::GenericElement`] property bags — so there is nothing for
-//! that strategy to generate against.
-//!
-//! So the shapes become data and [`crate::bag`] interprets them, the same way
-//! NC classes became [`cimmodel::base::ClassDef`] rows interpreted by the
-//! decoder. `cimgen` emits the table into `nc_shapes.rs`; with the
-//! `dynamic-shapes` feature it can be built from the SHACL TTL files at
-//! runtime instead.
+//! Elements are property bags ([`cimmodel::Element`]) with no struct to
+//! downcast to, so the shapes are data and [`crate::bag`] interprets them, the
+//! same way classes are [`cimmodel::base::ClassDef`] rows interpreted by the
+//! decoder. `cimgen` emits the tables into `cgmes_shapes.rs` and
+//! `nc_shapes.rs`; with the `dynamic-shapes` feature they can be built from the
+//! SHACL TTL files at runtime instead.
 //!
 //! Everything a consumer would have to compute per element is resolved when
 //! the table is built: target classes are already family-qualified
@@ -20,7 +15,7 @@
 /// Where a property shape's values come from.
 ///
 /// Field keys are the local XML element name with the prefix stripped, which
-/// is exactly what the decoder puts in [`cimmodel::base::RdfBlock::fields`].
+/// is exactly what the decoder puts in [`cimmodel::Element::fields`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Path {
     /// A field on the element itself.
@@ -45,7 +40,7 @@ pub enum Path {
     ///
     /// The referenced element may belong to *either* family: NCP's value-type
     /// lists name CGMES classes (`cim17:ACLineSegment`) alongside NC ones, and
-    /// `CimElement::type_name` answers for both.
+    /// `Element::type_name` answers for both.
     Chain(&'static [Step]),
 }
 
@@ -84,7 +79,7 @@ pub enum Constraint {
     MinCount(u32),
     MaxCount(u32),
     /// The xsd type's local name (`"integer"`, `"dateTime"`, …). A bag holds
-    /// strings, so this is a real parse check rather than the tautology it is
+    /// strings, so this is a real parse check rather than the tautology it was
     /// against a typed struct.
     Datatype(&'static str),
     NodeKind(NodeKind),

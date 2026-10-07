@@ -14,7 +14,7 @@ fn check_mutual_coupling_terminals_assignment(dataset: &CimDataset) -> Vec<Viola
         let term = Fields::get(dataset, term_id, "Terminal")?;
         let ce_ref = term.reference("Terminal.ConductingEquipment")?;
         let eq_id = ce_ref.trim_start_matches('#').to_string();
-        let type_name = dataset.entries.get(&eq_id).map(|e| e.element.type_name().to_string());
+        let type_name = dataset.entries.get(&eq_id).map(|e| e.type_name().to_string());
         Some((eq_id, type_name))
     };
 

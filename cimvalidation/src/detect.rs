@@ -54,14 +54,7 @@ pub fn detect_nc_profiles(dataset: &CimDataset) -> Vec<String> {
     let mut seen: Vec<String> = Vec::new();
     for type_name in ["nc:Dataset", "nc:DifferenceSet"] {
         for mrid in dataset.by_type.get(type_name).into_iter().flatten() {
-            let Some(entry) = dataset.entries.get(mrid) else { continue };
-            let Some(el) = entry
-                .element
-                .as_any()
-                .downcast_ref::<cimmodel::base::GenericElement>()
-            else {
-                continue;
-            };
+            let Some(el) = dataset.entries.get(mrid) else { continue };
             // Written as rdf:resource in practice, but a plain literal is
             // legal too, so both are read.
             let refs: Vec<&str> = el.get_refs("conformsTo").iter().map(String::as_str).collect();

@@ -55,70 +55,31 @@ fn render_enum_stub(s: &mut String, e: &CimEnum) {
     writeln!(s).unwrap();
 }
 
+/// One class as a functional `TypedDict`: its keys are the attributes'
+/// `Class.attr` ids, which are not Python identifiers, and a functional
+/// `TypedDict` cannot extend another, so inherited attributes are listed too.
+/// Values are strings as written; a list-valued attribute is a list of them.
 fn render_type_stub(s: &mut String, t: &CimType, spec: &CimSpecification) {
-    let base = if t.super_type.is_empty() || !spec.types.contains_key(&t.super_type) {
-        "TypedDict".to_string()
-    } else {
-        t.super_type.clone()
-    };
-
     if !t.comment.is_empty() {
-        writeln!(s, "# {}", t.comment).unwrap();
+        writeln!(s, "# {}", t.comment.replace('\n', " ")).unwrap();
     }
-    writeln!(s, "class {}({}, total=False):", t.id, base).unwrap();
-
-    let fields: Vec<&CimAttribute> = t
-        .attributes
-        .iter()
-        .filter(|a| a.is_association_used)
-        .collect();
-
-    if t.super_type.is_empty() {
-        writeln!(s, "    id: str").unwrap();
+    let mut keys: Vec<(String, &'static str)> = vec![
+        ("id".to_string(), "str"),
+        ("_type".to_string(), "str"),
+    ];
+    let mut chain = vec![t];
+    while let Some(parent) = spec.types.get(&chain.last().unwrap().super_type) {
+        chain.push(parent);
     }
-
-    if fields.is_empty() && t.super_type.is_empty() {
-        // id field already emitted above
-    } else if fields.is_empty() {
-        writeln!(s, "    pass").unwrap();
-    } else {
-        for attr in fields {
-            let fname = to_snake_case(&attr.label);
-            let ftype = py_field_type(attr);
-            writeln!(s, "    {fname}: {ftype}").unwrap();
+    for class in chain.iter().rev() {
+        for attr in class.attributes.iter().filter(|a| a.is_association_used) {
+            let ty = if attr.is_list { "list[str]" } else { "str" };
+            keys.push((attr.id.clone(), ty));
         }
     }
-
+    let fields: Vec<String> = keys.iter().map(|(k, ty)| format!("\"{k}\": {ty}")).collect();
+    writeln!(s, "{id} = TypedDict(\"{id}\", {{{}}}, total=False)", fields.join(", "), id = t.id).unwrap();
     writeln!(s).unwrap();
-}
-
-fn py_field_type(attr: &CimAttribute) -> &'static str {
-    if attr.is_primitive || attr.is_cim_datatype {
-        if attr.is_list {
-            if attr.lang_type == "Vec<f64>" {
-                "list[float]"
-            } else if attr.lang_type == "Vec<i64>" {
-                "list[int]"
-            } else if attr.lang_type == "Vec<bool>" {
-                "list[bool]"
-            } else {
-                "list[str]"
-            }
-        } else {
-            match attr.lang_type.as_str() {
-                "f64" => "float | None",
-                "i64" => "int | None",
-                "bool" => "bool | None",
-                _ => "str",
-            }
-        }
-    } else if attr.is_enum_value {
-        "str | None"
-    } else if attr.is_list {
-        "list[str]"
-    } else {
-        "str | None"
-    }
 }
 
 fn topological_sort(types: &HashMap<String, CimType>) -> Vec<String> {
@@ -148,26 +109,4 @@ fn topo_visit(
         }
     }
     sorted.push(id.to_string());
-}
-
-fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    let chars: Vec<char> = s.chars().collect();
-    for (i, &c) in chars.iter().enumerate() {
-        if c.is_uppercase() {
-            if i > 0 && !chars[i - 1].is_uppercase() {
-                result.push('_');
-            } else if i > 0
-                && chars[i - 1].is_uppercase()
-                && i + 1 < chars.len()
-                && chars[i + 1].is_lowercase()
-            {
-                result.push('_');
-            }
-            result.push(c.to_lowercase().next().unwrap());
-        } else {
-            result.push(c);
-        }
-    }
-    result
 }

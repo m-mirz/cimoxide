@@ -27,17 +27,16 @@ fn check_per_entry_block_checks(dataset: &CimDataset) -> Vec<Violation> {
     // in one bucket, so the buckets are then decided independently, again on
     // threads.
     //
-    // mRIDs are keyed on the text as stored (borrowed; owned only for the rare
-    // element that takes the `to_block` path), with the class as the static
-    // name: cloning both for every element was most of this pass's time.
-    type Owner<'a> = (&'a String, &'static str, &'a cimmodel::CimEntry);
+    // mRIDs are keyed on the text as stored, borrowed, with the class as the
+    // static name: cloning both for every element was most of this pass's time.
+    type Owner<'a> = (&'a String, &'static str, &'a cimmodel::Element);
     type Candidate<'a> = (Cow<'a, str>, Owner<'a>);
 
     let threads = crate::par::threads_for(dataset.entries.len());
     let bucket_of = |m_rid: &str| {
         (cimmodel::base::FastBuildHasher::default().hash_one(m_rid) % threads as u64) as usize
     };
-    let all: Vec<(&String, &cimmodel::CimEntry)> = dataset.entries.iter().collect();
+    let all: Vec<(&String, &cimmodel::Element)> = dataset.entries.iter().collect();
     let parts = crate::par::par_map(&crate::par::runs(&all, threads, |_| 1), |run| {
         let mut v = Vec::new();
         let mut buckets: Vec<Vec<Candidate<'_>>> = (0..threads).map(|_| Vec::new()).collect();
@@ -45,36 +44,27 @@ fn check_per_entry_block_checks(dataset: &CimDataset) -> Vec<Violation> {
             v.extend(id_uuid_violation(id, entry));
             v.extend(id_deprecated_violation(id, entry));
 
-            // Fast path. These checks read the struct's view of the element
-            // (`to_block`), and building it for every element was most of this
-            // pass's time. The decoder's block holds every value that view does,
-            // as written, so if nothing in it could fail a check, nothing in the
-            // struct's view can either. Only elements with a candidate pay for
-            // `to_block` and the exact checks below.
-            if !entry.block.type_name.is_empty() && !may_fail_entry_checks(&entry.block.fields) {
-                if let Some(cimmodel::base::FieldValue::Text(m_rid)) = entry.block.fields.get("IdentifiedObject.mRID")
+            // Fast path. These checks read the element's typed view
+            // (`super::view`), which is costlier than its raw fields. The raw
+            // fields hold every value that view does, as written, so if
+            // nothing in them could fail a check, nothing in the view can
+            // either. Only elements with a candidate pay for the view.
+            if !may_fail_entry_checks(entry.fields()) {
+                if let Some(cimmodel::base::FieldValue::Text(m_rid)) = entry.fields().get("IdentifiedObject.mRID")
                     && !m_rid.is_empty() {
-                        // Unconfirmed: re-read through `to_block` if it turns out
+                        // Unconfirmed: re-read through the view if it turns out
                         // to be a duplicate, below.
-                        buckets[bucket_of(m_rid)].push((Cow::Borrowed(m_rid.as_str()), (id, entry.element.type_name(), entry)));
+                        buckets[bucket_of(m_rid)].push((Cow::Borrowed(m_rid.as_str()), (id, entry.type_name(), entry)));
                     }
                 continue;
             }
 
-            let block = entry.element.to_block();
-            let class = &block.type_name;
-
             // --- mRID uniqueness (all600:All-GENC1), collected ---
-            if let Some(cimmodel::base::FieldValue::Text(m_rid)) = block.fields.get("IdentifiedObject.mRID")
-                && !m_rid.is_empty() {
-                    buckets[bucket_of(m_rid)].push((Cow::Owned(m_rid.clone()), (id, entry.element.type_name(), entry)));
-                }
+            if let Some(m_rid) = super::view::mrid(entry) {
+                buckets[bucket_of(m_rid)].push((Cow::Borrowed(m_rid), (id, entry.type_name(), entry)));
+            }
 
-            for (key, val) in &block.fields {
-                let s = match val {
-                    cimmodel::base::FieldValue::Text(s) => s,
-                    _ => continue,
-                };
+            for (key, s) in super::view::texts(entry) {
 
                 // --- float special values (all600:Float-specialValues) ---
                 if let Ok(f) = s.trim().parse::<f64>()
@@ -83,8 +73,8 @@ fn check_per_entry_block_checks(dataset: &CimDataset) -> Vec<Violation> {
                             object_id: id.clone(),
                             rule_id:   "all600:Float-specialValues".into(),
                             name:      "C:301:ALL:Float:specialValues".into(),
-                            class:     class.clone(),
-                            property:  key.clone(),
+                            class:     entry.type_name().to_string(),
+                            property:  key.to_string(),
                             message:   "INF or NaN used in an attribute defined as float.".into(),
                             severity:  "sh:Violation".into(),
                             description: String::new(),
@@ -128,12 +118,9 @@ fn check_per_entry_block_checks(dataset: &CimDataset) -> Vec<Violation> {
             // order.
             for (m_rid, owners) in by_mrid.iter_mut() {
                 // Duplicates are rare, so confirm each owner against the
-                // struct's view, which is what decides here; the fast path
-                // read the raw block.
-                owners.retain(|(_, _, entry)| {
-                    matches!(entry.element.to_block().fields.get("IdentifiedObject.mRID"),
-                        Some(cimmodel::base::FieldValue::Text(m)) if m.as_str() == m_rid.as_ref())
-                });
+                // typed view, which is what decides here; the fast path read
+                // the raw fields.
+                owners.retain(|(_, _, entry)| super::view::mrid(entry) == Some(m_rid.as_ref()));
                 if owners.len() < 2 {
                     continue;
                 }
@@ -202,7 +189,7 @@ fn is_uuid(s: &str) -> bool {
 }
 
 /// GENC4 for one element: its ID must be a UUID.
-fn id_uuid_violation(id: &str, entry: &cimmodel::CimEntry) -> Option<Violation> {
+fn id_uuid_violation(id: &str, entry: &cimmodel::Element) -> Option<Violation> {
     // Extract clean ID
     let clean_id: &str = if id.contains("#_") {
         id.split("#_").nth(1).unwrap_or("")
@@ -225,7 +212,7 @@ fn id_uuid_violation(id: &str, entry: &cimmodel::CimEntry) -> Option<Violation> 
             object_id: id.to_string(),
             rule_id:   "all600:All-GENC4".into(),
             name:      "C:600:ALL:NA:GENC4".into(),
-            class:     entry.element.type_name().to_string(),
+            class:     entry.type_name().to_string(),
             property:  "rdf:ID".into(),
             message:   "Invalid syntax of ID (rdf:ID or rdf:about). UUID expected.".into(),
             severity:  "sh:Info".into(),
@@ -237,7 +224,7 @@ fn id_uuid_violation(id: &str, entry: &cimmodel::CimEntry) -> Option<Violation> 
 
 /// GENC5 for one element: a non-URN ID starts with `_` and is at most 60
 /// characters.
-fn id_deprecated_violation(id: &str, entry: &cimmodel::CimEntry) -> Option<Violation> {
+fn id_deprecated_violation(id: &str, entry: &cimmodel::Element) -> Option<Violation> {
     if id.starts_with("urn:uuid:") { return None; }
     let second_part: &str = if id.contains("#_") {
         id.split("#_").nth(1).unwrap_or("")
@@ -249,7 +236,7 @@ fn id_deprecated_violation(id: &str, entry: &cimmodel::CimEntry) -> Option<Viola
             object_id: id.to_string(),
             rule_id:   "all600:All-GENC5".into(),
             name:      "C:600:ALL:NA:GENC5".into(),
-            class:     entry.element.type_name().to_string(),
+            class:     entry.type_name().to_string(),
             property:  "rdf:ID".into(),
             message:   "The ID string is more than 60 characters or the string does not begin with underscore.".into(),
             severity:  "sh:Violation".into(),

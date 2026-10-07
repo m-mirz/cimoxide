@@ -66,7 +66,7 @@ fn cimmodel_codegen_stable() {
     assert!(status.success(), "cimgen exited with failure");
 
     let hash = hash_dir(&out);
-    assert_eq!(hash, "92f5124890ce0ca7ab1df259b7ee6eb94615a068e0630110fd722be5982c4241", "cimmodel output drifted — rerun to update hash");
+    assert_eq!(hash, "b1c47f3adaa9d2799f22331b6d33323140144c46af1fc244e4a698f4ac8d32de", "cimmodel output drifted — rerun to update hash");
 }
 
 /// Hashes the NC shape table on its own, for the same reason

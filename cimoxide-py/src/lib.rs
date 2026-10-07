@@ -4,16 +4,16 @@ use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use cimmodel::{CimDataset, CimEntry};
+use cimmodel::{CimDataset, Element};
 
 fn map_err<E: std::fmt::Display>(e: E) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
 }
 
-fn entry_to_python(py: Python<'_>, entry: &CimEntry) -> PyResult<PyObject> {
-    let mut val = entry.element.to_json_value();
+fn entry_to_python(py: Python<'_>, entry: &Element) -> PyResult<PyObject> {
+    let mut val = entry.to_json_value();
     if let Some(obj) = val.as_object_mut() {
-        obj.insert("_type".to_string(), entry.element.type_name().into());
+        obj.insert("_type".to_string(), entry.type_name().into());
     }
     pythonize::pythonize(py, &val)
         .map(|b| b.unbind())
@@ -148,20 +148,6 @@ impl PyCimDataset {
         Ok(())
     }
 
-    /// Release all RdfBlock memory after the final merge.
-    ///
-    /// This deliberately does *not* invalidate an already-built SPARQL store.
-    /// Materialisation reads `entry.block` when it is populated and falls back
-    /// to the lossy `CimElement::to_block()` once blocks are gone, so a store
-    /// built before this call is strictly better than one built after. Order
-    /// therefore matters: `query()` then `drop_blocks()` gives lossless
-    /// triples, the reverse gives rebuilt ones.
-    fn drop_blocks(&self) -> PyResult<()> {
-        let mut guard = self.lock()?;
-        guard.ds.drop_blocks();
-        Ok(())
-    }
-
     /// Release the cached SPARQL store built by `query()`.
     ///
     /// The store roughly doubles a dataset's resident memory and is otherwise
@@ -203,11 +189,11 @@ impl PyCimDataset {
             .and_then(|v| v.as_str())
             .ok_or_else(|| PyValueError::new_err("element dict missing \"_type\" key"))?
             .to_string();
-        let reg = cimmodel::registry::json_registry();
-        let ctor = reg
-            .get(type_name.as_str())
+        let reg = cimmodel::registry::type_registry();
+        let class = reg
+            .by_type_name(&type_name)
             .ok_or_else(|| PyValueError::new_err(format!("unknown CIM type \"{type_name}\"")))?;
-        let element = ctor(json_val).map_err(map_err)?;
+        let element = Element::from_json(class, reg, &json_val).map_err(PyValueError::new_err)?;
         let mut guard = self.lock()?;
         guard.ds.set(mrid, element);
         guard.invalidate();
@@ -317,7 +303,7 @@ impl PyCimDataset {
     /// expensive than the rest. The cache is dropped whenever the dataset is
     /// mutated (`__setitem__`, `__delitem__`, `merge`) and can be released
     /// explicitly with `drop_sparql_store()` - it roughly doubles the dataset's
-    /// resident memory. See `drop_blocks()` for how the two interact.
+    /// resident memory.
     ///
     /// The CGMES namespaces (`cim:`, `eu:`, `md:`, `dm:`, `rdf:`) and `xsd:`
     /// are pre-bound.

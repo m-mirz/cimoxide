@@ -165,20 +165,18 @@ fn is_dangling(dataset: &CimDataset, target: &str) -> bool {
 
 fn check_dangling_references(dataset: &CimDataset) -> Vec<Violation> {
     // A walk over every element, split into runs on their own threads.
-    let all: Vec<(&String, &cimmodel::CimEntry)> = dataset.entries.iter().collect();
+    let all: Vec<(&String, &cimmodel::Element)> = dataset.entries.iter().collect();
     let threads = crate::par::threads_for(all.len());
     crate::par::par_concat(&crate::par::runs(&all, threads, |_| 1), |run| dangling_in(dataset, run))
 }
 
-fn dangling_in(dataset: &CimDataset, run: &[(&String, &cimmodel::CimEntry)]) -> Vec<Violation> {
+fn dangling_in(dataset: &CimDataset, run: &[(&String, &cimmodel::Element)]) -> Vec<Violation> {
     let mut v = Vec::new();
     for &(id, entry) in run {
-        // The rule reads the struct's view of the element (`to_block`), and
-        // building it for every element was most of its time. The struct's
-        // references are the raw block's, copied unchanged, so an element
-        // with no dangling reference in its raw block has none in that view.
-        if !entry.block.type_name.is_empty()
-            && !entry.block.fields.values().any(|val| match val {
+        // The rule reads the element's typed view (`super::view`). Its
+        // references are a subset of the raw fields', so an element with no
+        // dangling reference among those has none in the view.
+        if !entry.fields().values().any(|val| match val {
                 cimmodel::base::FieldValue::Resource(r) => is_dangling(dataset, r),
                 cimmodel::base::FieldValue::ResourceList(rs) => rs.iter().any(|r| is_dangling(dataset, r)),
                 _ => false,
@@ -186,13 +184,7 @@ fn dangling_in(dataset: &CimDataset, run: &[(&String, &cimmodel::CimEntry)]) -> 
         {
             continue;
         }
-        let block = entry.element.to_block();
-        for (field, val) in &block.fields {
-            let refs: Vec<&str> = match val {
-                cimmodel::base::FieldValue::Resource(r) => vec![r.as_str()],
-                cimmodel::base::FieldValue::ResourceList(rs) => rs.iter().map(|s| s.as_str()).collect(),
-                _ => continue,
-            };
+        for (field, refs) in super::view::references(entry) {
             for target in refs {
                 let target_id = target.trim_start_matches('#');
                 if is_dangling(dataset, target) {
@@ -200,8 +192,8 @@ fn dangling_in(dataset: &CimDataset, run: &[(&String, &cimmodel::CimEntry)]) -> 
                         object_id:   id.clone(),
                         rule_id:     "sm600:All-DanglingReferences".into(),
                         name:        "C:600:ALL:NA:FBOD4".into(),
-                        class:       block.type_name.clone(),
-                        property:    field.clone(),
+                        class:       entry.type_name().to_string(),
+                        property:    field.to_string(),
                         message:     format!("Dangling reference to '{}'.", target_id),
                         severity:    "sh:Violation".into(),
                         description: String::new(),
@@ -286,7 +278,7 @@ fn check_state_variables_instantiated(dataset: &CimDataset, topo: &Topology) -> 
         let energized = tns.iter().any(|tn| tn_to_island.contains_key(tn));
         if !energized { continue; }
         if !ce_has_sv_status.contains(*eq_id) {
-            let type_name = dataset.entries.get(*eq_id).map_or("ConductingEquipment", |e| e.element.type_name());
+            let type_name = dataset.entries.get(*eq_id).map_or("ConductingEquipment", |e| e.type_name());
             v.push(Violation {
                 object_id:   eq_id.to_string(),
                 rule_id:     "sm600:SvStatus-SV__4".into(),
@@ -428,7 +420,7 @@ fn check_sv_tap_step_position_sync(dataset: &CimDataset) -> Vec<Violation> {
     v
 }
 
-fn get_tap_changer_info(entry: &cimmodel::CimEntry) -> Option<(bool, Option<String>, f64, &'static str)> {
+fn get_tap_changer_info(entry: &cimmodel::Element) -> Option<(bool, Option<String>, f64, &'static str)> {
     if let Some(tc) = Fields::of_class(entry, "RatioTapChanger") {
         let tcc = tc.reference("TapChanger.TapChangerControl").map(|r| r.trim_start_matches('#').to_string());
         return Some((tc.bool("TapChanger.controlEnabled").unwrap_or(false), tcc, tc.f64("TapChanger.step").unwrap_or(0.0), "RatioTapChanger"));

@@ -1,6 +1,6 @@
 # cimoxide
 
-Rust tooling for CGMES CIM data: struct generation, SHACL validation, decoding, and protobuf conversion.
+Rust tooling for CGMES CIM data: decoding, SHACL validation, conversion and SPARQL, driven by class and shape tables generated from the ENTSO-E schemas.
 
 ## Usage
 
@@ -45,7 +45,7 @@ cimoxide-cli query --query "SELECT ..." | --file <query.rq>
 | Crate | Description |
 |---|---|
 | `cimgen` | Code generator — reads ENTSO-E RDF/SHACL schemas and emits Rust source |
-| `cimmodel` | The data model: **generated** typed structs for every CGMES class and the NC class table (see "Profile families" below); the hand-written decoder (`decode.rs`, `CimDataset`), which reads CGMES and NC RDF/XML and resolves classes by XML namespace; and the hand-written JSON/RDF-XML conversion (`convert.rs`: `dataset_to_json`, `dataset_to_xml`, `dataset_to_xml_for_profile`) |
+| `cimmodel` | The data model: **generated** class tables for CGMES and NC (see "Profile families" below) that every element decodes against; the hand-written decoder (`decode.rs`, `CimDataset` of `Element`s), which reads RDF/XML and resolves classes by XML namespace; and the hand-written JSON/RDF-XML conversion (`convert.rs`: `dataset_to_json`, `dataset_to_xml`, `dataset_to_xml_for_profile`) |
 | `cimschema` | RDFS and SHACL parser, shared by `cimgen` at build time and the runtime loaders |
 | `cimvalidation` | SHACL validation for both families through one interpreter (`bag.rs`) over **generated** shape tables (`src/cgmes_shapes.rs`, `src/nc_shapes.rs`); `src/sparql/` is hand-written (the `sh:sparql` constraints, see "SHACL Validation" below) |
 | `cimsparql` | SPARQL 1.1 querying over a decoded dataset, backed by an in-memory oxigraph store (see "SPARQL" below) |
@@ -68,8 +68,8 @@ cimoxide reads two ENTSO-E schema trees from `application-profiles-library/`:
 
 | Family | Schemas | Representation | Status |
 |---|---|---|---|
-| CGMES | `CGMES/RDFS` | 446 typed structs | decode, validate, convert, query |
-| NC (Network Codes) | `NCP/RDFS` | 596-row class table + property bags | decode only |
+| CGMES | `CGMES/RDFS` | 446-class table | decode, validate, convert, query |
+| NC (Network Codes) | `NCP/RDFS` | 596-class table | decode, validate |
 
 They overlap on 164 class names — `Terminal`, `Equipment`, `ACLineSegment`,
 `Substation` and more — and these are *not* duplicates. NCP's re-declared CIM
@@ -89,39 +89,50 @@ So the decoder resolves `(namespace, local name)`, falling back to the bare
 local name when a document binds a namespace it does not recognise — which real
 files do, and which is how every release before this behaved.
 
-### Working with NC data
+### Working with elements
 
-NC elements are property bags rather than typed structs: adding a second family
-as codegen would have meant ~700 more struct files and a naming rule to break
-ties that the namespace already breaks. They key off a `nc:` prefix:
+Every element, of either family, is an `Element`: its class, its mRID, and its fields as the
+XML wrote them, keyed `Class.attr`. There are no generated types; what a class declares is
+data in its family's class table. NC classes carry an `nc:` prefix:
 
 ```rust
 let ds = CimDataset::decode_file(Path::new("contingencies.xml"))?;
 for mrid in &ds.by_type["nc:OrdinaryContingency"] {
-    let c = ds.entries[mrid].element.as_any()
-        .downcast_ref::<cimmodel::base::GenericElement>().unwrap();
+    let c = &ds.entries[mrid];
     println!("{} {:?}", mrid, c.get_str("IdentifiedObject.name"));
 }
+let line = &ds.entries["_line1"];          // a CGMES ACLineSegment
+let r: Option<f64> = line.get_f64("ACLineSegment.r");
+let terminals = line.get_refs("ACLineSegment.Terminals");
 ```
 
 `:` cannot occur in a CIM class name, so `by_type["Equipment"]` (CGMES) and
-`by_type["nc:Equipment"]` never collide, and existing CGMES code is unaffected.
+`by_type["nc:Equipment"]` never collide.
 
-### Loading the class table from RDFS
+Up to 0.3.3, CGMES decoded into 446 generated structs, with the raw field map kept beside
+each for validation and export. Dropping the structs left one copy of every element: on
+RealGrid (189,000 elements) decoding went from 1,186 to 922 ms and peak memory from 546 to
+406 MB, and `cimcli validate` from 1,354 to 1,126 ms. An attribute the class does not declare,
+and a value that does not parse, are now kept rather than dropped.
 
-The NC class table is generated into the binary, but `cimcli` and the Python
-bindings can load it from the ENTSO-E RDFS files at runtime instead, so a new
-profile version is a data load rather than a recompile:
+### Loading the class tables from RDFS
+
+Both class tables are generated into the binary, but `cimcli` and the Python bindings can
+load either from the ENTSO-E RDFS files at runtime instead, so a new profile version is a
+data load rather than a recompile:
 
 ```bash
 CIMOXIDE_RDFS_DIR=application-profiles-library/NCP/RDFS cimcli import model.xml
+CIMOXIDE_RDFS_DIR=application-profiles-library/CGMES/RDFS:application-profiles-library/NCP/RDFS \
+  cimcli validate model.xml
 ```
 
 Resolution is explicit `cimmodel::schema_source::load_from` > `CIMOXIDE_RDFS_DIR`
-> the generated table. A directory that is missing or fails to parse warns,
-naming the glob it tried, and falls back to the generated table. In library
-crates this lives behind the `dynamic-schema` feature, off by default, so
-nothing that merely wants the types pulls in an XML parser.
+> the generated table. The variable takes one directory or several, separated as in `PATH`;
+each serves the family whose vocabularies it holds, and a family with no directory keeps its
+generated table. A directory holding neither family's vocabularies, or failing to parse,
+warns and falls back. In library crates this lives behind the `dynamic-schema` feature, off
+by default, so nothing that merely decodes pulls in the RDFS parser.
 
 **What it costs** (18 files, 3.65 MB of RDFS; `scripts/bench_schema_source.sh`):
 
@@ -146,8 +157,8 @@ shape of the change, not profiled.
 ### NC validation: a shape table and an interpreter
 
 CGMES validation used to be generated code — 260,900 lines, one function per
-check, each downcasting to a concrete struct and reading a typed field. NC
-classes are property bags, so there was no struct to downcast to and nothing for
+check, each downcasting to a generated struct and reading a typed field. NC
+classes never had structs, so there was nothing for
 that strategy to reference. Its shapes became a data table instead, interpreted
 at run time: 1,973 shapes and 14,842 checks in a 2.4 MB generated table. CGMES
 has since moved to the same table and interpreter (see "SHACL Validation").
@@ -156,7 +167,7 @@ has since moved to the same table and interpreter (see "SHACL Validation").
 `sh:nodeKind` are tautologies against an `f64` and real checks against a
 `FieldValue::Text` — 2,747 NCP constraints that used to be discarded as
 type-system guarantees. `sh:closed` (823 shapes, "this property is not in the
-profile") cannot be expressed against generated structs at all, because unknown
+profile") could not be expressed against generated structs at all, because unknown
 properties are dropped at decode; a bag still has them.
 
 Profiles come from the schema rather than from code: `NCP/SHACL/Validation/`
@@ -182,8 +193,8 @@ CIMOXIDE_SHACL_DIR=application-profiles-library/NCP/SHACL:application-profiles-l
 `CIMOXIDE_SHACL_DIR` takes one directory or several, separated as in `PATH`; each
 serves the family whose files it holds (NC: a `Validation/` subdirectory; CGMES: the
 constraint files its manifest names). A directory holding neither is reported and
-ignored. CGMES classes are compiled structs, so a CGMES table loaded from another release
-can name classes this build does not decode; shapes on those match nothing. Loading the
+ignored. A shape table and a class table from different releases disagree about what a class
+is, so load the CGMES RDFS of the same release alongside (`CIMOXIDE_RDFS_DIR`). Loading the
 CGMES table adds about 165 ms per process.
 
 **What it costs** (32 files, 4.55 MB of Turtle; `scripts/bench_shape_source.sh`;
@@ -272,7 +283,7 @@ e.g. `cargo run -p cimoxide-gen -- --verbose --rule-report`.
 | Flag | Default | Effect |
 |---|---|---|
 | `--schema <glob>` | `application-profiles-library/CGMES/RDFS/61970-600-2_*-AP-Voc-RDFS2020.rdf` | RDF/RDFS schema files to import |
-| `--output <dir>` | `cimmodel/src/generated` | struct output directory |
+| `--output <dir>` | `cimmodel/src/generated` | class-table output directory |
 | `--shacl <glob>` | `application-profiles-library/CGMES/SHACL/*.ttl` | SHACL TTL files to import |
 | `--shacl-output <dir>` | `cimvalidation/src` | shape table output directory (`cgmes_shapes.rs`, `cgmes_profiles.rs`, `nc_shapes.rs`, `nc_profiles.rs`) |
 | `--python-stubs-output <dir>` | `cimoxide-py/python/cimoxide` | `.pyi` type stub output directory |
@@ -321,7 +332,7 @@ debug = true
 `cimgen/tests/codegen.rs` contains four hash-based tests that detect unintended drift in
 the generated output:
 
-- `cimmodel_codegen_stable` — runs the RDF struct generator and hashes `cimmodel/src/generated/`
+- `cimmodel_codegen_stable` — runs the class-table generator and hashes `cimmodel/src/generated/`
 - `nc_classes_codegen_stable` — hashes the NC class table on its own
 - `cgmes_shapes_codegen_stable` — hashes the CGMES shape table and profile index (`cimvalidation/src/cgmes_shapes.rs`, `cgmes_profiles.rs`)
 - `nc_shapes_codegen_stable` — hashes the NC shape table and profile index (`cimvalidation/src/nc_shapes.rs`, `nc_profiles.rs`)
@@ -399,14 +410,14 @@ the dependency tree is pure Rust and `Store::new()` is the in-memory store.
 ### How decoded data becomes RDF
 
 The decoder is namespace-blind by construction: `local_name()` drops the XML prefix and
-`strip_fragment()` drops the IRI base, so `RdfBlock.fields` keys are bare
+`strip_fragment()` drops the IRI base, so `Element::fields` keys are bare
 `IdentifiedObject.name` strings and every value is an untyped `FieldValue::Text`. Two tables
 generated into `cimmodel/src/generated/profile_meta.rs` put that back:
 
 | Table | Contents |
 |---|---|
 | `TYPE_NS` | `(type_name, namespace)` — the RDF namespace of each CIM class |
-| `ATTR_RDF` | `(attr_id, namespace, range, kind)` keyed by `RdfBlock.fields` key; `kind` is literal / association / enum, and `range` is the XSD datatype or the enum namespace |
+| `ATTR_RDF` | `(attr_id, namespace, range, kind)` keyed by `Element::fields` key; `kind` is literal / association / enum, and `range` is the XSD datatype or the enum namespace |
 
 This is what keeps `eu:` attributes out of the `cim:` namespace — a single `eu:BoundaryPoint`
 carries both `eu:BoundaryPoint.toEndName` and `cim:IdentifiedObject.description`, and they
@@ -423,21 +434,19 @@ Other mapping rules:
   `FILTER(?r > 0.1)` disagree with the value that was decoded. Without typing, that filter
   would compare lexically.
 - **Enum values** arrive fragment-stripped (`UnitSymbol.W`) and are rebuilt against the
-  enum's namespace. Two `eu:` enumerations — `LimitKind` and `SVCControlMode` — are
-  generated as marker structs rather than enums, because `cims:stereotype` parsing is
-  last-write-wins and their `European` stereotype overwrites the `enumeration` one; their
-  values are recovered from `TYPE_NS` instead.
-- **Fields** come from `entry.block` where it is populated, which is the lossless source and
-  retains predicates the typed struct's catch-all arm discarded. After `drop_blocks()`,
-  materialisation falls back to `CimElement::to_block()` and the graph becomes a subset.
-  `CimStore::stats()` reports how many elements took that path.
+  enum's namespace. Two `eu:` enumerations — `LimitKind` and `SVCControlMode` — are read
+  as classes rather than enumerations, because `cims:stereotype` parsing is last-write-wins
+  and their `European` stereotype overwrites the `enumeration` one; their values are
+  recovered from `TYPE_NS` instead.
+- **Fields.** Every field an element carries becomes a quad, including those its class does
+  not declare.
 - **Graphs.** Everything goes in the default graph. Per-profile named graphs are not
-  possible: `CimEntry` records no source-file provenance.
+  possible: an `Element` records no source-file provenance.
 
 ### Cost
 
-The graph is held *in addition to* the typed structs and `RdfBlock`s it was built from, so
-materialisation roughly doubles memory for a dataset.
+The graph is held *in addition to* the elements it was built from, so materialisation
+more than doubles memory for a dataset.
 
 The merged RealGrid configuration (117 MB of RDF/XML) decodes to **188,551 elements** and
 materialises to **1,302,191 quads**. From `cargo bench -p cimoxide-sparql`:
@@ -453,15 +462,14 @@ Peak RSS for the same dataset, measured on `cimoxide-cli` release builds:
 
 | Command | Peak RSS | Wall |
 |---|---:|---:|
-| `cimcli import` (decode only) | 559 MB | 1.24 s |
-| `cimcli query` (decode + materialise + `COUNT(*)`) | 1067 MB | 3.94 s |
+| `cimcli import` (decode only) | 406 MB | 0.88 s |
+| `cimcli query` (decode + materialise + `COUNT(*)`) | 962 MB | 3.72 s |
 
-So the graph costs roughly what the decoded dataset already costs — about +510 MB and +2.7 s
+So the graph costs somewhat more than the decoded dataset itself — about +556 MB and +2.8 s
 here, both consistent with the `into_store` figure above.
 
-Two levers if that matters: `GraphOptions::with_types([...])` restricts materialisation to
-the classes a query touches, and calling `CimDataset::drop_blocks()` first frees the raw
-field maps at the cost of the predicates the typed structs do not model.
+The lever if that matters: `GraphOptions::with_types([...])` restricts materialisation to
+the classes a query touches.
 
 ## RDF/XML export
 

@@ -40,7 +40,7 @@ fn check_excitation_system_smd(dataset: &CimDataset) -> Vec<Violation> {
             if let Some(smd_ref) = obj.reference("ExcitationSystemDynamics.SynchronousMachineDynamics") {
                 let target_id = smd_ref.trim_start_matches('#');
                 let is_simplified = dataset.entries.get(target_id)
-                    .is_some_and(|e| e.element.type_name() == "SynchronousMachineSimplified");
+                    .is_some_and(|e| e.type_name() == "SynchronousMachineSimplified");
                 if is_simplified {
                     v.push(Violation {
                         object_id:   mrid.clone(),

@@ -1,4 +1,4 @@
-//! Where a bag family's class table comes from.
+//! Where a family's class table comes from.
 //!
 //! By default it is the table `cimgen` generated. With the `dynamic-schema`
 //! feature, an ENTSO-E RDFS directory can supply it instead, so a new profile
@@ -7,7 +7,10 @@
 //! Resolution order, highest first:
 //!
 //! 1. [`load_from`] — an explicit call, for libraries and tests
-//! 2. `CIMOXIDE_RDFS_DIR` — for the CLI and the Python bindings
+//! 2. `CIMOXIDE_RDFS_DIR` — for the CLI and the Python bindings. It may list
+//!    several directories, separated as in `PATH`; each serves the family
+//!    whose vocabularies it holds (see [`family_of_dir`]), so NC's directory
+//!    alone leaves CGMES on its generated table
 //! 3. the generated table
 //!
 //! A directory that is missing or fails to parse falls back to the generated
@@ -16,7 +19,7 @@
 
 use crate::base::ClassDef;
 
-/// Resolve the class table for a bag family.
+/// Resolve the class table for a family.
 ///
 /// `generated` is the table `cimgen` emitted, used unless something overrides it.
 pub fn resolve(family: &'static str, generated: &'static [ClassDef]) -> &'static [ClassDef] {
@@ -32,7 +35,7 @@ pub fn resolve(family: &'static str, generated: &'static [ClassDef]) -> &'static
 }
 
 #[cfg(feature = "dynamic-schema")]
-pub use dynamic::{load_from, load_table, SchemaError, RDFS_DIR_ENV};
+pub use dynamic::{family_of_dir, load_from, load_table, SchemaError, RDFS_DIR_ENV};
 
 #[cfg(feature = "dynamic-schema")]
 mod dynamic {
@@ -46,7 +49,8 @@ mod dynamic {
 
     use crate::base::{AttrDef, AttrKind, ClassDef};
 
-    /// Environment variable naming a directory of RDFS vocabularies.
+    /// Environment variable naming RDFS directories — one, or several separated
+    /// as in `PATH`, each serving the family whose vocabularies it holds.
     pub const RDFS_DIR_ENV: &str = "CIMOXIDE_RDFS_DIR";
 
     #[derive(Debug)]
@@ -55,7 +59,7 @@ mod dynamic {
         TooLate,
         /// A table was already loaded for this family.
         AlreadyLoaded,
-        /// No family with this id, or it is not a bag family.
+        /// No family with this id.
         UnknownFamily(String),
         Parse(String),
     }
@@ -68,7 +72,7 @@ mod dynamic {
                     "the type registry is already built; load the schema before decoding"
                 ),
                 Self::AlreadyLoaded => write!(f, "a schema is already loaded for this family"),
-                Self::UnknownFamily(id) => write!(f, "unknown or non-bag family: {id}"),
+                Self::UnknownFamily(id) => write!(f, "unknown family: {id}"),
                 Self::Parse(e) => write!(f, "{e}"),
             }
         }
@@ -85,14 +89,14 @@ mod dynamic {
     /// would have had no effect instead of silently doing nothing.
     static RESOLVED: AtomicBool = AtomicBool::new(false);
 
-    /// Load a bag family's class table from a directory of RDFS vocabularies.
+    /// Load a family's class table from a directory of RDFS vocabularies.
     ///
     /// Takes precedence over `CIMOXIDE_RDFS_DIR`. Must be called before the
     /// first decode: the registry is memoized, so afterwards this returns
     /// [`SchemaError::TooLate`] rather than being quietly ignored.
     pub fn load_from(family_id: &str, dir: &Path) -> Result<(), SchemaError> {
         let family = family::by_id(family_id)
-            .filter(|f| !f.typed)
+            
             .ok_or_else(|| SchemaError::UnknownFamily(family_id.to_string()))?;
         if RESOLVED.load(Ordering::SeqCst) {
             return Err(SchemaError::TooLate);
@@ -116,13 +120,16 @@ mod dynamic {
             return classes;
         }
 
-        let Some(dir) = std::env::var_os(RDFS_DIR_ENV) else {
+        let Some(dirs) = env_dirs() else {
             return generated;
         };
-        let Some(family) = family::by_id(family_id).filter(|f| !f.typed) else {
+        let Some(family) = family::by_id(family_id) else {
             return generated;
         };
-        match load_family(family, &PathBuf::from(dir)) {
+        let Some(dir) = dirs.iter().find(|d| family_of_dir(d).is_some_and(|f| f.id == family.id)) else {
+            return generated;
+        };
+        match load_family(family, dir) {
             Ok(classes) => classes,
             Err(e) => {
                 eprintln!(
@@ -134,13 +141,54 @@ mod dynamic {
         }
     }
 
+    /// The directories `CIMOXIDE_RDFS_DIR` lists, or `None` when it is unset. A
+    /// directory holding neither family's vocabularies is reported once.
+    fn env_dirs() -> Option<&'static [PathBuf]> {
+        static DIRS: OnceLock<Option<Vec<PathBuf>>> = OnceLock::new();
+        DIRS.get_or_init(|| {
+            let value = std::env::var_os(RDFS_DIR_ENV)?;
+            let dirs: Vec<PathBuf> = std::env::split_paths(&value).collect();
+            for d in &dirs {
+                if family_of_dir(d).is_none() {
+                    eprintln!(
+                        "warning: {RDFS_DIR_ENV} lists {}, which holds no CGMES or NC RDFS \
+                         vocabularies; ignoring it",
+                        d.display()
+                    );
+                }
+            }
+            Some(dirs)
+        })
+        .as_deref()
+    }
+
+    /// Which family's vocabularies an RDFS directory holds, by the families'
+    /// file-name patterns. NC's pattern (`*-AP-Voc-RDFS2020.rdf`) also matches
+    /// CGMES's files, so CGMES's narrower one is tried first.
+    pub fn family_of_dir(dir: &Path) -> Option<&'static Family> {
+        let names: Vec<String> = std::fs::read_dir(dir)
+            .ok()?
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        let matches = |f: &Family| {
+            let pattern = Path::new(f.default_schema)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let (prefix, suffix) = pattern.split_once('*').unwrap_or((&pattern, ""));
+            names.iter().any(|n| n.starts_with(prefix) && n.ends_with(suffix))
+        };
+        [&family::CGMES, &family::NC].into_iter().find(|f| matches(f))
+    }
+
     /// Build a family's class table from RDFS without installing it.
     ///
     /// Useful for inspecting what a schema directory would produce, and for
     /// checking it against the generated table.
     pub fn load_table(family_id: &str, dir: &Path) -> Result<&'static [ClassDef], SchemaError> {
         let family = family::by_id(family_id)
-            .filter(|f| !f.typed)
+            
             .ok_or_else(|| SchemaError::UnknownFamily(family_id.to_string()))?;
         load_family(family, dir)
     }

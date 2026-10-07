@@ -1,7 +1,7 @@
 //! Mapping between cimoxide's decoded identifiers and RDF IRIs.
 //!
 //! The decoder is namespace-blind by construction: `local_name()` drops the XML prefix and
-//! `strip_fragment()` drops the IRI base, so `RdfBlock.fields` keys are bare
+//! `strip_fragment()` drops the IRI base, so `Element::fields` keys are bare
 //! `IdentifiedObject.name` strings and `rdf:resource` targets have lost their namespace.
 //! Everything needed to put that back is in the `TYPE_NS` / `ATTR_RDF` tables that `cimgen`
 //! emits into `cimmodel::profile_meta`; this module is the lookup layer over them.
@@ -75,12 +75,12 @@ pub fn type_iri(type_name: &str) -> String {
     format!("{}{type_name}", type_namespace(type_name).unwrap_or(FALLBACK_NS))
 }
 
-/// RDF metadata for an `RdfBlock.fields` key such as `"ACLineSegment.b0ch"`.
+/// RDF metadata for an `Element::fields` key such as `"ACLineSegment.b0ch"`.
 pub fn attr(attr_id: &str) -> Option<AttrRdf> {
     attr_index().get(attr_id).copied()
 }
 
-/// Full predicate IRI for an `RdfBlock.fields` key.
+/// Full predicate IRI for an `Element::fields` key.
 pub fn predicate_iri(attr_id: &str) -> String {
     let ns = attr(attr_id).map_or(FALLBACK_NS, |a| a.namespace);
     format!("{ns}{attr_id}")

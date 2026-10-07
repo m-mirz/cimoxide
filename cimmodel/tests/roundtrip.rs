@@ -13,19 +13,16 @@ fn json_shape() {
     let json = dataset_to_json(&ds);
     let map = json.as_object().expect("root is object");
 
-    // N0 is a TopologicalNode with name "N0"
+    // N0 is a TopologicalNode with name "N0"; keys are the attributes' `Class.attr`.
     let n0 = &map["N0"];
     assert_eq!(n0["_type"].as_str().unwrap(), "TopologicalNode");
-    assert_eq!(n0["name"].as_str().unwrap(), "N0");
+    assert_eq!(n0["id"].as_str().unwrap(), "N0");
+    assert_eq!(n0["IdentifiedObject.name"].as_str().unwrap(), "N0");
 
-    // Terminal.N0 MridRef field should be a plain string
+    // A reference is a plain string: the referenced mRID.
     let t = &map["Terminal.N0"];
     assert_eq!(t["_type"].as_str().unwrap(), "Terminal");
-    assert!(
-        t["topological_node"].is_string(),
-        "MridRef should serialize as string"
-    );
-    assert_eq!(t["topological_node"].as_str().unwrap(), "N0");
+    assert_eq!(t["Terminal.TopologicalNode"].as_str().unwrap(), "N0");
 }
 
 #[test]
@@ -489,7 +486,8 @@ fn every_profile_round_trips_its_own_file() {
 }
 
 /// Elements inserted after decoding carry no history, so routing has to come from the
-/// schema. The JSON hop rebuilds every field through `to_block()`, exercising that path.
+/// schema. The JSON hop rebuilds every element from JSON, telling references from text by
+/// the class table, exercising that path.
 #[test]
 fn json_hop_exports_identically() {
     let ds = decode_eqbd();

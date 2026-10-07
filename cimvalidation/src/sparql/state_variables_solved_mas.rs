@@ -1,4 +1,4 @@
-use cimmodel::{CimDataset, CimEntry};
+use cimmodel::{CimDataset, Element};
 use crate::Violation;
 use super::Fields;
 
@@ -16,7 +16,7 @@ pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
     v
 }
 
-fn tc_low_high(entry: &CimEntry) -> Option<(i64, i64)> {
+fn tc_low_high(entry: &Element) -> Option<(i64, i64)> {
     if let Some(o) = Fields::of_class(entry, "RatioTapChanger") {
         return Some((o.i64("TapChanger.lowStep")?, o.i64("TapChanger.highStep")?));
     }
@@ -38,7 +38,7 @@ fn tc_low_high(entry: &CimEntry) -> Option<(i64, i64)> {
     None
 }
 
-fn rc_discrete_enabled(entry: &CimEntry) -> (bool, bool) {
+fn rc_discrete_enabled(entry: &Element) -> (bool, bool) {
     if let Some(o) = Fields::of_class(entry, "RegulatingControl") {
         return (o.bool("RegulatingControl.discrete").unwrap_or(false), o.bool("RegulatingControl.enabled").unwrap_or(false));
     }
@@ -108,7 +108,7 @@ fn check_sv_tap_step_position_integer(dataset: &CimDataset) -> Vec<Violation> {
     v
 }
 
-fn tap_changer_control_ref(entry: &CimEntry) -> Option<&str> {
+fn tap_changer_control_ref(entry: &Element) -> Option<&str> {
     if let Some(o) = Fields::of_class(entry, "RatioTapChanger") {
         return o.reference("TapChanger.TapChangerControl");
     }
@@ -130,7 +130,7 @@ fn tap_changer_control_ref(entry: &CimEntry) -> Option<&str> {
     None
 }
 
-fn shunt_compensator_regulating_control_ref(entry: &CimEntry) -> Option<&str> {
+fn shunt_compensator_regulating_control_ref(entry: &Element) -> Option<&str> {
     if let Some(o) = Fields::of_class(entry, "LinearShuntCompensator") {
         return o.reference("RegulatingCondEq.RegulatingControl");
     }

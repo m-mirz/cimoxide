@@ -105,8 +105,7 @@ fn min_count_flags_a_missing_required_property() {
 }
 
 /// A bag keeps repeated elements as a `TextList`, so the count is directly
-/// available. The generated validators consult `duplicate_fields` instead,
-/// because a typed struct collapses the repeats before they can be counted.
+/// available.
 #[test]
 fn max_count_flags_a_repeated_property() {
     let v = check(
@@ -163,7 +162,7 @@ fn enum_values_outside_the_allowed_set_are_flagged() {
 
 /// `sh:path ( nc:X.y rdf:type )` — follow the association, then read the
 /// referenced element's class. The allowed list mixes CGMES classes with NC
-/// ones and `CimElement::type_name` answers for both, so this is the one place
+/// ones and `Element::type_name` answers for both, so this is the one place
 /// NC validation legitimately reaches across families.
 #[test]
 fn ref_type_checks_the_class_of_the_referenced_element() {

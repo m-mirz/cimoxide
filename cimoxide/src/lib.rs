@@ -14,7 +14,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-/// The CIM data model: generated typed structs, one per RDF type, the
+/// The CIM data model: generated class tables, the property-bag `Element`, the
 /// streaming RDF/XML decoder producing a `CimDataset`, and conversion to
 /// RDF/XML and JSON (`model::convert`).
 pub use cimmodel as model;

@@ -30,8 +30,8 @@ mod par;
 
 // ── property-bag families ──────────────────────────────────────────────────
 //
-// NC classes decode into GenericElement bags; their shapes are a data table
-// interpreted by `bag`, the same interpreter CGMES uses below.
+// Elements of both families are property bags; each family's shapes are a
+// data table interpreted by `bag`.
 pub mod bag;
 pub mod shapes;
 pub mod shape_source;
@@ -104,7 +104,7 @@ fn cgmes_tagged(tag: &str) -> &'static [&'static shapes::ShapeDef] {
 }
 
 fn run_cgmes(dataset: &cimmodel::CimDataset, active: &[&shapes::ShapeDef]) -> Vec<Violation> {
-    bag::validate_shapes(dataset, bag::Source::Typed, active)
+    bag::validate_shapes(dataset, bag::Source::Cgmes, active)
 }
 
 // ── public two-phase API ───────────────────────────────────────────────────

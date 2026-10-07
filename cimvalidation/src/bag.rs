@@ -1,20 +1,17 @@
 //! Validates a dataset against a [`crate::shapes`] table.
 //!
-//! The counterpart to the generated `generated_*_shacl.rs` validators, which
-//! read typed struct fields. Here every value is the string the XML carried,
-//! so the checks the generated path treats as tautologies — `sh:datatype`,
-//! `sh:nodeKind` — are real, and `sh:closed` becomes answerable at all.
+//! It replaced generated per-check validators that read typed struct fields.
+//! Here every value is the string the XML carried, so the checks those treated
+//! as tautologies — `sh:datatype`, `sh:nodeKind` — are real, and `sh:closed`
+//! becomes answerable at all.
 //!
-//! Which elements a run reads is a [`Source`]: NC shapes read property bags,
-//! CGMES shapes read typed elements through the [`cimmodel::CimEntry::block`]
-//! the decoder keeps beside every struct. The block holds every field the XML
-//! carried, which is what lets one interpreter serve both. It is gone after
-//! `CimDataset::drop_blocks()`, so a typed element must be validated before
-//! that.
+//! Which elements a run reads is a [`Source`]: each family's shapes read that
+//! family's elements. Every element holds every field the XML carried, which
+//! is what lets one interpreter serve both.
 
 
-use cimmodel::{CimDataset, CimEntry};
-use cimmodel::base::{FastMap, FastSet, FieldMap, FieldValue, GenericElement};
+use cimmodel::{CimDataset, Element};
+use cimmodel::base::{FastMap, FastSet, FieldMap, FieldValue};
 
 use crate::helpers;
 use crate::par::{par_concat, par_map, runs, threads_for};
@@ -134,28 +131,22 @@ type Fields = FieldMap;
 /// from the other family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
-    /// [`GenericElement`] property bags, read directly.
-    Bags,
-    /// Generated structs, read through the decoder's block.
-    Typed,
+    /// Network Code profile elements (`nc:` classes).
+    Nc,
+    /// CGMES elements.
+    Cgmes,
 }
 
 impl Source {
-    /// The element's fields, or `None` if it is not this source's. A typed
-    /// element whose block was dropped also has none — see [`validate_shapes`]
-    /// for why a target in that state is an error rather than a skip.
-    fn fields(self, entry: &CimEntry) -> Option<&Fields> {
-        let bag = entry.element.as_any().downcast_ref::<GenericElement>();
-        match (self, bag) {
-            (Source::Bags, Some(el)) => Some(el.fields()),
-            (Source::Typed, None) if !entry.block.type_name.is_empty() => Some(&entry.block.fields),
-            _ => None,
-        }
+    /// The element's fields, or `None` if it is another family's.
+    fn fields(self, entry: &Element) -> Option<&Fields> {
+        self.owns(entry).then(|| entry.fields())
     }
 
-    fn owns(self, entry: &CimEntry) -> bool {
-        let bag = entry.element.as_any().is::<GenericElement>();
-        bag == (self == Source::Bags)
+    /// Whether `entry` belongs to this source's family. Families are told
+    /// apart by their class names: NC's carry the `nc:` prefix.
+    fn owns(self, entry: &Element) -> bool {
+        entry.type_name().starts_with("nc:") == (self == Source::Nc)
     }
 }
 
@@ -334,7 +325,7 @@ fn path_label(path: &Path) -> std::borrow::Cow<'static, str> {
 /// Reporting it would make every cross-file association a value-type
 /// violation.
 fn class_of<'a>(ctx: &Ctx<'a>, mrid: &str) -> Option<&'static str> {
-    ctx.ds.entries.get(mrid).map(|e| e.element.type_name())
+    ctx.ds.entries.get(mrid).map(|e| e.type_name())
 }
 
 /// Does `values` violate `constraint`? Unknown values violate nothing.
@@ -519,26 +510,12 @@ struct Resolved<'a> {
 }
 
 /// Resolve `mrid` for `source`: `None` when it is missing or another family's
-/// element — e.g. a CGMES struct under an NC shape, whose attributes that
+/// element — e.g. a CGMES element under an NC shape, whose attributes that
 /// family does not define and would report as absent.
-///
-/// # Panics
-///
-/// For a typed element of this source whose block was dropped: there is
-/// nothing left to read, and skipping it would report the element as valid.
 fn resolve_target<'a>(ds: &'a CimDataset, source: Source, mrid: &'a String) -> Option<Resolved<'a>> {
     let entry = ds.entries.get(mrid)?;
-    if !source.owns(entry) {
-        return None;
-    }
-    let fields = source.fields(entry).unwrap_or_else(|| {
-        panic!(
-            "{mrid} ({}) has no fields to validate: its block was dropped \
-             (CimDataset::drop_blocks) before validation",
-            entry.element.type_name()
-        )
-    });
-    Some(Resolved { mrid, class: entry.element.type_name(), fields })
+    let fields = source.fields(entry)?;
+    Some(Resolved { mrid, class: entry.type_name(), fields })
 }
 
 /// The reverse index and the `sh:targetSubjectsOf` index, built in one pass.
@@ -562,7 +539,7 @@ fn build_indexes<'a>(
         return (ReverseIndex::default(), FastMap::default());
     }
     type Partial<'a> = (ReverseIndex<'a>, FastMap<&'static str, Vec<Resolved<'a>>>);
-    let index = |entries: &mut dyn Iterator<Item = (&'a String, &'a CimEntry)>| -> Partial<'a> {
+    let index = |entries: &mut dyn Iterator<Item = (&'a String, &'a Element)>| -> Partial<'a> {
         let mut reverse = ReverseIndex::default();
         let mut subjects: FastMap<&'static str, Vec<Resolved<'a>>> =
             subject_fields.iter().map(|f| (*f, Vec::new())).collect();
@@ -580,7 +557,7 @@ fn build_indexes<'a>(
             }
             for field in subject_fields {
                 if f.contains_key(*field) {
-                    let r = Resolved { mrid, class: entry.element.type_name(), fields: f };
+                    let r = Resolved { mrid, class: entry.type_name(), fields: f };
                     subjects.get_mut(field).expect("seeded above").push(r);
                 }
             }
@@ -595,7 +572,7 @@ fn build_indexes<'a>(
     // One pass split into contiguous runs of the map's own order, each indexed
     // on its own thread, then merged in run order: the lists come out exactly
     // as the single pass builds them.
-    let all: Vec<(&'a String, &'a CimEntry)> = ds.entries.iter().collect();
+    let all: Vec<(&'a String, &'a Element)> = ds.entries.iter().collect();
     let parts: Vec<Partial<'a>> = par_map(&runs(&all, threads, |_| 1), |run| index(&mut run.iter().copied()));
     let mut parts = parts.into_iter();
     let (mut reverse, mut subjects) = parts.next().expect("at least one run");
@@ -684,8 +661,11 @@ pub fn validate_profile(
         .iter()
         .filter(|s| s.profiles.contains(&profile))
         .collect();
-    validate_shapes(ds, Source::Bags, &active)
+    validate_shapes(ds, Source::Nc, &active)
 }
+
+/// Elements per slice of a class's targets, the unit of work a thread takes.
+const SLICE: usize = 2048;
 
 /// Validate a dataset against shapes the caller has already selected.
 ///
@@ -695,14 +675,6 @@ pub fn validate_profile(
 ///
 /// Targets outside `source` are skipped: a family's shapes describe its own
 /// elements.
-///
-/// # Panics
-///
-/// If a target is a typed element whose block was dropped: there is nothing
-/// left to read, and skipping it would report the element as valid.
-/// Elements per slice of a class's targets, the unit of work a thread takes.
-const SLICE: usize = 2048;
-
 pub fn validate_shapes(ds: &CimDataset, source: Source, active: &[&ShapeDef]) -> Vec<Violation> {
     if active.is_empty() {
         return Vec::new();

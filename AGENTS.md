@@ -4,7 +4,7 @@ This file provides guidance to AI coding agents (Claude Code, Codex, Cursor and 
 
 ## What This Project Does
 
-cimoxide is a Rust monorepo providing tooling for ENTSO-E CGMES (Common Information Model Exchange Standard) data used in power system modeling. It reads IEC 61970/61968 RDF/SHACL schemas, generates strongly-typed Rust structs and SHACL shape tables that one interpreter validates against, and provides efficient RDF/XML deserialization.
+cimoxide is a Rust monorepo providing tooling for ENTSO-E CGMES (Common Information Model Exchange Standard) data used in power system modeling. It reads IEC 61970/61968 RDF/SHACL schemas, generates class tables that RDF/XML decodes against and SHACL shape tables that one interpreter validates against, and provides efficient RDF/XML deserialization.
 
 ## Common Commands
 
@@ -42,43 +42,58 @@ git submodule update --init --recursive
 
 ## Crate Architecture
 
-**Data flow**: RDF/SHACL schemas → `cimgen` (code generator) → `cimmodel` (structs, decoder, converter) + `cimvalidation` (shape tables)
+**Data flow**: RDF/SHACL schemas → `cimgen` (code generator) → `cimmodel` (class tables, decoder, converter) + `cimvalidation` (shape tables)
 
 ### `cimgen` — Code Generator CLI
 Parses RDF schema files and SHACL TTL constraint files, then generates Rust code. Key modules:
 - `schema/` — RDF schema parsing and internal model (`CimType`, `CimAttribute`, `CimDatatype`)
-- `generator/rust_gen.rs` — Emits struct definitions
+- `generator/rust_gen.rs` — Writes `cimmodel`'s generated module: a class table per family
+  (`generator/classes_gen.rs`), the CGMES version constants and the profile tables
 - `shacl/` — SHACL TTL parsing, constraint model, and validation code generation
 
 ### `cimmodel` — Data Model, Decoder and Converter
-One crate for CIM data and its RDF/XML in both directions. The generated part lives in
-`src/generated/` (do not hand-edit): `classes.rs` with every CGMES struct, plus the tables
-below and a `mod.rs`. `.gitignore` and `make clean` cover that directory alone, so a new
-hand-written module goes directly in `src/` and is declared in the hand-written `lib.rs`.
+One crate for CIM data and its RDF/XML in both directions. **There are no generated types.**
+Every element of every family is an `Element`: its class (a `&'static ClassDef`), its mRID,
+its fields as written (`Class.attr` → `FieldValue`, values unparsed) and which fields were
+repeated. What a class declares is data — a class table per family — so an attribute the
+class does not declare and a value that does not parse are kept, not dropped.
+
+The generated part lives in `src/generated/` (do not hand-edit): `cgmes_classes.rs`,
+`nc_classes.rs`, `constants.rs`, `profile_meta.rs` and a `mod.rs`. `.gitignore` and
+`make clean` cover that directory alone; a new hand-written module goes directly in `src/`
+and is declared in the hand-written `lib.rs`.
+
 Up to 0.3.3 this was three crates, `cimoxide-structs`, `cimoxide-decoder` and
-`cimoxide-convert`; those stay on crates.io at 0.3.x. Core files (generated ones under `src/generated/`):
-- `base.rs` — hand-written. Traits `CimElement`, `RdfBlock`, `FieldValue`, `MridRef`;
-  the `TypeRegistry`; and `ClassDef`/`AttrDef`/`GenericElement` for property-bag families
-- `registry.rs` — `TYPE_ROWS` keyed by `(namespace, local name)`, plus a bare-name
-  fallback table and the legacy `registry()`
-- `constants.rs` — CGMES version constants
-- `nc_classes.rs` — the NC family's 596-class table (generated)
+`cimoxide-convert`, and CGMES decoded into 446 generated structs plus a raw field map
+(`RdfBlock`) kept beside each; those crates stay on crates.io at 0.3.x. Dropping the structs
+cut RealGrid decoding by 22% and peak memory by 26%, because nothing was built twice.
+
+Core files:
+- `base.rs` — hand-written. `Element`, `FieldValue`, the `FastMap`/`FieldMap` hashing,
+  `ClassDef`/`AttrDef`, and the `TypeRegistry`: `(namespace, local name)` → class, a
+  bare-name fallback (CGMES only), and every attribute a class declares, inherited ones
+  included (`attr(class, id)`, `chain(class)`)
+- `registry.rs` — hand-written. `type_registry()`, built once from both class tables (each
+  generated, or read from RDFS at runtime; see "Loading the class tables from RDFS")
 - `decode.rs` — hand-written streaming XML parser that produces `CimDataset`
-  (re-exported at the crate root with `CimEntry`):
+  (re-exported at the crate root with `Element`):
   - `CimDataset::decode_file(path)` / `decode_files(paths)` / `decode_str(content)` — Entry points
-  - `CimDataset::merge(other)` — Combine multiple datasets (re-parses conflicts)
-  - `CimDataset::drop_blocks()` — Free `RdfBlock` memory after final merge
-  - `CimDataset { entries: FastMap<mrid, CimEntry>, by_type: FastMap<type_name, Vec<mrid>> }`
+  - `CimDataset::merge(other)` — Combine multiple datasets: a later scalar wins, reference
+    lists are joined; duplicate tracking stays per file
+  - `CimDataset { entries: FastMap<mrid, Element>, by_type: FastMap<type_name, Vec<mrid>> }`
   - `FastMap`/`FieldMap` (in `cimmodel::base`) use a hand-written Fx-style hasher instead of
     SipHash: −12% decode. It has a fixed seed, so map iteration — and therefore `by_type`
     order after `merge` and violation order — is reproducible run to run. Core crates take
     no dependency for it; do not pull in crates that are only in `Cargo.lock` via oxigraph
-- `convert.rs` — hand-written JSON and RDF/XML export (`dataset_to_json`, `dataset_to_xml`,
-  `dataset_to_xml_for_profile`), used by `cimoxide-cli` and `cimoxide-py`
+- `convert.rs` — hand-written RDF/XML export (`dataset_to_xml`, `dataset_to_xml_for_profile`)
+  and JSON (`dataset_to_json`, `dataset_from_json`): `{mrid: {"_type", "id", "Class.attr":
+  "value" | ["value", ...]}}`, values as written. Import tells references from text by the
+  attribute's declaration in the class table
+- `schema_source.rs` — where each family's class table comes from (generated or RDFS)
 
 ### `cimvalidation` — SHACL Validators (`cgmes_shapes.rs`, `cgmes_profiles.rs`, `nc_shapes.rs`, `nc_profiles.rs` are generated; do not hand-edit those)
 Both families validate through one interpreter, `bag.rs`, over a shape table:
-`cgmes_shapes.rs` (CGMES, read through the typed elements' `RdfBlock`s) and `nc_shapes.rs`.
+`cgmes_shapes.rs` (CGMES) and `nc_shapes.rs`, each reading its own family's elements.
 See "Shape tables" below. CGMES used to have ~250k lines of generated per-check
 validators (123 s to compile the crate, against 9.5 s now); they are gone.
 
@@ -90,17 +105,15 @@ hand-written. Entry points:
 - `validate_header`, `validate_profile_local(dataset, profile, cfg)`, `validate_crossprofile`
 - `validate_profile_shacl` / `validate_crossprofile_shacl` — the CGMES table half alone,
   without the hand-written SPARQL rules
-- Validate before `CimDataset::drop_blocks()`: typed elements are read through their block,
-  and a target without one panics rather than passing
 - The hand-written rules read attributes through `sparql::Fields` (`f64("Class.attr")`,
-  `reference(..)`, `enumeration(..)`, …), never by downcasting to the generated structs.
-  Its accessors reproduce `from_block` exactly — last value of a repeated scalar, `true`
-  only for the text `true`, numbers parsed into the field's own type, a single-valued
-  reference written twice is absent — and the key is the attribute's declaring class
-  (`Equipment.inService` on a Breaker). Three rules still read the struct's view on
-  purpose (`to_block`: float special values and mRID uniqueness in `common.rs`, dangling
-  references in `common_solved_mas.rs`), because their meaning depends on which attributes
-  a class declares
+  `reference(..)`, `enumeration(..)`, …). Its accessors keep the values the generated
+  structs once held — last value of a repeated scalar, `true` only for the text `true`,
+  numbers parsed into the attribute's own type, a single-valued reference written twice is
+  absent — and the key is the attribute's declaring class (`Equipment.inService` on a
+  Breaker). Three rules (float special values and mRID uniqueness in `common.rs`, dangling
+  references in `common_solved_mas.rs`) read `sparql::view`, which rebuilds the structs'
+  view — declared attributes only, in their typed form, iterated in the order a struct's
+  map produced — from the class table and `profile_meta::ATTR_RDF`
 - `combined_config(...)` builds the `Config`
 - Profiles: `"EQ"`, `"OP"`, `"DY"`, `"SV"`, `"SSH"`, `"SC"`, `"GL"`, `"DL"`, `"EQBD"`
 
@@ -118,8 +131,8 @@ no RocksDB/C++ toolchain) and queries it:
 ## Profile Families
 
 Two schema trees are read from `application-profiles-library/`: CGMES (`CGMES/RDFS`,
-446 typed structs) and NC / Network Codes (`NCP/RDFS`, 596 classes as a data table
-decoded into `GenericElement` property bags). A `Family` in
+446 classes) and NC / Network Codes (`NCP/RDFS`, 596 classes), each a class table that
+elements decode against. A `Family` in
 `cimgen/src/schema/family.rs` holds everything that differs between them.
 
 They overlap on 164 class names and both spell the XML prefix `cim`, so **only the
@@ -137,20 +150,24 @@ The two families must be imported into **separate** `CimSpecification`s —
 `specification_namespaces` is one prefix-to-IRI map filled with `or_insert`, and both
 bind `cim` and `base` differently.
 
-### Loading the NC table from RDFS
+### Loading the class tables from RDFS
 
-`cimmodel::schema_source` can build the NC class table from RDFS at runtime
-instead of using the generated one, behind the `dynamic-schema` feature (off by
-default; on for `cimoxide-cli` and `cimoxide-py`). Resolution: explicit
-`load_from` > `CIMOXIDE_RDFS_DIR` > generated table.
+`cimmodel::schema_source` can build a family's class table — CGMES or NC — from
+RDFS at runtime instead of using the generated one, behind the `dynamic-schema`
+feature (off by default; on for `cimoxide-cli` and `cimoxide-py`). Resolution:
+explicit `load_from` > `CIMOXIDE_RDFS_DIR` > generated table. The variable may list
+several directories, separated as in `PATH`; `schema_source::family_of_dir` assigns
+each to the family whose vocabularies it holds (CGMES's `61970-600-2_*` pattern is
+tried first, because NC's `*-AP-Voc-RDFS2020.rdf` matches CGMES's files too), so NC's
+directory alone leaves CGMES on its generated table.
 
 The parser lives in `cimschema/` (package `cimoxide-schema`) so both `cimgen`
 at build time and `cimmodel` at runtime use the same code. `postprocess` is
 **not** optional for either: attribute classification, profile origins and
 namespace fill-in all happen there.
 
-`cimmodel/tests/dynamic_schema.rs` compares the runtime table against the
-generated one field by field. The two are built by separate code paths — the
+`cimmodel/tests/dynamic_schema.rs` compares each family's runtime table against
+the generated one field by field. The two are built by separate code paths — the
 loader in `schema_source.rs` and `classes_gen.rs` in cimgen — and nothing else
 stops them drifting.
 
@@ -160,10 +177,10 @@ decode, +6.2 MB RSS. See the README table.
 ### Shape tables: how both families validate
 
 CGMES validation used to be generated code — one function per check, each
-downcasting to a concrete struct and reading a typed field. NC classes decode
-into `GenericElement` bags, so there was no struct to downcast to and nothing
-for that strategy to reference; NC got a data table instead, and CGMES now
-uses the same table and interpreter. A `bag::Source` keeps each family's
+downcasting to a generated struct and reading a typed field. NC never had
+structs, so there was nothing for that strategy to reference; NC got a data
+table instead, and CGMES now uses the same table and interpreter (and has no
+structs either). A `bag::Source` keeps each family's
 shapes on its own elements (NC targets `IdentifiedObject.name` via
 `sh:targetSubjectsOf`, which would otherwise reach every CGMES element).
 
@@ -248,9 +265,9 @@ The pieces:
 **The table checks more than generated code could, not less.** `sh:datatype`
 and `sh:nodeKind` are tautologies against an `f64` and real checks against the
 text as written — `simplify` used to discard them as "type-system guarantees"
-and no longer does, for either family. `sh:closed` (823 NC shapes) is
-inexpressible against generated structs at all, because unknown properties are
-dropped at decode.
+and no longer does, for either family. `sh:closed` (823 NC shapes) was
+inexpressible against generated structs, which dropped unknown properties at
+decode; an element keeps them.
 
 Resolution happens once, when the table is built, never per element: target
 classes become family-qualified `by_type` keys with abstract classes expanded
@@ -299,9 +316,9 @@ a SHACL directory instead of using the generated ones, behind the
 `CIMOXIDE_SHACL_DIR` may list several directories, separated as in `PATH`;
 `shape_source::family_of_dir` assigns each to the family whose files it holds
 (NC: a `Validation/` subdirectory; CGMES: files its manifest names), so an NC
-directory alone never makes CGMES try to load from it. CGMES classes are
-compiled structs, so a CGMES table from another release can name classes this
-build does not decode; shapes on those match nothing.
+directory alone never makes CGMES try to load from it. A shape table and a class
+table from different releases disagree about what a class is, so load the CGMES
+RDFS from the same release (`CIMOXIDE_RDFS_DIR`, or `<dir>/../RDFS` as below).
 
 The feature also enables `cimmodel/dynamic-schema`, because the shapes
 resolve against the class table: a shape table from one release and a class
@@ -331,8 +348,9 @@ re-measurement.
 
 **Not covered**, and reported as skips rather than silently dropped: NCP's 35
 `sh:sparql` constraints; the 119 `cim16:`/`cim17:` target classes (NC shapes on
-CGMES classes, whose NC attributes the decoder discards, so checking them would
-report absent values the XML carried). One logical shape in
+CGMES classes). They were skipped because CGMES structs discarded the NC attributes
+they check; elements now keep those, so enabling them is possible but would change
+validation results. One logical shape in
 `RemedialActionSchedule-AP-Con-Complex-SHACL.ttl` resolves but never runs: only
 the combined "ALL" manifest imports that file.
 
@@ -340,7 +358,8 @@ the combined "ALL" manifest imports that file.
 ## Codegen Stability Tests
 
 `cimgen/tests/codegen.rs` contains four hash-based tests that detect unintended generator drift:
-- `cimmodel_codegen_stable` — Hashes regenerated struct output against a stored SHA-256
+- `cimmodel_codegen_stable` — Hashes `cimmodel`'s regenerated module (class tables, constants,
+  profile tables) against a stored SHA-256
 - `cgmes_shapes_codegen_stable` — Same for the CGMES shape table, which validation runs,
   and its profile index
 - `nc_classes_codegen_stable` — Hashes the NC class table alone, so a CGMES-only change

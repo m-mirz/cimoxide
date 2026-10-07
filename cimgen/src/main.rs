@@ -118,8 +118,8 @@ fn main() {
         eprintln!("output dir     : {output}");
     }
 
-    if !families.iter().any(|f| f.typed) {
-        eprintln!("--families must include the typed family (cgmes)");
+    if !families.iter().any(|f| f.id == "cgmes") {
+        eprintln!("--families must include cgmes");
         std::process::exit(1);
     }
 
@@ -131,11 +131,11 @@ fn main() {
         }
     };
 
-    // Property-bag families are imported into their own specification: the
-    // prefix-to-namespace maps collide (both bind `cim`, to different IRIs), so
-    // a merged import would silently mis-namespace whichever parsed second.
+    // Each family is imported into its own specification: the prefix-to-
+    // namespace maps collide (both bind `cim`, to different IRIs), so a merged
+    // import would silently mis-namespace whichever parsed second.
     let mut bag_specs: Vec<schema::model::CimSpecification> = Vec::new();
-    for family in families.iter().filter(|f| !f.typed) {
+    for family in families.iter().filter(|f| f.id != "cgmes") {
         let pattern = if family.id == "nc" { &nc_schema } else { family.default_schema };
         match schema::import::import_schema_files(pattern, family, verbose) {
             Ok(s) => bag_specs.push(s),
@@ -161,12 +161,7 @@ fn main() {
         std::process::exit(1);
     }
 
-    eprintln!(
-        "generated {} structs, {} enums into {output}",
-        spec.types.len(),
-        spec.enums.len()
-    );
-    for bag in &bags {
+    for bag in std::iter::once(&&spec).chain(&bags) {
         eprintln!(
             "generated {} {} classes into {output}/{}_classes.rs",
             bag.types.len(),

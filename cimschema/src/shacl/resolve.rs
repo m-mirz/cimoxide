@@ -200,7 +200,7 @@ pub struct Resolver {
     ///
     /// NCP's association value-type lists name CGMES classes
     /// (`cim17:ACLineSegment`) beside NC ones, and the referenced element can
-    /// be either — `CimElement::type_name` answers for both.
+    /// be either — `Element::type_name` answers for both.
     any_family: HashMap<(String, String), String>,
     any_concrete: HashMap<String, Vec<String>>,
 }
@@ -413,9 +413,10 @@ fn resolve_shape(
                 }
                 None => {
                     // The cim16:/cim17: targets land here: NC shapes on CGMES
-                    // classes. The decoder builds a typed struct for those and
-                    // drops the NC attribute the shape constrains, so checking
-                    // them would report absent values that were in the XML.
+                    // classes. Their elements decode as CGMES, and these shapes
+                    // were skipped while CGMES structs dropped the NC attribute
+                    // they constrain. Elements now keep it, so they could run;
+                    // enabling them is a behaviour change left for later.
                     collector.push(&t.value, "", "sh:targetClass", &shape.name,
                         "target class is not in this family's schema (cross-family shape)");
                     continue;

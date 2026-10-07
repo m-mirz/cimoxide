@@ -1,5 +1,6 @@
 pub mod common;
 mod fields;
+mod view;
 pub(crate) use fields::Fields;
 pub mod common_solved_mas;
 pub mod equipment;
@@ -18,20 +19,9 @@ pub mod operation;
 pub mod prof10;
 pub mod quality;
 
-use cimmodel::{CimDataset, CimEntry};
-use cimmodel::base::RdfBlock;
+use cimmodel::CimDataset;
 use crate::{Config, Violation};
 
-/// An element's decoder block, for reading named attributes. Panics, like
-/// [`Fields::of`], when the block was dropped before validation.
-///
-/// The block also holds attributes the struct does not declare, so this is for
-/// reading named attributes, not for iterating every field — a rule that does
-/// the latter keeps `to_block` and the struct's view of the element.
-pub(crate) fn block_of(entry: &CimEntry) -> &RdfBlock {
-    Fields::of(entry);
-    &entry.block
-}
 
 /// Per-profile SPARQL checks that only need data from a single profile's file.
 pub fn validate_profile_local(dataset: &CimDataset, profile: &str, cfg: &Config) -> Vec<Violation> {

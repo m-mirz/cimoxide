@@ -2,19 +2,14 @@
 
 use std::path::Path;
 
-use cimmodel::CimDataset;
-use cimmodel::base::{CimElement, GenericElement};
+use cimmodel::{CimDataset, Element};
 
 fn nc_fixture() -> CimDataset {
     CimDataset::decode_file(Path::new("../testdata/test_nc_CO_001.xml")).unwrap()
 }
 
-fn bag<'a>(ds: &'a CimDataset, mrid: &str) -> &'a GenericElement {
-    ds.entries[mrid]
-        .element
-        .as_any()
-        .downcast_ref::<GenericElement>()
-        .expect("NC elements decode to property bags")
+fn bag<'a>(ds: &'a CimDataset, mrid: &str) -> &'a Element {
+    &ds.entries[mrid]
 }
 
 const CONTINGENCY: &str = "urn:uuid:11111111-1111-1111-1111-111111111111";
@@ -70,7 +65,7 @@ fn nc_inherits_across_namespaces() {
     let ds = nc_fixture();
     // nc:OrdinaryContingency extends cim:Contingency, declared in the other
     // NCP namespace.
-    let def = bag(&ds, CONTINGENCY).class_def();
+    let def = bag(&ds, CONTINGENCY).class();
     let super_idx = def.super_class.expect("OrdinaryContingency has a super class");
     let parent = &cimmodel::nc_classes::CLASSES[super_idx];
     assert_eq!(parent.local, "Contingency");
@@ -85,11 +80,11 @@ fn nc_equipment_is_not_cgmes_equipment() {
     assert_eq!(e.get_bool("Equipment.networkAnalysisEnabled"), Some(true));
     assert_eq!(e.type_name(), "nc:Equipment");
 
-    // ...and the CGMES struct of the same bare name is a different type with a
+    // ...and the CGMES class of the same bare name is a different class with a
     // different namespace.
-    let cgmes = cimmodel::Equipment::default();
-    assert_eq!(cgmes.type_name(), "Equipment");
-    assert_eq!(cgmes.type_ns(), "http://iec.ch/TC57/CIM100#");
+    let cgmes = cimmodel::registry::type_registry().by_type_name("Equipment").expect("CGMES Equipment");
+    assert_eq!(cgmes.qualified, "Equipment");
+    assert_eq!(cgmes.ns, "http://iec.ch/TC57/CIM100#");
 }
 
 #[test]

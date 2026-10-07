@@ -1,4 +1,4 @@
-//! The shape interpreter run against typed CGMES elements.
+//! The shape interpreter run against CGMES elements.
 //!
 //! The shapes here are written by hand rather than resolved from the CGMES
 //! SHACL, so each test pins down one constraint's semantics independently of
@@ -6,8 +6,8 @@
 //! validates clean and introduces one defect: a test asserting an empty result
 //! cannot tell a working interpreter from one that checks nothing.
 //!
-//! The semantics being pinned are the generated validators', since the table
-//! has to reproduce them: a range or comparison is only checked when the value
+//! The semantics being pinned are the former generated validators', which the
+//! table reproduces: a range or comparison is only checked when the value
 //! is present and parses as a number.
 
 use cimmodel::CimDataset;
@@ -41,7 +41,7 @@ fn unit(min_p: &str, max_p: &str, nominal_p: &str) -> CimDataset {
     let ds = CimDataset::decode_str(&xml).expect("fixture did not decode");
     assert!(
         ds.by_type.contains_key("GeneratingUnit"),
-        "fixture must decode as the typed CGMES struct, got {:?}",
+        "fixture must decode as a CGMES GeneratingUnit, got {:?}",
         ds.by_type.keys().collect::<Vec<_>>()
     );
     ds
@@ -94,7 +94,7 @@ static SHAPE: ShapeDef = ShapeDef {
 };
 
 fn run(ds: &CimDataset) -> Vec<Violation> {
-    validate_shapes(ds, Source::Typed, &[&SHAPE])
+    validate_shapes(ds, Source::Cgmes, &[&SHAPE])
 }
 
 fn names(v: &[Violation]) -> Vec<&str> {
@@ -175,22 +175,12 @@ static BY_NAME: ShapeDef = ShapeDef {
 };
 
 /// NC has `sh:targetSubjectsOf` shapes on `IdentifiedObject.name`. Run with
-/// `Source::Bags`, they must not reach a named CGMES struct, or every typed
+/// `Source::Nc`, they must not reach a named CGMES element, or every CGMES
 /// element in a mixed dataset would be validated against NC rules.
 #[test]
 fn a_source_reads_only_its_own_family() {
     let ds = unit("10", "90", "100");
-    assert_eq!(names(&validate_shapes(&ds, Source::Typed, &[&BY_NAME])), ["name-maxLength"]);
-    assert!(validate_shapes(&ds, Source::Bags, &[&BY_NAME]).is_empty());
-    assert!(validate_shapes(&ds, Source::Bags, &[&SHAPE]).is_empty());
-}
-
-/// After `drop_blocks` a typed element has nothing left to read. Skipping it
-/// would report a defective element as valid.
-#[test]
-#[should_panic(expected = "block was dropped")]
-fn validating_after_drop_blocks_is_an_error_not_a_pass() {
-    let mut ds = unit("-5", "90", "100");
-    ds.drop_blocks();
-    run(&ds);
+    assert_eq!(names(&validate_shapes(&ds, Source::Cgmes, &[&BY_NAME])), ["name-maxLength"]);
+    assert!(validate_shapes(&ds, Source::Nc, &[&BY_NAME]).is_empty());
+    assert!(validate_shapes(&ds, Source::Nc, &[&SHAPE]).is_empty());
 }

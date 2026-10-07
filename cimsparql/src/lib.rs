@@ -20,7 +20,7 @@
 //! ```
 //!
 //! Queries are run against the default graph. Per-profile named graphs are not possible:
-//! `CimEntry` records no source-file provenance.
+//! an `Element` records no source-file provenance.
 
 pub mod format;
 pub mod iri;
@@ -152,7 +152,7 @@ impl CimStore {
         Ok(self.store.is_empty()?)
     }
 
-    /// What materialisation saw — unmapped predicates, rebuilt blocks, totals.
+    /// What materialisation saw — unmapped predicates and totals.
     pub fn stats(&self) -> Stats {
         self.stats
     }

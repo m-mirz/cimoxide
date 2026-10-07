@@ -202,19 +202,19 @@ fn check_conducting_equipment_base_voltage_usage(dataset: &CimDataset) -> Vec<Vi
     let excluded = ["ACLineSegment", "EquivalentBranch", "SeriesCompensator"];
     let mut v = Vec::new();
     for (mrid, entry) in &dataset.entries {
-        let type_name = entry.element.type_name();
+        let type_name = entry.type_name();
         if excluded.contains(&type_name) { continue; }
-        let block = super::block_of(entry);
-        match block.fields.get("ConductingEquipment.BaseVoltage") {
+        let block = entry;
+        match block.fields().get("ConductingEquipment.BaseVoltage") {
             Some(cimmodel::base::FieldValue::Resource(_)) => {},
             _ => continue,
         }
-        let ec_id = match block.fields.get("Equipment.EquipmentContainer") {
+        let ec_id = match block.fields().get("Equipment.EquipmentContainer") {
             Some(cimmodel::base::FieldValue::Resource(id)) => id.trim_start_matches('#').to_string(),
             _ => continue,
         };
         if let Some(ec_entry) = dataset.entries.get(&ec_id)
-            && ec_entry.element.type_name() == "VoltageLevel" {
+            && ec_entry.type_name() == "VoltageLevel" {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "equ:ConductingEquipment.BaseVoltage-usage".into(),
                     name: "C:301:EQ:ConductingEquipment.BaseVoltage:usage".into(), class: type_name.to_string(),
@@ -592,11 +592,11 @@ fn check_nonlinear_shunt_compensator_point_count(dataset: &CimDataset) -> Vec<Vi
 fn check_shunt_compensator_nom_u(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for (type_name, get_nom_u, get_ec) in [
-        ("LinearShuntCompensator", |e: &cimmodel::CimEntry| Fields::of_class(e, "LinearShuntCompensator").and_then(|o| o.f64("ShuntCompensator.nomU")),
-         |e: &cimmodel::CimEntry| Fields::of_class(e, "LinearShuntCompensator").and_then(|o| o.reference("Equipment.EquipmentContainer").map(|r| r.trim_start_matches('#').to_string())) as Option<String>),
-        ("NonlinearShuntCompensator", |e: &cimmodel::CimEntry| Fields::of_class(e, "NonlinearShuntCompensator").and_then(|o| o.f64("ShuntCompensator.nomU")),
-         |e: &cimmodel::CimEntry| Fields::of_class(e, "NonlinearShuntCompensator").and_then(|o| o.reference("Equipment.EquipmentContainer").map(|r| r.trim_start_matches('#').to_string())) as Option<String>),
-    ] as [(&str, fn(&cimmodel::CimEntry) -> Option<f64>, fn(&cimmodel::CimEntry) -> Option<String>); 2] {
+        ("LinearShuntCompensator", |e: &cimmodel::Element| Fields::of_class(e, "LinearShuntCompensator").and_then(|o| o.f64("ShuntCompensator.nomU")),
+         |e: &cimmodel::Element| Fields::of_class(e, "LinearShuntCompensator").and_then(|o| o.reference("Equipment.EquipmentContainer").map(|r| r.trim_start_matches('#').to_string())) as Option<String>),
+        ("NonlinearShuntCompensator", |e: &cimmodel::Element| Fields::of_class(e, "NonlinearShuntCompensator").and_then(|o| o.f64("ShuntCompensator.nomU")),
+         |e: &cimmodel::Element| Fields::of_class(e, "NonlinearShuntCompensator").and_then(|o| o.reference("Equipment.EquipmentContainer").map(|r| r.trim_start_matches('#').to_string())) as Option<String>),
+    ] as [(&str, fn(&cimmodel::Element) -> Option<f64>, fn(&cimmodel::Element) -> Option<String>); 2] {
         for mrid in dataset.by_type.get(type_name).into_iter().flatten() {
             let entry = &dataset.entries[mrid];
             let nom_u = match get_nom_u(entry) { Some(u) => u, None => continue };
@@ -697,7 +697,7 @@ fn check_voltage_limit_patl(dataset: &CimDataset) -> Vec<Violation> {
     v
 }
 
-fn tc_transformer_end_id(entry: &cimmodel::CimEntry) -> Option<String> {
+fn tc_transformer_end_id(entry: &cimmodel::Element) -> Option<String> {
     if let Some(o) = Fields::of_class(entry, "RatioTapChanger") {
         return o.reference("RatioTapChanger.TransformerEnd").map(|r| r.trim_start_matches('#').to_string());
     }
@@ -719,7 +719,7 @@ fn tc_transformer_end_id(entry: &cimmodel::CimEntry) -> Option<String> {
     None
 }
 
-fn tc_has_tcc(entry: &cimmodel::CimEntry) -> bool {
+fn tc_has_tcc(entry: &cimmodel::Element) -> bool {
     if let Some(o) = Fields::of_class(entry, "RatioTapChanger") {
         return o.reference("TapChanger.TapChangerControl").is_some();
     }
@@ -755,7 +755,7 @@ fn check_dc_converter_unit_tap_changer_control(dataset: &CimDataset) -> Vec<Viol
             let pt = match dataset.entries.get(&pt_id).and_then(|e| Fields::of_class(e, "PowerTransformer")) { Some(p) => p, None => continue };
             let ec_id = match pt.reference("Equipment.EquipmentContainer") { Some(r) => r.trim_start_matches('#').to_string(), None => continue };
             let ec_entry = match dataset.entries.get(&ec_id) { Some(e) => e, None => continue };
-            if ec_entry.element.type_name() == "DCConverterUnit" {
+            if ec_entry.type_name() == "DCConverterUnit" {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "equ:DCConverterUnit-tapChangerControl".into(),
                     name: "C:301:EQ:DCConverterUnit:tapChangerControl".into(), class: "TapChanger".into(),
@@ -1015,7 +1015,7 @@ fn check_dc_converter_unit_cs_converter_power_transformer(dataset: &CimDataset) 
         if let Some(csc) = Fields::of_class(entry, "CsConverter") {
             let ec_id = match csc.reference("Equipment.EquipmentContainer") { Some(r) => r.trim_start_matches('#').to_string(), None => continue };
             let ec_entry = match dataset.entries.get(&ec_id) { Some(e) => e, None => continue };
-            if ec_entry.element.type_name() != "DCConverterUnit" { continue; }
+            if ec_entry.type_name() != "DCConverterUnit" { continue; }
             if container_has_pt.contains(&ec_id) || !reported.insert(ec_id.clone()) { continue; }
             v.push(Violation {
                 object_id: ec_id, rule_id: "equ:DCConverterUnit-cscPowerTransformer".into(),
@@ -1041,13 +1041,13 @@ fn check_limit_kind_patl_number_of_limit_type(dataset: &CimDataset) -> Vec<Viola
     }
     if patl_olts.is_empty() { return Vec::new(); }
     let mut patl_counts: HashMap<String, HashMap<(String, String), i64>> = HashMap::default();
-    let get_olt_set = |entry: &cimmodel::CimEntry| -> Option<(String, String)> {
-        let block = super::block_of(entry);
-        let olt_id = match block.fields.get("OperationalLimit.OperationalLimitType") {
+    let get_olt_set = |entry: &cimmodel::Element| -> Option<(String, String)> {
+        let block = entry;
+        let olt_id = match block.fields().get("OperationalLimit.OperationalLimitType") {
             Some(cimmodel::base::FieldValue::Resource(id)) => id.trim_start_matches('#').to_string(),
             _ => return None,
         };
-        let set_id = match block.fields.get("OperationalLimit.OperationalLimitSet") {
+        let set_id = match block.fields().get("OperationalLimit.OperationalLimitSet") {
             Some(cimmodel::base::FieldValue::Resource(id)) => id.trim_start_matches('#').to_string(),
             _ => return None,
         };
@@ -1092,14 +1092,14 @@ fn check_limit_kind_tc_duration(dataset: &CimDataset) -> Vec<Violation> {
     }
     if tc_olts.is_empty() { return Vec::new(); }
     let mut counts_per_olt_set: HashMap<String, HashMap<String, i64>> = HashMap::default();
-    let add_limit = |counts: &mut HashMap<String, HashMap<String, i64>>, entry: &cimmodel::CimEntry, tc_olts: &HashMap<String, f64>| {
-        let block = super::block_of(entry);
-        let olt_id = match block.fields.get("OperationalLimit.OperationalLimitType") {
+    let add_limit = |counts: &mut HashMap<String, HashMap<String, i64>>, entry: &cimmodel::Element, tc_olts: &HashMap<String, f64>| {
+        let block = entry;
+        let olt_id = match block.fields().get("OperationalLimit.OperationalLimitType") {
             Some(cimmodel::base::FieldValue::Resource(id)) => id.trim_start_matches('#').to_string(),
             _ => return,
         };
         if !tc_olts.contains_key(&olt_id) { return; }
-        let set_id = match block.fields.get("OperationalLimit.OperationalLimitSet") {
+        let set_id = match block.fields().get("OperationalLimit.OperationalLimitSet") {
             Some(cimmodel::base::FieldValue::Resource(id)) => id.trim_start_matches('#').to_string(),
             _ => return,
         };
