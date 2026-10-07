@@ -1,4 +1,6 @@
 pub mod common;
+mod fields;
+pub(crate) use fields::Fields;
 pub mod common_solved_mas;
 pub mod equipment;
 pub mod equipment_not_solved_mas;
@@ -20,22 +22,15 @@ use cimmodel::{CimDataset, CimEntry};
 use cimmodel::base::RdfBlock;
 use crate::{Config, Violation};
 
-/// An element's fields, for reading one named attribute.
-///
-/// The decoder's block while it is still held, and only otherwise rebuilt from
-/// the struct: `to_block` allocates a fresh map per element, and calling it on
-/// every element was half of all SPARQL-rule time on RealGrid. For an
-/// attribute the struct declares the two hold the same reference.
+/// An element's decoder block, for reading named attributes. Panics, like
+/// [`Fields::of`], when the block was dropped before validation.
 ///
 /// The block also holds attributes the struct does not declare, so this is for
 /// reading named attributes, not for iterating every field — a rule that does
 /// the latter keeps `to_block` and the struct's view of the element.
-pub(crate) fn block_of(entry: &CimEntry) -> std::borrow::Cow<'_, RdfBlock> {
-    if entry.block.type_name.is_empty() {
-        std::borrow::Cow::Owned(entry.element.to_block())
-    } else {
-        std::borrow::Cow::Borrowed(&entry.block)
-    }
+pub(crate) fn block_of(entry: &CimEntry) -> &RdfBlock {
+    Fields::of(entry);
+    &entry.block
 }
 
 /// Per-profile SPARQL checks that only need data from a single profile's file.

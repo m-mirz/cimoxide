@@ -1,6 +1,7 @@
 use cimmodel::base::FastMap as HashMap;
 use cimmodel::CimDataset;
 use crate::Violation;
+use super::Fields;
 
 pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
@@ -19,13 +20,13 @@ fn check_terminal_phases_consistency_topological_node(dataset: &CimDataset) -> V
     let mut node_terminals: HashMap<String, Vec<(String, String)>> = HashMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let term = match entry.element.as_any().downcast_ref::<cimmodel::Terminal>() {
+        let term = match Fields::of_class(entry, "Terminal") {
             Some(t) => t, None => continue,
         };
-        let tn_id = match term.topological_node.as_ref() {
-            Some(r) => r.mrid.trim_start_matches('#').to_string(), None => continue,
+        let tn_id = match term.reference("Terminal.TopologicalNode") {
+            Some(r) => r.trim_start_matches('#').to_string(), None => continue,
         };
-        let phase = term.phases.as_ref().map_or(String::new(), |p| p.uri.clone());
+        let phase = term.enumeration("Terminal.phases").map_or(String::new(), str::to_string);
         node_terminals.entry(tn_id).or_default().push((mrid.clone(), phase));
     }
 
@@ -66,52 +67,13 @@ fn check_terminal_phases_consistency_topological_node(dataset: &CimDataset) -> V
     v
 }
 
-fn get_tn_for_terminal(term: &cimmodel::Terminal, dataset: &CimDataset) -> Option<String> {
-    if let Some(tn_ref) = term.topological_node.as_ref() {
-        return Some(tn_ref.mrid.trim_start_matches('#').to_string());
+fn get_tn_for_terminal(term: &Fields, dataset: &CimDataset) -> Option<String> {
+    if let Some(tn_ref) = term.reference("Terminal.TopologicalNode") {
+        return Some(tn_ref.trim_start_matches('#').to_string());
     }
-    let cn_id = term.connectivity_node.as_ref()?.mrid.trim_start_matches('#').to_string();
-    let cn = dataset.entries.get(&cn_id)?.element.as_any().downcast_ref::<cimmodel::ConnectivityNode>()?;
-    Some(cn.topological_node.as_ref()?.mrid.trim_start_matches('#').to_string())
-}
-
-macro_rules! check_switch_retained {
-    ($v:expr, $dataset:expr, $eq_terms:expr, $($T:ident, $ret_path:expr),+) => {$(
-        for mrid in $dataset.by_type.get(stringify!($T)).into_iter().flatten() {
-            let entry = &$dataset.entries[mrid];
-            if let Some(obj) = entry.element.as_any().downcast_ref::<cimmodel::$T>() {
-                if !$ret_path(obj).unwrap_or(false) { continue; }
-                let terms = match $eq_terms.get(mrid) { Some(t) => t, None => continue };
-                let mut t1_tn: Option<String> = None;
-                let mut t2_tn: Option<String> = None;
-                for t_mrid in terms {
-                    if let Some(entry) = $dataset.entries.get(t_mrid) {
-                        if let Some(term) = entry.element.as_any().downcast_ref::<cimmodel::Terminal>() {
-                            match term.base.sequence_number {
-                                Some(1) => t1_tn = get_tn_for_terminal(term, $dataset),
-                                Some(2) => t2_tn = get_tn_for_terminal(term, $dataset),
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-                if let (Some(tn1), Some(tn2)) = (t1_tn, t2_tn) {
-                    if !tn1.is_empty() && tn1 == tn2 {
-                        $v.push(Violation {
-                            object_id:   mrid.clone(),
-                            rule_id:     "tpn456:Switch-sameTopologicalNode".into(),
-                            name:        "C:456:TP:Terminal:switch".into(),
-                            class:       stringify!($T).to_string(),
-                            property:    "retained".into(),
-                            message:     "Terminals of retained Switch connect to the same TopologicalNode.".into(),
-                            severity:    "sh:Violation".into(),
-                            description: String::new(),
-                        });
-                    }
-                }
-            }
-        }
-    )+};
+    let cn_id = term.reference("Terminal.ConnectivityNode")?.trim_start_matches('#').to_string();
+    let cn = Fields::get(dataset, &cn_id, "ConnectivityNode")?;
+    Some(cn.reference("ConnectivityNode.TopologicalNode")?.trim_start_matches('#').to_string())
 }
 
 fn check_switch_same_topological_node(dataset: &CimDataset) -> Vec<Violation> {
@@ -119,25 +81,50 @@ fn check_switch_same_topological_node(dataset: &CimDataset) -> Vec<Violation> {
     let mut eq_terminals: HashMap<String, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(term) = entry.element.as_any().downcast_ref::<cimmodel::Terminal>()
-            && let Some(ce_ref) = term.conducting_equipment.as_ref() {
-                eq_terminals.entry(ce_ref.mrid.trim_start_matches('#').to_string())
+        if let Some(term) = Fields::of_class(entry, "Terminal")
+            && let Some(ce_ref) = term.reference("Terminal.ConductingEquipment") {
+                eq_terminals.entry(ce_ref.trim_start_matches('#').to_string())
                     .or_default().push(mrid.clone());
             }
     }
 
+    // Switch and its subclasses, each read through the inherited Switch.retained.
+    const SWITCHES: &[&str] = &[
+        "Switch", "Disconnector", "Fuse", "Jumper", "Cut", "GroundDisconnector",
+        "LoadBreakSwitch", "Breaker", "DisconnectingCircuitBreaker",
+    ];
     let mut v = Vec::new();
-    check_switch_retained!(v, dataset, eq_terminals,
-        Switch,                   |o: &cimmodel::Switch|                    o.retained,
-        Disconnector,             |o: &cimmodel::Disconnector|              o.base.retained,
-        Fuse,                     |o: &cimmodel::Fuse|                      o.base.retained,
-        Jumper,                   |o: &cimmodel::Jumper|                    o.base.retained,
-        Cut,                      |o: &cimmodel::Cut|                       o.base.retained,
-        GroundDisconnector,       |o: &cimmodel::GroundDisconnector|        o.base.retained,
-        LoadBreakSwitch,          |o: &cimmodel::LoadBreakSwitch|           o.base.base.retained,
-        Breaker,                  |o: &cimmodel::Breaker|                   o.base.base.retained,
-        DisconnectingCircuitBreaker, |o: &cimmodel::DisconnectingCircuitBreaker| o.base.base.base.retained
-    );
+    for class in SWITCHES {
+        for mrid in dataset.by_type.get(*class).into_iter().flatten() {
+            let Some(obj) = Fields::of_class(&dataset.entries[mrid], class) else { continue };
+            if !obj.bool("Switch.retained").unwrap_or(false) { continue; }
+            let terms = match eq_terminals.get(mrid) { Some(t) => t, None => continue };
+            let mut t1_tn: Option<String> = None;
+            let mut t2_tn: Option<String> = None;
+            for t_mrid in terms {
+                if let Some(term) = Fields::get(dataset, t_mrid, "Terminal") {
+                    match term.i64("ACDCTerminal.sequenceNumber") {
+                        Some(1) => t1_tn = get_tn_for_terminal(&term, dataset),
+                        Some(2) => t2_tn = get_tn_for_terminal(&term, dataset),
+                        _ => {}
+                    }
+                }
+            }
+            if let (Some(tn1), Some(tn2)) = (t1_tn, t2_tn)
+                && !tn1.is_empty() && tn1 == tn2 {
+                    v.push(Violation {
+                        object_id:   mrid.clone(),
+                        rule_id:     "tpn456:Switch-sameTopologicalNode".into(),
+                        name:        "C:456:TP:Terminal:switch".into(),
+                        class:       class.to_string(),
+                        property:    "retained".into(),
+                        message:     "Terminals of retained Switch connect to the same TopologicalNode.".into(),
+                        severity:    "sh:Violation".into(),
+                        description: String::new(),
+                    });
+                }
+        }
+    }
     v
 }
 
@@ -147,13 +134,8 @@ fn check_terminal_exch8_topological_node(dataset: &CimDataset) -> Vec<Violation>
     for type_name in &["RegulatingControl", "TapChangerControl"] {
         for mrid in dataset.by_type.get(*type_name).into_iter().flatten() {
             let entry = &dataset.entries[mrid];
-            let rc_term = if let Some(rc) = entry.element.as_any().downcast_ref::<cimmodel::RegulatingControl>() {
-                rc.terminal.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string())
-            } else if let Some(tcc) = entry.element.as_any().downcast_ref::<cimmodel::TapChangerControl>() {
-                tcc.base.terminal.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string())
-            } else {
-                None
-            };
+            let rc_term = Fields::of_class(entry, type_name)
+                .and_then(|rc| rc.reference("RegulatingControl.Terminal").map(|r| r.trim_start_matches('#').to_string()));
             if let Some(t_id) = rc_term { rc_terminals.insert(t_id); }
         }
     }
@@ -162,16 +144,15 @@ fn check_terminal_exch8_topological_node(dataset: &CimDataset) -> Vec<Violation>
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         if !rc_terminals.contains(mrid) { continue; }
         let entry = &dataset.entries[mrid];
-        let term = match entry.element.as_any().downcast_ref::<cimmodel::Terminal>() {
+        let term = match Fields::of_class(entry, "Terminal") {
             Some(t) => t, None => continue,
         };
-        if term.topological_node.is_some() { continue; }
+        if term.reference("Terminal.TopologicalNode").is_some() { continue; }
         // Check if connectivity node has a TN
-        let has_tn = term.connectivity_node.as_ref().and_then(|cn_ref| {
-            dataset.entries.get(cn_ref.mrid.trim_start_matches('#'))
-                .and_then(|e| e.element.as_any().downcast_ref::<cimmodel::ConnectivityNode>())
-                .and_then(|cn| cn.topological_node.as_ref())
-        }).is_some();
+        let has_tn = term.reference("Terminal.ConnectivityNode").is_some_and(|cn_ref| {
+            Fields::get(dataset, cn_ref.trim_start_matches('#'), "ConnectivityNode")
+                .is_some_and(|cn| cn.reference("ConnectivityNode.TopologicalNode").is_some())
+        });
         if !has_tn {
             v.push(Violation {
                 object_id:   mrid.clone(),

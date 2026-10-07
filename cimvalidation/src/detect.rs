@@ -10,20 +10,13 @@ fn uri_to_short_name(uri: &str) -> Option<&'static str> {
 fn collect_profiles_from_type(dataset: &CimDataset, type_name: &str, seen: &mut std::collections::HashSet<&'static str>) {
     for mrid in dataset.by_type.get(type_name).into_iter().flatten() {
         let entry = match dataset.entries.get(mrid) { Some(e) => e, None => continue };
-        let profiles: &[String] = if let Some(fm) = entry.element.as_any().downcast_ref::<cimmodel::FullModel>() {
-            &fm.base.profile
-        } else if let Some(dm) = entry.element.as_any().downcast_ref::<cimmodel::DifferenceModel>() {
-            &dm.base.profile
-        } else {
-            continue;
-        };
-        for p in profiles {
+        let Some(model) = crate::sparql::Fields::of_class(entry, type_name) else { continue };
+        for p in model.texts("Model.profile") {
             let p = p.trim();
-            if !p.is_empty() {
-                if let Some(short) = uri_to_short_name(p) {
+            if !p.is_empty()
+                && let Some(short) = uri_to_short_name(p) {
                     seen.insert(short);
                 }
-            }
         }
     }
 }
@@ -74,11 +67,10 @@ pub fn detect_nc_profiles(dataset: &CimDataset) -> Vec<String> {
             let refs: Vec<&str> = el.get_refs("conformsTo").iter().map(String::as_str).collect();
             let text = el.get_str("conformsTo").into_iter().collect::<Vec<_>>();
             for iri in refs.into_iter().chain(text) {
-                if let Some(code) = nc_profile_code(iri) {
-                    if !seen.iter().any(|s| s == code) {
+                if let Some(code) = nc_profile_code(iri)
+                    && !seen.iter().any(|s| s == code) {
                         seen.push(code.to_string());
                     }
-                }
             }
         }
     }

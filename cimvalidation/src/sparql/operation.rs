@@ -1,4 +1,5 @@
 use cimmodel::CimDataset;
+use super::Fields;
 use crate::Violation;
 
 pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
@@ -7,32 +8,6 @@ pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
 
 const MEASUREMENT_TYPES: &[&str] = &["Measurement", "Analog", "Discrete", "Accumulator", "StringMeasurement"];
 
-fn get_measurement_fields(entry: &cimmodel::CimEntry) -> Option<(&str, Option<&str>, Option<&str>)> {
-    fn from_m(m: &cimmodel::Measurement) -> Option<(&str, Option<&str>, Option<&str>)> {
-        Some((
-            m.measurement_type.as_str(),
-            m.power_system_resource.as_ref().map(|r| r.mrid.as_str()),
-            m.terminal.as_ref().map(|r| r.mrid.as_str()),
-        ))
-    }
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::Measurement>() {
-        return from_m(o);
-    }
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::Analog>() {
-        return from_m(&o.base);
-    }
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::Discrete>() {
-        return from_m(&o.base);
-    }
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::Accumulator>() {
-        return from_m(&o.base);
-    }
-    if let Some(o) = entry.element.as_any().downcast_ref::<cimmodel::StringMeasurement>() {
-        return from_m(&o.base);
-    }
-    None
-}
-
 fn check_measurement_terminal_required_cases(dataset: &CimDataset) -> Vec<Violation> {
     // Build index: terminal MRID → conducting equipment MRID (for verifying terminal belongs to PSR)
     let mut v = Vec::new();
@@ -40,9 +15,10 @@ fn check_measurement_terminal_required_cases(dataset: &CimDataset) -> Vec<Violat
     for type_name in MEASUREMENT_TYPES {
         for mrid in dataset.by_type.get(*type_name).into_iter().flatten() {
             let entry = &dataset.entries[mrid];
-            let (m_type, psr_ref, term_ref) = match get_measurement_fields(entry) {
-                Some(f) => f, None => continue,
-            };
+            let Some(m) = Fields::of_class(entry, type_name) else { continue };
+            let m_type = m.text("Measurement.measurementType");
+            let psr_ref = m.reference("Measurement.PowerSystemResource");
+            let term_ref = m.reference("Measurement.Terminal");
 
             if m_type == "TapPosition" || m_type == "SwitchPosition" {
                 if term_ref.is_some() {
@@ -80,10 +56,9 @@ fn check_measurement_terminal_required_cases(dataset: &CimDataset) -> Vec<Violat
             let psr_id = match psr_ref { Some(r) => r.trim_start_matches('#'), None => continue };
 
             // Verify terminal belongs to the PSR
-            let term_belongs = dataset.entries.get(term_mrid)
-                .and_then(|e| e.element.as_any().downcast_ref::<cimmodel::Terminal>())
-                .and_then(|t| t.conducting_equipment.as_ref())
-                .map_or(false, |ce| ce.mrid.trim_start_matches('#') == psr_id);
+            let term_belongs = Fields::get(dataset, term_mrid, "Terminal")
+                .is_some_and(|t| t.reference("Terminal.ConductingEquipment")
+                    .is_some_and(|ce| ce.trim_start_matches('#') == psr_id));
 
             if !term_belongs {
                 v.push(Violation {

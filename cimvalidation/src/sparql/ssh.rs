@@ -1,6 +1,7 @@
 use cimmodel::base::FastMap as HashMap;
 use cimmodel::CimDataset;
 use crate::Violation;
+use super::Fields;
 
 pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
@@ -24,8 +25,8 @@ fn check_energy_source_active_power_consumer(dataset: &CimDataset) -> Vec<Violat
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("EnergySource").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(es) = entry.element.as_any().downcast_ref::<cimmodel::EnergySource>()
-            && es.active_power.unwrap_or(0.0) > 0.0 {
+        if let Some(es) = Fields::of_class(entry, "EnergySource")
+            && es.f64("EnergySource.activePower").unwrap_or(0.0) > 0.0 {
                 v.push(Violation {
                     object_id:   mrid.clone(),
                     rule_id:     "sshu:EnergySource.activePower-consumer".into(),
@@ -61,15 +62,15 @@ fn check_regulating_control_target_deadband_applicability(dataset: &CimDataset) 
     };
     for mrid in dataset.by_type.get("RegulatingControl").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(rc) = entry.element.as_any().downcast_ref::<cimmodel::RegulatingControl>()
-            && let Some(viol) = check(mrid, "RegulatingControl", rc.target_deadband.unwrap_or(0.0), rc.discrete.unwrap_or(false)) {
+        if let Some(rc) = Fields::of_class(entry, "RegulatingControl")
+            && let Some(viol) = check(mrid, "RegulatingControl", rc.f64("RegulatingControl.targetDeadband").unwrap_or(0.0), rc.bool("RegulatingControl.discrete").unwrap_or(false)) {
                 v.push(viol);
             }
     }
     for mrid in dataset.by_type.get("TapChangerControl").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(tcc) = entry.element.as_any().downcast_ref::<cimmodel::TapChangerControl>()
-            && let Some(viol) = check(mrid, "TapChangerControl", tcc.base.target_deadband.unwrap_or(0.0), tcc.base.discrete.unwrap_or(false)) {
+        if let Some(tcc) = Fields::of_class(entry, "TapChangerControl")
+            && let Some(viol) = check(mrid, "TapChangerControl", tcc.f64("RegulatingControl.targetDeadband").unwrap_or(0.0), tcc.bool("RegulatingControl.discrete").unwrap_or(false)) {
                 v.push(viol);
             }
     }
@@ -82,10 +83,10 @@ fn check_cs_converter_value_range(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("CsConverter").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(csc) = entry.element.as_any().downcast_ref::<cimmodel::CsConverter>() {
-            let mode = match &csc.operating_mode { Some(r) => r.uri.as_str(), None => continue };
+        if let Some(csc) = Fields::of_class(entry, "CsConverter") {
+            let mode = match csc.enumeration("CsConverter.operatingMode") { Some(r) => r, None => continue };
             if mode == rectifier {
-                if csc.max_alpha.unwrap_or(0.0) > 18.0 {
+                if csc.f64("CsConverter.maxAlpha").unwrap_or(0.0) > 18.0 {
                     v.push(Violation {
                         object_id: mrid.clone(), rule_id: "sshu:CsConverter.maxAlpha-valueRangeTypical".into(),
                         name: "C:301:EQ:CsConverter.maxAlpha:valueRangeTypical".into(), class: "CsConverter".into(),
@@ -93,8 +94,8 @@ fn check_cs_converter_value_range(dataset: &CimDataset) -> Vec<Violation> {
                         severity: "sh:Warning".into(), description: String::new(),
                     });
                 }
-                let min_a = csc.min_alpha.unwrap_or(0.0);
-                let max_a = csc.max_alpha.unwrap_or(0.0);
+                let min_a = csc.f64("CsConverter.minAlpha").unwrap_or(0.0);
+                let max_a = csc.f64("CsConverter.maxAlpha").unwrap_or(0.0);
                 if min_a < 10.0 || min_a > max_a {
                     v.push(Violation {
                         object_id: mrid.clone(), rule_id: "sshu:CsConverter.minAlpha-valueRangeTypical".into(),
@@ -104,7 +105,7 @@ fn check_cs_converter_value_range(dataset: &CimDataset) -> Vec<Violation> {
                     });
                 }
             } else if mode == inverter {
-                if csc.max_gamma.unwrap_or(0.0) > 20.0 {
+                if csc.f64("CsConverter.maxGamma").unwrap_or(0.0) > 20.0 {
                     v.push(Violation {
                         object_id: mrid.clone(), rule_id: "sshu:CsConverter.maxGamma-valueRangeTypical".into(),
                         name: "C:301:EQ:CsConverter.maxGamma:valueRangeTypical".into(), class: "CsConverter".into(),
@@ -112,8 +113,8 @@ fn check_cs_converter_value_range(dataset: &CimDataset) -> Vec<Violation> {
                         severity: "sh:Warning".into(), description: String::new(),
                     });
                 }
-                let min_g = csc.min_gamma.unwrap_or(0.0);
-                let max_g = csc.max_gamma.unwrap_or(0.0);
+                let min_g = csc.f64("CsConverter.minGamma").unwrap_or(0.0);
+                let max_g = csc.f64("CsConverter.maxGamma").unwrap_or(0.0);
                 if min_g < 17.0 || min_g > max_g {
                     v.push(Violation {
                         object_id: mrid.clone(), rule_id: "sshu:CsConverter.minGamma-valueRangeTypical".into(),
@@ -135,21 +136,21 @@ fn check_cs_converter_p_pcc_control(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("CsConverter").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(csc) = entry.element.as_any().downcast_ref::<cimmodel::CsConverter>() {
-            let ctrl = match &csc.p_pcc_control { Some(r) => r.uri.as_str(), None => continue };
-            if ctrl == dc_current && csc.target_idc.unwrap_or(0.0) == 0.0 {
+        if let Some(csc) = Fields::of_class(entry, "CsConverter") {
+            let ctrl = match csc.enumeration("CsConverter.pPccControl") { Some(r) => r, None => continue };
+            if ctrl == dc_current && csc.f64("CsConverter.targetIdc").unwrap_or(0.0) == 0.0 {
                 v.push(Violation { object_id: mrid.clone(), rule_id: "sshu:CsConverter.pPccControl-targetValueIdc".into(),
                     name: "C:301:SSH:CsPpccControlKind.dcCurrent:targetValueIdc".into(), class: "CsConverter".into(),
                     property: "CsConverter.pPccControl".into(),
                     message: "CsConverter.targetIdc is not provided for a converter with CsPpccControlKind.dcCurrent.".into(),
                     severity: "sh:Violation".into(), description: String::new() });
-            } else if ctrl == dc_voltage && csc.base.target_udc.unwrap_or(0.0) == 0.0 {
+            } else if ctrl == dc_voltage && csc.f64("ACDCConverter.targetUdc").unwrap_or(0.0) == 0.0 {
                 v.push(Violation { object_id: mrid.clone(), rule_id: "sshu:CsConverter.pPccControl-targetValueUdc".into(),
                     name: "C:301:SSH:CsPpccControlKind.dcVoltage:targetValueUdc".into(), class: "CsConverter".into(),
                     property: "CsConverter.pPccControl".into(),
                     message: "ACDCConverter.targetUdc is not provided for a converter with CsPpccControlKind.dcVoltage.".into(),
                     severity: "sh:Violation".into(), description: String::new() });
-            } else if ctrl == active_power && csc.base.target_ppcc.unwrap_or(0.0) == 0.0 {
+            } else if ctrl == active_power && csc.f64("ACDCConverter.targetPpcc").unwrap_or(0.0) == 0.0 {
                 v.push(Violation { object_id: mrid.clone(), rule_id: "sshu:CsConverter.pPccControl-targetValuePpcc".into(),
                     name: "C:301:SSH:CsPpccControlKind.activePower:targetValuePpcc".into(), class: "CsConverter".into(),
                     property: "CsConverter.pPccControl".into(),
@@ -166,13 +167,13 @@ fn check_vs_converter_p_pcc_control(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("VsConverter").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(vsc) = entry.element.as_any().downcast_ref::<cimmodel::VsConverter>() {
-            let ctrl = match &vsc.p_pcc_control { Some(r) => r.uri.as_str(), None => continue };
-            let ppcc      = vsc.base.target_ppcc.unwrap_or(0.0);
-            let udc       = vsc.base.target_udc.unwrap_or(0.0);
-            let droop     = vsc.droop.unwrap_or(0.0);
-            let droopcomp = vsc.droop_compensation.unwrap_or(0.0);
-            let phase_pcc = vsc.target_phase_pcc.unwrap_or(0.0);
+        if let Some(vsc) = Fields::of_class(entry, "VsConverter") {
+            let ctrl = match vsc.enumeration("VsConverter.pPccControl") { Some(r) => r, None => continue };
+            let ppcc      = vsc.f64("ACDCConverter.targetPpcc").unwrap_or(0.0);
+            let udc       = vsc.f64("ACDCConverter.targetUdc").unwrap_or(0.0);
+            let droop     = vsc.f64("VsConverter.droop").unwrap_or(0.0);
+            let droopcomp = vsc.f64("VsConverter.droopCompensation").unwrap_or(0.0);
+            let phase_pcc = vsc.f64("VsConverter.targetPhasePcc").unwrap_or(0.0);
             let (rule_id, name, msg): (&str, &str, Option<&str>) =
                 if ctrl == format!("{prefix}pPccAndUdcDroop") {
                     ("sshu:VsConverter.pPccControl-targetValuepPccAndUdcDroop",
@@ -223,13 +224,13 @@ fn check_vs_converter_q_pcc_control(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("VsConverter").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(vsc) = entry.element.as_any().downcast_ref::<cimmodel::VsConverter>() {
-            let ctrl = match &vsc.q_pcc_control { Some(r) => r.uri.as_str(), None => continue };
-            let pf        = vsc.target_power_factor_pcc.unwrap_or(0.0);
-            let pwm       = vsc.target_pw_mfactor.unwrap_or(0.0);
-            let phase_pcc = vsc.target_phase_pcc.unwrap_or(0.0);
-            let qpcc      = vsc.target_qpcc.unwrap_or(0.0);
-            let upcc      = vsc.target_upcc.unwrap_or(0.0);
+        if let Some(vsc) = Fields::of_class(entry, "VsConverter") {
+            let ctrl = match vsc.enumeration("VsConverter.qPccControl") { Some(r) => r, None => continue };
+            let pf        = vsc.f64("VsConverter.targetPowerFactorPcc").unwrap_or(0.0);
+            let pwm       = vsc.f64("VsConverter.targetPWMfactor").unwrap_or(0.0);
+            let phase_pcc = vsc.f64("VsConverter.targetPhasePcc").unwrap_or(0.0);
+            let qpcc      = vsc.f64("VsConverter.targetQpcc").unwrap_or(0.0);
+            let upcc      = vsc.f64("VsConverter.targetUpcc").unwrap_or(0.0);
             let (rule_id, name, msg): (&str, &str, Option<&str>) =
                 if ctrl == format!("{prefix}powerFactorPcc") {
                     ("sshu:VsConverter.qPccControl-targetValuepowerFactorPcc",
@@ -267,8 +268,8 @@ fn check_energy_source_pq(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("EnergySource").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(es) = entry.element.as_any().downcast_ref::<cimmodel::EnergySource>()
-            && (es.voltage_angle.unwrap_or(0.0) != 0.0 || es.voltage_magnitude.unwrap_or(0.0) != 0.0) {
+        if let Some(es) = Fields::of_class(entry, "EnergySource")
+            && (es.f64("EnergySource.voltageAngle").unwrap_or(0.0) != 0.0 || es.f64("EnergySource.voltageMagnitude").unwrap_or(0.0) != 0.0) {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "ssh456:EnergySource-EnergySourcePQ".into(),
                     name: "C:456:SSH:EnergySource:EnergySourcePQ".into(), class: "EnergySource".into(),
@@ -285,9 +286,9 @@ pub(super) fn check_synchronous_machine_operating_mode_match(dataset: &CimDatase
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SynchronousMachine").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(sm) = entry.element.as_any().downcast_ref::<cimmodel::SynchronousMachine>() {
-            let mode = match &sm.operating_mode { Some(r) => r.uri.as_str(), None => continue };
-            let kind = match &sm.type_ { Some(r) => r.uri.as_str(), None => continue };
+        if let Some(sm) = Fields::of_class(entry, "SynchronousMachine") {
+            let mode = match sm.enumeration("SynchronousMachine.operatingMode") { Some(r) => r, None => continue };
+            let kind = match sm.enumeration("SynchronousMachine.type") { Some(r) => r, None => continue };
             let valid = if mode.ends_with("motor") {
                 kind.ends_with("motor") || kind.ends_with("generatorOrMotor") || kind.ends_with("motorOrCondenser") || kind.ends_with("generatorOrCondenserOrMotor")
             } else if mode.ends_with("condenser") {
@@ -316,12 +317,12 @@ pub(super) fn check_generating_unit_single_active_power_slack(dataset: &CimDatas
     let mut ca_slacks: HashMap<String, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("ControlAreaGeneratingUnit").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(cagu) = entry.element.as_any().downcast_ref::<cimmodel::ControlAreaGeneratingUnit>() {
-            let ca_id = match &cagu.control_area { Some(r) => r.mrid.trim_start_matches('#').to_string(), None => continue };
-            let gu_id = match &cagu.generating_unit { Some(r) => r.mrid.trim_start_matches('#').to_string(), None => continue };
+        if let Some(cagu) = Fields::of_class(entry, "ControlAreaGeneratingUnit") {
+            let ca_id = match cagu.reference("ControlAreaGeneratingUnit.ControlArea") { Some(r) => r.trim_start_matches('#').to_string(), None => continue };
+            let gu_id = match cagu.reference("ControlAreaGeneratingUnit.GeneratingUnit") { Some(r) => r.trim_start_matches('#').to_string(), None => continue };
             let gu_entry = match dataset.entries.get(&gu_id) { Some(e) => e, None => continue };
-            if let Some(gu) = gu_entry.element.as_any().downcast_ref::<cimmodel::GeneratingUnit>()
-                && gu.normal_pf.unwrap_or(0.0) > 0.0 {
+            if let Some(gu) = Fields::of_class(gu_entry, "GeneratingUnit")
+                && gu.f64("GeneratingUnit.normalPF").unwrap_or(0.0) > 0.0 {
                     ca_slacks.entry(ca_id).or_default().push(gu_id);
                 }
         }
@@ -345,12 +346,12 @@ pub(super) fn check_external_network_injection_limits(dataset: &CimDataset) -> V
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("ExternalNetworkInjection").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(eni) = entry.element.as_any().downcast_ref::<cimmodel::ExternalNetworkInjection>() {
-            if !eni.base.base.base.base.in_service.unwrap_or(false) { continue; }
-            let p = eni.p.unwrap_or(0.0);
+        if let Some(eni) = Fields::of_class(entry, "ExternalNetworkInjection") {
+            if !eni.bool("Equipment.inService").unwrap_or(false) { continue; }
+            let p = eni.f64("ExternalNetworkInjection.p").unwrap_or(0.0);
             let neg_p = if p == 0.0 { 0.0 } else { -p };
-            let min_p = eni.min_p.unwrap_or(0.0);
-            let max_p = eni.max_p.unwrap_or(0.0);
+            let min_p = eni.f64("ExternalNetworkInjection.minP").unwrap_or(0.0);
+            let max_p = eni.f64("ExternalNetworkInjection.maxP").unwrap_or(0.0);
             if neg_p < min_p || neg_p > max_p {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "sshn456:ExternalNetworkInjection.p-limits".into(),
@@ -360,10 +361,10 @@ pub(super) fn check_external_network_injection_limits(dataset: &CimDataset) -> V
                     severity: "sh:Violation".into(), description: String::new(),
                 });
             }
-            let q = eni.q.unwrap_or(0.0);
+            let q = eni.f64("ExternalNetworkInjection.q").unwrap_or(0.0);
             let neg_q = if q == 0.0 { 0.0 } else { -q };
-            let min_q = eni.min_q.unwrap_or(0.0);
-            let max_q = eni.max_q.unwrap_or(0.0);
+            let min_q = eni.f64("ExternalNetworkInjection.minQ").unwrap_or(0.0);
+            let max_q = eni.f64("ExternalNetworkInjection.maxQ").unwrap_or(0.0);
             if neg_q < min_q || neg_q > max_q {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "sshn456:ExternalNetworkInjection.q-limits".into(),
@@ -382,12 +383,12 @@ pub(super) fn check_equivalent_injection_limits(dataset: &CimDataset) -> Vec<Vio
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("EquivalentInjection").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(ei) = entry.element.as_any().downcast_ref::<cimmodel::EquivalentInjection>() {
-            if !ei.base.base.base.in_service.unwrap_or(false) { continue; }
-            let p = ei.p.unwrap_or(0.0);
+        if let Some(ei) = Fields::of_class(entry, "EquivalentInjection") {
+            if !ei.bool("Equipment.inService").unwrap_or(false) { continue; }
+            let p = ei.f64("EquivalentInjection.p").unwrap_or(0.0);
             let neg_p = if p == 0.0 { 0.0 } else { -p };
-            let min_p = ei.min_p.unwrap_or(0.0);
-            let max_p = ei.max_p.unwrap_or(0.0);
+            let min_p = ei.f64("EquivalentInjection.minP").unwrap_or(0.0);
+            let max_p = ei.f64("EquivalentInjection.maxP").unwrap_or(0.0);
             if neg_p < min_p || neg_p > max_p {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "sshn456:EquivalentInjection.p-limits".into(),
@@ -397,10 +398,10 @@ pub(super) fn check_equivalent_injection_limits(dataset: &CimDataset) -> Vec<Vio
                     severity: "sh:Violation".into(), description: String::new(),
                 });
             }
-            let q = ei.q.unwrap_or(0.0);
+            let q = ei.f64("EquivalentInjection.q").unwrap_or(0.0);
             let neg_q = if q == 0.0 { 0.0 } else { -q };
-            let min_q = ei.min_q.unwrap_or(0.0);
-            let max_q = ei.max_q.unwrap_or(0.0);
+            let min_q = ei.f64("EquivalentInjection.minQ").unwrap_or(0.0);
+            let max_q = ei.f64("EquivalentInjection.maxQ").unwrap_or(0.0);
             if neg_q < min_q || neg_q > max_q {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "sshn456:EquivalentInjection.q-limits".into(),
@@ -421,11 +422,11 @@ pub(super) fn check_rotating_machine_curve_limits(dataset: &CimDataset) -> Vec<V
     let mut curve_points: HashMap<String, Vec<(f64, f64, f64)>> = HashMap::default();
     for cd_mrid in dataset.by_type.get("CurveData").into_iter().flatten() {
         let cd_entry = &dataset.entries[cd_mrid];
-        if let Some(cd) = cd_entry.element.as_any().downcast_ref::<cimmodel::CurveData>()
-            && let Some(r) = &cd.curve {
-                let curve_id = r.mrid.trim_start_matches('#').to_string();
+        if let Some(cd) = Fields::of_class(cd_entry, "CurveData")
+            && let Some(r) = &cd.reference("CurveData.Curve") {
+                let curve_id = r.trim_start_matches('#').to_string();
                 curve_points.entry(curve_id).or_default().push((
-                    cd.xvalue.unwrap_or(0.0), cd.y1value.unwrap_or(0.0), cd.y2value.unwrap_or(0.0),
+                    cd.f64("CurveData.xvalue").unwrap_or(0.0), cd.f64("CurveData.y1value").unwrap_or(0.0), cd.f64("CurveData.y2value").unwrap_or(0.0),
                 ));
             }
     }
@@ -433,10 +434,10 @@ pub(super) fn check_rotating_machine_curve_limits(dataset: &CimDataset) -> Vec<V
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SynchronousMachine").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(sm) = entry.element.as_any().downcast_ref::<cimmodel::SynchronousMachine>() {
-            if !sm.base.base.base.base.base.in_service.unwrap_or(false) { continue; }
-            let rcc_id = match &sm.initial_reactive_capability_curve {
-                Some(r) => r.mrid.trim_start_matches('#').to_string(),
+        if let Some(sm) = Fields::of_class(entry, "SynchronousMachine") {
+            if !sm.bool("Equipment.inService").unwrap_or(false) { continue; }
+            let rcc_id = match sm.reference("SynchronousMachine.InitialReactiveCapabilityCurve") {
+                Some(r) => r.trim_start_matches('#').to_string(),
                 None => continue,
             };
             let points = match curve_points.get(&rcc_id) { Some(p) => p, None => continue };
@@ -453,9 +454,9 @@ pub(super) fn check_rotating_machine_curve_limits(dataset: &CimDataset) -> Vec<V
             let max_x = xvals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
             let min_y1 = y1vals.iter().cloned().fold(f64::INFINITY, f64::min);
             let max_y2 = y2vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            let p = sm.base.p.unwrap_or(0.0);
+            let p = sm.f64("RotatingMachine.p").unwrap_or(0.0);
             let neg_p = if p == 0.0 { 0.0 } else { -p };
-            let q = sm.base.q.unwrap_or(0.0);
+            let q = sm.f64("RotatingMachine.q").unwrap_or(0.0);
             let neg_q = if q == 0.0 { 0.0 } else { -q };
             if neg_p < min_x || neg_p > max_x {
                 v.push(Violation {
@@ -484,9 +485,9 @@ pub(super) fn check_regulating_control_target_value_positive(dataset: &CimDatase
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("RegulatingControl").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(rc) = entry.element.as_any().downcast_ref::<cimmodel::RegulatingControl>()
-            && rc.mode.as_ref().is_some_and(|r| r.uri.ends_with("voltage"))
-                && rc.target_value.unwrap_or(0.0) <= 0.0 {
+        if let Some(rc) = Fields::of_class(entry, "RegulatingControl")
+            && rc.enumeration("RegulatingControl.mode").is_some_and(|r| r.ends_with("voltage"))
+                && rc.f64("RegulatingControl.targetValue").unwrap_or(0.0) <= 0.0 {
                     v.push(Violation {
                         object_id: mrid.clone(), rule_id: "sshn456:RegulatingControl.targetValue-value".into(),
                         name: "C:456:SSH:RegulatingControl.targetValue:value".into(), class: "RegulatingControl".into(),

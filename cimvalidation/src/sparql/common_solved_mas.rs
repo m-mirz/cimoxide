@@ -1,6 +1,7 @@
 use cimmodel::base::{FastMap as HashMap, FastSet as HashSet};
 use cimmodel::CimDataset;
 use crate::Violation;
+use super::Fields;
 
 /// The rules are independent, so they run on their own threads: those that
 /// need the topology once it is built, the rest meanwhile. Results are joined
@@ -58,9 +59,9 @@ impl<'a> Topology<'a> {
         let mut tn_to_island: HashMap<&'a str, &'a str> = HashMap::default();
         for mrid in dataset.by_type.get("TopologicalIsland").into_iter().flatten() {
             let entry = &dataset.entries[mrid];
-            if let Some(island) = entry.element.as_any().downcast_ref::<cimmodel::TopologicalIsland>() {
-                for tn in &island.topological_nodes {
-                    tn_to_island.insert(tn.mrid.trim_start_matches('#'), mrid);
+            if let Some(island) = Fields::of_class(entry, "TopologicalIsland") {
+                for tn in island.references("TopologicalIsland.TopologicalNodes") {
+                    tn_to_island.insert(tn.trim_start_matches('#'), mrid);
                 }
             }
         }
@@ -69,13 +70,13 @@ impl<'a> Topology<'a> {
         let mut equip_terms: HashMap<&'a str, Vec<&'a str>> = HashMap::default();
         for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
             let entry = &dataset.entries[mrid];
-            let Some(term) = entry.element.as_any().downcast_ref::<cimmodel::Terminal>() else { continue };
-            let tn = term.topological_node.as_ref().map(|r| r.mrid.trim_start_matches('#'));
+            let Some(term) = Fields::of_class(entry, "Terminal") else { continue };
+            let tn = term.reference("Terminal.TopologicalNode").map(|r| r.trim_start_matches('#'));
             if let Some(tn) = tn {
                 term_tn.insert(mrid, tn);
             }
-            if let Some(ce) = &term.conducting_equipment {
-                let eq = ce.mrid.trim_start_matches('#');
+            if let Some(ce) = &term.reference("Terminal.ConductingEquipment") {
+                let eq = ce.trim_start_matches('#');
                 equip_terms.entry(eq).or_default().push(mrid);
                 if let Some(tn) = tn {
                     equip_tns.entry(eq).or_default().push(tn);
@@ -95,9 +96,9 @@ fn check_angle_reference(dataset: &CimDataset, topo: &Topology) -> Vec<Violation
     let mut angle_ref_tns: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("TopologicalIsland").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(island) = entry.element.as_any().downcast_ref::<cimmodel::TopologicalIsland>()
-            && let Some(r) = &island.angle_ref_topological_node {
-                angle_ref_tns.insert(r.mrid.trim_start_matches('#').to_string());
+        if let Some(island) = Fields::of_class(entry, "TopologicalIsland")
+            && let Some(r) = &island.reference("TopologicalIsland.AngleRefTopologicalNode") {
+                angle_ref_tns.insert(r.trim_start_matches('#').to_string());
             }
     }
 
@@ -106,8 +107,8 @@ fn check_angle_reference(dataset: &CimDataset, topo: &Topology) -> Vec<Violation
     let mut highest_prio_sms: Vec<String> = Vec::new();
     for mrid in dataset.by_type.get("SynchronousMachine").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(sm) = entry.element.as_any().downcast_ref::<cimmodel::SynchronousMachine>() {
-            let prio = sm.reference_priority.unwrap_or(0);
+        if let Some(sm) = Fields::of_class(entry, "SynchronousMachine") {
+            let prio = sm.i64("SynchronousMachine.referencePriority").unwrap_or(0);
             if prio <= 0 { continue; }
             if prio < min_priority {
                 min_priority = prio;
@@ -220,9 +221,9 @@ fn check_state_variables_instantiated(dataset: &CimDataset, topo: &Topology) -> 
     let mut tn_has_sv_voltage: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("SvVoltage").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(svv) = entry.element.as_any().downcast_ref::<cimmodel::SvVoltage>()
-            && let Some(r) = &svv.topological_node {
-                tn_has_sv_voltage.insert(r.mrid.trim_start_matches('#').to_string());
+        if let Some(svv) = Fields::of_class(entry, "SvVoltage")
+            && let Some(r) = &svv.reference("SvVoltage.TopologicalNode") {
+                tn_has_sv_voltage.insert(r.trim_start_matches('#').to_string());
             }
     }
     for (tn_id, island_id) in tn_to_island {
@@ -246,16 +247,16 @@ fn check_state_variables_instantiated(dataset: &CimDataset, topo: &Topology) -> 
     let mut sw_has_sv_switch: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("SvSwitch").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(svsw) = entry.element.as_any().downcast_ref::<cimmodel::SvSwitch>()
-            && let Some(r) = &svsw.switch {
-                sw_has_sv_switch.insert(r.mrid.trim_start_matches('#').to_string());
+        if let Some(svsw) = Fields::of_class(entry, "SvSwitch")
+            && let Some(r) = &svsw.reference("SvSwitch.Switch") {
+                sw_has_sv_switch.insert(r.trim_start_matches('#').to_string());
             }
     }
     for mrid in dataset.by_type.get("Switch").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(sw) = entry.element.as_any().downcast_ref::<cimmodel::Switch>() {
-            if !sw.retained.unwrap_or(false) { continue; }
-            if !sw.base.base.in_service.unwrap_or(false) { continue; }
+        if let Some(sw) = Fields::of_class(entry, "Switch") {
+            if !sw.bool("Switch.retained").unwrap_or(false) { continue; }
+            if !sw.bool("Equipment.inService").unwrap_or(false) { continue; }
             if !topo.energized(mrid) { continue; }
             if !sw_has_sv_switch.contains(mrid) {
                 v.push(Violation {
@@ -276,9 +277,9 @@ fn check_state_variables_instantiated(dataset: &CimDataset, topo: &Topology) -> 
     let mut ce_has_sv_status: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("SvStatus").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(svs) = entry.element.as_any().downcast_ref::<cimmodel::SvStatus>()
-            && let Some(r) = &svs.conducting_equipment {
-                ce_has_sv_status.insert(r.mrid.trim_start_matches('#').to_string());
+        if let Some(svs) = Fields::of_class(entry, "SvStatus")
+            && let Some(r) = &svs.reference("SvStatus.ConductingEquipment") {
+                ce_has_sv_status.insert(r.trim_start_matches('#').to_string());
             }
     }
     for (eq_id, tns) in equip_tns {
@@ -306,11 +307,11 @@ fn check_regulating_control_contradictory(dataset: &CimDataset) -> Vec<Violation
     let mut groups: HashMap<(String, String), Vec<(String, f64)>> = HashMap::default();
     for mrid in dataset.by_type.get("RegulatingControl").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let rc = match entry.element.as_any().downcast_ref::<cimmodel::RegulatingControl>() { Some(r) => r, None => continue };
-        if !rc.enabled.unwrap_or(false) { continue; }
-        let term_id = match &rc.terminal { Some(r) => r.mrid.trim_start_matches('#').to_string(), None => continue };
-        let mode_uri = match &rc.mode { Some(r) => r.uri.clone(), None => continue };
-        let target = rc.target_value.unwrap_or(0.0);
+        let rc = match Fields::of_class(entry, "RegulatingControl") { Some(r) => r, None => continue };
+        if !rc.bool("RegulatingControl.enabled").unwrap_or(false) { continue; }
+        let term_id = match rc.reference("RegulatingControl.Terminal") { Some(r) => r.trim_start_matches('#').to_string(), None => continue };
+        let mode_uri = match rc.enumeration("RegulatingControl.mode") { Some(r) => r.to_string(), None => continue };
+        let target = rc.f64("RegulatingControl.targetValue").unwrap_or(0.0);
         groups.entry((term_id, mode_uri)).or_default().push((mrid.clone(), target));
     }
     let mut v = Vec::new();
@@ -342,31 +343,31 @@ fn check_sv_shunt_compensator_sections_sync(dataset: &CimDataset) -> Vec<Violati
     let mut sv_status_in_service: HashMap<String, bool> = HashMap::default();
     for mrid in dataset.by_type.get("SvStatus").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(svs) = entry.element.as_any().downcast_ref::<cimmodel::SvStatus>()
-            && let Some(r) = &svs.conducting_equipment {
-                let ce_id = r.mrid.trim_start_matches('#').to_string();
-                sv_status_in_service.insert(ce_id, svs.in_service.unwrap_or(false));
+        if let Some(svs) = Fields::of_class(entry, "SvStatus")
+            && let Some(r) = &svs.reference("SvStatus.ConductingEquipment") {
+                let ce_id = r.trim_start_matches('#').to_string();
+                sv_status_in_service.insert(ce_id, svs.bool("SvStatus.inService").unwrap_or(false));
             }
     }
 
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SvShuntCompensatorSections").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let svsc = match entry.element.as_any().downcast_ref::<cimmodel::SvShuntCompensatorSections>() { Some(s) => s, None => continue };
-        let sc_id = match &svsc.shunt_compensator { Some(r) => r.mrid.trim_start_matches('#'), None => continue };
-        let sv_sections = svsc.sections.unwrap_or(0.0);
+        let svsc = match Fields::of_class(entry, "SvShuntCompensatorSections") { Some(s) => s, None => continue };
+        let sc_id = match svsc.reference("SvShuntCompensatorSections.ShuntCompensator") { Some(r) => r.trim_start_matches('#'), None => continue };
+        let sv_sections = svsc.f64("SvShuntCompensatorSections.sections").unwrap_or(0.0);
 
         let sc_entry = match dataset.entries.get(sc_id) { Some(e) => e, None => continue };
         let (control_enabled, rc_id, sections, type_name) =
-            if let Some(lsc) = sc_entry.element.as_any().downcast_ref::<cimmodel::LinearShuntCompensator>() {
-                (lsc.base.base.control_enabled.unwrap_or(false),
-                 lsc.base.base.regulating_control.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()),
-                 lsc.base.sections.unwrap_or(0.0),
+            if let Some(lsc) = Fields::of_class(sc_entry, "LinearShuntCompensator") {
+                (lsc.bool("RegulatingCondEq.controlEnabled").unwrap_or(false),
+                 lsc.reference("RegulatingCondEq.RegulatingControl").map(|r| r.trim_start_matches('#').to_string()),
+                 lsc.f64("ShuntCompensator.sections").unwrap_or(0.0),
                  "LinearShuntCompensator")
-            } else if let Some(nsc) = sc_entry.element.as_any().downcast_ref::<cimmodel::NonlinearShuntCompensator>() {
-                (nsc.base.base.control_enabled.unwrap_or(false),
-                 nsc.base.base.regulating_control.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()),
-                 nsc.base.sections.unwrap_or(0.0),
+            } else if let Some(nsc) = Fields::of_class(sc_entry, "NonlinearShuntCompensator") {
+                (nsc.bool("RegulatingCondEq.controlEnabled").unwrap_or(false),
+                 nsc.reference("RegulatingCondEq.RegulatingControl").map(|r| r.trim_start_matches('#').to_string()),
+                 nsc.f64("ShuntCompensator.sections").unwrap_or(0.0),
                  "NonlinearShuntCompensator")
             } else {
                 continue
@@ -377,8 +378,8 @@ fn check_sv_shunt_compensator_sections_sync(dataset: &CimDataset) -> Vec<Violati
 
         let rc_enabled = rc_id.as_deref()
             .and_then(|id| dataset.entries.get(id))
-            .and_then(|e| e.element.as_any().downcast_ref::<cimmodel::RegulatingControl>())
-            .is_none_or(|rc| rc.enabled.unwrap_or(false));
+            .and_then(|e| Fields::of_class(e, "RegulatingControl"))
+            .is_none_or(|rc| rc.bool("RegulatingControl.enabled").unwrap_or(false));
 
         if (!control_enabled || !rc_enabled)
             && sv_sections != sections {
@@ -401,15 +402,15 @@ fn check_sv_tap_step_position_sync(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SvTapStep").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let svts = match entry.element.as_any().downcast_ref::<cimmodel::SvTapStep>() { Some(s) => s, None => continue };
-        let tc_id = match &svts.tap_changer { Some(r) => r.mrid.trim_start_matches('#'), None => continue };
-        let position = svts.position.unwrap_or(0.0);
+        let svts = match Fields::of_class(entry, "SvTapStep") { Some(s) => s, None => continue };
+        let tc_id = match svts.reference("SvTapStep.TapChanger") { Some(r) => r.trim_start_matches('#'), None => continue };
+        let position = svts.f64("SvTapStep.position").unwrap_or(0.0);
         let tc_entry = match dataset.entries.get(tc_id) { Some(e) => e, None => continue };
         let (control_enabled, tcc_id, step, type_name) = match get_tap_changer_info(tc_entry) { Some(i) => i, None => continue };
         let rc_enabled = tcc_id.as_deref()
             .and_then(|id| dataset.entries.get(id))
-            .and_then(|e| e.element.as_any().downcast_ref::<cimmodel::TapChangerControl>())
-            .is_none_or(|tcc| tcc.base.enabled.unwrap_or(false));
+            .and_then(|e| Fields::of_class(e, "TapChangerControl"))
+            .is_none_or(|tcc| tcc.bool("RegulatingControl.enabled").unwrap_or(false));
         if (!control_enabled || !rc_enabled)
             && position != step {
                 v.push(Violation {
@@ -428,25 +429,25 @@ fn check_sv_tap_step_position_sync(dataset: &CimDataset) -> Vec<Violation> {
 }
 
 fn get_tap_changer_info(entry: &cimmodel::CimEntry) -> Option<(bool, Option<String>, f64, &'static str)> {
-    if let Some(tc) = entry.element.as_any().downcast_ref::<cimmodel::RatioTapChanger>() {
-        let tcc = tc.base.tap_changer_control.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string());
-        return Some((tc.base.control_enabled.unwrap_or(false), tcc, tc.base.step.unwrap_or(0.0), "RatioTapChanger"));
+    if let Some(tc) = Fields::of_class(entry, "RatioTapChanger") {
+        let tcc = tc.reference("TapChanger.TapChangerControl").map(|r| r.trim_start_matches('#').to_string());
+        return Some((tc.bool("TapChanger.controlEnabled").unwrap_or(false), tcc, tc.f64("TapChanger.step").unwrap_or(0.0), "RatioTapChanger"));
     }
-    if let Some(tc) = entry.element.as_any().downcast_ref::<cimmodel::PhaseTapChangerLinear>() {
-        let tcc = tc.base.base.tap_changer_control.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string());
-        return Some((tc.base.base.control_enabled.unwrap_or(false), tcc, tc.base.base.step.unwrap_or(0.0), "PhaseTapChangerLinear"));
+    if let Some(tc) = Fields::of_class(entry, "PhaseTapChangerLinear") {
+        let tcc = tc.reference("TapChanger.TapChangerControl").map(|r| r.trim_start_matches('#').to_string());
+        return Some((tc.bool("TapChanger.controlEnabled").unwrap_or(false), tcc, tc.f64("TapChanger.step").unwrap_or(0.0), "PhaseTapChangerLinear"));
     }
-    if let Some(tc) = entry.element.as_any().downcast_ref::<cimmodel::PhaseTapChangerSymmetrical>() {
-        let tcc = tc.base.base.base.tap_changer_control.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string());
-        return Some((tc.base.base.base.control_enabled.unwrap_or(false), tcc, tc.base.base.base.step.unwrap_or(0.0), "PhaseTapChangerSymmetrical"));
+    if let Some(tc) = Fields::of_class(entry, "PhaseTapChangerSymmetrical") {
+        let tcc = tc.reference("TapChanger.TapChangerControl").map(|r| r.trim_start_matches('#').to_string());
+        return Some((tc.bool("TapChanger.controlEnabled").unwrap_or(false), tcc, tc.f64("TapChanger.step").unwrap_or(0.0), "PhaseTapChangerSymmetrical"));
     }
-    if let Some(tc) = entry.element.as_any().downcast_ref::<cimmodel::PhaseTapChangerAsymmetrical>() {
-        let tcc = tc.base.base.base.tap_changer_control.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string());
-        return Some((tc.base.base.base.control_enabled.unwrap_or(false), tcc, tc.base.base.base.step.unwrap_or(0.0), "PhaseTapChangerAsymmetrical"));
+    if let Some(tc) = Fields::of_class(entry, "PhaseTapChangerAsymmetrical") {
+        let tcc = tc.reference("TapChanger.TapChangerControl").map(|r| r.trim_start_matches('#').to_string());
+        return Some((tc.bool("TapChanger.controlEnabled").unwrap_or(false), tcc, tc.f64("TapChanger.step").unwrap_or(0.0), "PhaseTapChangerAsymmetrical"));
     }
-    if let Some(tc) = entry.element.as_any().downcast_ref::<cimmodel::PhaseTapChangerTabular>() {
-        let tcc = tc.base.base.tap_changer_control.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string());
-        return Some((tc.base.base.control_enabled.unwrap_or(false), tcc, tc.base.base.step.unwrap_or(0.0), "PhaseTapChangerTabular"));
+    if let Some(tc) = Fields::of_class(entry, "PhaseTapChangerTabular") {
+        let tcc = tc.reference("TapChanger.TapChangerControl").map(|r| r.trim_start_matches('#').to_string());
+        return Some((tc.bool("TapChanger.controlEnabled").unwrap_or(false), tcc, tc.f64("TapChanger.step").unwrap_or(0.0), "PhaseTapChangerTabular"));
     }
     None
 }
@@ -455,9 +456,9 @@ fn check_sv_status_instance(dataset: &CimDataset, topo: &Topology) -> Vec<Violat
     let mut ce_has_sv_status: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("SvStatus").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(svs) = entry.element.as_any().downcast_ref::<cimmodel::SvStatus>()
-            && let Some(r) = &svs.conducting_equipment {
-                ce_has_sv_status.insert(r.mrid.trim_start_matches('#').to_string());
+        if let Some(svs) = Fields::of_class(entry, "SvStatus")
+            && let Some(r) = &svs.reference("SvStatus.ConductingEquipment") {
+                ce_has_sv_status.insert(r.trim_start_matches('#').to_string());
             }
     }
 
@@ -490,9 +491,9 @@ fn check_sv_shunt_compensator_sections_instance(dataset: &CimDataset, topo: &Top
     let mut sc_has_sv: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("SvShuntCompensatorSections").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(svsc) = entry.element.as_any().downcast_ref::<cimmodel::SvShuntCompensatorSections>()
-            && let Some(r) = &svsc.shunt_compensator {
-                sc_has_sv.insert(r.mrid.trim_start_matches('#').to_string());
+        if let Some(svsc) = Fields::of_class(entry, "SvShuntCompensatorSections")
+            && let Some(r) = &svsc.reference("SvShuntCompensatorSections.ShuntCompensator") {
+                sc_has_sv.insert(r.trim_start_matches('#').to_string());
             }
     }
     let mut v = Vec::new();
@@ -523,9 +524,9 @@ fn check_sv_tap_step_instance(dataset: &CimDataset, topo: &Topology) -> Vec<Viol
     for type_name in &["PowerTransformerEnd"] {
         for mrid in dataset.by_type.get(*type_name).into_iter().flatten() {
             let entry = &dataset.entries[mrid];
-            if let Some(pte) = entry.element.as_any().downcast_ref::<cimmodel::PowerTransformerEnd>()
-                && let Some(r) = &pte.base.terminal {
-                    te_terminal.insert(mrid.clone(), r.mrid.trim_start_matches('#').to_string());
+            if let Some(pte) = Fields::of_class(entry, "PowerTransformerEnd")
+                && let Some(r) = &pte.reference("TransformerEnd.Terminal") {
+                    te_terminal.insert(mrid.clone(), r.trim_start_matches('#').to_string());
                 }
         }
     }
@@ -538,9 +539,9 @@ fn check_sv_tap_step_instance(dataset: &CimDataset, topo: &Topology) -> Vec<Viol
     let mut tc_has_sv: HashSet<String> = HashSet::default();
     for mrid in dataset.by_type.get("SvTapStep").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(svts) = entry.element.as_any().downcast_ref::<cimmodel::SvTapStep>()
-            && let Some(r) = &svts.tap_changer {
-                tc_has_sv.insert(r.mrid.trim_start_matches('#').to_string());
+        if let Some(svts) = Fields::of_class(entry, "SvTapStep")
+            && let Some(r) = &svts.reference("SvTapStep.TapChanger") {
+                tc_has_sv.insert(r.trim_start_matches('#').to_string());
             }
     }
 
@@ -551,16 +552,16 @@ fn check_sv_tap_step_instance(dataset: &CimDataset, topo: &Topology) -> Vec<Viol
         for mrid in dataset.by_type.get(*type_name).into_iter().flatten() {
             // Get TransformerEnd from this tap changer
             let te_id = dataset.entries.get(mrid).and_then(|e| {
-                if let Some(tc) = e.element.as_any().downcast_ref::<cimmodel::RatioTapChanger>() {
-                    tc.transformer_end.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string())
-                } else if let Some(tc) = e.element.as_any().downcast_ref::<cimmodel::PhaseTapChangerLinear>() {
-                    tc.base.transformer_end.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string())
-                } else if let Some(tc) = e.element.as_any().downcast_ref::<cimmodel::PhaseTapChangerSymmetrical>() {
-                    tc.base.base.transformer_end.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string())
-                } else if let Some(tc) = e.element.as_any().downcast_ref::<cimmodel::PhaseTapChangerAsymmetrical>() {
-                    tc.base.base.transformer_end.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string())
-                } else if let Some(tc) = e.element.as_any().downcast_ref::<cimmodel::PhaseTapChangerTabular>() {
-                    tc.base.transformer_end.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string())
+                if let Some(tc) = Fields::of_class(e, "RatioTapChanger") {
+                    tc.reference("RatioTapChanger.TransformerEnd").map(|r| r.trim_start_matches('#').to_string())
+                } else if let Some(tc) = Fields::of_class(e, "PhaseTapChangerLinear") {
+                    tc.reference("PhaseTapChanger.TransformerEnd").map(|r| r.trim_start_matches('#').to_string())
+                } else if let Some(tc) = Fields::of_class(e, "PhaseTapChangerSymmetrical") {
+                    tc.reference("PhaseTapChanger.TransformerEnd").map(|r| r.trim_start_matches('#').to_string())
+                } else if let Some(tc) = Fields::of_class(e, "PhaseTapChangerAsymmetrical") {
+                    tc.reference("PhaseTapChanger.TransformerEnd").map(|r| r.trim_start_matches('#').to_string())
+                } else if let Some(tc) = Fields::of_class(e, "PhaseTapChangerTabular") {
+                    tc.reference("PhaseTapChanger.TransformerEnd").map(|r| r.trim_start_matches('#').to_string())
                 } else {
                     None
                 }
@@ -593,9 +594,9 @@ fn check_regulating_control_same_island(dataset: &CimDataset, topo: &Topology) -
     let mut rc_to_sm: HashMap<String, Vec<String>> = HashMap::default();
     for sm_mrid in dataset.by_type.get("SynchronousMachine").into_iter().flatten() {
         let sm_entry = &dataset.entries[sm_mrid];
-        if let Some(sm) = sm_entry.element.as_any().downcast_ref::<cimmodel::SynchronousMachine>()
-            && let Some(rc_ref) = sm.base.base.regulating_control.as_ref() {
-                let rc_id = rc_ref.mrid.trim_start_matches('#').to_string();
+        if let Some(sm) = Fields::of_class(sm_entry, "SynchronousMachine")
+            && let Some(rc_ref) = sm.reference("RegulatingCondEq.RegulatingControl") {
+                let rc_id = rc_ref.trim_start_matches('#').to_string();
                 rc_to_sm.entry(rc_id).or_default().push(sm_mrid.clone());
             }
     }
@@ -611,21 +612,21 @@ fn check_regulating_control_same_island(dataset: &CimDataset, topo: &Topology) -
     for tc_type in &tc_types {
         for tc_mrid in dataset.by_type.get(*tc_type).into_iter().flatten() {
             let tc_entry = &dataset.entries[tc_mrid];
-            let (tcc_ref, te_id) = if let Some(tc) = tc_entry.element.as_any().downcast_ref::<cimmodel::RatioTapChanger>() {
-                (tc.base.tap_changer_control.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()),
-                 tc.transformer_end.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()))
-            } else if let Some(tc) = tc_entry.element.as_any().downcast_ref::<cimmodel::PhaseTapChangerLinear>() {
-                (tc.base.base.tap_changer_control.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()),
-                 tc.base.transformer_end.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()))
-            } else if let Some(tc) = tc_entry.element.as_any().downcast_ref::<cimmodel::PhaseTapChangerSymmetrical>() {
-                (tc.base.base.base.tap_changer_control.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()),
-                 tc.base.base.transformer_end.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()))
-            } else if let Some(tc) = tc_entry.element.as_any().downcast_ref::<cimmodel::PhaseTapChangerAsymmetrical>() {
-                (tc.base.base.base.tap_changer_control.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()),
-                 tc.base.base.transformer_end.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()))
-            } else if let Some(tc) = tc_entry.element.as_any().downcast_ref::<cimmodel::PhaseTapChangerTabular>() {
-                (tc.base.base.tap_changer_control.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()),
-                 tc.base.transformer_end.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string()))
+            let (tcc_ref, te_id) = if let Some(tc) = Fields::of_class(tc_entry, "RatioTapChanger") {
+                (tc.reference("TapChanger.TapChangerControl").map(|r| r.trim_start_matches('#').to_string()),
+                 tc.reference("RatioTapChanger.TransformerEnd").map(|r| r.trim_start_matches('#').to_string()))
+            } else if let Some(tc) = Fields::of_class(tc_entry, "PhaseTapChangerLinear") {
+                (tc.reference("TapChanger.TapChangerControl").map(|r| r.trim_start_matches('#').to_string()),
+                 tc.reference("PhaseTapChanger.TransformerEnd").map(|r| r.trim_start_matches('#').to_string()))
+            } else if let Some(tc) = Fields::of_class(tc_entry, "PhaseTapChangerSymmetrical") {
+                (tc.reference("TapChanger.TapChangerControl").map(|r| r.trim_start_matches('#').to_string()),
+                 tc.reference("PhaseTapChanger.TransformerEnd").map(|r| r.trim_start_matches('#').to_string()))
+            } else if let Some(tc) = Fields::of_class(tc_entry, "PhaseTapChangerAsymmetrical") {
+                (tc.reference("TapChanger.TapChangerControl").map(|r| r.trim_start_matches('#').to_string()),
+                 tc.reference("PhaseTapChanger.TransformerEnd").map(|r| r.trim_start_matches('#').to_string()))
+            } else if let Some(tc) = Fields::of_class(tc_entry, "PhaseTapChangerTabular") {
+                (tc.reference("TapChanger.TapChangerControl").map(|r| r.trim_start_matches('#').to_string()),
+                 tc.reference("PhaseTapChanger.TransformerEnd").map(|r| r.trim_start_matches('#').to_string()))
             } else {
                 continue
             };
@@ -638,9 +639,9 @@ fn check_regulating_control_same_island(dataset: &CimDataset, topo: &Topology) -
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("RegulatingControl").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let rc = match entry.element.as_any().downcast_ref::<cimmodel::RegulatingControl>() { Some(r) => r, None => continue };
-        if !rc.enabled.unwrap_or(false) { continue; }
-        let rc_term_id = match &rc.terminal { Some(r) => r.mrid.trim_start_matches('#'), None => continue };
+        let rc = match Fields::of_class(entry, "RegulatingControl") { Some(r) => r, None => continue };
+        if !rc.bool("RegulatingControl.enabled").unwrap_or(false) { continue; }
+        let rc_term_id = match rc.reference("RegulatingControl.Terminal") { Some(r) => r.trim_start_matches('#'), None => continue };
         let rc_island = match term_to_island(rc_term_id) { Some(i) => i, None => continue };
 
         // Check SynchronousMachines referencing this RC
@@ -666,8 +667,8 @@ fn check_regulating_control_same_island(dataset: &CimDataset, topo: &Topology) -
         // Check TapChangers referencing this RC
         for (tc_mrid, tc_type, te_id) in tcc_to_tc.get(mrid).into_iter().flatten() {
             let te_entry = match te_id.as_deref().and_then(|id| dataset.entries.get(id)) { Some(e) => e, None => continue };
-            let term_id = if let Some(pte) = te_entry.element.as_any().downcast_ref::<cimmodel::PowerTransformerEnd>() {
-                pte.base.terminal.as_ref().map(|r| r.mrid.trim_start_matches('#').to_string())
+            let term_id = if let Some(pte) = Fields::of_class(te_entry, "PowerTransformerEnd") {
+                pte.reference("TransformerEnd.Terminal").map(|r| r.trim_start_matches('#').to_string())
             } else {
                 None
             };

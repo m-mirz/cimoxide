@@ -264,11 +264,9 @@ fn check_model_date_time_utc(dataset: &CimDataset) -> Vec<Violation> {
     for type_name in &["FullModel", "DifferenceModel"] {
         for mrid in dataset.by_type.get(*type_name).into_iter().flatten() {
             let entry = &dataset.entries[mrid];
-            let model_base = if let Some(fm) = entry.element.as_any().downcast_ref::<cimmodel::FullModel>() {
-                Some(&fm.base)
-            } else { entry.element.as_any().downcast_ref::<cimmodel::DifferenceModel>().map(|dm| &dm.base) };
-            if let Some(m) = model_base {
-                if !m.created.is_empty() && !m.created.ends_with('Z') {
+            if let Some(m) = super::Fields::of_class(entry, type_name) {
+                let created = m.text("Model.created");
+                if !created.is_empty() && !created.ends_with('Z') {
                     v.push(Violation {
                         object_id: mrid.clone(),
                         rule_id:   "all600:Model.created-HGEN4".into(),
@@ -280,7 +278,8 @@ fn check_model_date_time_utc(dataset: &CimDataset) -> Vec<Violation> {
                         description: String::new(),
                     });
                 }
-                if !m.scenario_time.is_empty() && !m.scenario_time.ends_with('Z') {
+                let scenario_time = m.text("Model.scenarioTime");
+                if !scenario_time.is_empty() && !scenario_time.ends_with('Z') {
                     v.push(Violation {
                         object_id: mrid.clone(),
                         rule_id:   "all600:Model.scenarioTime-HGEN4".into(),
@@ -303,12 +302,9 @@ fn check_modeling_authority_set_not_empty(dataset: &CimDataset) -> Vec<Violation
     for type_name in &["FullModel", "DifferenceModel"] {
         for mrid in dataset.by_type.get(*type_name).into_iter().flatten() {
             let entry = &dataset.entries[mrid];
-            let mas = if let Some(fm) = entry.element.as_any().downcast_ref::<cimmodel::FullModel>() {
-                fm.base.modeling_authority_set.trim().to_string()
-            } else if let Some(dm) = entry.element.as_any().downcast_ref::<cimmodel::DifferenceModel>() {
-                dm.base.modeling_authority_set.trim().to_string()
-            } else {
-                continue
+            let mas = match super::Fields::of_class(entry, type_name) {
+                Some(m) => m.text("Model.modelingAuthoritySet").trim().to_string(),
+                None => continue,
             };
             if mas.is_empty() {
                 v.push(Violation {

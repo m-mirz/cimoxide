@@ -92,6 +92,15 @@ hand-written. Entry points:
   without the hand-written SPARQL rules
 - Validate before `CimDataset::drop_blocks()`: typed elements are read through their block,
   and a target without one panics rather than passing
+- The hand-written rules read attributes through `sparql::Fields` (`f64("Class.attr")`,
+  `reference(..)`, `enumeration(..)`, …), never by downcasting to the generated structs.
+  Its accessors reproduce `from_block` exactly — last value of a repeated scalar, `true`
+  only for the text `true`, numbers parsed into the field's own type, a single-valued
+  reference written twice is absent — and the key is the attribute's declaring class
+  (`Equipment.inService` on a Breaker). Three rules still read the struct's view on
+  purpose (`to_block`: float special values and mRID uniqueness in `common.rs`, dangling
+  references in `common_solved_mas.rs`), because their meaning depends on which attributes
+  a class declares
 - `combined_config(...)` builds the `Config`
 - Profiles: `"EQ"`, `"OP"`, `"DY"`, `"SV"`, `"SSH"`, `"SC"`, `"GL"`, `"DL"`, `"EQBD"`
 
