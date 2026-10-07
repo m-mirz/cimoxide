@@ -479,7 +479,7 @@ fn pair(values: &Values, el: &Fields, other: &str, holds: impl Fn(f64, f64) -> b
 fn check_closed(el: &Fields, class: &str, mrid: &str, closed: &ClosedShape, out: &mut Vec<Violation>) {
     let mut extra: Vec<&str> = el
         .keys()
-        .map(String::as_str)
+        .copied()
         .filter(|k| !closed.allowed.contains(k))
         .collect();
     // Deterministic order: HashMap iteration is not, and a violation list that

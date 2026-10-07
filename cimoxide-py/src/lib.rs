@@ -100,31 +100,38 @@ impl PyCimDataset {
 
 #[pymethods]
 impl PyCimDataset {
-    /// Parse a single CGMES RDF/XML file.
+    /// Parse a single CGMES RDF/XML file. Releases the GIL while parsing.
     #[staticmethod]
-    fn decode_file(path: &str) -> PyResult<Self> {
-        let ds = CimDataset::decode_file(Path::new(path)).map_err(map_err)?;
+    fn decode_file(py: Python<'_>, path: &str) -> PyResult<Self> {
+        let ds = py
+            .allow_threads(|| CimDataset::decode_file(Path::new(path)).map_err(|e| e.to_string()))
+            .map_err(map_err)?;
         Ok(Self {
             inner: std::sync::Mutex::new(Inner::new(ds)),
         })
     }
 
     /// Parse multiple CGMES RDF/XML files, merging them into one dataset.
+    /// The files are parsed in parallel, one thread each, without the GIL.
     #[staticmethod]
-    fn decode_files(paths: Vec<String>) -> PyResult<Self> {
+    fn decode_files(py: Python<'_>, paths: Vec<String>) -> PyResult<Self> {
         let path_bufs: Vec<std::path::PathBuf> =
             paths.iter().map(std::path::PathBuf::from).collect();
         let path_refs: Vec<&Path> = path_bufs.iter().map(|p| p.as_path()).collect();
-        let ds = CimDataset::decode_files(&path_refs).map_err(map_err)?;
+        let ds = py
+            .allow_threads(|| CimDataset::decode_files_parallel(&path_refs).map_err(|e| e.to_string()))
+            .map_err(map_err)?;
         Ok(Self {
             inner: std::sync::Mutex::new(Inner::new(ds)),
         })
     }
 
-    /// Parse CGMES RDF/XML from a string.
+    /// Parse CGMES RDF/XML from a string. Releases the GIL while parsing.
     #[staticmethod]
-    fn decode_str(content: &str) -> PyResult<Self> {
-        let ds = CimDataset::decode_str(content).map_err(map_err)?;
+    fn decode_str(py: Python<'_>, content: &str) -> PyResult<Self> {
+        let ds = py
+            .allow_threads(|| CimDataset::decode_str(content).map_err(|e| e.to_string()))
+            .map_err(map_err)?;
         Ok(Self {
             inner: std::sync::Mutex::new(Inner::new(ds)),
         })

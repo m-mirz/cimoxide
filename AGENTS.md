@@ -67,6 +67,10 @@ Up to 0.3.3 this was three crates, `cimoxide-structs`, `cimoxide-decoder` and
 `cimoxide-convert`, and CGMES decoded into 446 generated structs plus a raw field map
 (`RdfBlock`) kept beside each; those crates stay on crates.io at 0.3.x. Dropping the structs
 cut RealGrid decoding by 22% and peak memory by 26%, because nothing was built twice.
+Field keys are `&'static str` (`FieldMap = FastMap<&'static str, FieldValue>`): the decoder
+takes a declared attribute's key from the class table and passes any other through
+`base::intern`, which leaks each distinct name once. That cut another 13% off decoding and
+56 MB off RealGrid's peak; a `String` per field was ~900k allocations to build and free.
 
 Core files:
 - `base.rs` — hand-written. `Element`, `FieldValue`, the `FastMap`/`FieldMap` hashing,

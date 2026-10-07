@@ -95,7 +95,7 @@ file individually, then cross-profile checks on the merged dataset. See the
 | Function / method | Description |
 |---|---|
 | `cimoxide.decode_file(path)` | Parse a single RDF/XML file. |
-| `cimoxide.decode_files(paths)` | Parse and merge multiple RDF/XML files. |
+| `cimoxide.decode_files(paths)` | Parse multiple RDF/XML files in parallel (one thread each, GIL released) and merge them. |
 | `cimoxide.decode_str(content)` | Parse RDF/XML from a string. |
 | `cimoxide.validate_files(paths, ...)` | Two-phase SHACL/SPARQL validation, returns `list[Violation]`. |
 | `CimDataset.merge(other)` | Merge another dataset into this one (`other` becomes empty). |

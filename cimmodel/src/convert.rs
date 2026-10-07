@@ -152,8 +152,8 @@ pub fn dataset_to_xml(ds: &CimDataset) -> Result<String, Box<dyn Error>> {
         write!(out, "  <{ns}:{type_name} rdf:about=\"#{}\">", escape_attr(mrid))?;
 
         // Emit fields sorted for deterministic output
-        let mut fields: Vec<(&String, &FieldValue)> = block.fields().iter().collect();
-        fields.sort_by_key(|(k, _)| k.as_str());
+        let mut fields: Vec<(&&'static str, &FieldValue)> = block.fields().iter().collect();
+        fields.sort_by_key(|(k, _)| **k);
 
         let mut children = String::new();
         for (key, val) in fields {
@@ -214,8 +214,8 @@ pub fn dataset_to_xml_for_profile(
         if let Some((mrid, block)) = find_full_model_header(ds, uri) {
             write!(out, "  <{hdr}:FullModel rdf:about=\"{}\">", escape_attr(mrid))?;
 
-            let mut fields: Vec<(&String, &FieldValue)> = block.fields().iter().collect();
-            fields.sort_by_key(|(k, _)| k.as_str());
+            let mut fields: Vec<(&&'static str, &FieldValue)> = block.fields().iter().collect();
+            fields.sort_by_key(|(k, _)| **k);
 
             let mut children = String::new();
             for (key, val) in fields {
@@ -265,7 +265,7 @@ pub fn dataset_to_xml_for_profile(
             }
         };
 
-        let mut fields: Vec<(&String, &FieldValue)> =
+        let mut fields: Vec<(&&'static str, &FieldValue)> =
             block.fields().iter().filter(|(k, _)| include_field(k)).collect();
 
         if fields.is_empty() {
@@ -279,7 +279,7 @@ pub fn dataset_to_xml_for_profile(
             write!(out, "  <{ns}:{type_name} rdf:about=\"#{}\">", escape_attr(mrid))?;
         }
 
-        fields.sort_by_key(|(k, _)| k.as_str());
+        fields.sort_by_key(|(k, _)| **k);
         let mut children = String::new();
         for (key, val) in fields {
             write_field(&mut children, key, val, type_name, "#", ds)?;
@@ -336,7 +336,7 @@ fn write_synthesized_header(
             .filter(|(_, e)| e.type_name() == "FullModel")
             .collect();
         headers.sort_by_key(|(m, _)| m.as_str());
-        headers.into_iter().find_map(|(_, b)| match b.fields().get(&format!("Model.{field}")) {
+        headers.into_iter().find_map(|(_, b)| match b.fields().get(format!("Model.{field}").as_str()) {
             Some(FieldValue::Text(v)) if !v.is_empty() => Some(v.clone()),
             _ => None,
         })
@@ -430,10 +430,10 @@ fn write_carried_fields(
     attr_map: &HashMap<&'static str, &'static [&'static str]>,
     ds: &CimDataset,
 ) -> Result<(), Box<dyn Error>> {
-    let mut by_class: std::collections::BTreeMap<&str, Vec<(&String, &FieldValue)>> =
+    let mut by_class: std::collections::BTreeMap<&str, Vec<(&&'static str, &FieldValue)>> =
         std::collections::BTreeMap::new();
     for (key, val) in block.fields() {
-        let only_here = attr_map.get(key.as_str()).is_some_and(|o| *o == [profile_code]);
+        let only_here = attr_map.get(*key).is_some_and(|o| *o == [profile_code]);
         let Some((class, _)) = key.split_once('.') else { continue };
         let class_in_profile = type_map.get(class).is_some_and(|o| o.contains(&profile_code));
         if only_here && class_in_profile {
@@ -443,7 +443,7 @@ fn write_carried_fields(
     for (class, mut fields) in by_class {
         let ns = prefix_for_type(class);
         write!(out, "  <{ns}:{class} rdf:about=\"#{}\">", escape_attr(mrid))?;
-        fields.sort_by_key(|(k, _)| k.as_str());
+        fields.sort_by_key(|(k, _)| **k);
         let mut children = String::new();
         for (key, val) in fields {
             write_field(&mut children, key, val, class, "#", ds)?;

@@ -146,7 +146,7 @@ pub(crate) fn texts(e: &Element) -> Vec<(&str, Cow<'_, str>)> {
     for (key, value) in e.fields() {
         if is_nc(e) {
             if let FieldValue::Text(s) = value {
-                out.push((key.as_str(), Cow::Borrowed(s.as_str())));
+                out.push((*key, Cow::Borrowed(s.as_str())));
             }
             continue;
         }
@@ -162,7 +162,7 @@ pub(crate) fn texts(e: &Element) -> Vec<(&str, Cow<'_, str>)> {
             Literal::Boolean => Some(Cow::Owned((raw.trim() == "true").to_string())),
         };
         if let Some(s) = shown {
-            out.push((key.as_str(), s));
+            out.push((*key, s));
         }
     }
     ordered(e, out)
@@ -187,7 +187,7 @@ pub(crate) fn references(e: &Element) -> Vec<(&str, &[String])> {
                 continue;
             }
         }
-        out.push((key.as_str(), refs));
+        out.push((*key, refs));
     }
     ordered(e, out)
 }

@@ -3,7 +3,7 @@ use std::path::Path;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 
-use crate::base::{ClassDef, Element, FastMap, FieldValue, TypeRegistry};
+use crate::base::{intern, AttrDef, ClassDef, Element, FastMap, FieldValue, TypeRegistry};
 use crate::registry;
 
 pub struct CimDataset {
@@ -264,7 +264,14 @@ fn parse_rdf(
     // Resolved at the element's start tag, so an unregistered element never
     // accumulates fields.
     let mut current: Option<Element> = None;
-    let mut pending_key: Option<String> = None;
+    // The attributes `current`'s class declares, which supply most field keys.
+    let mut declared: Option<&'static FastMap<&'static str, &'static AttrDef>> = None;
+    let mut pending_key: Option<&'static str> = None;
+    // A field key as stored: the class table's id when the class declares it,
+    // else the interned name.
+    let key_of = |declared: Option<&'static FastMap<&'static str, &'static AttrDef>>, local: &str| {
+        declared.and_then(|d| d.get(local)).map_or_else(|| intern(local), |a| a.id)
+    };
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -289,14 +296,15 @@ fn parse_rdf(
                         }
 
                         current = resolve(&scope, reg, e.name().as_ref())?.map(|class| Element::new(class, mrid));
+                        declared = current.as_ref().and_then(|c| reg.declared(c.class()));
                     }
                     3 => {
                         if let Some(element) = current.as_mut() {
                             let name = e.name();
                             let (_, local_bytes) = split_qname(name.as_ref());
-                            let local = std::str::from_utf8(local_bytes)?.to_string();
+                            let local = key_of(declared, std::str::from_utf8(local_bytes)?);
                             if let Some(res) = find_resource(e.attributes())? {
-                                element.add_field(&local, FieldValue::Resource(res));
+                                element.add_field(local, FieldValue::Resource(res));
                             } else {
                                 pending_key = Some(local);
                             }
@@ -337,7 +345,7 @@ fn parse_rdf(
                             && let Some(res) = find_resource(e.attributes())? {
                                 let name = e.name();
                                 let (_, local_bytes) = split_qname(name.as_ref());
-                                let local = std::str::from_utf8(local_bytes)?;
+                                let local = key_of(declared, std::str::from_utf8(local_bytes)?);
                                 element.add_field(local, FieldValue::Resource(res));
                             }
                     }
@@ -350,7 +358,7 @@ fn parse_rdf(
                     && let (Some(element), Some(key)) = (current.as_mut(), pending_key.take()) {
                         let text = e.unescape()?.trim().to_string();
                         if !text.is_empty() {
-                            element.add_field(&key, FieldValue::Text(text));
+                            element.add_field(key, FieldValue::Text(text));
                         }
                     }
             }

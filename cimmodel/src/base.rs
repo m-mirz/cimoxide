@@ -67,8 +67,39 @@ impl Hasher for FastHasher {
 pub type FastBuildHasher = BuildHasherDefault<FastHasher>;
 pub type FastMap<K, V> = HashMap<K, V, FastBuildHasher>;
 pub type FastSet<T> = HashSet<T, FastBuildHasher>;
-/// An element's fields, keyed by `Class.attr`.
-pub type FieldMap = FastMap<String, FieldValue>;
+/// An element's fields, keyed by `Class.attr`. Keys are `&'static`: a declared
+/// attribute's key is its id in the class table, any other goes through
+/// [`intern`], so a key is allocated once per process rather than per field.
+pub type FieldMap = FastMap<&'static str, FieldValue>;
+
+/// The one `&'static` copy of a field key the class tables do not hold — an
+/// attribute the element's class does not declare, as written in the file or
+/// set from JSON. Each distinct key is leaked once and kept for the process;
+/// there are as many as distinct undeclared attribute names, not fields.
+pub fn intern(key: &str) -> &'static str {
+    use std::cell::RefCell;
+    use std::sync::{Mutex, OnceLock};
+    thread_local! {
+        static LOCAL: RefCell<FastSet<&'static str>> = RefCell::new(FastSet::default());
+    }
+    static GLOBAL: OnceLock<Mutex<FastSet<&'static str>>> = OnceLock::new();
+    if let Some(k) = LOCAL.with(|l| l.borrow().get(key).copied()) {
+        return k;
+    }
+    let k = {
+        let mut global = GLOBAL.get_or_init(Default::default).lock().unwrap();
+        match global.get(key) {
+            Some(k) => *k,
+            None => {
+                let k: &'static str = Box::leak(key.to_owned().into_boxed_str());
+                global.insert(k);
+                k
+            }
+        }
+    };
+    LOCAL.with(|l| l.borrow_mut().insert(k));
+    k
+}
 
 #[derive(Debug, Clone)]
 pub enum FieldValue {
@@ -96,7 +127,7 @@ pub struct Element {
     fields: FieldMap,
     /// Fields assigned more than once within the element, which `sh:maxCount`
     /// reads.
-    duplicate_fields: FastSet<String>,
+    duplicate_fields: FastSet<&'static str>,
 }
 
 impl Element {
@@ -136,7 +167,7 @@ impl Element {
         &self.fields
     }
 
-    pub fn duplicate_fields(&self) -> &FastSet<String> {
+    pub fn duplicate_fields(&self) -> &FastSet<&'static str> {
         &self.duplicate_fields
     }
 
@@ -184,12 +215,12 @@ impl Element {
 
     /// Add one value as the decoder reads it: a repeated key becomes a list
     /// and is recorded in [`Element::duplicate_fields`].
-    pub fn add_field(&mut self, key: &str, val: FieldValue) {
+    pub fn add_field(&mut self, key: &'static str, val: FieldValue) {
         match &val {
             FieldValue::Resource(new_ref) => match self.fields.get_mut(key) {
                 Some(FieldValue::ResourceList(list)) => {
                     list.push(new_ref.clone());
-                    self.duplicate_fields.insert(key.to_string());
+                    self.duplicate_fields.insert(key);
                     return;
                 }
                 Some(existing @ FieldValue::Resource(_)) => {
@@ -197,7 +228,7 @@ impl Element {
                         unreachable!()
                     };
                     *existing = FieldValue::ResourceList(vec![old, new_ref.clone()]);
-                    self.duplicate_fields.insert(key.to_string());
+                    self.duplicate_fields.insert(key);
                     return;
                 }
                 _ => {}
@@ -205,7 +236,7 @@ impl Element {
             FieldValue::Text(new_text) => match self.fields.get_mut(key) {
                 Some(FieldValue::TextList(list)) => {
                     list.push(new_text.clone());
-                    self.duplicate_fields.insert(key.to_string());
+                    self.duplicate_fields.insert(key);
                     return;
                 }
                 Some(existing @ FieldValue::Text(_)) => {
@@ -213,18 +244,18 @@ impl Element {
                         unreachable!()
                     };
                     *existing = FieldValue::TextList(vec![old, new_text.clone()]);
-                    self.duplicate_fields.insert(key.to_string());
+                    self.duplicate_fields.insert(key);
                     return;
                 }
                 _ => {}
             },
             _ => {
                 if self.fields.contains_key(key) {
-                    self.duplicate_fields.insert(key.to_string());
+                    self.duplicate_fields.insert(key);
                 }
             }
         }
-        self.fields.insert(key.to_string(), val);
+        self.fields.insert(key, val);
     }
 
     /// Combine another file's view of the same object: a later scalar wins,
@@ -235,11 +266,11 @@ impl Element {
                 FieldValue::ResourceList(new_list) => match self.fields.get_mut(k) {
                     Some(FieldValue::ResourceList(existing)) => existing.extend(new_list.iter().cloned()),
                     _ => {
-                        self.fields.insert(k.clone(), v.clone());
+                        self.fields.insert(*k, v.clone());
                     }
                 },
                 _ => {
-                    self.fields.insert(k.clone(), v.clone());
+                    self.fields.insert(*k, v.clone());
                 }
             }
         }
@@ -251,7 +282,7 @@ impl Element {
         let mut map = serde_json::Map::with_capacity(self.fields.len() + 1);
         map.insert("id".to_string(), serde_json::Value::String(self.mrid.clone()));
         for (k, v) in &self.fields {
-            map.insert(k.clone(), field_to_json(v));
+            map.insert(k.to_string(), field_to_json(v));
         }
         serde_json::Value::Object(map)
     }
@@ -284,7 +315,7 @@ impl Element {
                 }
                 other => return Err(format!("{k}: expected a string or an array, got {other}")),
             };
-            fields.insert(k.clone(), value);
+            fields.insert(reg.field_key(class, k), value);
         }
         Ok(Self::with_fields(class, mrid, fields))
     }
@@ -415,6 +446,17 @@ impl TypeRegistry {
     /// The attribute `id` if `class` declares it, itself or by inheritance.
     pub fn attr(&self, class: &ClassDef, id: &str) -> Option<&'static AttrDef> {
         self.declared.get(class.qualified)?.get(id).copied()
+    }
+
+    /// The attributes `class` declares, inherited ones included, by id — for a
+    /// caller that resolves many keys of one element.
+    pub fn declared(&self, class: &ClassDef) -> Option<&FastMap<&'static str, &'static AttrDef>> {
+        self.declared.get(class.qualified)
+    }
+
+    /// The `&'static` key a field `id` of `class` is stored under.
+    pub fn field_key(&self, class: &ClassDef, id: &str) -> &'static str {
+        self.attr(class, id).map_or_else(|| intern(id), |a| a.id)
     }
 
     /// `class` and its ancestors, root first.

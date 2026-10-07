@@ -44,17 +44,22 @@ class CimDataset:
 
     @staticmethod
     def decode_file(path: str) -> CimDataset:
-        """Parse a single CGMES RDF/XML file."""
+        """Parse a single CGMES RDF/XML file. Releases the GIL while parsing."""
         ...
 
     @staticmethod
     def decode_files(paths: list[str]) -> CimDataset:
-        """Parse multiple CGMES RDF/XML files, merging them into one dataset."""
+        """Parse multiple CGMES RDF/XML files, merging them into one dataset.
+
+        The files are parsed in parallel, one thread each, without holding the
+        GIL, then merged in the order given. ``by_type()`` lists each class's
+        elements in document order, the first file's first.
+        """
         ...
 
     @staticmethod
     def decode_str(content: str) -> CimDataset:
-        """Parse CGMES RDF/XML from a string."""
+        """Parse CGMES RDF/XML from a string. Releases the GIL while parsing."""
         ...
 
     def merge(self, other: CimDataset) -> None:

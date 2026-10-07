@@ -112,7 +112,9 @@ let terminals = line.get_refs("ACLineSegment.Terminals");
 Up to 0.3.3, CGMES decoded into 446 generated structs, with the raw field map kept beside
 each for validation and export. Dropping the structs left one copy of every element: on
 RealGrid (189,000 elements) decoding went from 1,186 to 922 ms and peak memory from 546 to
-406 MB, and `cimcli validate` from 1,354 to 1,126 ms. An attribute the class does not declare,
+406 MB, and `cimcli validate` from 1,354 to 1,126 ms. Storing field keys as `&'static str` — the
+class table's own id for a declared attribute, interned once otherwise — instead of a `String` per
+field then took import to 780 ms and 350 MB, and validate to 960 ms. An attribute the class does not declare,
 and a value that does not parse, are now kept rather than dropped.
 
 ### Loading the class tables from RDFS
@@ -462,10 +464,10 @@ Peak RSS for the same dataset, measured on `cimoxide-cli` release builds:
 
 | Command | Peak RSS | Wall |
 |---|---:|---:|
-| `cimcli import` (decode only) | 406 MB | 0.88 s |
-| `cimcli query` (decode + materialise + `COUNT(*)`) | 962 MB | 3.72 s |
+| `cimcli import` (decode only) | 350 MB | 0.78 s |
+| `cimcli query` (decode + materialise + `COUNT(*)`) | 900 MB | 3.58 s |
 
-So the graph costs somewhat more than the decoded dataset itself — about +556 MB and +2.8 s
+So the graph costs somewhat more than the decoded dataset itself — about +550 MB and +2.8 s
 here, both consistent with the `into_store` figure above.
 
 The lever if that matters: `GraphOptions::with_types([...])` restricts materialisation to
