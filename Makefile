@@ -23,4 +23,4 @@ python-build:
 clean:
 	cargo clean
 	rm -rf cimmodel/src/generated
-	rm -f cimvalidation/src/cgmes_shapes.rs cimvalidation/src/nc_shapes.rs cimvalidation/src/nc_profiles.rs
+	rm -f cimvalidation/src/cgmes_shapes.rs cimvalidation/src/cgmes_profiles.rs cimvalidation/src/nc_shapes.rs cimvalidation/src/nc_profiles.rs

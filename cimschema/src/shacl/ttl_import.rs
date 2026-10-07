@@ -1551,10 +1551,8 @@ fn get_str(g: &Graph, subj: &str, pred: &str) -> Option<String> {
 /// pulls in.
 ///
 /// `NCP/SHACL/Validation/` ships 18 of these, one per profile, and they are the
-/// authority on which shapes apply to which profile. CGMES has no equivalent —
-/// `cimvalidation/src/lib.rs` hardcodes the mapping as ten hand-written
-/// functions — so reading them replaces code with data rather than adding a
-/// second source of truth.
+/// authority on which shapes apply to which profile. CGMES has no equivalent,
+/// so its mapping is written out in `cgmes_manifest`.
 #[derive(Debug)]
 pub struct Manifest {
     /// `dcat:keyword`, the profile code (`"CO"`, `"ER"`, …; `"ALL"` for the

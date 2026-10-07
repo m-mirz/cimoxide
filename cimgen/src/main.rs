@@ -486,14 +486,10 @@ fn run_bag_shacl(
         &format!("{}_shapes.rs", spec.family.id),
         generator::shapes_gen::render_shapes(spec.family.id, &table.shapes),
     );
-    // A family with a written-out manifest detects its profiles from its own
-    // headers and has no profile index to emit.
-    let profiles_path = spec.family.shacl_manifest.is_none().then(|| {
-        write(
-            &format!("{}_profiles.rs", spec.family.id),
-            generator::shapes_gen::render_profiles_from(&table.profile_iris, &table.profiles),
-        )
-    });
+    let profiles_path = write(
+        &format!("{}_profiles.rs", spec.family.id),
+        generator::shapes_gen::render_profiles_from(&table.profile_iris, &table.profiles),
+    );
 
     let skips = collector.into_entries();
     eprintln!(
@@ -505,14 +501,12 @@ fn run_bag_shacl(
         skips.len(),
         shapes_path.display(),
     );
-    if let Some(profiles_path) = profiles_path {
-        eprintln!(
-            "{} profiles: {} descriptors → {}",
-            spec.family.id,
-            table.profiles.len(),
-            profiles_path.display()
-        );
-    }
+    eprintln!(
+        "{} profiles: {} descriptors → {}",
+        spec.family.id,
+        table.profiles.len(),
+        profiles_path.display()
+    );
 
     if skip_report {
         for e in &skips {

@@ -1,31 +1,10 @@
 use cimmodel::CimDataset;
 use crate::Config;
 
-const PROF_EQ:   &str = "http://iec.ch/TC57/ns/CIM/CoreEquipment-EU/3.0";
-const PROF_EQBD: &str = "http://iec.ch/TC57/ns/CIM/EquipmentBoundary-EU/3.0";
-const PROF_DY:   &str = "http://iec.ch/TC57/ns/CIM/Dynamics-EU/1.0";
-const PROF_DL:   &str = "http://iec.ch/TC57/ns/CIM/DiagramLayout-EU/3.0";
-const PROF_SC:   &str = "http://iec.ch/TC57/ns/CIM/ShortCircuit-EU/3.0";
-const PROF_OP:   &str = "http://iec.ch/TC57/ns/CIM/Operation-EU/3.0";
-const PROF_GL:   &str = "http://iec.ch/TC57/ns/CIM/GeographicalLocation-EU/3.0";
-const PROF_SV:   &str = "http://iec.ch/TC57/ns/CIM/StateVariables-EU/3.0";
-const PROF_TP:   &str = "http://iec.ch/TC57/ns/CIM/Topology-EU/3.0";
-const PROF_SSH:  &str = "http://iec.ch/TC57/ns/CIM/SteadyStateHypothesis-EU/3.0";
-
+/// The short code for a CGMES profile IRI, from `CGMES/PROF` via
+/// [`crate::cgmes_profile_index`].
 fn uri_to_short_name(uri: &str) -> Option<&'static str> {
-    match uri {
-        PROF_EQ   => Some("EQ"),
-        PROF_SSH  => Some("SSH"),
-        PROF_TP   => Some("TP"),
-        PROF_SV   => Some("SV"),
-        PROF_DY   => Some("DY"),
-        PROF_SC   => Some("SC"),
-        PROF_DL   => Some("DL"),
-        PROF_GL   => Some("GL"),
-        PROF_OP   => Some("OP"),
-        PROF_EQBD => Some("EQBD"),
-        _         => None,
-    }
+    crate::cgmes_profile_index().0.iter().find(|(iri, _)| *iri == uri).map(|(_, code)| *code)
 }
 
 fn collect_profiles_from_type(dataset: &CimDataset, type_name: &str, seen: &mut std::collections::HashSet<&'static str>) {
@@ -72,10 +51,9 @@ pub fn detect_config(dataset: &CimDataset) -> Config {
 /// Profile codes an NC dataset declares conformance to.
 ///
 /// CGMES announces its profiles in an `md:FullModel` header whose
-/// `Model.profile` values are matched against a hardcoded URI table above. NC
+/// `Model.profile` values are matched against `CGMES/PROF`'s index above. NC
 /// uses a DCAT header instead: a `dcat:Dataset` with `dcterms:conformsTo`
-/// naming profile IRIs, which `NCP/PROF` maps to short codes — read from the
-/// descriptors rather than written out by hand.
+/// naming profile IRIs, which `NCP/PROF` maps to short codes.
 ///
 /// The field key is the bare `conformsTo`, because the decoder keys fields by
 /// the XML local name and the predicate is written `<dcterms:conformsTo>`.

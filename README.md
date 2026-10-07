@@ -57,7 +57,7 @@ In `cimmodel/src/`, everything under `generated/` is generated — do not hand-e
 `lib.rs`, `base.rs`, `schema_source.rs`, `decode.rs` and `convert.rs` are hand-written.
 The decoder and converter used to be the crates `cimoxide-decoder` and `cimoxide-convert`,
 and the model `cimoxide-structs`; those stay on crates.io at 0.3.x. In `cimvalidation/`,
-only `cgmes_shapes.rs`, `nc_shapes.rs` and `nc_profiles.rs` are generated; everything else
+only `cgmes_shapes.rs`, `cgmes_profiles.rs`, `nc_shapes.rs` and `nc_profiles.rs` are generated; everything else
 (`src/sparql/`, `bag.rs`, `shapes.rs`, `helpers.rs`, `violation.rs`, `detect.rs`, `lib.rs`)
 is hand-written.
 
@@ -161,9 +161,11 @@ properties are dropped at decode; a bag still has them.
 
 Profiles come from the schema rather than from code: `NCP/SHACL/Validation/`
 names which constraint files each of the 18 profiles uses, and `NCP/PROF/` maps
-a dataset's `dcterms:conformsTo` IRI to a short code. NC announces itself with a
-DCAT header (`dcat:Dataset`), not CGMES's `md:FullModel` — with no header, no NC
-profile is detected and nothing runs.
+a dataset's `dcterms:conformsTo` IRI to a short code (`nc_profiles.rs`; CGMES's
+`md:Model.profile` IRIs come from `CGMES/PROF/` the same way, into
+`cgmes_profiles.rs`). NC announces itself with a DCAT header (`dcat:Dataset`),
+not CGMES's `md:FullModel` — with no header, no NC profile is detected and
+nothing runs.
 
 NC leans on advisory severity far more than CGMES: 842 `sh:Info` occurrences
 against 7. `cimcli validate` therefore reports `sh:Info` findings but does not
@@ -272,7 +274,7 @@ e.g. `cargo run -p cimoxide-gen -- --verbose --rule-report`.
 | `--schema <glob>` | `application-profiles-library/CGMES/RDFS/61970-600-2_*-AP-Voc-RDFS2020.rdf` | RDF/RDFS schema files to import |
 | `--output <dir>` | `cimmodel/src/generated` | struct output directory |
 | `--shacl <glob>` | `application-profiles-library/CGMES/SHACL/*.ttl` | SHACL TTL files to import |
-| `--shacl-output <dir>` | `cimvalidation/src` | shape table output directory (`cgmes_shapes.rs`, `nc_shapes.rs`, `nc_profiles.rs`) |
+| `--shacl-output <dir>` | `cimvalidation/src` | shape table output directory (`cgmes_shapes.rs`, `cgmes_profiles.rs`, `nc_shapes.rs`, `nc_profiles.rs`) |
 | `--python-stubs-output <dir>` | `cimoxide-py/python/cimoxide` | `.pyi` type stub output directory |
 | `--verbose` / `-v` | off | print parse diagnostics |
 | `--skip-report` | off | print the full per-entry + global skipped-constraint breakdown (see "Skipped constraints" below) |
@@ -321,8 +323,8 @@ the generated output:
 
 - `cimmodel_codegen_stable` — runs the RDF struct generator and hashes `cimmodel/src/generated/`
 - `nc_classes_codegen_stable` — hashes the NC class table on its own
-- `cgmes_shapes_codegen_stable` — hashes the CGMES shape table (`cimvalidation/src/cgmes_shapes.rs`)
-- `nc_shapes_codegen_stable` — hashes the NC shape table (`cimvalidation/src/nc_shapes.rs`)
+- `cgmes_shapes_codegen_stable` — hashes the CGMES shape table and profile index (`cimvalidation/src/cgmes_shapes.rs`, `cgmes_profiles.rs`)
+- `nc_shapes_codegen_stable` — hashes the NC shape table and profile index (`cimvalidation/src/nc_shapes.rs`, `nc_profiles.rs`)
 
 Each test regenerates into a temporary directory under `target/` and compares the
 directory hash against a stored expected value. A mismatch means either the generator

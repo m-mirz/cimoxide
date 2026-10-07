@@ -78,6 +78,7 @@ pub fn validate_nc_profile(
 // `cimschema::shacl::cgmes_manifest` — so one table holds the local,
 // not-solved, cross-profile and header rules apart.
 pub mod cgmes_shapes;
+pub mod cgmes_profiles;
 
 /// The CGMES shape table in force: loaded from SHACL if the `dynamic-shapes`
 /// feature is on and a directory was supplied, otherwise the generated one.
@@ -141,8 +142,15 @@ pub fn validate_crossprofile_shacl(dataset: &cimmodel::CimDataset, cfg: &Config)
     run_cgmes(dataset, &active)
 }
 
-/// Every CGMES profile code `detect_config` can report.
-const CGMES_PROFILES: &[&str] = &["DL", "DY", "EQ", "EQBD", "GL", "OP", "SC", "SSH", "SV", "TP"];
+/// The CGMES profile index in force: `md:Model.profile` IRI → short code, and
+/// every short code, read from `CGMES/PROF`. Loaded together with the shapes,
+/// like [`nc_profile_index`].
+pub fn cgmes_profile_index() -> ProfileIndex {
+    static R: std::sync::OnceLock<ProfileIndex> = std::sync::OnceLock::new();
+    *R.get_or_init(|| {
+        shape_source::resolve_profiles("cgmes", cgmes_profiles::PROFILE_IRIS, cgmes_profiles::PROFILES)
+    })
+}
 
 /// The profiles with cross-profile rules. Mirrors
 /// `cimschema::shacl::cgmes_manifest::CROSS_PROFILES`, which this crate does
@@ -165,9 +173,9 @@ pub fn validate_profile_local(dataset: &cimmodel::CimDataset, profile: &str, cfg
     }
     // NC profile codes cannot collide with CGMES ones, so one flat
     // `Config::profiles` list carries both families. The CGMES codes are
-    // checked first: they are fixed, and asking the NC index loads the NC
-    // table — 170 ms when it comes from SHACL — for data that has no NC in it.
-    if !CGMES_PROFILES.contains(&profile) && nc_profile_index().1.contains(&profile) {
+    // checked first: asking the NC index loads the NC table — 170 ms when it
+    // comes from SHACL — for data that has no NC in it.
+    if !cgmes_profile_index().1.contains(&profile) && nc_profile_index().1.contains(&profile) {
         return validate_nc_profile(dataset, profile, cfg);
     }
 

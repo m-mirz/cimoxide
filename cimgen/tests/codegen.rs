@@ -96,8 +96,10 @@ fn nc_shapes_codegen_stable() {
 
     let mut h = Sha256::new();
     h.update(std::fs::read(shacl_out.join("nc_shapes.rs")).unwrap());
+    // The profile index decides which of the shapes run.
+    h.update(std::fs::read(shacl_out.join("nc_profiles.rs")).unwrap());
     let hash: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
-    assert_eq!(hash, "8a6e12a38432782bb500a036108a7766ca77941f7e0fc9ed07961700066b7a5e", "NC shape table drifted — rerun to update hash");
+    assert_eq!(hash, "787cf5f4083d16f6debc9cee6bb68ededcafbf6d801b07c7afbee5ae8ecc5fb3", "NC shape table drifted — rerun to update hash");
 }
 
 /// Hashes the CGMES shape table on its own: it replaced the generated
@@ -126,8 +128,10 @@ fn cgmes_shapes_codegen_stable() {
 
     let mut h = Sha256::new();
     h.update(std::fs::read(shacl_out.join("cgmes_shapes.rs")).unwrap());
+    // The profile index decides which of the shapes run.
+    h.update(std::fs::read(shacl_out.join("cgmes_profiles.rs")).unwrap());
     let hash: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
-    assert_eq!(hash, "554dc2b20a97850653cae56a50436f4dd3a1ea04cb49c6489e99b1e979170409", "CGMES shape table drifted — rerun to update hash");
+    assert_eq!(hash, "aa86444b2f645e7b85263a772b999129790f05771651bdadc095779790d38631", "CGMES shape table drifted — rerun to update hash");
 }
 
 /// Hashes the NC class table on its own, so a CGMES-only change cannot mask an

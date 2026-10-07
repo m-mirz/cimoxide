@@ -879,14 +879,11 @@ pub fn load_shape_table(
 
     let (shapes, stats) = resolve_shapes(spec, others, &files, &profiles_of, collector);
 
-    // A family with a written-out manifest detects its profiles another way
-    // (CGMES: the `md:Model.profile` header), so it has no index to load.
-    let index = if family.shacl_manifest.is_some() {
-        Vec::new()
-    } else {
-        let prof_dir = dir.parent().map_or_else(|| dir.join("PROF"), |p| p.join("PROF"));
-        crate::import::import_profile_index(&prof_dir)?
-    };
+    // Profile identity — which IRI a dataset declares, which code that is —
+    // comes from the PROF descriptors for every family. A dataset names them in
+    // `dcterms:conformsTo` (NC) or `md:Model.profile` (CGMES).
+    let prof_dir = dir.parent().map_or_else(|| dir.join("PROF"), |p| p.join("PROF"));
+    let index = crate::import::import_profile_index(&prof_dir)?;
     let mut profile_iris: Vec<(String, String)> = index
         .iter()
         .flat_map(|p| p.iris.iter().map(|i| (i.clone(), p.keyword.clone())))

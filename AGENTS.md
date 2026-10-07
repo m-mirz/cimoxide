@@ -76,13 +76,13 @@ Up to 0.3.3 this was three crates, `cimoxide-structs`, `cimoxide-decoder` and
 - `convert.rs` — hand-written JSON and RDF/XML export (`dataset_to_json`, `dataset_to_xml`,
   `dataset_to_xml_for_profile`), used by `cimoxide-cli` and `cimoxide-py`
 
-### `cimvalidation` — SHACL Validators (`cgmes_shapes.rs`, `nc_shapes.rs`, `nc_profiles.rs` are generated; do not hand-edit those)
+### `cimvalidation` — SHACL Validators (`cgmes_shapes.rs`, `cgmes_profiles.rs`, `nc_shapes.rs`, `nc_profiles.rs` are generated; do not hand-edit those)
 Both families validate through one interpreter, `bag.rs`, over a shape table:
 `cgmes_shapes.rs` (CGMES, read through the typed elements' `RdfBlock`s) and `nc_shapes.rs`.
 See "Shape tables" below. CGMES used to have ~250k lines of generated per-check
 validators (123 s to compile the crate, against 9.5 s now); they are gone.
 
-Generated: `src/cgmes_shapes.rs`, `src/nc_shapes.rs`, `src/nc_profiles.rs`. `src/sparql/` (hand-written reimplementations of the
+Generated: `src/cgmes_shapes.rs`, `src/cgmes_profiles.rs`, `src/nc_shapes.rs`, `src/nc_profiles.rs`. `src/sparql/` (hand-written reimplementations of the
 `sh:sparql` constraints), `helpers.rs`, `violation.rs`, `detect.rs` and `lib.rs` are
 hand-written. Entry points:
 - `validate_files(per_file, cfg)` — full two-phase run: per-file checks in parallel, then
@@ -232,7 +232,8 @@ The pieces:
 - `cimvalidation/src/nc_shapes.rs` — generated, 1,973 shapes / 14,842 checks
 - `cimvalidation/src/cgmes_shapes.rs` — generated, 849 shapes / 18,681 checks plus
   node-level logic
-- `cimvalidation/src/nc_profiles.rs` — generated, profile IRI → short code
+- `cimvalidation/src/nc_profiles.rs`, `cgmes_profiles.rs` — generated from each
+  family's `PROF/` descriptors, profile IRI → short code
 - `cimvalidation/src/bag.rs` — hand-written interpreter
 
 **The table checks more than generated code could, not less.** `sh:datatype`
@@ -260,11 +261,19 @@ the XML carried, so a shape whose path the imported table lacks still validates
 real data — `dcterms:spatial` on `dcat:Dataset` is exactly that. Verifying
 rejected 43 DatasetMetadata shapes whose data is present.
 
-Profile dispatch is read rather than written. `NCP/SHACL/Validation/` ships one
-manifest per profile whose `owl:imports` names the files that apply, and
-`NCP/PROF/` maps a dataset's `dcterms:conformsTo` IRI to a short code. NC
-announces its profiles with a DCAT header (`dcat:Dataset`), not CGMES's
-`md:FullModel` — without one, no NC profile is detected and nothing runs.
+Profile identity is read rather than written, for both families: each `PROF/`
+directory maps the profile IRI a dataset declares to a short code — NC's
+`dcterms:conformsTo` in a DCAT header (`dcat:Dataset`), CGMES's
+`md:Model.profile` in an `md:FullModel` (`detect.rs` looks it up in
+`cgmes_profile_index()`). Without a header, no profile is detected and nothing
+runs. CGMES's PROF also names `FH` (file header), which no test configuration
+declares and which has no shapes of its own; the header rules run for every file.
+
+Which files apply to which profile is read for NC (`NCP/SHACL/Validation/` ships
+one manifest per profile, whose `owl:imports` names the files) but written out
+for CGMES in `cgmes_manifest`, since CGMES ships no manifests. CGMES's PROF files
+list constraint resources per standard part and solved/notSolved, but not the
+cross-profile split the manifest's `X:` tags carry.
 
 NC leans on `sh:Info` far more than CGMES: 842 occurrences against 7. `cimcli
 validate` therefore treats `sh:Info` as advisory and excludes it from the exit
@@ -323,10 +332,11 @@ the combined "ALL" manifest imports that file.
 
 `cimgen/tests/codegen.rs` contains four hash-based tests that detect unintended generator drift:
 - `cimmodel_codegen_stable` — Hashes regenerated struct output against a stored SHA-256
-- `cgmes_shapes_codegen_stable` — Same for the CGMES shape table, which validation runs
+- `cgmes_shapes_codegen_stable` — Same for the CGMES shape table, which validation runs,
+  and its profile index
 - `nc_classes_codegen_stable` — Hashes the NC class table alone, so a CGMES-only change
   cannot mask an NC change
-- `nc_shapes_codegen_stable` — Same for the NC shape table
+- `nc_shapes_codegen_stable` — Same for the NC shape table and its profile index
 
 **When making intentional generator changes**:
 1. Run the codegen tests — the failure message shows the actual new hash
