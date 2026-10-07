@@ -51,13 +51,12 @@ Parses RDF schema files and SHACL TTL constraint files, then generates Rust code
 - `shacl/` — SHACL TTL parsing, constraint model, and validation code generation
 
 ### `cimmodel` — Data Model, Decoder and Converter
-One crate for CIM data and its RDF/XML in both directions. The generated part is one
-file per CGMES class plus the tables below (do not hand-edit); `base.rs`,
-`schema_source.rs`, `decode.rs` and `convert.rs` are hand-written, and `.gitignore` and
-`make clean` list them as exceptions — add any new hand-written module there too.
-`lib.rs` is generated: `rust_gen.rs`'s `render_lib` declares the hand-written modules.
+One crate for CIM data and its RDF/XML in both directions. The generated part lives in
+`src/generated/` (do not hand-edit): `classes.rs` with every CGMES struct, plus the tables
+below and a `mod.rs`. `.gitignore` and `make clean` cover that directory alone, so a new
+hand-written module goes directly in `src/` and is declared in the hand-written `lib.rs`.
 Up to 0.3.3 this was three crates, `cimoxide-structs`, `cimoxide-decoder` and
-`cimoxide-convert`; those stay on crates.io at 0.3.x. Core files in `src/`:
+`cimoxide-convert`; those stay on crates.io at 0.3.x. Core files (generated ones under `src/generated/`):
 - `base.rs` — hand-written. Traits `CimElement`, `RdfBlock`, `FieldValue`, `MridRef`;
   the `TypeRegistry`; and `ClassDef`/`AttrDef`/`GenericElement` for property-bag families
 - `registry.rs` — `TYPE_ROWS` keyed by `(namespace, local name)`, plus a bare-name

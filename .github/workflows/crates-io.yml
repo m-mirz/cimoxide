@@ -32,7 +32,7 @@ jobs:
           key: ${{ runner.os }}-cargo-publish-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-publish-
 
-      # cimmodel/src/*.rs (bar the hand-written modules) and the cimvalidation shape tables are gitignored, so
+      # cimmodel/src/generated/ and the cimvalidation shape tables are gitignored, so
       # they have to be regenerated before packaging (and packaged via --allow-dirty).
       - name: Generate cimmodel and cimvalidation
         run: make generate

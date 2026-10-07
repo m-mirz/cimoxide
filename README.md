@@ -53,10 +53,11 @@ cimoxide-cli query --query "SELECT ..." | --file <query.rq>
 | `cimoxide-cli` | `cimoxide-cli` binary — import/convert/validate over the command line |
 | `cimoxide-py` | Python bindings (PyO3) exposing decode/convert/validate as a `cimoxide` package; built with `maturin`, excluded from the Cargo workspace |
 
-In `cimmodel/src/`, everything but `base.rs`, `schema_source.rs`, `decode.rs` and
-`convert.rs` is generated — do not hand-edit it. The decoder and converter used to be the
-crates `cimoxide-decoder` and `cimoxide-convert`, and the model `cimoxide-structs`; those
-stay on crates.io at 0.3.x. In `cimvalidation/`, only `cgmes_shapes.rs`, `nc_shapes.rs` and `nc_profiles.rs` are generated; everything else
+In `cimmodel/src/`, everything under `generated/` is generated — do not hand-edit it;
+`lib.rs`, `base.rs`, `schema_source.rs`, `decode.rs` and `convert.rs` are hand-written.
+The decoder and converter used to be the crates `cimoxide-decoder` and `cimoxide-convert`,
+and the model `cimoxide-structs`; those stay on crates.io at 0.3.x. In `cimvalidation/`,
+only `cgmes_shapes.rs`, `nc_shapes.rs` and `nc_profiles.rs` are generated; everything else
 (`src/sparql/`, `bag.rs`, `shapes.rs`, `helpers.rs`, `violation.rs`, `detect.rs`, `lib.rs`)
 is hand-written.
 
@@ -269,7 +270,7 @@ e.g. `cargo run -p cimoxide-gen -- --verbose --rule-report`.
 | Flag | Default | Effect |
 |---|---|---|
 | `--schema <glob>` | `application-profiles-library/CGMES/RDFS/61970-600-2_*-AP-Voc-RDFS2020.rdf` | RDF/RDFS schema files to import |
-| `--output <dir>` | `cimmodel/src` | struct output directory |
+| `--output <dir>` | `cimmodel/src/generated` | struct output directory |
 | `--shacl <glob>` | `application-profiles-library/CGMES/SHACL/*.ttl` | SHACL TTL files to import |
 | `--shacl-output <dir>` | `cimvalidation/src` | shape table output directory (`cgmes_shapes.rs`, `nc_shapes.rs`, `nc_profiles.rs`) |
 | `--python-stubs-output <dir>` | `cimoxide-py/python/cimoxide` | `.pyi` type stub output directory |
@@ -290,7 +291,7 @@ entirely if passed as the very last argument with no value following.
 | `make all` | `generate` + `build` + `test` |
 | `make python-dev` | `maturin develop --release` in `cimoxide-py` (local editable install) |
 | `make python-build` | `maturin build --release` in `cimoxide-py` (build a distributable wheel) |
-| `make clean` | `cargo clean`, plus remove generated `cimmodel`/`cimvalidation` files (keeps the hand-written ones) |
+| `make clean` | `cargo clean`, plus remove `cimmodel/src/generated/` and the generated `cimvalidation` files |
 
 ## Benchmarks
 
@@ -318,7 +319,7 @@ debug = true
 `cimgen/tests/codegen.rs` contains four hash-based tests that detect unintended drift in
 the generated output:
 
-- `cimmodel_codegen_stable` — runs the RDF struct generator and hashes the generated part of `cimmodel/src/`
+- `cimmodel_codegen_stable` — runs the RDF struct generator and hashes `cimmodel/src/generated/`
 - `nc_classes_codegen_stable` — hashes the NC class table on its own
 - `cgmes_shapes_codegen_stable` — hashes the CGMES shape table (`cimvalidation/src/cgmes_shapes.rs`)
 - `nc_shapes_codegen_stable` — hashes the NC shape table (`cimvalidation/src/nc_shapes.rs`)
@@ -398,7 +399,7 @@ the dependency tree is pure Rust and `Store::new()` is the in-memory store.
 The decoder is namespace-blind by construction: `local_name()` drops the XML prefix and
 `strip_fragment()` drops the IRI base, so `RdfBlock.fields` keys are bare
 `IdentifiedObject.name` strings and every value is an untyped `FieldValue::Text`. Two tables
-generated into `cimmodel/src/profile_meta.rs` put that back:
+generated into `cimmodel/src/generated/profile_meta.rs` put that back:
 
 | Table | Contents |
 |---|---|

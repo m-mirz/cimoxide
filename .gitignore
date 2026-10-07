@@ -1,10 +1,6 @@
 target
 
-cimmodel/src/*.rs
-!cimmodel/src/base.rs
-!cimmodel/src/schema_source.rs
-!cimmodel/src/decode.rs
-!cimmodel/src/convert.rs
+cimmodel/src/generated/
 cimvalidation/src/nc_shapes.rs
 cimvalidation/src/cgmes_shapes.rs
 cimvalidation/src/nc_profiles.rs
