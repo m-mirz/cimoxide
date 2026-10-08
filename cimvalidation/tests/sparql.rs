@@ -615,3 +615,18 @@ fn dangling_references_are_found_in_both_spellings() {
         ("_t2".to_string(), "Terminal.ConductingEquipment".to_string()),
     ]);
 }
+
+/// NC elements are left to NC's own dangling-reference rule, which runs on the
+/// same merged dataset; reporting them here too would double every finding.
+#[test]
+fn cgmes_dangling_references_skip_nc_elements() {
+    let xml = r##"<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:nc="https://cim4.eu/ns/nc#">
+  <nc:BoundaryPoint rdf:ID="_bp"><nc:BoundaryPoint.BoundaryPointBorder rdf:resource="#_gone"/></nc:BoundaryPoint>
+</rdf:RDF>"##;
+    let ds = cimmodel::CimDataset::decode_str(xml).unwrap();
+    let cfg = Config { common: true, solved: true, ..Default::default() };
+    assert!(!cimvalidation::sparql::validate_crossprofile(&ds, &cfg)
+        .iter()
+        .any(|v| v.rule_id == "sm600:All-DanglingReferences"));
+}

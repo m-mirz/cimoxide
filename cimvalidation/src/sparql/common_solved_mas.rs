@@ -165,8 +165,11 @@ fn is_dangling(dataset: &CimDataset, target: &str) -> bool {
 }
 
 fn check_dangling_references(dataset: &CimDataset) -> Vec<Violation> {
-    // A walk over every element, split into runs on their own threads.
-    let all: Vec<(&String, &cimmodel::Element)> = dataset.entries.iter().collect();
+    // A walk over every CGMES element, split into runs on their own threads.
+    // NC elements have their own rule (`com:All-DanglingReferences`, in
+    // `sparql::nc`), which the NC pass runs on the same merged dataset.
+    let all: Vec<(&String, &cimmodel::Element)> =
+        dataset.entries.iter().filter(|(_, e)| !e.type_name().starts_with("nc:")).collect();
     let threads = crate::par::threads_for(all.len());
     crate::par::par_concat(&crate::par::runs(&all, threads, |_| 1), |run| dangling_in(dataset, run))
 }
