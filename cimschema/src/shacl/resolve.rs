@@ -3,6 +3,8 @@
 //! The output is what a property-bag validator needs and nothing more: target
 //! classes as family-qualified `by_type` keys, paths as the field keys the
 //! decoder stores, and class lists already expanded to concrete descendants.
+//! A target class matches itself when concrete and its concrete descendants
+//! when abstract ([`Resolver::targets_of`] says why).
 //!
 //! This lives here rather than in `cimgen` so the build-time generator and the
 //! runtime shape loader in `cimvalidation` resolve *identically* — the same
@@ -283,16 +285,20 @@ impl Resolver {
         Self { by_ns, concrete_of, any_family, any_concrete, ancestors }
     }
 
-    /// The concrete classes a `sh:closed` shape on `target` governs: `target`'s
-    /// concrete descendants, less those below a class with a closed shape of
-    /// its own (`closed_classes`).
+    /// The concrete classes a `sh:closed` shape on `target` governs: `target`
+    /// itself when it is concrete (see [`Self::targets_of`]); for an abstract
+    /// one, its concrete descendants less those below a class with a closed
+    /// shape of its own (`closed_classes`).
     ///
     /// The APL writes one closed `AllowedProperties` shape per class, listing
     /// that class's properties, inherited ones included. A subclass with its
     /// own is held to its own list; held to the superclass's as well, every
-    /// property the subclass adds would be reported. A subclass without one
-    /// still falls under the superclass's, as SHACL's class targets have it.
+    /// property the subclass adds would be reported. Below an abstract target,
+    /// a subclass without one still falls under the target's.
     fn closed_concrete(&self, target: &str, closed_classes: &HashSet<String>) -> Vec<String> {
+        if self.is_concrete(target) {
+            return vec![target.to_string()];
+        }
         let below_target = |c: &String| {
             c != target && self.ancestors.get(c).is_some_and(|a| a.iter().any(|x| x == target))
         };
@@ -321,6 +327,30 @@ impl Resolver {
 
     fn concrete(&self, qualified: &str) -> &[String] {
         self.concrete_of.get(qualified).map_or(&[], Vec::as_slice)
+    }
+
+    fn is_concrete(&self, qualified: &str) -> bool {
+        self.concrete(qualified).iter().any(|c| c == qualified)
+    }
+
+    /// The `by_type` keys `sh:targetClass q` matches: `q` alone when it is
+    /// concrete, else its concrete descendants.
+    ///
+    /// SHACL matches subclass instances only through `rdfs:subClassOf` triples
+    /// in the data graph, and CGMES and NC data carry none, so a target class
+    /// matches literally. The APL is written for that: the 600-2 Simple files
+    /// give every concrete class its own node shape repeating its inherited
+    /// properties, the Complex files enumerate subclasses by name, and
+    /// `RegulatingControl-RegulatingEquipment` describes `TapChangerControl` as
+    /// exempt. An abstract class has no instances, so a literal match would
+    /// check nothing; its target expands instead. Of 1,487 CGMES class targets
+    /// 3 are abstract (`Measurement`, `Control`).
+    fn targets_of(&self, qualified: &str) -> Vec<String> {
+        if self.is_concrete(qualified) {
+            vec![qualified.to_string()]
+        } else {
+            self.concrete(qualified).to_vec()
+        }
     }
 
     /// Every concrete class the listed IRIs allow, across all families.
@@ -455,14 +485,14 @@ fn resolve_shape(
         match t.kind.as_str() {
             "targetClass" | "targetNode" => match r.class(&t.value, &fr.prefixes) {
                 Some(q) => {
-                    let concrete = r.concrete(q);
+                    let concrete = r.targets_of(q);
                     if concrete.is_empty() {
                         collector.push(&t.value, "", "sh:targetClass", &shape.name,
                             "class has no concrete subclass in this family");
                         continue;
                     }
                     target_classes.push(q.clone());
-                    targets.push(Target::Class(concrete.to_vec()));
+                    targets.push(Target::Class(concrete));
                     if shape.closed.is_some() {
                         let narrowed = r.closed_concrete(q, closed_classes);
                         if !narrowed.is_empty() {

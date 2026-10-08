@@ -184,3 +184,40 @@ fn a_source_reads_only_its_own_family() {
     assert!(validate_shapes(&ds, Source::Nc, &[&BY_NAME]).is_empty());
     assert!(validate_shapes(&ds, Source::Nc, &[&SHAPE]).is_empty());
 }
+
+/// The classes the generated CGMES shape whose check is `rule` targets.
+fn cgmes_targets(rule: &str) -> Vec<&'static str> {
+    let shape = cimvalidation::cgmes_shapes::SHAPES
+        .iter()
+        .find(|s| s.props.iter().any(|p| p.checks.iter().any(|c| c.rule_id == rule)))
+        .unwrap_or_else(|| panic!("no CGMES shape checks {rule}"));
+    shape
+        .targets
+        .iter()
+        .flat_map(|t| match t {
+            Target::Class(c) => c.to_vec(),
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
+/// A concrete target class matches itself only: SHACL reaches subclass
+/// instances through `rdfs:subClassOf` in the data graph, which CGMES data
+/// lacks, and the APL is written that way — this shape's description exempts
+/// `TapChangerControl`, a subclass of its target.
+#[test]
+fn a_concrete_target_class_does_not_reach_its_subclasses() {
+    assert_eq!(cgmes_targets("eq452:RegulatingControl-RegulatingEquipment"), ["RegulatingControl"]);
+}
+
+/// An abstract target has no instances of its own, so it still expands to its
+/// concrete descendants; a literal match would check nothing.
+#[test]
+fn an_abstract_target_class_expands_to_its_concrete_descendants() {
+    let shape = cimvalidation::cgmes_shapes::SHAPES
+        .iter()
+        .find(|s| s.targets.iter().any(|t| matches!(t, Target::Class(c) if c.contains(&"Analog") && c.contains(&"Discrete"))))
+        .expect("no shape on abstract Measurement");
+    let classes: Vec<&str> = shape.targets.iter().flat_map(|t| match t { Target::Class(c) => c.to_vec(), _ => Vec::new() }).collect();
+    assert!(classes.contains(&"Discrete") && !classes.contains(&"Measurement"), "{classes:?}");
+}

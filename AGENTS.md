@@ -196,15 +196,25 @@ CGMES ships no per-profile manifests, so `cimschema::shacl::cgmes_manifest`
 writes the file → tag mapping out (`"EQ"`, `"SSH!NS"` for not-solved,
 `"X:SV"` for cross-profile, `"HDR"`), referenced from `Family::shacl_manifest`.
 
-CGMES targets follow SHACL: an abstract `sh:targetClass` expands to its
-concrete subclasses. The generated validators looked the literal class up and
-so checked nothing for those — e.g. SSH `IdentifiedObject.mRID-cardinality`
-and `Equipment.inService`.
+A concrete `sh:targetClass` matches that class only; an abstract one expands
+to its concrete descendants (`Resolver::targets_of`). SHACL reaches subclass
+instances only through `rdfs:subClassOf` in the data graph, which CGMES and NC
+data never carry, and the APL is written for literal matching: the 600-2
+Simple files give each concrete class its own node shape repeating its
+inherited properties, the Complex files enumerate subclasses by name, and
+`RegulatingControl-RegulatingEquipment` describes `TapChangerControl` (a
+subclass) as exempt. Only 3 of 1,487 CGMES class targets are abstract
+(`Measurement`, `Control`); a literal match would check nothing for those.
+Expanding concrete targets too, as cimoxide did until 2026-10, put 14,284
+extra findings on the CGMES test configurations and was the largest difference
+from triplets on relicapgrid's data. 896 of NC's 1,973 targets narrowed; only
+relicapgrid's mostly valid data exercised that.
 
-The SSH mRID rule is kept as written on purpose. It fires on every Equipment
-element of nearly every SSH test configuration (18,761 on RealGrid), which
-leaves the attribute out; the SSH vocabulary says `1..1` and the SHACL agrees.
-Do not skip or downgrade it. Its rule id `ido:IdentifiedObject.mRID-cardinality`
+So the SSH `IdentifiedObject.mRID-cardinality` rule, attached only to the
+`cim:Equipment` node shape, reaches elements written as `cim:Equipment`
+(9,070 on RealGrid). The SSH vocabulary declares `mRID` 1..1 on every
+equipment class, but no published shape checks it there; reporting that is a
+vocabulary check, not something to recover by widening targets. Its rule id
 is shared by all ten profiles' constraint files, so `--silence` hides it in EQ
 too.
 
@@ -224,13 +234,13 @@ reads the text as written, where a malformed number is real. `sh:in` values are
 keyed the way the decoder stores an `rdf:resource` — after the last `#`, else
 the whole IRI, with prefixed names expanded first.
 
-`sh:closed` is the one exception to that expansion. The APL writes one closed
+`sh:closed` narrows an abstract target further. The APL writes one closed
 `AllowedProperties` shape per class, listing its properties with inherited
-ones, so a closed shape governs its class's concrete descendants *except* those
-below a class with a closed shape of its own in the same file
+ones, so a closed shape on an abstract class governs its concrete descendants
+*except* those below a class with a closed shape of its own in the same file
 (`Resolver::closed_concrete`); otherwise every property a subclass adds would be
 reported against its superclass's list (`PinTerminal.kind` against
-`GateInputPin`). A closed shape that also carries checks would be split in two so
+`GateInputPin`, which mattered while concrete targets still expanded). A closed shape that also carries checks would be split in two so
 the checks keep the full targets; none in the APL does.
 
 The interpreter walks element-major (each target once, every shape on its

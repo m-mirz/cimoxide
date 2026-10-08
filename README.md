@@ -540,13 +540,20 @@ decoded dataset — the same interpreter and table format the NC family uses. Wh
 applies to which profile, and when (not solved, cross-profile, header), is written out in
 `cimschema/src/shacl/cgmes_manifest.rs`, since CGMES ships no per-profile manifests.
 
-Targets follow SHACL: an abstract `sh:targetClass` applies to all its concrete subclasses.
-One consequence: the SSH rule `IdentifiedObject.mRID-cardinality` targets `cim:Equipment`
-and now applies to every piece of equipment in an SSH file. Most SSH files in the ENTSO-E
-test configurations leave `IdentifiedObject.mRID` out (18,761 findings on RealGrid), while the
-SSH vocabulary and SHACL require it exactly once. cimoxide reports it as written. Note that
-its rule id, `ido:IdentifiedObject.mRID-cardinality`, is shared by every profile, so
-`--silence` would hide a missing mRID in EQ as well.
+A concrete `sh:targetClass` matches that class only; an abstract one matches its concrete
+subclasses. SHACL reaches subclass instances only through `rdfs:subClassOf` triples in the data
+graph, which CGMES and NC data never carry, and the constraint files are written for that: the
+600-2 Simple files give every concrete class its own node shape repeating its inherited
+properties, and the Complex files list subclasses by name. Only 3 of 1,487 CGMES class targets
+are abstract (`Measurement`, `Control`); without expansion they would check nothing.
+
+So the SSH rule `IdentifiedObject.mRID-cardinality`, attached only to the `cim:Equipment` node
+shape, applies to elements written as `cim:Equipment` — 9,070 findings on RealGrid, whose SSH
+file writes many that way and leaves the mRID out. The SSH vocabulary declares `mRID` 1..1 on
+every equipment class, but no published shape checks it there; that belongs to a vocabulary
+check, not to target expansion, which used to report it (18,761 on RealGrid). Note that the rule
+id, `ido:IdentifiedObject.mRID-cardinality`, is shared by every profile, so `--silence` would
+hide a missing mRID in EQ as well.
 
 A finding is reported once even when a property shape reaches an element through more
 than one node shape. `sh:datatype` and `sh:nodeKind` are checked: the interpreter reads the
