@@ -585,3 +585,33 @@ fn cs_converter_angle_ranges_ignore_absent_values() {
     assert_eq!(rules(&cs_converter("SV", "rectifier", &field("alpha", "90"))), ["CsConverter.alpha-valueRangeTypical"]);
     assert_eq!(rules(&cs_converter("SV", "inverter", &field("gamma", "5"))), ["CsConverter.gamma-valueRangeTypical"]);
 }
+
+/// FBOD4 matches the SPARQL's `#_…` fragments as the decoder stores them,
+/// `_…`, as well as `urn:uuid:` references. Testing the stored value for `#_`
+/// once let every fragment reference through.
+#[test]
+fn dangling_references_are_found_in_both_spellings() {
+    let xml = r##"<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/CIM100#">
+  <cim:ConnectivityNode rdf:ID="_cn"/>
+  <cim:Terminal rdf:ID="_t1">
+    <cim:Terminal.ConnectivityNode rdf:resource="#_cn"/>
+    <cim:Terminal.ConductingEquipment rdf:resource="#_gone"/>
+  </cim:Terminal>
+  <cim:Terminal rdf:ID="_t2">
+    <cim:Terminal.ConductingEquipment rdf:resource="urn:uuid:00000000-0000-0000-0000-00000000dead"/>
+  </cim:Terminal>
+</rdf:RDF>"##;
+    let ds = cimmodel::CimDataset::decode_str(xml).unwrap();
+    let cfg = Config { common: true, solved: true, ..Default::default() };
+    let mut found: Vec<(String, String)> = cimvalidation::sparql::validate_crossprofile(&ds, &cfg)
+        .into_iter()
+        .filter(|v| v.rule_id == "sm600:All-DanglingReferences")
+        .map(|v| (v.object_id, v.property))
+        .collect();
+    found.sort();
+    assert_eq!(found, [
+        ("_t1".to_string(), "Terminal.ConductingEquipment".to_string()),
+        ("_t2".to_string(), "Terminal.ConductingEquipment".to_string()),
+    ]);
+}

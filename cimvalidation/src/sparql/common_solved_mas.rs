@@ -154,13 +154,14 @@ fn check_angle_reference(dataset: &CimDataset, topo: &Topology) -> Vec<Violation
 }
 
 /// A reference that names a CIM object this dataset does not hold.
+///
+/// The SPARQL matches `urn:uuid:…` and IRIs with a `#_…` fragment. The decoder
+/// stores a reference after its last `#`, so the latter arrive as `_…`; testing
+/// the stored value for `#_` missed every one of them, and FBOD4 caught only
+/// `urn:uuid:` references.
 fn is_dangling(dataset: &CimDataset, target: &str) -> bool {
-    let target_id = target.trim_start_matches('#');
-    if target_id.is_empty() {
-        return false;
-    }
-    let is_cim_id = target.starts_with("urn:uuid:") || target.contains("#_") || target.ends_with('#');
-    is_cim_id && !dataset.entries.contains_key(target_id)
+    let is_cim_id = target.starts_with("urn:uuid:") || (target.starts_with('_') && target.len() > 1);
+    is_cim_id && !dataset.entries.contains_key(target)
 }
 
 fn check_dangling_references(dataset: &CimDataset) -> Vec<Violation> {
@@ -186,7 +187,6 @@ fn dangling_in(dataset: &CimDataset, run: &[(&String, &cimmodel::Element)]) -> V
         }
         for (field, refs) in super::view::references(entry) {
             for target in refs {
-                let target_id = target.trim_start_matches('#');
                 if is_dangling(dataset, target) {
                     v.push(Violation {
                         object_id:   id.clone(),
@@ -194,7 +194,7 @@ fn dangling_in(dataset: &CimDataset, run: &[(&String, &cimmodel::Element)]) -> V
                         name:        "C:600:ALL:NA:FBOD4".into(),
                         class:       entry.type_name().to_string(),
                         property:    field.to_string(),
-                        message:     format!("Dangling reference to '{}'.", target_id),
+                        message:     format!("Dangling reference to '{}'.", target),
                         severity:    "sh:Violation".into(),
                         description: String::new(),
                     });
