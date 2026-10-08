@@ -128,15 +128,22 @@ pub struct Element {
     /// Fields assigned more than once within the element, which `sh:maxCount`
     /// reads.
     duplicate_fields: FastSet<&'static str>,
+    /// The `xml:lang` of each text value written with one, by field, in the
+    /// order read. `None` until a value carries one, so an element without
+    /// language tags — nearly all of them — pays a pointer.
+    langs: Option<Box<Langs>>,
 }
+
+/// `(field key, xml:lang)` for each tagged text value of an element.
+type Langs = Vec<(&'static str, Box<str>)>;
 
 impl Element {
     pub fn new(class: &'static ClassDef, mrid: String) -> Self {
-        Self { class, mrid, fields: FieldMap::default(), duplicate_fields: FastSet::default() }
+        Self { class, mrid, fields: FieldMap::default(), duplicate_fields: FastSet::default(), langs: None }
     }
 
     pub fn with_fields(class: &'static ClassDef, mrid: String, fields: FieldMap) -> Self {
-        Self { class, mrid, fields, duplicate_fields: FastSet::default() }
+        Self { class, mrid, fields, duplicate_fields: FastSet::default(), langs: None }
     }
 
     pub fn class(&self) -> &'static ClassDef {
@@ -169,6 +176,18 @@ impl Element {
 
     pub fn duplicate_fields(&self) -> &FastSet<&'static str> {
         &self.duplicate_fields
+    }
+
+    /// The `xml:lang` tags of `key`'s text values, one per value that had
+    /// one. A value written without a tag has no entry, so a field whose
+    /// values outnumber its tags has an untagged value.
+    pub fn langs(&self, key: &str) -> impl Iterator<Item = &str> {
+        self.langs.iter().flat_map(|l| l.iter()).filter(move |(k, _)| *k == key).map(|(_, l)| &**l)
+    }
+
+    /// Record the `xml:lang` of a text value just added to `key`.
+    pub fn add_lang(&mut self, key: &'static str, lang: &str) {
+        self.langs.get_or_insert_with(Default::default).push((key, lang.into()));
     }
 
     pub fn get(&self, attr: &str) -> Option<&FieldValue> {
@@ -271,6 +290,13 @@ impl Element {
                 },
                 _ => {
                     self.fields.insert(*k, v.clone());
+                    // The later file's text replaced ours, tags included.
+                    if let Some(l) = self.langs.as_mut() {
+                        l.retain(|(key, _)| key != k);
+                    }
+                    for lang in other.langs(k) {
+                        self.add_lang(k, lang);
+                    }
                 }
             }
         }
@@ -462,6 +488,19 @@ impl TypeRegistry {
     /// `class` and its ancestors, root first.
     pub fn chain(&self, class: &ClassDef) -> &[&'static ClassDef] {
         self.chain.get(class.qualified).map_or(&[], Vec::as_slice)
+    }
+
+    /// The `by_type` keys of the concrete classes at or below `qualified`,
+    /// sorted: what instances of a class can be typed as.
+    pub fn concrete_descendants(&self, qualified: &str) -> Vec<&'static str> {
+        let mut out: Vec<&'static str> = self
+            .chain
+            .iter()
+            .filter(|(_, chain)| chain.iter().any(|c| c.qualified == qualified))
+            .filter_map(|(q, _)| self.by_type_name.get(q).filter(|c| c.concrete).map(|c| c.qualified))
+            .collect();
+        out.sort_unstable();
+        out
     }
 
     /// Every attribute `class` declares, inherited ones included.

@@ -109,6 +109,8 @@ hand-written. Entry points:
 - `validate_header`, `validate_profile_local(dataset, profile, cfg)`, `validate_crossprofile`
 - `validate_profile_shacl` / `validate_crossprofile_shacl` — the CGMES table half alone,
   without the hand-written SPARQL rules
+- `validate_nc_profile` / `validate_nc_merged` — one NC profile on one file, and NC's
+  Complex files on the merged dataset (see "NCP's Complex files and `sh:sparql` rules")
 - The hand-written rules read attributes through `sparql::Fields` (`f64("Class.attr")`,
   `reference(..)`, `enumeration(..)`, …). Its accessors keep the values the generated
   structs once held — last value of a repeated scalar, `true` only for the text `true`,
@@ -282,7 +284,8 @@ The pieces:
   and (later) `cimvalidation` at runtime, the same split the RDFS parser uses
 - `cimvalidation/src/shapes.rs` — hand-written IR (`ShapeDef`, `PropShape`,
   `Check`, `Constraint`, `Path`)
-- `cimvalidation/src/nc_shapes.rs` — generated, 1,973 shapes / 14,842 checks
+- `cimvalidation/src/nc_shapes.rs` — generated, 2,014 shapes / 14,889 checks (41
+  shapes from the Complex files, profile `ALL`)
 - `cimvalidation/src/cgmes_shapes.rs` — generated, 849 shapes / 18,681 checks plus
   node-level logic
 - `cimvalidation/src/nc_profiles.rs`, `cgmes_profiles.rs` — generated from each
@@ -373,13 +376,44 @@ difference under ~5% means nothing until a second independent A/B reproduces
 it — a 14.9% "speedup" was reported from a single pair of runs and vanished on
 re-measurement.
 
-**Not covered**, and reported as skips rather than silently dropped: NCP's 35
-`sh:sparql` constraints; the 119 `cim16:`/`cim17:` target classes (NC shapes on
-CGMES classes). They were skipped because CGMES structs discarded the NC attributes
-they check; elements now keep those, so enabling them is possible but would change
-validation results. One logical shape in
-`RemedialActionSchedule-AP-Con-Complex-SHACL.ttl` resolves but never runs: only
-the combined "ALL" manifest imports that file.
+**Not covered**, and reported as skips rather than silently dropped: the 119
+`cim16:`/`cim17:` target classes (NC shapes on CGMES classes). They were skipped
+because CGMES structs discarded the NC attributes they check; elements now keep
+those, so enabling them is possible but would change validation results.
+
+#### NCP's Complex files and `sh:sparql` rules
+
+NCP's per-profile manifests import the Simple files; every Complex file
+(`*-AP-Con-Complex-SHACL.ttl` and `NC-AP-Con-Complex-Common-SHACL.ttl`) is imported
+only by the combined `NCP-AP-Con-Complex-Validation` manifest, keyword `ALL`, which
+relicapgrid and triplets run on the assembled datasets. `resolve::profile_files`
+gives a file only that manifest imports the code `ALL`
+(`resolve::MERGED_PROFILE`), and `validate_crossprofile` runs those shapes once on
+the merged dataset (`validate_nc_merged`) when an NC profile is in play — 41 table
+shapes, from 2026-10 on; before, no Complex file ran.
+
+NCP's 35 `sh:sparql` constraints and its two `sh:SPARQLTarget` shapes are hand-written
+in `cimvalidation/src/sparql/nc.rs`, in two groups by the manifest that imports them:
+`validate_local` (ClassCount and the four DatasetMetadata rules, every NC file, from
+`validate_nc_profile`) and `validate_merged` (the 32 of the Complex files). The
+importer still reports them as skips; that is where its table stops. Departures from
+the SPARQL, each commented at the rule:
+- `AssessedElement.inBaseCase true` compares with the text `true` — untyped RDF/XML
+  never equals the typed literal, which would fail every BaseCaseCurrentLimit
+- `RemedialActionApplied.StageForRemedialActionScheme` binds `?ratype` but tests `?ra`,
+  so it can never report; the rule implements its description
+- `com:All-DanglingReferences` reports the referring NC element and field, like the
+  CGMES FBOD4 rule, rather than the missing node
+- `PowerFlowResult-ReactivePowerLimit` names a class neither CGMES 3.0 nor NCP
+  defines; it fires only on a class table that does
+
+`ClassCount` is `sh:Info` on every class of every dataset, so tests asserting a clean
+NC dataset filter `sh:Info`. The language-tag rules read `Element::langs`: the decoder
+keeps a text value's `xml:lang` (only when present; one pointer per element). JSON and
+RDF/XML export do not write it back.
+
+`cimvalidation/tests/nc_sparql.rs` breaks and fixes each rule, since relicapgrid's data
+exercises only ClassCount and the dangling references.
 
 
 ## Codegen Stability Tests

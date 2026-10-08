@@ -162,7 +162,7 @@ CGMES validation used to be generated code — 260,900 lines, one function per
 check, each downcasting to a generated struct and reading a typed field. NC
 classes never had structs, so there was nothing for
 that strategy to reference. Its shapes became a data table instead, interpreted
-at run time: 1,973 shapes and 14,842 checks in a 2.4 MB generated table. CGMES
+at run time: 2,014 shapes and 14,889 checks in a 2.4 MB generated table. CGMES
 has since moved to the same table and interpreter (see "SHACL Validation").
 
 **The bag checks more than the generated path can.** `sh:datatype` and
@@ -240,16 +240,20 @@ are separate processes, and cross-run drift on this machine has been measured at
 20% for byte-identical code. Any difference under about 5% needs a second
 independent A/B before it means anything.
 
-Not covered for NC, and reported as skips rather than dropped silently: the 35
-`sh:sparql` constraints, and 119 `cim16:`/`cim17:` target classes, which are NC
-shapes on CGMES classes whose NC attributes the decoder discards.
+Not covered for NC, and reported as skips rather than dropped silently: 119
+`cim16:`/`cim17:` target classes, NC shapes on CGMES classes.
+
+NCP's Complex constraint files are imported only by the combined "ALL" manifest, so they
+relate datasets to one another: they run once on the merged dataset whenever an NC profile
+is validated, beside the Simple files that run per file. Their 35 `sh:sparql` constraints
+and two `sh:SPARQLTarget` shapes, which a shape table cannot express, are implemented by
+hand (`cimvalidation/src/sparql/nc.rs`); the two DatasetMetadata language-tag rules read the
+`xml:lang` the decoder now keeps.
 
 DatasetMetadata's material implications are checked —
 `sh:or ( [ sh:not dm:conformsToNCProfile ] [ sh:path P ; sh:minCount 1 ] )`, "a dataset
 declaring an NC profile must carry P", seven of them — through negated logical branches
-and `sh:qualifiedValueShape`. One more logical shape, in
-`RemedialActionSchedule-AP-Con-Complex-SHACL.ttl`, resolves too but never runs: only the
-combined "ALL" manifest imports that file, not the RemedialActionSchedule profile's own.
+and `sh:qualifiedValueShape`.
 
 Still not supported for NC: RDF/XML encoding and SPARQL. The encoder skips NC
 elements rather than emit a malformed document.

@@ -18,6 +18,7 @@ pub mod equipment_boundary;
 pub mod operation;
 pub mod prof10;
 pub mod quality;
+pub mod nc;
 
 use cimmodel::CimDataset;
 use crate::{Config, Violation};

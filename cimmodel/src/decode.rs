@@ -267,6 +267,8 @@ fn parse_rdf(
     // The attributes `current`'s class declares, which supply most field keys.
     let mut declared: Option<&'static FastMap<&'static str, &'static AttrDef>> = None;
     let mut pending_key: Option<&'static str> = None;
+    // The `xml:lang` of the field element whose text comes next.
+    let mut pending_lang: Option<String> = None;
     // A field key as stored: the class table's id when the class declares it,
     // else the interned name.
     let key_of = |declared: Option<&'static FastMap<&'static str, &'static AttrDef>>, local: &str| {
@@ -303,10 +305,12 @@ fn parse_rdf(
                             let name = e.name();
                             let (_, local_bytes) = split_qname(name.as_ref());
                             let local = key_of(declared, std::str::from_utf8(local_bytes)?);
-                            if let Some(res) = find_resource(e.attributes())? {
+                            let (res, lang) = field_attrs(e.attributes())?;
+                            if let Some(res) = res {
                                 element.add_field(local, FieldValue::Resource(res));
                             } else {
                                 pending_key = Some(local);
+                                pending_lang = lang;
                             }
                         }
                     }
@@ -359,6 +363,9 @@ fn parse_rdf(
                         let text = e.unescape()?.trim().to_string();
                         if !text.is_empty() {
                             element.add_field(key, FieldValue::Text(text));
+                            if let Some(lang) = pending_lang.take() {
+                                element.add_lang(key, &lang);
+                            }
                         }
                     }
             }
@@ -366,6 +373,7 @@ fn parse_rdf(
             Ok(Event::End(_)) => {
                 if depth == 2 {
                     pending_key = None;
+                    pending_lang = None;
                     if let Some(element) = current.take()
                         && !element.mrid().is_empty() {
                             index(&mut ds.by_type, element.type_name(), element.mrid().to_string());
@@ -400,6 +408,22 @@ fn strip_fragment(s: &str) -> String {
     }
 }
 
+
+/// A field element's `rdf:resource` (as [`find_resource`] gives it) and
+/// `xml:lang`, in one pass over its attributes.
+fn field_attrs(
+    attrs: quick_xml::events::attributes::Attributes<'_>,
+) -> Result<(Option<String>, Option<String>), Box<dyn std::error::Error>> {
+    let (mut res, mut lang) = (None, None);
+    for attr in attrs.flatten() {
+        match attr.key.as_ref() {
+            b"rdf:resource" => res = Some(strip_fragment(std::str::from_utf8(&attr.value)?)),
+            b"xml:lang" => lang = Some(std::str::from_utf8(&attr.value)?.to_string()),
+            _ => {}
+        }
+    }
+    Ok((res, lang))
+}
 
 /// Find the value of the "rdf:resource" attribute from an element.
 fn find_resource(

@@ -1002,11 +1002,26 @@ pub fn load_shape_table(
     Ok(ShapeTable { shapes, profile_iris, profiles, stats })
 }
 
+/// The profile code given to files only the combined manifest imports.
+///
+/// NCP's per-profile manifests import the Simple files; every Complex file
+/// (`AssessedElement-AP-Con-Complex-SHACL.ttl`, …, and
+/// `NC-AP-Con-Complex-Common-SHACL.ttl`) is imported by the combined
+/// `NCP-AP-Con-Complex-Validation` manifest alone, whose keyword is `ALL`. Its
+/// rules relate datasets to one another, so they run once on the merged
+/// dataset (`cimvalidation::validate_crossprofile`) under this code.
+pub const MERGED_PROFILE: &str = "ALL";
+
 /// TTL base file name → the profile codes whose manifest imports it.
+///
+/// A file the combined manifest imports and no per-profile one does gets
+/// [`MERGED_PROFILE`]; one imported by both keeps only its per-profile codes,
+/// since those already run it on every file.
 pub fn profile_files(
     dir: &std::path::Path,
 ) -> Result<HashMap<String, Vec<String>>, Box<dyn std::error::Error>> {
     let mut map: HashMap<String, Vec<String>> = HashMap::new();
+    let mut merged_only: Vec<String> = Vec::new();
     let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
@@ -1015,14 +1030,16 @@ pub fn profile_files(
     paths.sort();
     for path in &paths {
         let m = crate::shacl::ttl_import::import_manifest(path)?;
-        // The combined "ALL" manifest imports every file; recording it would
-        // put a redundant profile code on every shape.
-        if m.profile == "ALL" {
+        if m.profile == MERGED_PROFILE {
+            merged_only = m.imports;
             continue;
         }
         for file in m.imports {
             map.entry(file).or_default().push(m.profile.clone());
         }
+    }
+    for file in merged_only {
+        map.entry(file).or_insert_with(|| vec![MERGED_PROFILE.to_string()]);
     }
     for v in map.values_mut() {
         v.sort();

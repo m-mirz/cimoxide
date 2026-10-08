@@ -335,8 +335,14 @@ fn base_and_version_iris_map_to_the_same_code() {
 fn the_conforming_fixture_validates_clean() {
     let ds = CimDataset::decode_file(std::path::Path::new("../testdata/test_nc_CO_002.xml"))
         .expect("fixture did not decode");
-    let v = validate_nc_profile(&ds, "CO", &Config::default());
+    let v = findings(validate_nc_profile(&ds, "CO", &Config::default()));
     assert!(v.is_empty(), "{v:#?}");
+}
+
+/// Everything but `sh:Info`, which is advisory: `ClassCount` reports every
+/// class of every dataset as Info, valid or not.
+fn findings(v: Vec<Violation>) -> Vec<Violation> {
+    v.into_iter().filter(|v| v.severity != "sh:Info").collect()
 }
 
 /// DatasetMetadata states several requirements as material implication:
@@ -350,7 +356,7 @@ fn fixture_without(property: &str) -> String {
 #[test]
 fn an_nc_dataset_missing_a_required_metadata_property_is_flagged() {
     let ds = CimDataset::decode_str(&fixture_without("dcterms:spatial")).expect("decode");
-    let v = validate_nc_profile(&ds, "CO", &Config::default());
+    let v = findings(validate_nc_profile(&ds, "CO", &Config::default()));
     // Both dcat:Dataset elements lost it.
     assert_eq!(by_name(&v, "spatial-NC-cardinality").len(), 2, "{v:#?}");
     assert_eq!(v.len(), 2, "only the removed property should be reported: {v:#?}");

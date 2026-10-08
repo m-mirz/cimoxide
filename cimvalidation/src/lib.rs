@@ -57,7 +57,8 @@ pub fn nc_profile_index() -> ProfileIndex {
     })
 }
 
-/// Run one NC profile's shapes against a dataset.
+/// Run one NC profile's shapes against a dataset, and the hand-written rules
+/// of the files every NC profile imports (`sparql::nc::validate_local`).
 ///
 /// Separate from `validate_profile_local` so a caller can drive it with an
 /// explicit profile code, without depending on header detection.
@@ -66,8 +67,29 @@ pub fn validate_nc_profile(
     profile: &str,
     cfg: &Config,
 ) -> Vec<Violation> {
-    bag::validate_profile(dataset, profile, nc_shapes(), cfg)
+    let mut v = bag::validate_profile(dataset, profile, nc_shapes(), cfg);
+    // Every NC profile's manifest imports the files these come from, and no
+    // other code names one.
+    if nc_profile_index().1.contains(&profile) {
+        v.extend(sparql::nc::validate_local(dataset));
+    }
+    v
 }
+
+/// The NC rules that relate datasets: the Complex files only the combined
+/// manifest imports, as table shapes and hand-written rules, on the merged
+/// dataset. [`validate_crossprofile`] runs this when an NC profile is in play.
+pub fn validate_nc_merged(dataset: &cimmodel::CimDataset, cfg: &Config) -> Vec<Violation> {
+    let mut v = bag::validate_profile(dataset, MERGED_PROFILE, nc_shapes(), cfg);
+    v.extend(sparql::nc::validate_merged(dataset));
+    v
+}
+
+/// The profile code of the shapes [`validate_nc_merged`] runs: the combined
+/// manifest's keyword, as `cimschema::shacl::resolve::MERGED_PROFILE` assigns it.
+/// Repeated here because `cimoxide-schema` is optional; a test holds the two
+/// together.
+pub const MERGED_PROFILE: &str = "ALL";
 
 
 // ── CGMES shape table ──────────────────────────────────────────────────────
@@ -196,6 +218,12 @@ pub fn validate_crossprofile(dataset: &cimmodel::CimDataset, cfg: &Config) -> Ve
         (shacl, sparql.join().expect("validation thread panicked"))
     });
     v.extend(sparql);
+    // CGMES codes first, as in `validate_profile_local`: data without NC
+    // never loads the NC table.
+    let cgmes = cgmes_profile_index().1;
+    if cfg.profiles.iter().any(|p| !cgmes.contains(&p.as_str()) && nc_profile_index().1.contains(&p.as_str())) {
+        v.extend(validate_nc_merged(dataset, cfg));
+    }
     v
 }
 
