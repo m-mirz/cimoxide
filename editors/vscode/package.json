@@ -2,7 +2,7 @@
   "name": "cimoxide",
   "displayName": "cimoxide — CGMES & NC",
   "description": "SHACL validation, hover, go to definition and completion for ENTSO-E CGMES and Network Code RDF/XML — and an MCP server to ask a chat about your model",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "m-mirz",
   "license": "Apache-2.0",
   "repository": {
