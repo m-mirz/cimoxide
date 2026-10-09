@@ -1,5 +1,5 @@
 [workspace]
-members = ["cimoxide", "cimgen", "cimschema", "cimmodel", "cimvalidation", "cimsparql", "cimoxide-cli"]
+members = ["cimoxide", "cimgen", "cimschema", "cimmodel", "cimvalidation", "cimsparql", "cimoxide-cli", "cimoxide-lsp"]
 exclude = ["cimoxide-py"]
 resolver = "2"
 

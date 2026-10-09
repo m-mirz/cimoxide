@@ -39,6 +39,36 @@ advisory); `json` and `sarif` always exit `0`. `sarif` writes
 result per finding, the object as a logical location and every file and line that writes it
 as a physical location (`sh:Violation` → `error`, `sh:Warning` → `warning`, `sh:Info` → `note`).
 
+### Editor support: `cimlsp` and the VS Code extension
+
+`cimlsp` (crate `cimoxide-lsp`) is a language server over stdio for CGMES and NC RDF/XML:
+
+- **Diagnostics** — the findings of `cimcli validate`, over the *model set* a document
+  belongs to: every CIM XML file in its directory, open buffers in place of the files on
+  disk. A finding shows on every file that writes its object, at the field it is about.
+  Runs on open and save, and while typing with `onType`.
+- **Hover** on a class, an attribute or an `rdf:resource`; **go to definition** and **find
+  references** across the model set; a document **outline**; **completion** of a class's
+  attributes (inherited included) and of classes.
+
+Initialization options: `{"common": bool, "quality": bool, "silence": [rule ids],
+"onType": bool}`; schemas come from `CIMOXIDE_RDFS_DIR` / `CIMOXIDE_SHACL_DIR` as for
+`cimcli`. Any LSP client can run it (`cargo install cimoxide-lsp`, or the binaries on each
+GitHub release).
+
+The VS Code extension in `editors/vscode/` bundles `cimlsp` per platform and is published to
+the Visual Studio Marketplace by `.github/workflows/vscode.yml`. To try it
+locally:
+
+```bash
+cargo build --release -p cimoxide-lsp
+cd editors/vscode && npm ci && mkdir -p server && cp ../../target/release/cimlsp server/
+npx vsce package --target linux-x64      # then: code --install-extension cimoxide-*.vsix
+```
+
+or open `editors/vscode/` in VS Code and press F5 (with `cimoxide.server.path` pointing at
+`target/release/cimlsp`).
+
 ## Repository layout
 
 | Crate | Description |
@@ -50,6 +80,7 @@ as a physical location (`sh:Violation` → `error`, `sh:Warning` → `warning`, 
 | `cimsparql` | SPARQL 1.1 over a decoded dataset, backed by in-memory oxigraph |
 | `cimoxide` | Facade re-exporting `cimmodel` (as `model`), `cimvalidation` and `cimsparql` |
 | `cimoxide-cli` | The command-line tool |
+| `cimoxide-lsp` | `cimlsp`, the language server; its VS Code extension is `editors/vscode/` |
 | `cimoxide-py` | Python bindings (PyO3, built with `maturin`, outside the Cargo workspace) |
 
 Generated, not to be hand-edited: `cimmodel/src/generated/` and

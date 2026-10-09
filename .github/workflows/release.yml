@@ -16,12 +16,18 @@ jobs:
           - os: ubuntu-latest
             binary: cimcli
             artifact: cimcli-linux-amd64
+            lsp_binary: cimlsp
+            lsp_artifact: cimlsp-linux-amd64
           - os: windows-latest
             binary: cimcli.exe
             artifact: cimcli-windows-amd64.exe
+            lsp_binary: cimlsp.exe
+            lsp_artifact: cimlsp-windows-amd64.exe
           - os: macos-latest
             binary: cimcli
             artifact: cimcli-darwin-arm64
+            lsp_binary: cimlsp
+            lsp_artifact: cimlsp-darwin-arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -43,16 +49,20 @@ jobs:
         run: make generate
 
       - name: Build
-        run: cargo build --release -p cimoxide-cli
+        run: cargo build --release -p cimoxide-cli -p cimoxide-lsp
 
       - name: Stage artifact
         shell: bash
-        run: cp target/release/${{ matrix.binary }} ${{ matrix.artifact }}
+        run: |
+          cp target/release/${{ matrix.binary }} ${{ matrix.artifact }}
+          cp target/release/${{ matrix.lsp_binary }} ${{ matrix.lsp_artifact }}
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}
+          path: |
+            ${{ matrix.artifact }}
+            ${{ matrix.lsp_artifact }}
 
   release:
     name: Create GitHub Release
@@ -76,4 +86,7 @@ jobs:
             --repo ${{ github.repository }} \
             cimcli-linux-amd64 \
             cimcli-windows-amd64.exe \
-            cimcli-darwin-arm64
+            cimcli-darwin-arm64 \
+            cimlsp-linux-amd64 \
+            cimlsp-windows-amd64.exe \
+            cimlsp-darwin-arm64
