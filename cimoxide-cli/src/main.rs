@@ -1,3 +1,5 @@
+mod sarif;
+
 use std::path::PathBuf;
 use std::process;
 
@@ -17,7 +19,7 @@ fn usage() -> ! {
     eprintln!("  cimoxide-cli convert --to xml  <input.json>   --profile EQ,SSH [--out <dir/>]");
     eprintln!("  cimoxide-cli validate [--profiles EQ,SSH,...] [--solved] [--not-solved]");
     eprintln!("                        [--common] [--quality] [--silence rule1,rule2]");
-    eprintln!("                        [--format json|text] <xml-files...>");
+    eprintln!("                        [--format text|json|sarif] <xml-files...>");
     #[cfg(feature = "sparql")]
     {
         eprintln!("  cimoxide-cli query  --query \"SELECT ...\" | --file <query.rq>");
@@ -266,7 +268,7 @@ fn cmd_validate(args: &[String]) {
     let mut enable_common = false;
     let mut enable_quality = false;
     let mut silenced: Vec<String> = Vec::new();
-    let mut output_json = false;
+    let mut format = "text";
 
     let mut i = 0usize;
     while i < args.len() {
@@ -288,11 +290,12 @@ fn cmd_validate(args: &[String]) {
             "--format" => {
                 i += 1;
                 if i >= args.len() { eprintln!("error: --format requires an argument"); usage(); }
-                match args[i].as_str() {
-                    "json" => output_json = true,
-                    "text" => output_json = false,
-                    other => { eprintln!("error: unknown format '{other}', expected 'json' or 'text'"); usage(); }
-                }
+                format = match args[i].as_str() {
+                    "json" => "json",
+                    "text" => "text",
+                    "sarif" => "sarif",
+                    other => { eprintln!("error: unknown format '{other}', expected 'text', 'json' or 'sarif'"); usage(); }
+                };
             }
             arg if !arg.starts_with('-') => {
                 input_files.push(PathBuf::from(arg));
@@ -337,7 +340,12 @@ fn cmd_validate(args: &[String]) {
     // on the merged dataset, with rule silencing applied.
     let violations = cimvalidation::validate_files(datasets, &cfg);
 
-    if output_json {
+    if format == "sarif" {
+        let log = sarif::render(&violations, &input_files);
+        let mut out = std::io::BufWriter::new(std::io::stdout().lock());
+        or_die(serde_json::to_writer_pretty(&mut out, &log), "error writing SARIF");
+        or_die(std::io::Write::write_all(&mut out, b"\n"), "error writing SARIF");
+    } else if format == "json" {
         let arr: Vec<serde_json::Value> = violations.iter().map(|v| {
             serde_json::json!({
                 "object_id": v.object_id,

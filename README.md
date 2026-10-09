@@ -22,7 +22,7 @@ cimoxide-cli convert --to xml <input.json> --profile EQ,SSH [--out <dir/>]
 # Run SHACL + SPARQL validation
 cimoxide-cli validate [--profiles EQ,SSH,...] [--solved] [--not-solved]
                       [--common] [--quality] [--silence rule1,rule2]
-                      [--format json|text] <xml-files...>
+                      [--format text|json|sarif] <xml-files...>
 
 # Run a SPARQL 1.1 query over the merged input files
 cimoxide-cli query --query "SELECT ..." | --file <query.rq>
@@ -38,7 +38,13 @@ cimoxide-cli query --query "SELECT ..." | --file <query.rq>
 | `--common` | enable cross-profile common checks |
 | `--quality` | enable the 14 CIMdesk quality checks (see "CIMdesk quality checks" below) |
 | `--silence rule1,rule2` | suppress specific `rule_id`s from the output |
-| `--format json\|text` | output format (default `text`); in `text` mode, exits with status `2` if any violation is found |
+| `--format text\|json\|sarif` | output format (default `text`); in `text` mode, exits with status `2` if any violation is found |
+
+`--format sarif` writes [SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/), the
+format code-scanning tools (GitHub, GitLab, VS Code's SARIF viewer) read: one result per
+finding, its rule's metadata, the object as a logical location, and every input file and line
+that writes the object as a physical location. `sh:Violation` is `error`, `sh:Warning`
+`warning`, `sh:Info` `note`. Like `json`, it exits `0` whatever it finds.
 
 ## Repository layout
 
