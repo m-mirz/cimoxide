@@ -35,6 +35,7 @@ Data flow: RDFS/SHACL → `cimgen` → `cimmodel` (class tables) + `cimvalidatio
 | `cimsparql/` | `cimoxide-sparql` | SPARQL 1.1 over an in-memory oxigraph store |
 | `cimoxide/` | `cimoxide` | facade re-exporting the above |
 | `cimoxide-cli/` | `cimoxide-cli` (binary `cimcli`) | CLI |
+| `cimoxide-lsp/` | `cimoxide-lsp` (binary `cimlsp`) | language server; VS Code extension in `editors/vscode/` |
 | `cimoxide-py/` | — | PyO3 bindings, outside the workspace |
 
 `cargo -p` takes the package name. Each crate sets an explicit `[lib] name`.
@@ -186,6 +187,21 @@ to trigger the touched rules. Time with alternating before/after runs in one ses
 difference under ~5% means nothing until an independent A/B reproduces it (cross-run drift
 has been measured at 20% for identical code).
 
+### `cimoxide-lsp`
+
+`cimlsp` over stdio (`lsp-server`/`lsp-types`, no async runtime). A *model set* is every CIM
+XML file in a document's directory, open buffers taking precedence over disk; it is
+validated with `validate_files` + `combined_config`, as `cimcli validate` does, on a worker
+thread with a 300 ms debounce. The decoder keeps no positions, so `src/index.rs` makes its
+own quick-xml pass per document (ranges of elements, fields, `rdf:resource` values; mRID =
+text after the last `#`, as in `decode.rs`). Each diagnostic's `data` carries `object_id`
+and `property`; its `code` is the `rule_id`. Diagnostics must stay equal to
+`cimcli validate --format json` as sets of `(object_id, rule_id, property)` per directory.
+
+The extension (`editors/vscode/`, TypeScript, `vscode-languageclient`) passes settings as
+initialization options and schema directories as `CIMOXIDE_*` environment variables, and
+restarts the server on any `cimoxide.*` change.
+
 ## Codegen Stability Tests
 
 `cimgen/tests/codegen.rs` hashes generated output: `cimmodel_codegen_stable`,
@@ -205,3 +221,8 @@ Version, license and internal dependency versions live once in the root `Cargo.t
 `workflow_dispatch`). Publishing goes through `scripts/publish-workspace.sh`, which skips
 `name@version` pairs already on crates.io and sleeps through 429 rate limits, so a stalled
 run can be re-run as-is.
+
+`vscode.yml` builds `cimlsp` for five targets (static musl on Linux), packages one VSIX per
+platform and publishes them to the Visual Studio Marketplace (`VSCE_PAT` in the
+`vscode-release` environment). `editors/vscode/package.json`'s version is
+bumped by hand with the workspace's; the workflow fails when they differ.

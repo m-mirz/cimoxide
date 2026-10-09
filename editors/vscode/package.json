@@ -1,0 +1,116 @@
+{
+  "name": "cimoxide",
+  "displayName": "cimoxide — CGMES & NC",
+  "description": "SHACL validation, hover, go to definition and completion for ENTSO-E CGMES and Network Code RDF/XML",
+  "version": "0.4.0",
+  "publisher": "m-mirz",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/m-mirz/cimoxide"
+  },
+  "homepage": "https://github.com/m-mirz/cimoxide",
+  "keywords": [
+    "cim",
+    "cgmes",
+    "entsoe",
+    "rdf",
+    "shacl",
+    "power systems"
+  ],
+  "categories": [
+    "Linters",
+    "Programming Languages"
+  ],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "activationEvents": [
+    "onLanguage:xml"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "cimoxide.revalidate",
+        "title": "Revalidate model set",
+        "category": "cimoxide"
+      },
+      {
+        "command": "cimoxide.restartServer",
+        "title": "Restart language server",
+        "category": "cimoxide"
+      }
+    ],
+    "configuration": {
+      "title": "cimoxide",
+      "properties": {
+        "cimoxide.server.path": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to a `cimlsp` binary. Empty: the one bundled with the extension, else `cimlsp` on `PATH`."
+        },
+        "cimoxide.validation.common": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Run the common cross-profile checks (`cimcli validate --common`)."
+        },
+        "cimoxide.validation.quality": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Run the CIMdesk modelling-quality checks (`cimcli validate --quality`)."
+        },
+        "cimoxide.validation.silence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Rule ids not to report (`cimcli validate --silence`)."
+        },
+        "cimoxide.validation.onType": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Revalidate while typing, not only on open and save. Each run validates the whole model set — every CIM file in the document's directory."
+        },
+        "cimoxide.schema.rdfsDir": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "RDFS directories to load class tables from instead of the built-in ones (`CIMOXIDE_RDFS_DIR`; a `PATH`-style list)."
+        },
+        "cimoxide.schema.shaclDir": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "SHACL directories to load shapes from instead of the built-in ones (`CIMOXIDE_SHACL_DIR`; a `PATH`-style list)."
+        },
+        "cimoxide.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace the communication between VS Code and the language server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build -- --minify && node -e \"require('fs').copyFileSync('../../LICENSE', 'LICENSE')\"",
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18",
+    "watch": "npm run build -- --sourcemap --watch",
+    "typecheck": "tsc --noEmit",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.0",
+    "@types/vscode": "~1.85.0",
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.0"
+  }
+}
