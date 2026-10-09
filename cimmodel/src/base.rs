@@ -135,12 +135,16 @@ pub struct Element {
     /// The other classes files wrote the object under, when merged datasets
     /// disagree — an SSH file's `cim:Equipment` for an EQ file's
     /// `cim:ACLineSegment`. In RDF the object has every one of those types;
-    /// `class` is the most specific. `None` for nearly every element.
-    also: Option<Box<Vec<&'static ClassDef>>>,
+    /// `class` is the most specific. `None` for nearly every element, so it
+    /// costs a pointer, like `langs`.
+    also: Option<Box<Types>>,
 }
 
 /// `(field key, xml:lang)` for each tagged text value of an element.
 type Langs = Vec<(&'static str, Box<str>)>;
+
+/// The classes besides its own a merged element was written under.
+type Types = Vec<&'static ClassDef>;
 
 impl Element {
     pub fn new(class: &'static ClassDef, mrid: String) -> Self {
@@ -169,14 +173,10 @@ impl Element {
         if self.types().any(|c| c.qualified == other.qualified) {
             return false;
         }
-        let also = self.also.get_or_insert_with(Default::default);
-        if reg.chain(other).iter().any(|c| c.qualified == self.class.qualified) {
-            also.push(std::mem::replace(&mut self.class, other));
-            true
-        } else {
-            also.push(other);
-            false
-        }
+        let promote = reg.chain(other).iter().any(|c| c.qualified == self.class.qualified);
+        let kept = if promote { std::mem::replace(&mut self.class, other) } else { other };
+        self.also.get_or_insert_with(Default::default).push(kept);
+        promote
     }
 
     pub fn mrid(&self) -> &str {
