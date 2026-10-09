@@ -93,7 +93,12 @@ Core files:
   (re-exported at the crate root with `Element`):
   - `CimDataset::decode_file(path)` / `decode_files(paths)` / `decode_str(content)` — Entry points
   - `CimDataset::merge(other)` — Combine multiple datasets: a later scalar wins, reference
-    lists are joined; duplicate tracking stays per file
+    lists are joined; duplicate tracking stays per file. An object the files type
+    differently (an SSH file's `cim:Equipment` for an EQ file's `cim:ACLineSegment`, common
+    in real data) keeps every type, as the RDF union does (`Element::types`); its class and
+    `by_type` bucket are the most specific, whichever file came first. Until 2026-10 the
+    first file's class won, so a merge order could turn a line into `Equipment` and fail
+    every `sh:class ConductingEquipment` check on it (1,972 findings on relicapgrid)
   - `CimDataset { entries: FastMap<mrid, Element>, by_type: FastMap<type_name, Vec<mrid>> }`
   - `FastMap`/`FieldMap` (in `cimmodel::base`) use a hand-written Fx-style hasher instead of
     SipHash: −12% decode. It has a fixed seed, so map iteration — and therefore `by_type`
@@ -260,6 +265,18 @@ negated — `[ sh:not X ]`; all-or-nothing: a branch the importer cannot fully
 represent skips the whole combination) and `sh:qualifiedValueShape` over a value
 list (`Constraint::QualifiedIn`). NCP's DatasetMetadata material implications,
 `sh:or ( [ sh:not dm:conformsToNCProfile ] [ P required ] )`, run through those.
+
+Class checks read every type of a merged element: `sh:class` holds when one
+type is an instance, while `sh:in` on an `rdf:type` path (`RefClass`) tests
+each type as a value of the path, so a superclass type outside the list fails
+it — as triplets does on the union.
+
+The 600-2 SV Simple file's `SvStatus.ConductingEquipment-valueType` is an APL
+defect: its `sh:in ( cim:CsConverter cim:VsConverter )` lists the concrete
+ConductingEquipment classes the SV vocabulary happens to declare, not the
+association's range. Triplets, running it on the union, reports every SvStatus
+of a breaker, line or load (7,684 on relicapgrid); cimoxide runs the file per
+SV file, where the equipment is absent and the check is silent.
 
 `sh:datatype` and `sh:nodeKind` are kept for both families: the interpreter
 reads the text as written, where a malformed number is real. `sh:in` values are

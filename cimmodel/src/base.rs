@@ -132,6 +132,11 @@ pub struct Element {
     /// order read. `None` until a value carries one, so an element without
     /// language tags — nearly all of them — pays a pointer.
     langs: Option<Box<Langs>>,
+    /// The other classes files wrote the object under, when merged datasets
+    /// disagree — an SSH file's `cim:Equipment` for an EQ file's
+    /// `cim:ACLineSegment`. In RDF the object has every one of those types;
+    /// `class` is the most specific. `None` for nearly every element.
+    also: Option<Box<Vec<&'static ClassDef>>>,
 }
 
 /// `(field key, xml:lang)` for each tagged text value of an element.
@@ -139,15 +144,39 @@ type Langs = Vec<(&'static str, Box<str>)>;
 
 impl Element {
     pub fn new(class: &'static ClassDef, mrid: String) -> Self {
-        Self { class, mrid, fields: FieldMap::default(), duplicate_fields: FastSet::default(), langs: None }
+        Self { class, mrid, fields: FieldMap::default(), duplicate_fields: FastSet::default(), langs: None, also: None }
     }
 
     pub fn with_fields(class: &'static ClassDef, mrid: String, fields: FieldMap) -> Self {
-        Self { class, mrid, fields, duplicate_fields: FastSet::default(), langs: None }
+        Self { class, mrid, fields, duplicate_fields: FastSet::default(), langs: None, also: None }
     }
 
     pub fn class(&self) -> &'static ClassDef {
         self.class
+    }
+
+    /// Every class the object is typed as: its class, then any other a merged
+    /// file wrote it under ([`CimDataset::merge`](crate::CimDataset::merge)).
+    pub fn types(&self) -> impl Iterator<Item = &'static ClassDef> + '_ {
+        std::iter::once(self.class).chain(self.also.iter().flat_map(|v| v.iter().copied()))
+    }
+
+    /// Record that a file also typed the object as `other`. Becomes its class
+    /// when it is a subclass of the current one (field keys name each
+    /// attribute's declaring class, so they stay valid); otherwise it is kept
+    /// beside it. Returns whether the class changed.
+    pub(crate) fn add_type(&mut self, other: &'static ClassDef, reg: &TypeRegistry) -> bool {
+        if self.types().any(|c| c.qualified == other.qualified) {
+            return false;
+        }
+        let also = self.also.get_or_insert_with(Default::default);
+        if reg.chain(other).iter().any(|c| c.qualified == self.class.qualified) {
+            also.push(std::mem::replace(&mut self.class, other));
+            true
+        } else {
+            also.push(other);
+            false
+        }
     }
 
     pub fn mrid(&self) -> &str {

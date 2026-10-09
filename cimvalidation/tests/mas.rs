@@ -55,3 +55,29 @@ fn a_rule_reading_eq_and_ssh_sees_both_files() {
     let all = cimvalidation::validate_files(files, &cfg);
     assert_eq!(all.iter().filter(|v| v.rule_id == RULE).count(), 1, "{all:#?}");
 }
+
+/// Merged, the equipment is typed both `ACLineSegment` (EQ) and `Equipment`
+/// (SSH), whichever file comes first, and `sh:class ConductingEquipment`
+/// holds: one of its types is one.
+#[test]
+fn a_merged_object_carries_every_type_it_was_written_under() {
+    let eq = file("CoreEquipment-EU", r##"
+  <cim:ACLineSegment rdf:ID="_line"/>"##);
+    let ssh = file("SteadyStateHypothesis-EU", r##"
+  <cim:Equipment rdf:about="#_line">
+    <cim:Equipment.inService>true</cim:Equipment.inService>
+  </cim:Equipment>"##);
+    let sv = file("StateVariables-EU", r##"
+  <cim:SvStatus rdf:ID="_status">
+    <cim:SvStatus.ConductingEquipment rdf:resource="#_line"/>
+    <cim:SvStatus.inService>true</cim:SvStatus.inService>
+  </cim:SvStatus>"##);
+    let mut merged = CimDataset::new();
+    for ds in [ssh, eq, sv] {
+        merged.merge(ds);
+    }
+    let cfg = cimvalidation::Config { profiles: vec!["SV".into()], solved: true, ..Default::default() };
+    let v = cimvalidation::validate_crossprofile_shacl(&merged, &cfg);
+    let class_rule = "sv456cpi:SvStatus.ConductingEquipment-valueType";
+    assert_eq!(v.iter().filter(|v| v.rule_id == class_rule).count(), 0, "{v:#?}");
+}

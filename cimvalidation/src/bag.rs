@@ -319,13 +319,13 @@ fn path_label(path: &Path) -> std::borrow::Cow<'static, str> {
     }
 }
 
-/// The class of a referenced element, or `None` when it is not in this
-/// dataset. Class checks are silent then: phase 1 runs per file, so a
+/// A referenced element, whose types the class checks read, or `None` when
+/// it is not in this dataset. Class checks are silent then: phase 1 runs per file, so a
 /// reference out of the file is normal and belongs to a cross-profile rule.
 /// Reporting it would make every cross-file association a value-type
 /// violation.
-fn class_of<'a>(ctx: &Ctx<'a>, mrid: &str) -> Option<&'static str> {
-    ctx.ds.entries.get(mrid).map(|e| e.type_name())
+fn class_of<'a>(ctx: &Ctx<'a>, mrid: &str) -> Option<&'a cimmodel::Element> {
+    ctx.ds.entries.get(mrid)
 }
 
 /// Does `values` violate `constraint`? Unknown values violate nothing.
@@ -365,12 +365,19 @@ fn fails(ctx: &Ctx<'_>, el: &Fields, values: &Values<'_>, constraint: &Constrain
         Constraint::MinLength(n) => values.any_text(|v| (v.chars().count() as u32) < *n),
         Constraint::Length(n) => values.any_text(|v| v.chars().count() as u32 != *n),
 
-        Constraint::Class(allowed) | Constraint::RefClass(allowed) => {
-            values.any_ref(|r| class_of(ctx, r).is_some_and(|t| !allowed.contains(&t)))
-        }
-        Constraint::NotClass(forbidden) => {
-            values.any_ref(|r| class_of(ctx, r).is_some_and(|t| forbidden.contains(&t)))
-        }
+        // An element merged from files that typed it differently has several
+        // types (`Element::types`). `sh:class` needs one of them to be an
+        // instance; `sh:in` on an `rdf:type` path tests each type, as each is
+        // a value of the path — a type outside the list fails it.
+        Constraint::Class(allowed) => values.any_ref(|r| {
+            class_of(ctx, r).is_some_and(|e| !e.types().any(|t| allowed.contains(&t.qualified)))
+        }),
+        Constraint::RefClass(allowed) => values.any_ref(|r| {
+            class_of(ctx, r).is_some_and(|e| e.types().any(|t| !allowed.contains(&t.qualified)))
+        }),
+        Constraint::NotClass(forbidden) => values.any_ref(|r| {
+            class_of(ctx, r).is_some_and(|e| e.types().any(|t| forbidden.contains(&t.qualified)))
+        }),
         Constraint::QualifiedIn { allowed, min } => {
             let mut n = 0u32;
             values.any_text(|v| {

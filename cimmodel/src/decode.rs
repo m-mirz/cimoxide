@@ -3,7 +3,7 @@ use std::path::Path;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 
-use crate::base::{intern, AttrDef, ClassDef, Element, FastMap, FieldValue, TypeRegistry};
+use crate::base::{intern, AttrDef, ClassDef, Element, FastMap, FastSet, FieldValue, TypeRegistry};
 use crate::registry;
 
 pub struct CimDataset {
@@ -85,14 +85,37 @@ impl CimDataset {
     /// Merge another dataset into self, combining objects with the same MRID:
     /// a later scalar wins, reference lists are joined. An object keeps the
     /// class it was first decoded as.
+    ///
+    /// Where the files type an object differently — an SSH file writing
+    /// `cim:Equipment` for what the EQ file wrote as `cim:ACLineSegment` — the
+    /// object keeps every type, as the RDF union does ([`Element::types`]),
+    /// and its class (and `by_type` bucket) is the most specific, whichever
+    /// file came first. Of unrelated classes the first stays the class.
     pub fn merge(&mut self, other: CimDataset) {
+        let reg = registry::type_registry();
+        let mut moved: FastMap<&'static str, FastSet<String>> = FastMap::default();
         for (mrid, incoming) in other.entries {
             if let Some(existing) = self.entries.get_mut(&mrid) {
                 existing.merge_from(&incoming);
+                let old = existing.class();
+                let mut changed = false;
+                for t in incoming.types() {
+                    changed |= existing.add_type(t, reg);
+                }
+                if changed {
+                    moved.entry(old.qualified).or_default().insert(mrid.clone());
+                    self.by_type.entry(existing.type_name().to_string()).or_default().push(mrid);
+                }
             } else {
                 let type_name = incoming.type_name().to_string();
                 self.by_type.entry(type_name).or_default().push(mrid.clone());
                 self.entries.insert(mrid, incoming);
+            }
+        }
+        // One pass per bucket left, however many of its objects moved.
+        for (old, mrids) in moved {
+            if let Some(bucket) = self.by_type.get_mut(old) {
+                bucket.retain(|m| !mrids.contains(m));
             }
         }
     }
