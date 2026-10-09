@@ -7,7 +7,7 @@
 use cimmodel::base::{AttrDef, AttrKind, ClassDef};
 use cimmodel::registry::type_registry;
 use lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionTextEdit, DocumentSymbol, Hover, HoverContents,
+    CompletionItem, CompletionItemKind, CompletionTextEdit, DocumentSymbol, Documentation, Hover, HoverContents,
     InsertTextFormat, Location, MarkupContent, MarkupKind, Position, Range, SymbolKind, TextEdit, Url,
 };
 
@@ -40,7 +40,8 @@ enum Target<'a> {
     /// An element's start tag; `id` when on its `rdf:ID` / `rdf:about` value.
     Element { el: &'a Element, id: bool },
     Field { el: &'a Element, key: &'a str, head: Range },
-    Resource { mrid: &'a str, range: Range },
+    /// An `rdf:resource` value: an object's mRID, or an enumeration value.
+    Resource { el: &'a Element, key: &'a str, mrid: &'a str, range: Range },
 }
 
 fn target_at(index: &Index, pos: Position) -> Option<Target<'_>> {
@@ -53,7 +54,7 @@ fn target_at(index: &Index, pos: Position) -> Option<Target<'_>> {
     }
     let f = el.fields.iter().find(|f| contains(f.full, pos))?;
     if let Some((mrid, range)) = f.resource.as_ref().filter(|(_, r)| contains(*r, pos)) {
-        return Some(Target::Resource { mrid, range: *range });
+        return Some(Target::Resource { el, key: f.key(), mrid, range: *range });
     }
     contains(f.head, pos).then(|| Target::Field { el, key: f.key(), head: f.head })
 }
@@ -71,7 +72,12 @@ pub fn hover(view: &View, pos: Position) -> Option<Hover> {
             let class = class_of(view.index, &el.qname)?;
             (attr_summary(type_registry().attr_of(class, key)?, class), Some(head))
         }
-        Target::Resource { mrid, range } => (object_summary(view, mrid)?, Some(range)),
+        Target::Resource { el, key, mrid, range } => {
+            let text = class_of(view.index, &el.qname)
+                .filter(|c| type_registry().attr_of(c, key).is_some_and(|a| a.kind == AttrKind::Enum))
+                .and_then(|c| enum_summary(c, mrid));
+            (text.or_else(|| object_summary(view, mrid))?, Some(range))
+        }
     };
     Some(Hover {
         contents: HoverContents::Markup(MarkupContent { kind: MarkupKind::Markdown, value: text }),
@@ -84,6 +90,9 @@ fn class_summary(class: &ClassDef) -> String {
     let chain: Vec<&str> = reg.chain(class).iter().map(|c| c.local).collect();
     let mut s = format!("**{}**{}\n\n", class.local, if class.concrete { "" } else { " *(abstract)*" });
     s.push_str(&format!("`{}`\n\n", chain.join(" → ")));
+    if !class.comment.is_empty() {
+        s.push_str(&format!("{}\n\n", class.comment));
+    }
     if !class.origins.is_empty() {
         s.push_str(&format!("Profiles: {}", class.origins.join(", ")));
     }
@@ -101,6 +110,9 @@ fn attr_summary(a: &AttrDef, class: &ClassDef) -> String {
         s.push_str(&format!(" (`xsd:{}`)", a.xsd));
     }
     s.push_str(if a.is_list { ", multi-valued" } else { ", single-valued" });
+    if !a.comment.is_empty() {
+        s.push_str(&format!("\n\n{}", a.comment));
+    }
     if type_registry().attr(class, a.id).is_none() {
         s.push_str(&format!("\n\n*Not declared for `{}`.*", class.local));
     }
@@ -108,6 +120,20 @@ fn attr_summary(a: &AttrDef, class: &ClassDef) -> String {
         s.push_str(&format!("\n\nProfiles: {}", a.origins.join(", ")));
     }
     s
+}
+
+/// An enumeration value an element of `class` writes: its definition and its
+/// enumeration's.
+fn enum_summary(class: &ClassDef, id: &str) -> Option<String> {
+    let (e, v) = type_registry().enum_value(class, id)?;
+    let mut s = format!("**{}** — value of enumeration `{}`", v.id, e.local);
+    if !v.comment.is_empty() {
+        s.push_str(&format!("\n\n{}", v.comment));
+    }
+    if !e.comment.is_empty() {
+        s.push_str(&format!("\n\n*{}:* {}", e.local, e.comment));
+    }
+    Some(s)
 }
 
 /// An object by mRID: its class and name, and the file that defines it.
@@ -262,7 +288,7 @@ pub fn completion(view: &View, pos: Position) -> Vec<CompletionItem> {
                     AttrKind::Association => format!("<{tag} rdf:resource=\"#$1\"/>"),
                     AttrKind::Enum => format!("<{tag} rdf:resource=\"{}$1\"/>", a.value_ns),
                 };
-                item(tag, a.range.to_string(), CompletionItemKind::FIELD, snippet, replace)
+                item(tag, a.range.to_string(), a.comment, CompletionItemKind::FIELD, snippet, replace)
             })
             .collect();
     }
@@ -276,16 +302,24 @@ pub fn completion(view: &View, pos: Position) -> Vec<CompletionItem> {
         .map(|c| {
             let tag = format!("cim:{}", c.local);
             let snippet = format!("<{tag} rdf:ID=\"$1\">\n\t$0\n</{tag}>");
-            item(tag, c.origins.join(", "), CompletionItemKind::CLASS, snippet, replace)
+            item(tag, c.origins.join(", "), c.comment, CompletionItemKind::CLASS, snippet, replace)
         })
         .collect()
 }
 
-fn item(label: String, detail: String, kind: CompletionItemKind, snippet: String, replace: Range) -> CompletionItem {
+fn item(
+    label: String,
+    detail: String,
+    doc: &str,
+    kind: CompletionItemKind,
+    snippet: String,
+    replace: Range,
+) -> CompletionItem {
     CompletionItem {
         filter_text: Some(format!("<{label}")),
         label,
         detail: Some(detail),
+        documentation: (!doc.is_empty()).then(|| Documentation::String(doc.to_string())),
         kind: Some(kind),
         insert_text_format: Some(InsertTextFormat::SNIPPET),
         text_edit: Some(CompletionTextEdit::Edit(TextEdit::new(replace, snippet))),
@@ -330,13 +364,34 @@ mod tests {
             let class = hover_text(hover(v, Position::new(5, 8)));
             assert!(class.starts_with("**ACLineSegment**"), "{class}");
             assert!(class.contains("IdentifiedObject → "), "{class}");
+            assert!(class.contains("A wire or combination of wires"), "{class}");
 
             let attr = hover_text(hover(v, Position::new(6, 10)));
             assert!(attr.starts_with("**ACLineSegment.r** — attribute"), "{attr}");
+            let comment = type_registry().by_type_name("ACLineSegment").unwrap().attr("ACLineSegment.r").unwrap().comment;
+            assert!(!comment.is_empty() && attr.contains(comment), "{attr}");
 
             let target = hover_text(hover(v, Position::new(7, 58)));
             assert!(target.starts_with("**BaseVoltage** 380 kV"), "{target}");
         });
+    }
+
+    #[test]
+    fn hovers_enumeration_values() {
+        let doc = r##"<rdf:RDF xmlns:cim="http://iec.ch/TC57/CIM100#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <cim:SynchronousMachine rdf:about="#_g1">
+    <cim:SynchronousMachine.operatingMode rdf:resource="http://iec.ch/TC57/CIM100#SynchronousMachineOperatingMode.generator"/>
+  </cim:SynchronousMachine>
+</rdf:RDF>
+"##;
+        let url = Url::parse("file:///tmp/ssh.xml").unwrap();
+        let lines = LineIndex::new(doc);
+        let index = Index::build(doc);
+        let view = View { url: &url, text: doc, lines: &lines, index: &index, set: None };
+        let text = hover_text(hover(&view, Position::new(2, 100)));
+        assert!(text.starts_with("**SynchronousMachineOperatingMode.generator** — value of enumeration"), "{text}");
+        assert!(text.contains("Operating as generator."), "{text}");
+        assert!(text.contains("Synchronous machine operating mode."), "{text}");
     }
 
     #[test]
@@ -356,6 +411,8 @@ mod tests {
             let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
             assert!(labels.contains(&"cim:ACLineSegment.r"), "{labels:?}");
             assert!(labels.contains(&"cim:IdentifiedObject.name"), "inherited");
+            let r = items.iter().find(|i| i.label == "cim:ACLineSegment.r").unwrap();
+            assert!(matches!(&r.documentation, Some(Documentation::String(d)) if !d.is_empty()), "documented");
             let Some(CompletionTextEdit::Edit(edit)) = &items[0].text_edit else { panic!() };
             assert_eq!(edit.range.start, Position::new(8, 4), "replaces the typed `<`");
         });

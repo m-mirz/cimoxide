@@ -80,16 +80,7 @@ pub fn mrid_of(value: &str) -> &str {
     value.rsplit_once('#').map_or(value, |(_, f)| f)
 }
 
-/// Whether `text` looks like CGMES or NC RDF/XML: it binds one of the two
-/// CIM namespaces near the top.
-pub fn is_cim(text: &str) -> bool {
-    let mut end = text.len().min(8192);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    let head = &text[..end];
-    head.contains("http://iec.ch/TC57/") || head.contains("https://cim.ucaiug.io/ns#")
-}
+pub use cimmodel::decode::is_cim;
 
 impl Index {
     pub fn build(text: &str) -> Self {

@@ -36,6 +36,7 @@ Data flow: RDFS/SHACL → `cimgen` → `cimmodel` (class tables) + `cimvalidatio
 | `cimoxide/` | `cimoxide` | facade re-exporting the above |
 | `cimoxide-cli/` | `cimoxide-cli` (binary `cimcli`) | CLI |
 | `cimoxide-lsp/` | `cimoxide-lsp` (binary `cimlsp`) | language server; VS Code extension in `editors/vscode/` |
+| `cimoxide-mcp/` | `cimoxide-mcp` (binary `cimmcp`) | MCP server for chat clients; bundled and registered by the extension |
 | `cimoxide-py/` | — | PyO3 bindings, outside the workspace |
 
 `cargo -p` takes the package name. Each crate sets an explicit `[lib] name`.
@@ -60,7 +61,10 @@ Each family's generated file holds one `SCHEMA: Schema` — classes (`ClassDef`/
 profiles (code → URI) and namespace bindings. That is everything the crates know about a
 family: the decoder, validation, export and SPARQL all read it through
 `registry::type_registry()` (`schema(family)`, `attr_of`, `family_attr`). `AttrDef` carries
-`used` (an association end some profile exchanges), `xsd` and `value_ns`; both
+`used` (an association end some profile exchanges), `xsd` and `value_ns`; classes and
+attributes carry the vocabulary's `rdfs:comment` as `comment`, and `Schema::enums` lists each
+enumeration with its values and theirs (`Schema::enum_value("WindingConnection.D")`) (first non-empty profile in
+file-name order wins; `cimlsp` hover and `cimmcp describe_class` show it); both
 `classes_gen.rs` and the runtime loader derive them through `cimschema::table`.
 
 - `base.rs` — `Element`, `FieldValue`, `FastMap`/`FieldMap`, `ClassDef`/`AttrDef`,
@@ -202,6 +206,18 @@ The extension (`editors/vscode/`, TypeScript, `vscode-languageclient`) passes se
 initialization options and schema directories as `CIMOXIDE_*` environment variables, and
 restarts the server on any `cimoxide.*` change.
 
+### `cimoxide-mcp`
+
+`cimmcp`: MCP over stdio as newline-delimited JSON-RPC, hand-written in `src/main.rs` (no
+async runtime, no MCP SDK). Tools in `src/tools.rs`, all read-only, output plain text with a
+`limit`. `src/session.rs` caches each model set (a directory's CIM files, as for `cimlsp`)
+until a file's mtime changes; the SPARQL store and each validation configuration's findings
+are built on first use. `validate` reports what `cimcli validate` does
+(`tests/protocol.rs` compares them). `cimmodel::decode::is_cim` decides which files belong,
+shared with `cimlsp`. The extension registers it through
+`lm.registerMcpServerDefinitionProvider` with `--dir <first workspace folder>` (VS Code
+≥ 1.101).
+
 ## Codegen Stability Tests
 
 `cimgen/tests/codegen.rs` hashes generated output: `cimmodel_codegen_stable`,
@@ -216,13 +232,15 @@ For an intentional generator or schema change:
 
 Version, license and internal dependency versions live once in the root `Cargo.toml`
 (`[workspace.package]`, `[workspace.dependencies]`). Pushing a `v*` tag runs `release.yml`
-(cimcli binaries), `pypi.yml` and `crates-io.yml` (needs `CARGO_REGISTRY_TOKEN` in the
+(cimcli, cimlsp and cimmcp binaries), `pypi.yml` (the `cimoxide` bindings, and the
+`cimoxide-mcp` wheels: `cimmcp` as a maturin `bindings = "bin"` wheel per platform, for
+`uvx --from cimoxide-mcp cimmcp`; its version comes from the workspace) and `crates-io.yml` (needs `CARGO_REGISTRY_TOKEN` in the
 `crates-release` environment; runs `make generate`, hence `--allow-dirty`; dry-runnable via
 `workflow_dispatch`). Publishing goes through `scripts/publish-workspace.sh`, which skips
 `name@version` pairs already on crates.io and sleeps through 429 rate limits, so a stalled
 run can be re-run as-is.
 
-`vscode.yml` builds `cimlsp` for five targets (static musl on Linux), packages one VSIX per
+`vscode.yml` builds `cimlsp` and `cimmcp` for five targets (static musl on Linux), packages one VSIX per
 platform and publishes them to the Visual Studio Marketplace (`VSCE_PAT` in the
 `vscode-release` environment). `editors/vscode/package.json`'s version is
 bumped by hand with the workspace's; the workflow fails when they differ.

@@ -1,0 +1,20 @@
+[package]
+name = "cimoxide-mcp"
+description = "cimmcp: Model Context Protocol server for ENTSO-E CGMES and NC RDF/XML — lets an LLM chat look up, validate and query a model set"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories = ["development-tools", "science"]
+
+[[bin]]
+name = "cimmcp"
+path = "src/main.rs"
+
+[dependencies]
+cimoxide-model      = { workspace = true, features = ["dynamic-schema"] }
+cimoxide-validation = { workspace = true, features = ["dynamic-shapes"] }
+cimoxide-sparql     = { workspace = true }
+serde_json = "1"

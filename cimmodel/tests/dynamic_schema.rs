@@ -31,6 +31,12 @@ fn cgmes_runtime_table_matches_generated() {
 fn compare(dynamic: &Schema, generated: &Schema) {
     assert_eq!(dynamic.profiles, generated.profiles, "profiles");
     assert_eq!(dynamic.namespaces, generated.namespaces, "namespaces");
+    assert_eq!(dynamic.enums.len(), generated.enums.len(), "enumeration count");
+    for (d, g) in dynamic.enums.iter().zip(generated.enums) {
+        assert_eq!((d.ns, d.local, d.comment), (g.ns, g.local, g.comment), "enumeration {}", g.local);
+        let values = |e: &cimmodel::base::EnumDef| e.values.iter().map(|v| (v.id, v.comment)).collect::<Vec<_>>();
+        assert_eq!(values(d), values(g), "{}: values", g.local);
+    }
     let (dynamic, generated) = (dynamic.classes, generated.classes);
     assert_eq!(
         dynamic.len(),
@@ -49,6 +55,7 @@ fn compare(dynamic: &Schema, generated: &Schema) {
         assert_eq!(d.super_class, g.super_class, "{}: super class", g.qualified);
         assert_eq!(d.concrete, g.concrete, "{}: concrete", g.qualified);
         assert_eq!(d.origins, g.origins, "{}: origins", g.qualified);
+        assert_eq!(d.comment, g.comment, "{}: comment", g.qualified);
 
         assert_eq!(
             d.attrs.len(),
@@ -66,6 +73,7 @@ fn compare(dynamic: &Schema, generated: &Schema) {
             assert_eq!(da.xsd, ga.xsd, "{}.{}: xsd", g.qualified, ga.id);
             assert_eq!(da.value_ns, ga.value_ns, "{}.{}: value_ns", g.qualified, ga.id);
             assert_eq!(da.origins, ga.origins, "{}.{}: origins", g.qualified, ga.id);
+            assert_eq!(da.comment, ga.comment, "{}.{}: comment", g.qualified, ga.id);
         }
     }
 }

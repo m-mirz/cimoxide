@@ -61,13 +61,46 @@ the Visual Studio Marketplace by `.github/workflows/vscode.yml`. To try it
 locally:
 
 ```bash
-cargo build --release -p cimoxide-lsp
-cd editors/vscode && npm ci && mkdir -p server && cp ../../target/release/cimlsp server/
+cargo build --release -p cimoxide-lsp -p cimoxide-mcp
+cd editors/vscode && npm ci && mkdir -p server && cp ../../target/release/{cimlsp,cimmcp} server/
 npx vsce package --target linux-x64      # then: code --install-extension cimoxide-*.vsix
 ```
 
 or open `editors/vscode/` in VS Code and press F5 (with `cimoxide.server.path` pointing at
 `target/release/cimlsp`).
+
+### Chat about a model: `cimmcp`
+
+`cimmcp` (crate `cimoxide-mcp`) is a [Model Context Protocol](https://modelcontextprotocol.io)
+server over stdio, so an LLM chat can answer questions about a model set — "which generators
+are in BE and what is their P?", "why does this line fail validation?". Its tools are
+read-only:
+
+| Tool | |
+|---|---|
+| `list_model_sets` | directories holding CIM files, with each file's profiles |
+| `summary` | a set's files, model headers and object counts by class |
+| `find_objects` | search by class (abstract classes included), name/mRID text and attribute value |
+| `get_object` | one object's fields, references resolved, and what references it |
+| `validate` | the findings of `cimcli validate`, by rule, filterable |
+| `sparql` | a SPARQL query over the merged CGMES data |
+| `describe_class` | a class's, attribute's, enumeration's or enumeration value's definition from the ENTSO-E vocabulary, and what a class carries |
+
+A model set is decoded once and kept until one of its files changes. `--dir <path>` (else
+`CIMOXIDE_MODEL_DIR`, else the working directory) is where relative paths resolve. The VS Code
+extension bundles `cimmcp` and offers it to chat (Copilot agent mode) for the workspace; any
+other MCP client can run it. It is on PyPI as a binary wheel, so with
+[uv](https://docs.astral.sh/uv/) a client starts it with nothing installed first:
+
+```bash
+claude mcp add cimoxide -- uvx --from cimoxide-mcp cimmcp            # Claude Code
+codex mcp add cimoxide -- uvx --from cimoxide-mcp cimmcp --dir /path/to/models   # Codex
+```
+
+Clients configured by an `mcpServers` JSON block (Claude Desktop, Cursor, Windsurf,
+Antigravity, …) take `"command": "uvx", "args": ["--from", "cimoxide-mcp", "cimmcp", "--dir",
+"/path/to/models"]`. `cargo install cimoxide-mcp` and the GitHub release binaries work too;
+see [`cimoxide-mcp/README.md`](cimoxide-mcp/README.md).
 
 ## Repository layout
 
@@ -81,6 +114,7 @@ or open `editors/vscode/` in VS Code and press F5 (with `cimoxide.server.path` p
 | `cimoxide` | Facade re-exporting `cimmodel` (as `model`), `cimvalidation` and `cimsparql` |
 | `cimoxide-cli` | The command-line tool |
 | `cimoxide-lsp` | `cimlsp`, the language server; its VS Code extension is `editors/vscode/` |
+| `cimoxide-mcp` | `cimmcp`, the MCP server for chat clients |
 | `cimoxide-py` | Python bindings (PyO3, built with `maturin`, outside the Cargo workspace) |
 
 Generated, not to be hand-edited: `cimmodel/src/generated/` and

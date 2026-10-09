@@ -422,6 +422,9 @@ pub struct AttrDef {
     pub value_ns: &'static str,
     /// Profile codes that carry this attribute.
     pub origins: &'static [&'static str],
+    /// The vocabulary's `rdfs:comment`, HTML removed and on one line; `""`
+    /// if it has none.
+    pub comment: &'static str,
 }
 
 /// What one family's schema says, as a table: its classes, the profiles it
@@ -435,6 +438,43 @@ pub struct Schema {
     pub profiles: &'static [(&'static str, &'static str)],
     /// XML prefix → namespace IRI; sorted by prefix.
     pub namespaces: &'static [(&'static str, &'static str)],
+    /// Enumerations, sorted by name.
+    pub enums: &'static [EnumDef],
+}
+
+impl Schema {
+    /// The enumeration called `name` (`WindingConnection`).
+    pub fn enumeration(&self, name: &str) -> Option<&'static EnumDef> {
+        let enums: &'static [EnumDef] = self.enums;
+        enums.binary_search_by_key(&name, |e| e.local).ok().map(|i| &enums[i])
+    }
+
+    /// The enumeration value `id` names, as the decoder keeps it
+    /// (`WindingConnection.D`), with its enumeration.
+    pub fn enum_value(&self, id: &str) -> Option<(&'static EnumDef, &'static EnumValueDef)> {
+        let e = self.enumeration(id.split_once('.')?.0)?;
+        Some((e, e.values.iter().find(|v| v.id == id)?))
+    }
+}
+
+/// An enumeration of the schema and the values it allows.
+#[derive(Debug)]
+pub struct EnumDef {
+    pub ns: &'static str,
+    pub local: &'static str,
+    /// The vocabulary's `rdfs:comment`, as for [`ClassDef::comment`].
+    pub comment: &'static str,
+    /// In vocabulary order.
+    pub values: &'static [EnumValueDef],
+}
+
+/// One value of an enumeration.
+#[derive(Debug)]
+pub struct EnumValueDef {
+    /// `Enum.value`, as the decoder keeps a value after its `#`.
+    pub id: &'static str,
+    /// The vocabulary's `rdfs:comment`, as for [`ClassDef::comment`].
+    pub comment: &'static str,
 }
 
 /// A class of the schema: what it is called and what it declares.
@@ -452,6 +492,9 @@ pub struct ClassDef {
     /// ones.
     pub attrs: &'static [AttrDef],
     pub origins: &'static [&'static str],
+    /// The vocabulary's `rdfs:comment`, HTML removed and on one line; `""`
+    /// if it has none.
+    pub comment: &'static str,
 }
 
 impl ClassDef {
@@ -595,6 +638,12 @@ impl TypeRegistry {
 
     fn family(&self, id: &str) -> Option<&FamilyTable> {
         self.families.iter().find(|f| f.id == id)
+    }
+
+    /// The enumeration value `id` (`WindingConnection.D`) in the family of
+    /// `class`, which an element of `class` uses it on.
+    pub fn enum_value(&self, class: &ClassDef, id: &str) -> Option<(&'static EnumDef, &'static EnumValueDef)> {
+        self.schema(self.family_of(class.qualified)?)?.enum_value(id)
     }
 
     /// The family a `by_type` key belongs to, by its prefix.

@@ -47,7 +47,7 @@ mod dynamic {
     use cimschema::family::{self, Family};
     use cimschema::model::{CimAttribute, CimSpecification};
 
-    use crate::base::{AttrDef, AttrKind, ClassDef, Schema};
+    use crate::base::{AttrDef, AttrKind, ClassDef, EnumDef, EnumValueDef, Schema};
 
     /// Environment variable naming RDFS directories — one, or several separated
     /// as in `PATH`, each serving the family whose vocabularies it holds.
@@ -274,6 +274,7 @@ mod dynamic {
                     xsd: cimschema::table::xsd_type(a),
                     value_ns: interner.intern(cimschema::table::value_namespace(spec, a)),
                     origins: interner.intern_all(&a.origins),
+                    comment: interner.intern(&a.comment),
                 })
                 .collect();
 
@@ -286,6 +287,7 @@ mod dynamic {
                 concrete: !t.concrete_in.is_empty(),
                 attrs: Vec::leak(attrs),
                 origins: interner.intern_all(&t.origins),
+                comment: interner.intern(&t.comment),
             });
         }
 
@@ -294,6 +296,20 @@ mod dynamic {
         };
         let profiles = pairs(&mut interner, cimschema::table::profile_uris(spec));
         let namespaces = pairs(&mut interner, cimschema::table::namespaces(spec));
-        Box::leak(Box::new(Schema { classes: Vec::leak(out), profiles, namespaces }))
+        let enums: Vec<EnumDef> = cimschema::table::enums(spec)
+            .into_iter()
+            .map(|e| EnumDef {
+                ns: interner.intern(&e.namespace),
+                local: interner.intern(&e.id),
+                comment: interner.intern(&e.comment),
+                values: Vec::leak(
+                    e.values
+                        .iter()
+                        .map(|v| EnumValueDef { id: interner.intern(&v.id), comment: interner.intern(&v.comment) })
+                        .collect(),
+                ),
+            })
+            .collect();
+        Box::leak(Box::new(Schema { classes: Vec::leak(out), profiles, namespaces, enums: Vec::leak(enums) }))
     }
 }
