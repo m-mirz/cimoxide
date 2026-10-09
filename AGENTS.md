@@ -240,7 +240,7 @@ Version, license and internal dependency versions live once in the root `Cargo.t
 `name@version` pairs already on crates.io and sleeps through 429 rate limits, so a stalled
 run can be re-run as-is.
 
-`vscode.yml` builds `cimlsp` and `cimmcp` for five targets (static musl on Linux), packages one VSIX per
+`vscode.yml` builds `cimlsp` and `cimmcp` for three targets (Linux x64 as static musl, Windows x64, macOS arm64), packages one VSIX per
 platform and publishes them to the Visual Studio Marketplace (`VSCE_PAT` in the
 `vscode-release` environment). `editors/vscode/package.json`'s version is
 bumped by hand with the workspace's; the workflow fails when they differ.

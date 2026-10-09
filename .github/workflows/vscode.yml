@@ -28,11 +28,6 @@ jobs:
             vsce_target: linux-x64
             exe: cimlsp
             mcp_exe: cimmcp
-          - os: ubuntu-24.04-arm
-            rust_target: aarch64-unknown-linux-musl
-            vsce_target: linux-arm64
-            exe: cimlsp
-            mcp_exe: cimmcp
           - os: windows-latest
             rust_target: x86_64-pc-windows-msvc
             vsce_target: win32-x64
@@ -41,11 +36,6 @@ jobs:
           - os: macos-latest
             rust_target: aarch64-apple-darwin
             vsce_target: darwin-arm64
-            exe: cimlsp
-            mcp_exe: cimmcp
-          - os: macos-latest
-            rust_target: x86_64-apple-darwin
-            vsce_target: darwin-x64
             exe: cimlsp
             mcp_exe: cimmcp
 

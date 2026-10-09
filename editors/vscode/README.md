@@ -39,7 +39,7 @@ Validation runs when a document is opened and saved; turn on
 | `cimoxide.mcp.enabled` | offer the `cimmcp` MCP server to chat |
 | `cimoxide.mcp.path` | use another `cimmcp` binary |
 
-The language server, `cimlsp`, and the MCP server, `cimmcp`, are bundled for Linux (x64,
-arm64), macOS (x64, arm64) and Windows (x64). They speak LSP and MCP over stdio, so other
+The language server, `cimlsp`, and the MCP server, `cimmcp`, are bundled for Linux (x64),
+macOS (Apple silicon) and Windows (x64). They speak LSP and MCP over stdio, so other
 editors and chat clients can use them too — e.g. `claude mcp add cimoxide -- cimmcp --dir .`
 for Claude Code. The extension needs VS Code 1.101 or later.
