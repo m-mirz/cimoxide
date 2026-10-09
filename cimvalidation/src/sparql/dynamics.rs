@@ -14,7 +14,8 @@ pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
     v.extend(check_rotating_machine_saturation(dataset));
     v.extend(check_synchronous_machine_simplified_attributes(dataset));
     v.extend(check_gov_steam_fv3_t5(dataset));
-    v.extend(check_dynamics_associations(dataset));
+    // TurbineGovernorDynamics and MechanicalLoadDynamics "associationsCondition"
+    // are `sh:xone` node shapes, which the CGMES shape table runs.
     v
 }
 
@@ -76,11 +77,16 @@ fn check_smtcr_model_type(dataset: &CimDataset) -> Vec<Violation> {
         let mt = match obj.enumeration("SynchronousMachineTimeConstantReactance.modelType") { Some(r) => r, None => continue };
         let rt = match obj.enumeration("SynchronousMachineTimeConstantReactance.rotorType") { Some(r) => r, None => continue };
 
+        // As the SPARQL: an optional factor that is absent compares as an
+        // error, so only a given, non-zero one counts.
+        let nonzero = |key: &str| obj.f64(key).is_some_and(|x| x != 0.0);
         if mt == SUBTRANS_SIMPLIFIED && rt == ROUND_ROTOR {
-            if obj.f64("RotatingMachineDynamics.statorResistance").unwrap_or(0.0) != 0.0 ||
-               obj.f64("SynchronousMachineDetailed.saturationFactorQAxis").unwrap_or(0.0) != 0.0 ||
-               obj.f64("SynchronousMachineDetailed.saturationFactor120QAxis").unwrap_or(0.0) != 0.0
-            {
+            // The stator resistance is a required pattern: without it, nothing.
+            if obj.f64("RotatingMachineDynamics.statorResistance").is_some_and(|r| {
+                r != 0.0
+                    || nonzero("SynchronousMachineDetailed.saturationFactorQAxis")
+                    || nonzero("SynchronousMachineDetailed.saturationFactor120QAxis")
+            }) {
                 v.push(Violation {
                     object_id:   mrid.clone(),
                     rule_id:     "dy457:SynchronousMachineTimeConstantReactance-modelType-SubtransientRoundRotorSimplified".into(),
@@ -93,12 +99,17 @@ fn check_smtcr_model_type(dataset: &CimDataset) -> Vec<Violation> {
                 });
             }
         } else if mt == SUBTRANS && rt == ROUND_ROTOR {
-            if obj.f64("SynchronousMachineDetailed.saturationFactorQAxis").unwrap_or(0.0) == 0.0 ||
-               obj.f64("SynchronousMachineDetailed.saturationFactor120QAxis").unwrap_or(0.0) == 0.0 ||
-               obj.f64("RotatingMachineDynamics.saturationFactor").unwrap_or(0.0) == 0.0 ||
-               obj.f64("RotatingMachineDynamics.saturationFactor120").unwrap_or(0.0) == 0.0 ||
-               obj.f64("SynchronousMachineTimeConstantReactance.xQuadTrans").unwrap_or(0.0) == 0.0 ||
-               obj.f64("SynchronousMachineTimeConstantReactance.tpqo").unwrap_or(0.0) == 0.0
+            // Any of them absent (`!bound`); zero is a value.
+            if [
+                "SynchronousMachineDetailed.saturationFactorQAxis",
+                "SynchronousMachineDetailed.saturationFactor120QAxis",
+                "RotatingMachineDynamics.saturationFactor",
+                "RotatingMachineDynamics.saturationFactor120",
+                "SynchronousMachineTimeConstantReactance.xQuadTrans",
+                "SynchronousMachineTimeConstantReactance.tpqo",
+            ]
+            .iter()
+            .any(|k| !obj.has(k))
             {
                 v.push(Violation {
                     object_id:   mrid.clone(),
@@ -112,8 +123,8 @@ fn check_smtcr_model_type(dataset: &CimDataset) -> Vec<Violation> {
                 });
             }
         } else if mt == SUBTRANS && rt == SALIENT_POLE
-            && (obj.f64("SynchronousMachineDetailed.saturationFactorQAxis").unwrap_or(0.0) != 0.0 ||
-               obj.f64("SynchronousMachineDetailed.saturationFactor120QAxis").unwrap_or(0.0) != 0.0)
+            && (nonzero("SynchronousMachineDetailed.saturationFactorQAxis")
+                || nonzero("SynchronousMachineDetailed.saturationFactor120QAxis"))
             {
                 v.push(Violation {
                     object_id:   mrid.clone(),
@@ -133,13 +144,13 @@ fn check_smtcr_model_type(dataset: &CimDataset) -> Vec<Violation> {
 // -- TurbineGovernorDynamics mwbase check --
 
 fn check_turbine_governor_mbase(dataset: &CimDataset) -> Vec<Violation> {
-    // Each class declares its own mwbase.
+    // Each class declares its own mwbase; the shape's targets.
     const GOVERNORS: &[&str] = &[
         "GovCT1", "GovCT2", "GovGAST", "GovGAST1", "GovGAST2", "GovGASTWD",
         "GovHydro1", "GovHydro2", "GovHydro3", "GovHydro4", "GovHydroDD",
         "GovHydroIEEE0", "GovHydroIEEE2", "GovHydroPID", "GovHydroPID2",
         "GovHydroR", "GovHydroWEH", "GovHydroWPID",
-        "GovSteam0", "GovSteam1", "GovSteamEU",
+        "GovSteam0", "GovSteam1", "GovSteamCC", "GovSteamEU",
         "GovSteamFV2", "GovSteamFV3", "GovSteamIEEE1", "GovSteamSGO",
     ];
     let mut v = Vec::new();
@@ -147,7 +158,6 @@ fn check_turbine_governor_mbase(dataset: &CimDataset) -> Vec<Violation> {
         let mwbase_key = format!("{class}.mwbase");
         for mrid in dataset.by_type.get(*class).into_iter().flatten() {
             let Some(obj) = Fields::of_class(&dataset.entries[mrid], class) else { continue };
-            let mwbase = match obj.f64(&mwbase_key) { Some(v) if v != 0.0 => v, _ => continue };
             let smd_id = match obj.reference("TurbineGovernorDynamics.SynchronousMachineDynamics") {
                 Some(r) => r.trim_start_matches('#').to_string(), None => continue,
             };
@@ -156,22 +166,30 @@ fn check_turbine_governor_mbase(dataset: &CimDataset) -> Vec<Violation> {
                 Some(s) => s.trim_start_matches('#').to_string(),
                 None => continue,
             };
-            let sm = match Fields::get(dataset, &sm_id, "SynchronousMachine") { Some(o) => o, None => continue };
-            let rated_pf = sm.f64("RotatingMachine.ratedPowerFactor").unwrap_or(0.0);
-            let rated_s  = sm.f64("RotatingMachine.ratedS").unwrap_or(0.0);
-            let expected = rated_pf * rated_s;
-            if (mwbase - expected).abs() > 0.001 {
-                v.push(Violation {
-                    object_id:   mrid.clone(),
-                    rule_id:     "dyn457:TurbineGovernorDynamics-mbaseEquation".into(),
-                    name:        "C:457:DY:mwbase:equation".into(),
-                    class:       class.to_string(),
-                    property:    "mwbase".into(),
-                    message:     format!("The value {mwbase} does not equal RotatingMachine.ratedPowerFactor * RotatingMachine.ratedS ({expected})."),
-                    severity:    "sh:Violation".into(),
-                    description: String::new(),
-                });
-            }
+            // A machine the dataset does not hold is unknown, not missing its
+            // ratings — DY is validated without EQ.
+            let Some(sm) = dataset.entries.get(&sm_id).map(Fields::of) else { continue };
+            let message = match (sm.f64("RotatingMachine.ratedPowerFactor"), sm.f64("RotatingMachine.ratedS")) {
+                // The SPARQL reports a missing rating whatever mwbase is.
+                (None, _) | (_, None) => "Either both or one of RotatingMachine.ratedPowerFactor and RotatingMachine.ratedS are not defined.".to_string(),
+                (Some(pf), Some(s)) => match obj.f64(&mwbase_key) {
+                    Some(mwbase) if (mwbase - pf * s).abs() > 0.001 => format!(
+                        "The value {mwbase} does not equal RotatingMachine.ratedPowerFactor * RotatingMachine.ratedS ({}).",
+                        pf * s
+                    ),
+                    _ => continue,
+                },
+            };
+            v.push(Violation {
+                object_id:   mrid.clone(),
+                rule_id:     "dyn457:TurbineGovernorDynamics-mbaseEquation".into(),
+                name:        "C:457:DY:mwbase:equation".into(),
+                class:       class.to_string(),
+                property:    "mwbase".into(),
+                message,
+                severity:    "sh:Violation".into(),
+                description: String::new(),
+            });
         }
     }
     v
@@ -179,13 +197,15 @@ fn check_turbine_governor_mbase(dataset: &CimDataset) -> Vec<Violation> {
 
 // -- ExcitationSystem gain checks --
 
+/// Each SPARQL binds both values as required patterns: an absent gain or time
+/// constant is no violation.
 fn check_excitation_system_gains(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
 
     for mrid in dataset.by_type.get("ExcAC8B").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(obj) = Fields::of_class(entry, "ExcAC8B")
-            && obj.f64("ExcAC8B.kir").unwrap_or(0.0) == 0.0 && obj.f64("ExcAC8B.kpr").unwrap_or(0.0) <= 0.0 {
+            && obj.f64("ExcAC8B.kir") == Some(0.0) && obj.f64("ExcAC8B.kpr").is_some_and(|x| x <= 0.0) {
                 v.push(dyn_viol(mrid, "dyu:ExcAC8B.kpr-valueRange", "C:302:DY:ExcAC8B.kpr:valueRange",
                     "ExcAC8B", "ExcAC8B.kpr", "The value negative or zero when ExcAC8B.kir = 0."));
             }
@@ -193,7 +213,7 @@ fn check_excitation_system_gains(dataset: &CimDataset) -> Vec<Violation> {
     for mrid in dataset.by_type.get("ExcIEEEAC8B").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(obj) = Fields::of_class(entry, "ExcIEEEAC8B")
-            && obj.f64("ExcIEEEAC8B.kir").unwrap_or(0.0) == 0.0 && obj.f64("ExcIEEEAC8B.kpr").unwrap_or(0.0) <= 0.0 {
+            && obj.f64("ExcIEEEAC8B.kir") == Some(0.0) && obj.f64("ExcIEEEAC8B.kpr").is_some_and(|x| x <= 0.0) {
                 v.push(dyn_viol(mrid, "dyu:ExcIEEEAC8B.kpr-valueRange", "C:302:DY:ExcIEEEAC8B.kpr:valueRange",
                     "ExcIEEEAC8B", "ExcIEEEAC8B.kpr", "The value negative or zero when ExcIEEEAC8B.kir = 0."));
             }
@@ -201,11 +221,11 @@ fn check_excitation_system_gains(dataset: &CimDataset) -> Vec<Violation> {
     for mrid in dataset.by_type.get("ExcIEEEAC7B").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(obj) = Fields::of_class(entry, "ExcIEEEAC7B") {
-            if obj.f64("ExcIEEEAC7B.kia").unwrap_or(0.0) == 0.0 && obj.f64("ExcIEEEAC7B.kpa").unwrap_or(0.0) <= 0.0 {
+            if obj.f64("ExcIEEEAC7B.kia") == Some(0.0) && obj.f64("ExcIEEEAC7B.kpa").is_some_and(|x| x <= 0.0) {
                 v.push(dyn_viol(mrid, "dyu:ExcIEEEAC7B.kpa-valueRange", "C:302:DY:ExcIEEEAC7B.kpa:valueRange",
                     "ExcIEEEAC7B", "ExcIEEEAC7B.kpa", "The value negative or zero when ExcIEEEAC7B.kia = 0."));
             }
-            if obj.f64("ExcIEEEAC7B.kir").unwrap_or(0.0) == 0.0 && obj.f64("ExcIEEEAC7B.kpr").unwrap_or(0.0) <= 0.0 {
+            if obj.f64("ExcIEEEAC7B.kir") == Some(0.0) && obj.f64("ExcIEEEAC7B.kpr").is_some_and(|x| x <= 0.0) {
                 v.push(dyn_viol(mrid, "dyu:ExcIEEEAC7B.kpr-valueRange", "C:302:DY:ExcIEEEAC7B.kpr:valueRange",
                     "ExcIEEEAC7B", "ExcIEEEAC7B.kpr", "The value negative or zero when ExcIEEEAC7B.kir = 0."));
             }
@@ -214,7 +234,7 @@ fn check_excitation_system_gains(dataset: &CimDataset) -> Vec<Violation> {
     for mrid in dataset.by_type.get("ExcBBC").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(obj) = Fields::of_class(entry, "ExcBBC")
-            && obj.f64("ExcBBC.k").unwrap_or(0.0) == 0.0 {
+            && obj.f64("ExcBBC.k") == Some(0.0) {
                 v.push(dyn_viol(mrid, "dyu:ExcBBC.k-valueRange", "C:302:DY:ExcBBC.k:valueRange",
                     "ExcBBC", "ExcBBC.k", "The value is 0."));
             }
@@ -222,7 +242,7 @@ fn check_excitation_system_gains(dataset: &CimDataset) -> Vec<Violation> {
     for mrid in dataset.by_type.get("ExcIEEEDC4B").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(obj) = Fields::of_class(entry, "ExcIEEEDC4B")
-            && obj.f64("ExcIEEEDC4B.kd").unwrap_or(0.0) > 0.0 && obj.f64("ExcIEEEDC4B.td").unwrap_or(0.0) <= 0.0 {
+            && obj.f64("ExcIEEEDC4B.kd").is_some_and(|x| x > 0.0) && obj.f64("ExcIEEEDC4B.td").is_some_and(|x| x <= 0.0) {
                 v.push(dyn_viol(mrid, "dyu:ExcIEEEDC4B.td-valueRange", "C:302:DY:ExcIEEEDC4B.td:valueRange",
                     "ExcIEEEDC4B", "ExcIEEEDC4B.td", "The value negative or zero when ExcIEEEDC4B.kd > 0."));
             }
@@ -230,7 +250,7 @@ fn check_excitation_system_gains(dataset: &CimDataset) -> Vec<Violation> {
     for mrid in dataset.by_type.get("ExcSEXS").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(obj) = Fields::of_class(entry, "ExcSEXS")
-            && obj.f64("ExcSEXS.tc").unwrap_or(0.0) > 0.0 && obj.f64("ExcSEXS.kc").unwrap_or(0.0) <= 0.0 {
+            && obj.f64("ExcSEXS.tc").is_some_and(|x| x > 0.0) && obj.f64("ExcSEXS.kc").is_some_and(|x| x <= 0.0) {
                 v.push(dyn_viol(mrid, "dyu:ExcSEXS.kc-valueRange", "C:302:DY:ExcSEXS.kc:valueRange",
                     "ExcSEXS", "ExcSEXS.kc", "The value negative or zero when ExcSEXS.tc > 0."));
             }
@@ -243,7 +263,7 @@ fn check_gov_steam_fv3_t5(dataset: &CimDataset) -> Vec<Violation> {
     for mrid in dataset.by_type.get("GovSteamFV3").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(obj) = Fields::of_class(entry, "GovSteamFV3")
-            && obj.f64("GovSteamFV3.t5").unwrap_or(0.0) < 0.0 {
+            && obj.f64("GovSteamFV3.t5").is_some_and(|t5| t5 < 0.0) {
                 v.push(dyn_viol(mrid, "dyu:GovSteamFV3.t5-valueRange", "C:302:DY:GovSteamFV3.t5:valueRange",
                     "GovSteamFV3", "GovSteamFV3.t5", "The value is negative."));
             }
@@ -299,72 +319,47 @@ fn check_gov_hydro4_gain_points(dataset: &CimDataset) -> Vec<Violation> {
             Some(o) => o, None => continue,
         };
         let m = match obj.enumeration("GovHydro4.model") { Some(r) => r, None => continue };
+        let f = |key: &str| obj.f64(&format!("GovHydro4.{key}"));
+        let mut report = |prop: &str, message: &str| {
+            v.push(dyn_viol(mrid, &format!("dyu:GovHydro4.{prop}-valueRange"), &format!("C:302:DY:GovHydro4.{prop}:valueRange"),
+                "GovHydro4", &format!("GovHydro4.{prop}"), message));
+        };
+        // Each rule needs its own value given; an absent one is no violation.
+        let nonzero = |key: &str| f(key).is_some_and(|x| x != 0.0);
 
-        let f = |key: &str| obj.f64(&format!("GovHydro4.{key}")).unwrap_or(0.0);
-        if m == SIMPLE {
-            for (val, prop, rule_id, name) in [
-                (f("bmax"),  "bmax",  "dyu:GovHydro4.bmax-valueRange",  "C:302:DY:GovHydro4.bmax:valueRange"),
-                (f("bgv0"),  "bgv0",  "dyu:GovHydro4.bgv0-valueRange",  "C:302:DY:GovHydro4.bgv0:valueRange"),
-                (f("bgv1"),  "bgv1",  "dyu:GovHydro4.bgv1-valueRange",  "C:302:DY:GovHydro4.bgv1:valueRange"),
-                (f("bgv2"),  "bgv2",  "dyu:GovHydro4.bgv2-valueRange",  "C:302:DY:GovHydro4.bgv2:valueRange"),
-                (f("bgv3"),  "bgv3",  "dyu:GovHydro4.bgv3-valueRange",  "C:302:DY:GovHydro4.bgv3:valueRange"),
-                (f("bgv4"),  "bgv4",  "dyu:GovHydro4.bgv4-valueRange",  "C:302:DY:GovHydro4.bgv4:valueRange"),
-                (f("bgv5"),  "bgv5",  "dyu:GovHydro4.bgv5-valueRange",  "C:302:DY:GovHydro4.bgv5:valueRange"),
-                (f("gv0"),   "gv0",   "dyu:GovHydro4.gv0-valueRange",   "C:302:DY:GovHydro4.gv0:valueRange"),
-                (f("gv1"),   "gv1",   "dyu:GovHydro4.gv1-valueRange",   "C:302:DY:GovHydro4.gv1:valueRange"),
-                (f("gv2"),   "gv2",   "dyu:GovHydro4.gv2-valueRange",   "C:302:DY:GovHydro4.gv2:valueRange"),
-                (f("gv3"),   "gv3",   "dyu:GovHydro4.gv3-valueRange",   "C:302:DY:GovHydro4.gv3:valueRange"),
-                (f("gv4"),   "gv4",   "dyu:GovHydro4.gv4-valueRange",   "C:302:DY:GovHydro4.gv4:valueRange"),
-                (f("gv5"),   "gv5",   "dyu:GovHydro4.gv5-valueRange",   "C:302:DY:GovHydro4.gv5:valueRange"),
-                (f("pgv0"),  "pgv0",  "dyu:GovHydro4.pgv0-valueRange",  "C:302:DY:GovHydro4.pgv0:valueRange"),
-                (f("pgv1"),  "pgv1",  "dyu:GovHydro4.pgv1-valueRange",  "C:302:DY:GovHydro4.pgv1:valueRange"),
-                (f("pgv2"),  "pgv2",  "dyu:GovHydro4.pgv2-valueRange",  "C:302:DY:GovHydro4.pgv2:valueRange"),
-                (f("pgv3"),  "pgv3",  "dyu:GovHydro4.pgv3-valueRange",  "C:302:DY:GovHydro4.pgv3:valueRange"),
-                (f("pgv4"),  "pgv4",  "dyu:GovHydro4.pgv4-valueRange",  "C:302:DY:GovHydro4.pgv4:valueRange"),
-                (f("pgv5"),  "pgv5",  "dyu:GovHydro4.pgv5-valueRange",  "C:302:DY:GovHydro4.pgv5:valueRange"),
-            ] {
-                if val != 0.0 {
-                    v.push(dyn_viol(mrid, rule_id, name, "GovHydro4", &format!("GovHydro4.{prop}"),
-                        "The value is not 0 when GovHydro4.model is simple."));
+        // Zero under the simple model (and, for bmax and the bgv points, the
+        // Francis–Pelton one too).
+        let zero_for_fp = ["bmax", "bgv0", "bgv1", "bgv2", "bgv3", "bgv4", "bgv5"];
+        let zero_for_simple = ["gv0", "pgv0", "pgv1", "pgv2", "pgv3", "pgv4", "pgv5"];
+        for key in zero_for_fp {
+            if (m == SIMPLE || m == FRANCIS_PELTON) && nonzero(key) {
+                report(key, &format!("The value is not 0 when GovHydro4.model is {}.", if m == SIMPLE { "simple" } else { "francisPelton" }));
+            }
+        }
+        for key in zero_for_simple {
+            if m == SIMPLE && nonzero(key) {
+                report(key, "The value is not 0 when GovHydro4.model is simple.");
+            }
+        }
+        // gv1–gv5 bind the previous point as a required pattern, under every
+        // model: without it, nothing.
+        for (key, prev) in [("gv1", "gv0"), ("gv2", "gv1"), ("gv3", "gv2"), ("gv4", "gv3"), ("gv5", "gv4")] {
+            let (Some(value), Some(prev_value)) = (f(key), f(prev)) else { continue };
+            if m == SIMPLE {
+                if value != 0.0 {
+                    report(key, "The value is not 0 when GovHydro4.model is simple.");
                 }
-            }
-        } else if m == FRANCIS_PELTON || m == KAPLAN {
-            if m == FRANCIS_PELTON && f("bmax") != 0.0 {
-                v.push(dyn_viol(mrid, "dyu:GovHydro4.bmax-valueRange", "C:302:DY:GovHydro4.bmax:valueRange",
-                    "GovHydro4", "GovHydro4.bmax",
-                    "The value is not 0 when GovHydro4.model is francisPelton."));
-            }
-            if m == FRANCIS_PELTON {
-                for (val, prop, rule_id, name) in [
-                    (f("bgv0"), "bgv0", "dyu:GovHydro4.bgv0-valueRange", "C:302:DY:GovHydro4.bgv0:valueRange"),
-                    (f("bgv1"), "bgv1", "dyu:GovHydro4.bgv1-valueRange", "C:302:DY:GovHydro4.bgv1:valueRange"),
-                    (f("bgv2"), "bgv2", "dyu:GovHydro4.bgv2-valueRange", "C:302:DY:GovHydro4.bgv2:valueRange"),
-                    (f("bgv3"), "bgv3", "dyu:GovHydro4.bgv3-valueRange", "C:302:DY:GovHydro4.bgv3:valueRange"),
-                    (f("bgv4"), "bgv4", "dyu:GovHydro4.bgv4-valueRange", "C:302:DY:GovHydro4.bgv4:valueRange"),
-                    (f("bgv5"), "bgv5", "dyu:GovHydro4.bgv5-valueRange", "C:302:DY:GovHydro4.bgv5:valueRange"),
-                ] {
-                    if val != 0.0 {
-                        v.push(dyn_viol(mrid, rule_id, name, "GovHydro4", &format!("GovHydro4.{prop}"),
-                            "The value is not 0 when GovHydro4.model is francisPelton."));
+            } else if m == FRANCIS_PELTON || m == KAPLAN {
+                // gv5 also stays below 1. Its SPARQL joins the two bounds
+                // with `&&`, which no value can fail; this is the rule its
+                // description states.
+                if key == "gv5" {
+                    if value <= prev_value || value >= 1.0 {
+                        report(key, "The value is either not greater than GovHydro4.gv4 or it is not less than 1 when GovHydro4.model is francisPelton or kaplan.");
                     }
+                } else if value <= prev_value {
+                    report(key, &format!("The value is not greater than GovHydro4.{prev} when GovHydro4.model is francisPelton or kaplan."));
                 }
-            }
-            for (val, prev, prop, rule_id, name) in [
-                (f("gv1"), f("gv0"), "gv1", "dyu:GovHydro4.gv1-valueRange", "C:302:DY:GovHydro4.gv1:valueRange"),
-                (f("gv2"), f("gv1"), "gv2", "dyu:GovHydro4.gv2-valueRange", "C:302:DY:GovHydro4.gv2:valueRange"),
-                (f("gv3"), f("gv2"), "gv3", "dyu:GovHydro4.gv3-valueRange", "C:302:DY:GovHydro4.gv3:valueRange"),
-                (f("gv4"), f("gv3"), "gv4", "dyu:GovHydro4.gv4-valueRange", "C:302:DY:GovHydro4.gv4:valueRange"),
-            ] {
-                if val <= prev {
-                    v.push(dyn_viol(mrid, rule_id, name, "GovHydro4", &format!("GovHydro4.{prop}"),
-                        &format!("The value is not greater than GovHydro4.{} when GovHydro4.model is francisPelton or kaplan.", &prop[..prop.len()-1])));
-                }
-            }
-            let gv5 = f("gv5");
-            if gv5 <= f("gv4") || gv5 >= 1.0 {
-                v.push(dyn_viol(mrid, "dyu:GovHydro4.gv5-valueRange", "C:302:DY:GovHydro4.gv5:valueRange",
-                    "GovHydro4", "GovHydro4.gv5",
-                    "The value is either not greater than GovHydro4.gv4 or it is not less than 1 when GovHydro4.model is francisPelton or kaplan."));
             }
         }
     }
@@ -386,49 +381,40 @@ fn check_load_static_model_attributes(dataset: &CimDataset) -> Vec<Violation> {
             Some(o) => o, None => continue,
         };
         let m = match obj.enumeration("LoadStatic.staticLoadModelType") { Some(r) => r, None => continue };
-        let f = |key: &str| obj.f64(&format!("LoadStatic.{key}")).unwrap_or(0.0);
+        // Presence, as the SPARQL's `bound(..)`: a coefficient given as 0 is given.
+        let has = |keys: &[&str]| keys.iter().filter(|k| obj.has(&format!("LoadStatic.{k}"))).count();
+        let any = |keys: &[&str]| has(keys) > 0;
+        let all = |keys: &[&str]| has(keys) == keys.len();
+        const KP: [&str; 4] = ["kp1", "kp2", "kp3", "kpf"];
+        const KQ: [&str; 4] = ["kq1", "kq2", "kq3", "kqf"];
+        const E: [&str; 6] = ["ep1", "ep2", "ep3", "eq1", "eq2", "eq3"];
+        const K4: [&str; 2] = ["kp4", "kq4"];
 
-        if m == CONSTANT_Z {
-            if f("kp1")!=0.0 || f("kp2")!=0.0 || f("kp3")!=0.0 || f("kp4")!=0.0 || f("kpf")!=0.0 ||
-               f("kq1")!=0.0 || f("kq2")!=0.0 || f("kq3")!=0.0 || f("kq4")!=0.0 || f("kqf")!=0.0 ||
-               f("ep1")!=0.0 || f("ep2")!=0.0 || f("ep3")!=0.0 ||
-               f("eq1")!=0.0 || f("eq2")!=0.0 || f("eq3")!=0.0
-            {
-                v.push(dyn_viol(mrid,
-                    "dyu:LoadStatic.staticLoadModelType-constantZ",
-                    "C:302:DY:StaticLoadModelKind.constantZ:requiredAttributes",
-                    "LoadStatic", "LoadStatic.staticLoadModelType",
-                    "The load is represented as a constant impedance but other properties (attributes) are defined."));
-            }
+        let (rule, name, message, fails) = if m == CONSTANT_Z {
+            ("constantZ", "constantZ",
+             "The load is represented as a constant impedance but other properties (attributes) are defined.",
+             any(&KP) || any(&KQ) || any(&E) || any(&K4))
         } else if m == EXPONENTIAL {
-            if f("kp4")!=0.0 || f("kq4")!=0.0 {
-                v.push(dyn_viol(mrid,
-                    "dyu:LoadStatic.staticLoadModelType-exponental",
-                    "C:302:DY:StaticLoadModelKind.exponential:requiredAttributes",
-                    "LoadStatic", "LoadStatic.staticLoadModelType",
-                    "Unnecessary properties defined for exponential model type (kp4/kq4)."));
-            }
+            ("exponental", "exponential",
+             "Required properties (attributes) for exponential model type are not defined or there are unnecessary properties defined.",
+             !(all(&KP) && all(&KQ) && all(&E)) || any(&K4))
         } else if m == ZIP1 {
-            if f("ep1")!=0.0 || f("ep2")!=0.0 || f("ep3")!=0.0 ||
-               f("eq1")!=0.0 || f("eq2")!=0.0 || f("eq3")!=0.0 ||
-               f("kp4")!=0.0 || f("kq4")!=0.0
-            {
-                v.push(dyn_viol(mrid,
-                    "dyu:LoadStatic.staticLoadModelType-zIP1",
-                    "C:302:DY:StaticLoadModelKind.zIP1:requiredAttributes",
-                    "LoadStatic", "LoadStatic.staticLoadModelType",
-                    "Unnecessary properties defined for zIP1 model type."));
-            }
-        } else if m == ZIP2
-            && (f("ep1")!=0.0 || f("ep2")!=0.0 || f("ep3")!=0.0 ||
-               f("eq1")!=0.0 || f("eq2")!=0.0 || f("eq3")!=0.0)
-            {
-                v.push(dyn_viol(mrid,
-                    "dyu:LoadStatic.staticLoadModelType-zIP2",
-                    "C:302:DY:StaticLoadModelKind.zIP2:requiredAttributes",
-                    "LoadStatic", "LoadStatic.staticLoadModelType",
-                    "Unnecessary properties defined for zIP2 model type."));
-            }
+            ("zIP1", "zIP1",
+             "Required properties (attributes) for zIP1 model type are not defined or there are unnecessary properties defined.",
+             !(all(&KP) && all(&KQ)) || any(&E) || any(&K4))
+        } else if m == ZIP2 {
+            ("zIP2", "zIP2",
+             "Required properties (attributes) for zIP2 model type are not defined or there are unnecessary properties defined.",
+             !(all(&KP) && all(&KQ) && all(&K4)) || any(&E))
+        } else {
+            continue;
+        };
+        if fails {
+            v.push(dyn_viol(mrid,
+                &format!("dyu:LoadStatic.staticLoadModelType-{rule}"),
+                &format!("C:302:DY:StaticLoadModelKind.{name}:requiredAttributes"),
+                "LoadStatic", "LoadStatic.staticLoadModelType", message));
+        }
     }
     v
 }
@@ -476,9 +462,8 @@ fn check_synchronous_machine_simplified_attributes(dataset: &CimDataset) -> Vec<
         let obj = match Fields::of_class(entry, "SynchronousMachineSimplified") {
             Some(o) => o, None => continue,
         };
-        if obj.f64("RotatingMachineDynamics.saturationFactor").unwrap_or(0.0) != 0.0 ||
-           obj.f64("RotatingMachineDynamics.saturationFactor120").unwrap_or(0.0) != 0.0
-        {
+        // Either factor given at all (`bound`), zero included.
+        if obj.has("RotatingMachineDynamics.saturationFactor") || obj.has("RotatingMachineDynamics.saturationFactor120") {
             v.push(Violation {
                 object_id:   mrid.clone(),
                 rule_id:     "dyu:SynchronousMachineSimplified-requiredAttributes".into(),
@@ -489,48 +474,6 @@ fn check_synchronous_machine_simplified_attributes(dataset: &CimDataset) -> Vec<
                 severity:    "sh:Violation".into(),
                 description: String::new(),
             });
-        }
-    }
-    v
-}
-
-// -- Dynamics associations check --
-
-fn check_dynamics_associations(dataset: &CimDataset) -> Vec<Violation> {
-    const GOVERNORS: &[&str] = &[
-        "GovCT1", "GovCT2", "GovGAST", "GovGAST1", "GovGAST2", "GovGAST3", "GovGAST4", "GovGASTWD",
-        "GovHydro1", "GovHydro2", "GovHydro3", "GovHydro4", "GovHydroDD", "GovHydroFrancis",
-        "GovHydroIEEE0", "GovHydroIEEE2", "GovHydroPID", "GovHydroPID2", "GovHydroPelton",
-        "GovHydroR", "GovHydroWEH", "GovHydroWPID",
-        "GovSteam0", "GovSteam1", "GovSteam2", "GovSteamBB", "GovSteamEU",
-        "GovSteamFV2", "GovSteamFV3", "GovSteamFV4", "GovSteamIEEE1", "GovSteamSGO",
-    ];
-    const MECHANICAL_LOADS: &[&str] = &["MechLoad1", "MechanicalLoadUserDefined"];
-    let mut v = Vec::new();
-    for (classes, base, rule_id, name) in [
-        (GOVERNORS, "TurbineGovernorDynamics", "dyu:TurbineGovernorDynamics",
-         "C:302:DY:TurbineGovernorDynamics:associationsCondition"),
-        (MECHANICAL_LOADS, "MechanicalLoadDynamics", "dyu:MechanicalLoadDynamics",
-         "C:302:DY:MechanicalLoadDynamics:associationsCondition"),
-    ] {
-        let sync_key = format!("{base}.SynchronousMachineDynamics");
-        let async_key = format!("{base}.AsynchronousMachineDynamics");
-        for class in classes {
-            for mrid in dataset.by_type.get(*class).into_iter().flatten() {
-                let Some(obj) = Fields::of_class(&dataset.entries[mrid], class) else { continue };
-                if obj.reference(&sync_key).is_none() && obj.reference(&async_key).is_none() {
-                    v.push(Violation {
-                        object_id:   mrid.clone(),
-                        rule_id:     rule_id.into(),
-                        name:        name.into(),
-                        class:       class.to_string(),
-                        property:    "rdf:type".into(),
-                        message:     "Required association to either SynchronousMachineDynamics or to AsynchronousMachineDynamics is missing.".into(),
-                        severity:    "sh:Violation".into(),
-                        description: String::new(),
-                    });
-                }
-            }
         }
     }
     v

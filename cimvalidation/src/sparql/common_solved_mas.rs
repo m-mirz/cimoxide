@@ -18,7 +18,6 @@ pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
     const ON_TOPOLOGY: &[OnTopology] = &[
         check_angle_reference,
         check_state_variables_instantiated,
-        check_sv_status_instance,
         check_sv_shunt_compensator_sections_instance,
         check_sv_tap_step_instance,
         check_regulating_control_same_island,
@@ -153,6 +152,35 @@ fn check_angle_reference(dataset: &CimDataset, topo: &Topology) -> Vec<Violation
     v
 }
 
+/// The equipment whose `SvStatus.inService` is `true` — the
+/// `^cim:SvStatus.ConductingEquipment/cim:SvStatus.inService true` the SV rules
+/// start from.
+fn sv_in_service(dataset: &CimDataset) -> HashSet<&str> {
+    dataset
+        .by_type
+        .get("SvStatus")
+        .into_iter()
+        .flatten()
+        .filter_map(|m| Fields::of_class(&dataset.entries[m], "SvStatus"))
+        .filter(|svs| svs.bool("SvStatus.inService") == Some(true))
+        .filter_map(|svs| svs.reference("SvStatus.ConductingEquipment"))
+        .map(|r| r.trim_start_matches('#'))
+        .collect()
+}
+
+/// The PowerTransformer a tap changer's end belongs to. The SPARQL steps
+/// `cim:TransformerEnd.PowerTransformer`, which CGMES 3.0 does not define, so as
+/// written it never matches; the attribute is `PowerTransformerEnd.PowerTransformer`.
+fn tap_changer_transformer<'a>(dataset: &'a CimDataset, tc: &'a cimmodel::Element) -> Option<&'a str> {
+    let f = Fields::of(tc);
+    let end = f.reference("RatioTapChanger.TransformerEnd").or_else(|| f.reference("PhaseTapChanger.TransformerEnd"))?;
+    let end = dataset.entries.get(end.trim_start_matches('#'))?;
+    Fields::of(end).reference("PowerTransformerEnd.PowerTransformer").map(|r| r.trim_start_matches('#'))
+}
+
+const TAP_CHANGERS: [&str; 5] = ["RatioTapChanger", "PhaseTapChangerLinear", "PhaseTapChangerSymmetrical",
+    "PhaseTapChangerAsymmetrical", "PhaseTapChangerTabular"];
+
 /// A reference that names a CIM object this dataset does not hold.
 ///
 /// The SPARQL matches `urn:uuid:…` and IRIs with a `#_…` fragment. The decoder
@@ -246,18 +274,23 @@ fn check_state_variables_instantiated(dataset: &CimDataset, topo: &Topology) -> 
                 sw_has_sv_switch.insert(r.trim_start_matches('#').to_string());
             }
     }
-    for mrid in dataset.by_type.get("Switch").into_iter().flatten() {
+    // Every switch class the shape targets, in service as the SV states it.
+    let in_service = sv_in_service(dataset);
+    const SWITCHES: [&str; 9] = ["Switch", "Fuse", "GroundDisconnector", "Jumper", "Breaker",
+        "DisconnectingCircuitBreaker", "LoadBreakSwitch", "Disconnector", "Cut"];
+    for class in SWITCHES {
+    for mrid in dataset.by_type.get(class).into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(sw) = Fields::of_class(entry, "Switch") {
-            if !sw.bool("Switch.retained").unwrap_or(false) { continue; }
-            if !sw.bool("Equipment.inService").unwrap_or(false) { continue; }
+        if let Some(sw) = Fields::of_class(entry, class) {
+            if sw.bool("Switch.retained") != Some(true) { continue; }
+            if !in_service.contains(mrid.as_str()) { continue; }
             if !topo.energized(mrid) { continue; }
             if !sw_has_sv_switch.contains(mrid) {
                 v.push(Violation {
                     object_id:   mrid.clone(),
                     rule_id:     "sm600:SvSwitch-SV__4".into(),
                     name:        "C:600:SV:SvSwitch:SV__4".into(),
-                    class:       "Switch".into(),
+                    class:       class.into(),
                     property:    "rdf:type".into(),
                     message:     "SvSwitch not instantiated for energized retained Switch.".into(),
                     severity:    "sh:Violation".into(),
@@ -265,6 +298,7 @@ fn check_state_variables_instantiated(dataset: &CimDataset, topo: &Topology) -> 
                 });
             }
         }
+    }
     }
 
     // 3. SvStatus for all energized ConductingEquipment
@@ -296,186 +330,129 @@ fn check_state_variables_instantiated(dataset: &CimDataset, topo: &Topology) -> 
     v
 }
 
+/// `C:452:EQ:RegulatingControl:samePoint`: on one TopologicalNode, the enabled
+/// controls of one mode must agree on their target. Every control on the node
+/// with a target value is reported, as the SPARQL's `?rcfail`.
 fn check_regulating_control_contradictory(dataset: &CimDataset) -> Vec<Violation> {
-    // group by (termID, modeURI) → Vec<(rc_id, target_value)>
-    let mut groups: HashMap<(String, String), Vec<(String, f64)>> = HashMap::default();
+    let node_of = |rc: &Fields| -> Option<&str> {
+        let term = rc.reference("RegulatingControl.Terminal")?.trim_start_matches('#');
+        let t = Fields::get(dataset, term, "Terminal")?;
+        t.reference("Terminal.TopologicalNode").map(|r| r.trim_start_matches('#'))
+    };
+    // TopologicalNode → its controls with a target value; and, per (node, mode),
+    // the targets of the enabled ones.
+    let mut on_node: HashMap<&str, Vec<&String>> = HashMap::default();
+    let mut targets: HashMap<(&str, &str), Vec<f64>> = HashMap::default();
     for mrid in dataset.by_type.get("RegulatingControl").into_iter().flatten() {
-        let entry = &dataset.entries[mrid];
-        let rc = match Fields::of_class(entry, "RegulatingControl") { Some(r) => r, None => continue };
-        if !rc.bool("RegulatingControl.enabled").unwrap_or(false) { continue; }
-        let term_id = match rc.reference("RegulatingControl.Terminal") { Some(r) => r.trim_start_matches('#').to_string(), None => continue };
-        let mode_uri = match rc.enumeration("RegulatingControl.mode") { Some(r) => r.to_string(), None => continue };
-        let target = rc.f64("RegulatingControl.targetValue").unwrap_or(0.0);
-        groups.entry((term_id, mode_uri)).or_default().push((mrid.clone(), target));
-    }
-    let mut v = Vec::new();
-    for ((_, _), pairs) in &groups {
-        if pairs.len() < 2 { continue; }
-        let mut sorted = pairs.clone();
-        sorted.sort_by(|a, b| a.0.cmp(&b.0));
-        let val0 = sorted[0].1;
-        for (rc_id, target) in &sorted[1..] {
-            if *target != val0 {
-                v.push(Violation {
-                    object_id:   rc_id.clone(),
-                    rule_id:     "sm6002:RegulatingControl-samePoint".into(),
-                    name:        "C:452:EQ:RegulatingControl:samePoint".into(),
-                    class:       "RegulatingControl".into(),
-                    property:    "RegulatingControl.targetValue".into(),
-                    message:     format!("Enabled RegulatingControl-s of the same type associated with the same TopologicalNode have different target values. RegulatingControl ID: {}.", rc_id),
-                    severity:    "sh:Violation".into(),
-                    description: String::new(),
-                });
+        let Some(rc) = Fields::of_class(&dataset.entries[mrid], "RegulatingControl") else { continue };
+        let Some(target) = rc.f64("RegulatingControl.targetValue") else { continue };
+        let Some(node) = node_of(&rc) else { continue };
+        on_node.entry(node).or_default().push(mrid);
+        if rc.bool("RegulatingControl.enabled") == Some(true)
+            && let Some(mode) = rc.enumeration("RegulatingControl.mode") {
+                targets.entry((node, mode)).or_default().push(target);
             }
+    }
+    let mut failing: Vec<&str> = targets
+        .iter()
+        .filter(|(_, t)| t.iter().any(|x| *x != t[0]))
+        .map(|((node, _), _)| *node)
+        .collect();
+    failing.sort_unstable();
+    failing.dedup();
+    let mut v = Vec::new();
+    for node in failing {
+        let mut rcs = on_node[node].clone();
+        rcs.sort_unstable();
+        for rc_id in rcs {
+            v.push(Violation {
+                object_id:   rc_id.clone(),
+                rule_id:     "sm6002:RegulatingControl-samePoint".into(),
+                name:        "C:452:EQ:RegulatingControl:samePoint".into(),
+                class:       "RegulatingControl".into(),
+                property:    "RegulatingControl.targetValue".into(),
+                message:     format!("Enabled RegulatingControl-s of the same type associated with the same TopologicalNode ({node}) have different target values."),
+                severity:    "sh:Violation".into(),
+                description: String::new(),
+            });
         }
     }
     v
 }
 
+/// The SV's section count must match the SSH's for a shunt compensator that
+/// does not regulate: its `controlEnabled` false, or its control disabled. The
+/// SPARQL binds the SV status, `controlEnabled` and both counts as required
+/// patterns; the control's `enabled` only when given.
 fn check_sv_shunt_compensator_sections_sync(dataset: &CimDataset) -> Vec<Violation> {
-    // SvStatus lookup: CE id → in_service
-    let mut sv_status_in_service: HashMap<String, bool> = HashMap::default();
-    for mrid in dataset.by_type.get("SvStatus").into_iter().flatten() {
-        let entry = &dataset.entries[mrid];
-        if let Some(svs) = Fields::of_class(entry, "SvStatus")
-            && let Some(r) = &svs.reference("SvStatus.ConductingEquipment") {
-                let ce_id = r.trim_start_matches('#').to_string();
-                sv_status_in_service.insert(ce_id, svs.bool("SvStatus.inService").unwrap_or(false));
-            }
-    }
-
+    let in_service = sv_in_service(dataset);
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SvShuntCompensatorSections").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         let svsc = match Fields::of_class(entry, "SvShuntCompensatorSections") { Some(s) => s, None => continue };
         let sc_id = match svsc.reference("SvShuntCompensatorSections.ShuntCompensator") { Some(r) => r.trim_start_matches('#'), None => continue };
-        let sv_sections = svsc.f64("SvShuntCompensatorSections.sections").unwrap_or(0.0);
-
-        let sc_entry = match dataset.entries.get(sc_id) { Some(e) => e, None => continue };
-        let (control_enabled, rc_id, sections, type_name) =
-            if let Some(lsc) = Fields::of_class(sc_entry, "LinearShuntCompensator") {
-                (lsc.bool("RegulatingCondEq.controlEnabled").unwrap_or(false),
-                 lsc.reference("RegulatingCondEq.RegulatingControl").map(|r| r.trim_start_matches('#').to_string()),
-                 lsc.f64("ShuntCompensator.sections").unwrap_or(0.0),
-                 "LinearShuntCompensator")
-            } else if let Some(nsc) = Fields::of_class(sc_entry, "NonlinearShuntCompensator") {
-                (nsc.bool("RegulatingCondEq.controlEnabled").unwrap_or(false),
-                 nsc.reference("RegulatingCondEq.RegulatingControl").map(|r| r.trim_start_matches('#').to_string()),
-                 nsc.f64("ShuntCompensator.sections").unwrap_or(0.0),
-                 "NonlinearShuntCompensator")
-            } else {
-                continue
-            };
-
-        let in_service = sv_status_in_service.get(sc_id).copied().unwrap_or(false);
-        if !in_service { continue; }
-
-        let rc_enabled = rc_id.as_deref()
-            .and_then(|id| dataset.entries.get(id))
-            .and_then(|e| Fields::of_class(e, "RegulatingControl"))
-            .is_none_or(|rc| rc.bool("RegulatingControl.enabled").unwrap_or(false));
-
-        if (!control_enabled || !rc_enabled)
-            && sv_sections != sections {
-                v.push(Violation {
-                    object_id:   sc_id.to_string(),
-                    rule_id:     "sm600:SvShuntCompensatorSections.sections-SV__4".into(),
-                    name:        "C:600:SV:SvShuntCompensatorSections.sections:SV__4".into(),
-                    class:       type_name.to_string(),
-                    property:    "ShuntCompensator.sections".into(),
-                    message:     format!("SvShuntCompensatorSections.sections ({}) is not the same as ShuntCompensator.sections ({}) for non-regulating ShuntCompensator.", sv_sections, sections),
-                    severity:    "sh:Violation".into(),
-                    description: String::new(),
-                });
-            }
+        let Some(sv_sections) = svsc.f64("SvShuntCompensatorSections.sections") else { continue };
+        if !in_service.contains(sc_id) { continue; }
+        let Some(sc_entry) = dataset.entries.get(sc_id) else { continue };
+        let type_name = match sc_entry.type_name() {
+            t @ ("LinearShuntCompensator" | "NonlinearShuntCompensator") => t,
+            _ => continue,
+        };
+        let sc = Fields::of(sc_entry);
+        let (Some(control_enabled), Some(sections)) =
+            (sc.bool("RegulatingCondEq.controlEnabled"), sc.f64("ShuntCompensator.sections")) else { continue };
+        let rc_disabled = sc
+            .reference("RegulatingCondEq.RegulatingControl")
+            .and_then(|id| dataset.entries.get(id.trim_start_matches('#')))
+            .and_then(|e| Fields::of(e).bool("RegulatingControl.enabled"))
+            == Some(false);
+        if (!control_enabled || rc_disabled) && sv_sections != sections {
+            v.push(Violation {
+                object_id:   sc_id.to_string(),
+                rule_id:     "sm600:SvShuntCompensatorSections.sections-SV__4".into(),
+                name:        "C:600:SV:SvShuntCompensatorSections.sections:SV__4".into(),
+                class:       type_name.to_string(),
+                property:    "ShuntCompensator.sections".into(),
+                message:     format!("SvShuntCompensatorSections.sections ({}) is not the same as ShuntCompensator.sections ({}) for non-regulating ShuntCompensator.", sv_sections, sections),
+                severity:    "sh:Violation".into(),
+                description: String::new(),
+            });
+        }
     }
     v
 }
 
+/// As [`check_sv_shunt_compensator_sections_sync`], for a tap changer's step,
+/// in service through its transformer.
 fn check_sv_tap_step_position_sync(dataset: &CimDataset) -> Vec<Violation> {
+    let in_service = sv_in_service(dataset);
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SvTapStep").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         let svts = match Fields::of_class(entry, "SvTapStep") { Some(s) => s, None => continue };
         let tc_id = match svts.reference("SvTapStep.TapChanger") { Some(r) => r.trim_start_matches('#'), None => continue };
-        let position = svts.f64("SvTapStep.position").unwrap_or(0.0);
-        let tc_entry = match dataset.entries.get(tc_id) { Some(e) => e, None => continue };
-        let (control_enabled, tcc_id, step, type_name) = match get_tap_changer_info(tc_entry) { Some(i) => i, None => continue };
-        let rc_enabled = tcc_id.as_deref()
-            .and_then(|id| dataset.entries.get(id))
-            .and_then(|e| Fields::of_class(e, "TapChangerControl"))
-            .is_none_or(|tcc| tcc.bool("RegulatingControl.enabled").unwrap_or(false));
-        if (!control_enabled || !rc_enabled)
-            && position != step {
-                v.push(Violation {
-                    object_id:   tc_id.to_string(),
-                    rule_id:     "sm600:SvTapStep.position-SV__4".into(),
-                    name:        "C:600:SV:SvTapStep.position:SV__4".into(),
-                    class:       type_name.to_string(),
-                    property:    "TapChanger.step".into(),
-                    message:     format!("SvTapStep.position ({}) is not the same as TapChanger.step ({}) for non-regulating TapChanger.", position, step),
-                    severity:    "sh:Violation".into(),
-                    description: String::new(),
-                });
-            }
-    }
-    v
-}
-
-fn get_tap_changer_info(entry: &cimmodel::Element) -> Option<(bool, Option<String>, f64, &'static str)> {
-    if let Some(tc) = Fields::of_class(entry, "RatioTapChanger") {
-        let tcc = tc.reference("TapChanger.TapChangerControl").map(|r| r.trim_start_matches('#').to_string());
-        return Some((tc.bool("TapChanger.controlEnabled").unwrap_or(false), tcc, tc.f64("TapChanger.step").unwrap_or(0.0), "RatioTapChanger"));
-    }
-    if let Some(tc) = Fields::of_class(entry, "PhaseTapChangerLinear") {
-        let tcc = tc.reference("TapChanger.TapChangerControl").map(|r| r.trim_start_matches('#').to_string());
-        return Some((tc.bool("TapChanger.controlEnabled").unwrap_or(false), tcc, tc.f64("TapChanger.step").unwrap_or(0.0), "PhaseTapChangerLinear"));
-    }
-    if let Some(tc) = Fields::of_class(entry, "PhaseTapChangerSymmetrical") {
-        let tcc = tc.reference("TapChanger.TapChangerControl").map(|r| r.trim_start_matches('#').to_string());
-        return Some((tc.bool("TapChanger.controlEnabled").unwrap_or(false), tcc, tc.f64("TapChanger.step").unwrap_or(0.0), "PhaseTapChangerSymmetrical"));
-    }
-    if let Some(tc) = Fields::of_class(entry, "PhaseTapChangerAsymmetrical") {
-        let tcc = tc.reference("TapChanger.TapChangerControl").map(|r| r.trim_start_matches('#').to_string());
-        return Some((tc.bool("TapChanger.controlEnabled").unwrap_or(false), tcc, tc.f64("TapChanger.step").unwrap_or(0.0), "PhaseTapChangerAsymmetrical"));
-    }
-    if let Some(tc) = Fields::of_class(entry, "PhaseTapChangerTabular") {
-        let tcc = tc.reference("TapChanger.TapChangerControl").map(|r| r.trim_start_matches('#').to_string());
-        return Some((tc.bool("TapChanger.controlEnabled").unwrap_or(false), tcc, tc.f64("TapChanger.step").unwrap_or(0.0), "PhaseTapChangerTabular"));
-    }
-    None
-}
-
-fn check_sv_status_instance(dataset: &CimDataset, topo: &Topology) -> Vec<Violation> {
-    let mut ce_has_sv_status: HashSet<String> = HashSet::default();
-    for mrid in dataset.by_type.get("SvStatus").into_iter().flatten() {
-        let entry = &dataset.entries[mrid];
-        if let Some(svs) = Fields::of_class(entry, "SvStatus")
-            && let Some(r) = &svs.reference("SvStatus.ConductingEquipment") {
-                ce_has_sv_status.insert(r.trim_start_matches('#').to_string());
-            }
-    }
-
-    let ce_type_names = ["SynchronousMachine", "AsynchronousMachine", "EnergyConsumer",
-        "ConformLoad", "NonConformLoad", "ACLineSegment", "Breaker", "Disconnector",
-        "ExternalNetworkInjection", "EquivalentInjection", "PowerTransformer"];
-
-    let mut v = Vec::new();
-    for type_name in &ce_type_names {
-        for mrid in dataset.by_type.get(*type_name).into_iter().flatten() {
-            if !topo.energized(mrid) { continue; }
-            if !ce_has_sv_status.contains(mrid) {
-                v.push(Violation {
-                    object_id:   mrid.clone(),
-                    rule_id:     "sm600:SvStatus-SV__4".into(),
-                    name:        "C:600:SV:SvStatus:SV__4".into(),
-                    class:       type_name.to_string(),
-                    property:    "rdf:type".into(),
-                    message:     "SvStatus is not instantiated for a ConductingEquipment connected to a TopologicalNode which is referenced by a TopologicalIsland.".into(),
-                    severity:    "sh:Violation".into(),
-                    description: String::new(),
-                });
-            }
+        let Some(position) = svts.f64("SvTapStep.position") else { continue };
+        let Some(tc_entry) = dataset.entries.get(tc_id) else { continue };
+        let Some(type_name) = TAP_CHANGERS.into_iter().find(|t| *t == tc_entry.type_name()) else { continue };
+        if !tap_changer_transformer(dataset, tc_entry).is_some_and(|pt| in_service.contains(pt)) { continue; }
+        let tc = Fields::of(tc_entry);
+        let (Some(control_enabled), Some(step)) = (tc.bool("TapChanger.controlEnabled"), tc.f64("TapChanger.step")) else { continue };
+        let rc_disabled = tc
+            .reference("TapChanger.TapChangerControl")
+            .and_then(|id| dataset.entries.get(id.trim_start_matches('#')))
+            .and_then(|e| Fields::of(e).bool("RegulatingControl.enabled"))
+            == Some(false);
+        if (!control_enabled || rc_disabled) && position != step {
+            v.push(Violation {
+                object_id:   tc_id.to_string(),
+                rule_id:     "sm600:SvTapStep.position-SV__4".into(),
+                name:        "C:600:SV:SvTapStep.position:SV__4".into(),
+                class:       type_name.to_string(),
+                property:    "TapChanger.step".into(),
+                message:     format!("SvTapStep.position ({}) is not the same as TapChanger.step ({}) for non-regulating TapChanger.", position, step),
+                severity:    "sh:Violation".into(),
+                description: String::new(),
+            });
         }
     }
     v
@@ -490,10 +467,11 @@ fn check_sv_shunt_compensator_sections_instance(dataset: &CimDataset, topo: &Top
                 sc_has_sv.insert(r.trim_start_matches('#').to_string());
             }
     }
+    let in_service = sv_in_service(dataset);
     let mut v = Vec::new();
     for type_name in &["LinearShuntCompensator", "NonlinearShuntCompensator"] {
         for mrid in dataset.by_type.get(*type_name).into_iter().flatten() {
-            if !topo.energized(mrid) { continue; }
+            if !in_service.contains(mrid.as_str()) || !topo.energized(mrid) { continue; }
             if !sc_has_sv.contains(mrid) {
                 v.push(Violation {
                     object_id:   mrid.clone(),
@@ -539,6 +517,7 @@ fn check_sv_tap_step_instance(dataset: &CimDataset, topo: &Topology) -> Vec<Viol
             }
     }
 
+    let in_service = sv_in_service(dataset);
     let mut v = Vec::new();
     let tc_types = ["RatioTapChanger", "PhaseTapChangerLinear", "PhaseTapChangerSymmetrical",
                     "PhaseTapChangerAsymmetrical", "PhaseTapChangerTabular"];
@@ -562,6 +541,8 @@ fn check_sv_tap_step_instance(dataset: &CimDataset, topo: &Topology) -> Vec<Viol
             });
             let energized = te_id.as_deref().is_some_and(is_tc_energized);
             if !energized { continue; }
+            let tc_entry = &dataset.entries[mrid];
+            if !tap_changer_transformer(dataset, tc_entry).is_some_and(|pt| in_service.contains(pt)) { continue; }
             if !tc_has_sv.contains(mrid) {
                 v.push(Violation {
                     object_id:   mrid.clone(),

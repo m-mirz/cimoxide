@@ -331,7 +331,8 @@ fn sparql_dy_003_302() {
         "LOAD.STATIC.Z.BAD",
         "SM.SAT.BAD",
         "SMS.BAD",
-        "MECH.BAD",
+        // MECH.BAD's missing association is an `sh:xone` shape, which the
+        // CGMES shape table runs, not these rules.
     ] {
         assert!(by_id.get(*id).map_or(0, |v| v.len()) >= 1,
             "{}: expected violation, got none", id);

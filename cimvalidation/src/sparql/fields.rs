@@ -38,6 +38,12 @@ impl<'a> Fields<'a> {
         self.element.mrid()
     }
 
+    /// Whether the element carries `key` at all, with any value: the SPARQL's
+    /// `EXISTS { $this p ?o }`, or a bound `OPTIONAL`.
+    pub(crate) fn has(&self, key: &str) -> bool {
+        self.element.fields().contains_key(key)
+    }
+
     fn scalar(&self, key: &str) -> Option<&'a str> {
         match self.element.fields().get(key)? {
             FieldValue::Text(s) => Some(s),

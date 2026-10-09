@@ -18,8 +18,10 @@ fn check_series_compensator_varistor_usage(dataset: &CimDataset) -> Vec<Violatio
         let obj = match Fields::of_class(entry, "SeriesCompensator") {
             Some(o) => o, None => continue,
         };
-        if !obj.bool("SeriesCompensator.varistorPresent").unwrap_or(false) {
-            if obj.f64("SeriesCompensator.varistorRatedCurrent").unwrap_or(0.0) != 0.0 {
+        // The SPARQL needs `varistorPresent` given and false, and the value
+        // present, whatever it is.
+        if obj.bool("SeriesCompensator.varistorPresent") == Some(false) {
+            if obj.has("SeriesCompensator.varistorRatedCurrent") {
                 v.push(Violation {
                     object_id:   mrid.clone(),
                     rule_id:     "scu:SeriesCompensator.varistorRatedCurrent-usage".into(),
@@ -31,7 +33,7 @@ fn check_series_compensator_varistor_usage(dataset: &CimDataset) -> Vec<Violatio
                     description: String::new(),
                 });
             }
-            if obj.f64("SeriesCompensator.varistorVoltageThreshold").unwrap_or(0.0) != 0.0 {
+            if obj.has("SeriesCompensator.varistorVoltageThreshold") {
                 v.push(Violation {
                     object_id:   mrid.clone(),
                     rule_id:     "scu:SeriesCompensator.varistorVoltageThreshold-usage".into(),
@@ -55,8 +57,10 @@ fn check_transformer_end_grounding(dataset: &CimDataset) -> Vec<Violation> {
         let obj = match Fields::of_class(entry, "PowerTransformerEnd") {
             Some(o) => o, None => continue,
         };
-        if obj.bool("TransformerEnd.grounded").unwrap_or(false)
-            && obj.f64("TransformerEnd.rground").unwrap_or(0.0) == 0.0 && obj.f64("TransformerEnd.xground").unwrap_or(0.0) == 0.0 {
+        // Either impedance absent, as the SPARQL's `!bound(..) || !bound(..)`;
+        // a value of zero is a value.
+        if obj.bool("TransformerEnd.grounded") == Some(true)
+            && (!obj.has("TransformerEnd.rground") || !obj.has("TransformerEnd.xground")) {
                 v.push(Violation {
                     object_id:   mrid.clone(),
                     rule_id:     "sc452:TransformerEnd-grounding".into(),
@@ -79,8 +83,8 @@ fn check_synchronous_machine_earthing(dataset: &CimDataset) -> Vec<Violation> {
         let obj = match Fields::of_class(entry, "SynchronousMachine") {
             Some(o) => o, None => continue,
         };
-        if obj.bool("SynchronousMachine.earthing").unwrap_or(false)
-            && obj.f64("SynchronousMachine.earthingStarPointR").unwrap_or(0.0) == 0.0 && obj.f64("SynchronousMachine.earthingStarPointX").unwrap_or(0.0) == 0.0 {
+        if obj.bool("SynchronousMachine.earthing") == Some(true)
+            && (!obj.has("SynchronousMachine.earthingStarPointR") || !obj.has("SynchronousMachine.earthingStarPointX")) {
                 v.push(Violation {
                     object_id:   mrid.clone(),
                     rule_id:     "sc452:SynchronousMachine-attributes".into(),
@@ -103,8 +107,8 @@ fn check_series_compensator_varistor_required(dataset: &CimDataset) -> Vec<Viola
         let obj = match Fields::of_class(entry, "SeriesCompensator") {
             Some(o) => o, None => continue,
         };
-        if obj.bool("SeriesCompensator.varistorPresent").unwrap_or(false) {
-            if obj.f64("SeriesCompensator.varistorRatedCurrent").unwrap_or(0.0) == 0.0 {
+        if obj.bool("SeriesCompensator.varistorPresent") == Some(true) {
+            if !obj.has("SeriesCompensator.varistorRatedCurrent") {
                 v.push(Violation {
                     object_id:   mrid.clone(),
                     rule_id:     "sc600:SeriesCompensator.varistorRatedCurrent-required".into(),
@@ -116,7 +120,7 @@ fn check_series_compensator_varistor_required(dataset: &CimDataset) -> Vec<Viola
                     description: String::new(),
                 });
             }
-            if obj.f64("SeriesCompensator.varistorVoltageThreshold").unwrap_or(0.0) == 0.0 {
+            if !obj.has("SeriesCompensator.varistorVoltageThreshold") {
                 v.push(Violation {
                     object_id:   mrid.clone(),
                     rule_id:     "sc600:SeriesCompensator.varistorVoltageThreshold-required".into(),
