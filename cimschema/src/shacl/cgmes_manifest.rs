@@ -9,7 +9,9 @@
 //! A tag is one of:
 //!
 //! * `"EQ"` — a local rule of that profile, run on each file declaring it
-//! * `"EQ!NS"` — the same, only when no SV is present (not solved)
+//! * `"EQ!NS"` — a NotSolvedMAS file's rule, run once on the merged dataset
+//!   when no SV is present (not solved): those files are written for a model
+//!   authority set and read across its profiles
 //! * `"X:SV"` — a cross-profile rule, run once on the merged dataset
 //! * `"HDR"` — a model header rule, run on every file
 //! * `"COMMON"` — a rule for every profile, run once on the merged dataset

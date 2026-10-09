@@ -137,20 +137,17 @@ pub fn validate_header(dataset: &cimmodel::CimDataset, _cfg: &Config) -> Vec<Vio
 }
 
 /// The SHACL half of [`validate_profile_local`] for one CGMES profile: its
-/// local rules, plus its not-solved rules when `cfg.not_solved`. Without the
-/// hand-written `sparql` rules or the `cfg.profiles` filter.
-pub fn validate_profile_shacl(dataset: &cimmodel::CimDataset, profile: &str, cfg: &Config) -> Vec<Violation> {
-    let mut active: Vec<&shapes::ShapeDef> = cgmes_tagged(profile).to_vec();
-    if cfg.not_solved {
-        active.extend_from_slice(cgmes_tagged(&format!("{profile}!NS")));
-    }
-    // One call, so the indexes are built once for both sets.
-    run_cgmes(dataset, &active)
+/// local rules. Without the hand-written `sparql` rules or the `cfg.profiles`
+/// filter.
+pub fn validate_profile_shacl(dataset: &cimmodel::CimDataset, profile: &str, _cfg: &Config) -> Vec<Violation> {
+    run_cgmes(dataset, cgmes_tagged(profile))
 }
 
 /// The SHACL half of [`validate_crossprofile`]: every enabled profile's
-/// cross-profile rules on the merged dataset, plus the rules for every profile
-/// when `cfg.common`.
+/// cross-profile rules on the merged dataset, its not-solved (`!NS`, the
+/// NotSolvedMAS files) rules when `cfg.not_solved` — written for a model
+/// authority set, like the hand-written ones in [`sparql::mas_groups`] — and
+/// the rules for every profile when `cfg.common`.
 pub fn validate_crossprofile_shacl(dataset: &cimmodel::CimDataset, cfg: &Config) -> Vec<Violation> {
     let has = |p: &str| cfg.profiles.is_empty() || cfg.profiles.iter().any(|x| x == p);
     let mut active: Vec<&shapes::ShapeDef> = cimschema_cross_profiles()
@@ -158,6 +155,11 @@ pub fn validate_crossprofile_shacl(dataset: &cimmodel::CimDataset, cfg: &Config)
         .filter(|p| has(p))
         .flat_map(|p| cgmes_tagged(&format!("X:{p}")).iter().copied())
         .collect();
+    if cfg.not_solved {
+        for p in cgmes_profile_index().1.iter().filter(|p| has(p)) {
+            active.extend_from_slice(cgmes_tagged(&format!("{p}!NS")));
+        }
+    }
     if cfg.common {
         active.extend_from_slice(cgmes_tagged("COMMON"));
     }

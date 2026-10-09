@@ -254,7 +254,10 @@ fn ssh(body: &str, rule: &str, not_solved: bool) -> usize {
     );
     let ds = cimmodel::CimDataset::decode_str(&xml).unwrap();
     let cfg = Config { profiles: vec!["SSH".into()], not_solved, ..Default::default() };
-    cimvalidation::sparql::validate_profile_local(&ds, "SSH", &cfg).iter().filter(|v| v.rule_id == rule).count()
+    // The MAS files' rules run on the merged dataset, which this one stands for.
+    let mut v = cimvalidation::sparql::validate_profile_local(&ds, "SSH", &cfg);
+    v.extend(cimvalidation::sparql::validate_crossprofile(&ds, &cfg));
+    v.iter().filter(|v| v.rule_id == rule).count()
 }
 
 const CIM: &str = "http://iec.ch/TC57/CIM100#";
@@ -473,7 +476,10 @@ fn eq_not_solved(body: &str, rule: &str) -> usize {
     );
     let ds = cimmodel::CimDataset::decode_str(&xml).unwrap();
     let cfg = Config { profiles: vec!["EQ".into()], not_solved: true, ..Default::default() };
-    cimvalidation::sparql::validate_profile_local(&ds, "EQ", &cfg).iter().filter(|v| v.rule_id == rule).count()
+    // The MAS files' rules run on the merged dataset, which this one stands for.
+    let mut v = cimvalidation::sparql::validate_profile_local(&ds, "EQ", &cfg);
+    v.extend(cimvalidation::sparql::validate_crossprofile(&ds, &cfg));
+    v.iter().filter(|v| v.rule_id == rule).count()
 }
 
 #[test]
@@ -516,7 +522,10 @@ fn sv_solved(body: &str, rule: &str) -> usize {
     );
     let ds = cimmodel::CimDataset::decode_str(&xml).unwrap();
     let cfg = Config { profiles: vec!["SV".into()], solved: true, ..Default::default() };
-    cimvalidation::sparql::validate_profile_local(&ds, "SV", &cfg).iter().filter(|v| v.rule_id == rule).count()
+    // The MAS files' rules run on the merged dataset, which this one stands for.
+    let mut v = cimvalidation::sparql::validate_profile_local(&ds, "SV", &cfg);
+    v.extend(cimvalidation::sparql::validate_crossprofile(&ds, &cfg));
+    v.iter().filter(|v| v.rule_id == rule).count()
 }
 
 #[test]

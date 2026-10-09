@@ -318,7 +318,9 @@ fn check_sv_power_flow_instance(dataset: &CimDataset) -> Vec<Violation> {
 
 /// The machine's curve points, as (x, Some((y1, y2))) — y only where both are
 /// given.
-fn curve_points(dataset: &CimDataset) -> FastMap<&str, Vec<(Option<f64>, Option<(f64, f64)>)>> {
+type CurvePoint = (Option<f64>, Option<(f64, f64)>);
+
+fn curve_points(dataset: &CimDataset) -> FastMap<&str, Vec<CurvePoint>> {
     let mut map: FastMap<&str, Vec<_>> = FastMap::default();
     for mrid in dataset.by_type.get("CurveData").into_iter().flatten() {
         let cd = Fields::of(&dataset.entries[mrid]);

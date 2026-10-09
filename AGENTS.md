@@ -143,9 +143,12 @@ hand-written. Entry points:
   lookup through a reference (a machine's GeneratingUnit, which may be a
   `ThermalGeneratingUnit`) uses `Fields::of`. The Complex `*SolvedMAS`/
   `*NotSolvedMAS` files are written for a model authority set (EQ, SSH, TP, SV
-  together), but their hand-written rules (and the `!NS` table shapes) run per
-  file, so an SV rule comparing flows with EQ machine limits, or an SSH rule
-  reading EQ operating limits, finds nothing to compare on real data. Float special values
+  together) and read across its profiles — an SV rule compares flows with EQ
+  machine limits — so their hand-written rules (`sparql::mas_groups`) and the
+  `!NS` table shapes run on the merged dataset, the union relicapgrid validates
+  CGMES's Complex shapes on. Until 2026-10 they ran per file and found nothing to
+  compare. A rule counting over the dataset (one slack unit) therefore counts
+  over every file given, as triplets does on the union. Float special values
   (`common.rs`) are checked on attributes the schema types as Float (`AttrDef::xsd`
   `double`) only, GENC1 reads any element's `IdentifiedObject.mRID`, and FBOD4
   (`common_solved_mas.rs`) every reference as written. Until 2026-10 these three read
@@ -222,7 +225,7 @@ shapes on its own elements (NC targets `IdentifiedObject.name` via
 `sh:targetSubjectsOf`, which would otherwise reach every CGMES element).
 
 CGMES ships no per-profile manifests, so `cimschema::shacl::cgmes_manifest`
-writes the file → tag mapping out (`"EQ"`, `"SSH!NS"` for not-solved,
+writes the file → tag mapping out (`"EQ"`, `"SSH!NS"` for not-solved, run on the merged dataset,
 `"X:SV"` for cross-profile, `"HDR"`), referenced from `Family::shacl_manifest`.
 
 A concrete `sh:targetClass` matches that class only; an abstract one expands
