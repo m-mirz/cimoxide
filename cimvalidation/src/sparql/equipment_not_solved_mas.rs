@@ -28,8 +28,9 @@ fn build_terminals_by_equipment_seq(dataset: &CimDataset) -> HashMap<String, Has
         if let Some(term) = Fields::of_class(entry, "Terminal")
             && let Some(ce) = &term.reference("Terminal.ConductingEquipment") {
                 let eq_id = ce.trim_start_matches('#').to_string();
-                let seq = term.i64("ACDCTerminal.sequenceNumber").unwrap_or(0);
-                map.entry(eq_id).or_default().insert(seq, mrid.clone());
+                if let Some(seq) = term.i64("ACDCTerminal.sequenceNumber") {
+                    map.entry(eq_id).or_default().insert(seq, mrid.clone());
+                }
             }
     }
     map
@@ -80,14 +81,12 @@ fn check_regulating_control_target_value_tap_changer(dataset: &CimDataset) -> Ve
     // Collect all RCs with voltage mode enabled
     for rc_mrid in dataset.by_type.get("RegulatingControl").into_iter().chain(dataset.by_type.get("TapChangerControl")).flatten() {
         let rc_entry = &dataset.entries[rc_mrid];
-        let (mode_ok, enabled, target_value, terminal_ref) =
-            if let Some(rc) = Fields::of_class(rc_entry, "RegulatingControl") {
-                (rc.enumeration("RegulatingControl.mode").is_some_and(|r| r.ends_with(voltage_suffix)), rc.bool("RegulatingControl.enabled").unwrap_or(false), rc.f64("RegulatingControl.targetValue").unwrap_or(0.0), rc.reference("RegulatingControl.Terminal"))
-            } else if let Some(tcc) = Fields::of_class(rc_entry, "TapChangerControl") {
-                (tcc.enumeration("RegulatingControl.mode").is_some_and(|r| r.ends_with(voltage_suffix)), tcc.bool("RegulatingControl.enabled").unwrap_or(false), tcc.f64("RegulatingControl.targetValue").unwrap_or(0.0), tcc.reference("RegulatingControl.Terminal"))
-            } else {
-                continue
-            };
+        // Every value the formula reads is a required pattern.
+        let rc = Fields::of(rc_entry);
+        let mode_ok = rc.enumeration("RegulatingControl.mode").is_some_and(|r| r.ends_with(voltage_suffix));
+        let enabled = rc.bool("RegulatingControl.enabled") == Some(true);
+        let Some(target_value) = rc.f64("RegulatingControl.targetValue") else { continue };
+        let terminal_ref = rc.reference("RegulatingControl.Terminal");
         if !mode_ok || !enabled { continue; }
         let term_id = match terminal_ref { Some(r) => r.trim_start_matches('#'), None => continue };
 
@@ -95,7 +94,7 @@ fn check_regulating_control_target_value_tap_changer(dataset: &CimDataset) -> Ve
         for rtc_mrid in rtc_by_tcc.get(rc_mrid).into_iter().flatten() {
             let rtc_entry = &dataset.entries[rtc_mrid];
             let rtc = match Fields::of_class(rtc_entry, "RatioTapChanger") { Some(r) => r, None => continue };
-            if !rtc.bool("TapChanger.controlEnabled").unwrap_or(false) { continue; }
+            if rtc.bool("TapChanger.controlEnabled") != Some(true) { continue; }
 
             // Get nominal voltage via RC terminal → CN → VoltageLevel → BaseVoltage
             let nominal_u = (|| -> Option<f64> {
@@ -110,10 +109,10 @@ fn check_regulating_control_target_value_tap_changer(dataset: &CimDataset) -> Ve
             let nominal_u = match nominal_u { Some(u) if u != 0.0 => u, _ => continue };
 
             let target_pu = target_value / nominal_u;
-            let step_pct = rtc.f64("RatioTapChanger.stepVoltageIncrement").unwrap_or(0.0) / 100.0;
-            let high = rtc.i64("TapChanger.highStep").unwrap_or(0);
-            let neutral = rtc.i64("TapChanger.neutralStep").unwrap_or(0);
-            let low = rtc.i64("TapChanger.lowStep").unwrap_or(0);
+            let (Some(svi), Some(high), Some(neutral), Some(low)) = (
+                rtc.f64("RatioTapChanger.stepVoltageIncrement"), rtc.i64("TapChanger.highStep"),
+                rtc.i64("TapChanger.neutralStep"), rtc.i64("TapChanger.lowStep")) else { continue };
+            let step_pct = svi / 100.0;
             let upper_limit = 1.0 + step_pct * (high - neutral) as f64;
             let lower_limit = 1.0 - step_pct * (neutral - low) as f64;
 
@@ -156,51 +155,53 @@ fn check_ac_line_segment_base_voltage_diff(dataset: &CimDataset) -> Vec<Violatio
     v
 }
 
+/// The two-terminal classes a boundary point's node should connect.
+const BRANCHES: &[&str] = &[
+    "ACLineSegment", "PowerTransformer", "DCLineSegment", "DCSeriesDevice", "DCSwitch", "DCDisconnector",
+    "DCBreaker", "DCChopper", "Switch", "Disconnector", "Fuse", "GroundDisconnector", "Jumper", "Breaker",
+    "LoadBreakSwitch", "DisconnectingCircuitBreaker", "Cut", "SeriesCompensator", "EquivalentBranch",
+];
+
+/// The target is a ConnectivityNode the dataset holds with a BoundaryPoint on
+/// it, and both rules need its name. bppl1Bppl2: a branch connects there but
+/// no EquivalentInjection does. bppl3: no branch connects there.
 fn check_boundary_point_bppl(dataset: &CimDataset) -> Vec<Violation> {
-    // BoundaryPoint → ConnectivityNode
-    let mut bp_to_cn: HashMap<String, String> = HashMap::default();
+    let mut nodes: Vec<&str> = Vec::new();
     for mrid in dataset.by_type.get("BoundaryPoint").into_iter().flatten() {
-        let entry = &dataset.entries[mrid];
-        if let Some(bp) = Fields::of_class(entry, "BoundaryPoint")
-            && let Some(r) = &bp.reference("BoundaryPoint.ConnectivityNode") {
-                bp_to_cn.insert(mrid.clone(), r.trim_start_matches('#').to_string());
-            }
+        if let Some(r) = Fields::of(&dataset.entries[mrid]).reference("BoundaryPoint.ConnectivityNode") {
+            nodes.push(r.trim_start_matches('#'));
+        }
     }
-    // CN → set of terminal MRIDs
-    let mut cn_terminals: HashMap<String, Vec<String>> = HashMap::default();
+    nodes.sort_unstable();
+    nodes.dedup();
+    // CN → classes of the equipment connected there
+    let mut cn_classes: HashMap<&str, Vec<&str>> = HashMap::default();
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
-        let entry = &dataset.entries[mrid];
-        if let Some(term) = Fields::of_class(entry, "Terminal")
-            && let Some(r) = &term.reference("Terminal.ConnectivityNode") {
-                cn_terminals.entry(r.trim_start_matches('#').to_string()).or_default().push(mrid.clone());
+        let term = Fields::of(&dataset.entries[mrid]);
+        if let (Some(cn), Some(eq)) = (term.reference("Terminal.ConnectivityNode"), term.reference("Terminal.ConductingEquipment"))
+            && let Some(e) = dataset.entries.get(eq.trim_start_matches('#')) {
+                cn_classes.entry(cn.trim_start_matches('#')).or_default().push(e.type_name());
             }
     }
     let mut v = Vec::new();
-    for cn_id in bp_to_cn.values() {
-        let mut has_eq_injection = false;
-        let mut has_two_terminal = false;
-        for term_mrid in cn_terminals.get(cn_id).into_iter().flatten() {
-            let term = match dataset.entries.get(term_mrid).and_then(|e| Fields::of_class(e, "Terminal")) { Some(t) => t, None => continue };
-            let eq_id = match term.reference("Terminal.ConductingEquipment") { Some(r) => r.trim_start_matches('#').to_string(), None => continue };
-            let eq_entry = match dataset.entries.get(&eq_id) { Some(e) => e, None => continue };
-            if Fields::of_class(eq_entry, "EquivalentInjection").is_some() { has_eq_injection = true; }
-            if Fields::of_class(eq_entry, "ACLineSegment").is_some()
-            || Fields::of_class(eq_entry, "PowerTransformer").is_some()
-            || Fields::of_class(eq_entry, "Breaker").is_some()
-            || Fields::of_class(eq_entry, "Disconnector").is_some() { has_two_terminal = true; }
-        }
-        if !has_eq_injection {
+    for cn_id in nodes {
+        let Some(cn) = Fields::get(dataset, cn_id, "ConnectivityNode") else { continue };
+        if !cn.has("IdentifiedObject.name") { continue; }
+        let classes = cn_classes.get(cn_id).map(Vec::as_slice).unwrap_or_default();
+        let has_branch = classes.iter().any(|c| BRANCHES.contains(c));
+        let has_injection = classes.contains(&"EquivalentInjection");
+        if has_branch && !has_injection {
             v.push(Violation {
-                object_id: cn_id.clone(), rule_id: "eqn600:BoundaryPoint-bppl1Bppl2".into(),
+                object_id: cn_id.to_string(), rule_id: "eqn600:BoundaryPoint-bppl1Bppl2".into(),
                 name: "C:600:EQ:BoundaryPoint:bppl1Bppl2".into(), class: "ConnectivityNode".into(),
                 property: "rdf:type".into(),
                 message: "Boundary Point ConnectivityNode does not have an EquivalentInjection connected.".into(),
                 severity: "sh:Violation".into(), description: String::new(),
             });
         }
-        if !has_two_terminal {
+        if !has_branch {
             v.push(Violation {
-                object_id: cn_id.clone(), rule_id: "eqn600:BoundaryPoint-bppl3".into(),
+                object_id: cn_id.to_string(), rule_id: "eqn600:BoundaryPoint-bppl3".into(),
                 name: "C:600:EQ:BoundaryPoint:bppl3".into(), class: "ConnectivityNode".into(),
                 property: "rdf:type".into(),
                 message: "Boundary Point ConnectivityNode does not have a two-terminal ConductingEquipment connected.".into(),
@@ -213,12 +214,14 @@ fn check_boundary_point_bppl(dataset: &CimDataset) -> Vec<Violation> {
 
 fn check_equivalent_injection_regulation_capability_not_hvdc(dataset: &CimDataset) -> Vec<Violation> {
     // CN → BoundaryPoint DC flag
+    // Only a BoundaryPoint that says it is not DC counts.
     let mut cn_is_dc: HashMap<String, bool> = HashMap::default();
     for mrid in dataset.by_type.get("BoundaryPoint").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(bp) = Fields::of_class(entry, "BoundaryPoint")
-            && let Some(r) = &bp.reference("BoundaryPoint.ConnectivityNode") {
-                cn_is_dc.insert(r.trim_start_matches('#').to_string(), bp.bool("BoundaryPoint.isDirectCurrent").unwrap_or(false));
+            && let Some(r) = &bp.reference("BoundaryPoint.ConnectivityNode")
+            && let Some(is_dc) = bp.bool("BoundaryPoint.isDirectCurrent") {
+                cn_is_dc.insert(r.trim_start_matches('#').to_string(), is_dc);
             }
     }
     // Equipment MRID → true if it has at least one terminal connected to a non-HVDC
@@ -243,7 +246,8 @@ fn check_equivalent_injection_regulation_capability_not_hvdc(dataset: &CimDatase
         let ei = match Fields::of_class(ei_entry, "EquivalentInjection") { Some(e) => e, None => continue };
         let is_non_hvdc_bp = equip_non_hvdc_bp.contains_key(ei_mrid.as_str());
         if is_non_hvdc_bp
-            && (ei.bool("EquivalentInjection.regulationCapability").unwrap_or(false) || ei.reference("EquivalentInjection.ReactiveCapabilityCurve").is_some()) {
+            && let Some(capable) = ei.bool("EquivalentInjection.regulationCapability")
+            && (capable || ei.has("EquivalentInjection.ReactiveCapabilityCurve")) {
                 v.push(Violation {
                     object_id: ei_mrid.clone(), rule_id: "eqn600:EquivalentInjection.regulationCapability-notHVDC".into(),
                     name: "C:600:EQ:EquivalentInjection.regulationCapability:notHvdc".into(), class: "EquivalentInjection".into(),

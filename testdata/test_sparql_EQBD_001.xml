@@ -1,46 +1,110 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <rdf:RDF xmlns:cim="http://iec.ch/TC57/CIM100#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:eu="http://iec.ch/TC57/CIM100-European#">
-  <cim:ConnectivityNode rdf:ID="CN.BP.OK1">
-    <cim:IdentifiedObject.name>CN.BP.OK1</cim:IdentifiedObject.name>
-  </cim:ConnectivityNode>
-  <cim:Terminal rdf:ID="Term.OK1">
+  <!-- Each BoundaryPoint sits on terminal 1 of a line whose terminal 2 is
+       elsewhere; the tie flow, if any, is on terminal 1. -->
+  <!-- OK1: excluded false, tie flow yes -->
+  <cim:ConnectivityNode rdf:ID="CN.BP.OK1" />
+  <cim:ConnectivityNode rdf:ID="CN.IN.OK1" />
+  <cim:ACLineSegment rdf:ID="LINE.OK1" />
+  <cim:Terminal rdf:ID="T1.OK1">
+    <cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber>
+    <cim:Terminal.ConductingEquipment rdf:resource="#LINE.OK1" />
     <cim:Terminal.ConnectivityNode rdf:resource="#CN.BP.OK1" />
   </cim:Terminal>
+  <cim:Terminal rdf:ID="T2.OK1">
+    <cim:ACDCTerminal.sequenceNumber>2</cim:ACDCTerminal.sequenceNumber>
+    <cim:Terminal.ConductingEquipment rdf:resource="#LINE.OK1" />
+    <cim:Terminal.ConnectivityNode rdf:resource="#CN.IN.OK1" />
+  </cim:Terminal>
   <cim:TieFlow rdf:ID="TF.OK1">
-    <cim:TieFlow.Terminal rdf:resource="#Term.OK1" />
+    <cim:TieFlow.Terminal rdf:resource="#T1.OK1" />
   </cim:TieFlow>
   <eu:BoundaryPoint rdf:ID="BP.OK1">
     <eu:BoundaryPoint.ConnectivityNode rdf:resource="#CN.BP.OK1" />
     <eu:BoundaryPoint.isExcludedFromAreaInterchange>false</eu:BoundaryPoint.isExcludedFromAreaInterchange>
   </eu:BoundaryPoint>
 
-  <cim:ConnectivityNode rdf:ID="CN.BP.OK2">
-    <cim:IdentifiedObject.name>CN.BP.OK2</cim:IdentifiedObject.name>
-  </cim:ConnectivityNode>
+  <!-- OK2: excluded true, tie flow no -->
+  <cim:ConnectivityNode rdf:ID="CN.BP.OK2" />
+  <cim:ConnectivityNode rdf:ID="CN.IN.OK2" />
+  <cim:ACLineSegment rdf:ID="LINE.OK2" />
+  <cim:Terminal rdf:ID="T1.OK2">
+    <cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber>
+    <cim:Terminal.ConductingEquipment rdf:resource="#LINE.OK2" />
+    <cim:Terminal.ConnectivityNode rdf:resource="#CN.BP.OK2" />
+  </cim:Terminal>
+  <cim:Terminal rdf:ID="T2.OK2">
+    <cim:ACDCTerminal.sequenceNumber>2</cim:ACDCTerminal.sequenceNumber>
+    <cim:Terminal.ConductingEquipment rdf:resource="#LINE.OK2" />
+    <cim:Terminal.ConnectivityNode rdf:resource="#CN.IN.OK2" />
+  </cim:Terminal>
   <eu:BoundaryPoint rdf:ID="BP.OK2">
     <eu:BoundaryPoint.ConnectivityNode rdf:resource="#CN.BP.OK2" />
     <eu:BoundaryPoint.isExcludedFromAreaInterchange>true</eu:BoundaryPoint.isExcludedFromAreaInterchange>
   </eu:BoundaryPoint>
 
-  <cim:ConnectivityNode rdf:ID="CN.BP.BAD1">
-    <cim:IdentifiedObject.name>CN.BP.BAD1</cim:IdentifiedObject.name>
-  </cim:ConnectivityNode>
+  <!-- BAD1: excluded false, tie flow no -->
+  <cim:ConnectivityNode rdf:ID="CN.BP.BAD1" />
+  <cim:ConnectivityNode rdf:ID="CN.IN.BAD1" />
+  <cim:ACLineSegment rdf:ID="LINE.BAD1" />
+  <cim:Terminal rdf:ID="T1.BAD1">
+    <cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber>
+    <cim:Terminal.ConductingEquipment rdf:resource="#LINE.BAD1" />
+    <cim:Terminal.ConnectivityNode rdf:resource="#CN.BP.BAD1" />
+  </cim:Terminal>
+  <cim:Terminal rdf:ID="T2.BAD1">
+    <cim:ACDCTerminal.sequenceNumber>2</cim:ACDCTerminal.sequenceNumber>
+    <cim:Terminal.ConductingEquipment rdf:resource="#LINE.BAD1" />
+    <cim:Terminal.ConnectivityNode rdf:resource="#CN.IN.BAD1" />
+  </cim:Terminal>
   <eu:BoundaryPoint rdf:ID="BP.BAD1">
     <eu:BoundaryPoint.ConnectivityNode rdf:resource="#CN.BP.BAD1" />
     <eu:BoundaryPoint.isExcludedFromAreaInterchange>false</eu:BoundaryPoint.isExcludedFromAreaInterchange>
   </eu:BoundaryPoint>
 
-  <cim:ConnectivityNode rdf:ID="CN.BP.BAD2">
-    <cim:IdentifiedObject.name>CN.BP.BAD2</cim:IdentifiedObject.name>
-  </cim:ConnectivityNode>
-  <cim:Terminal rdf:ID="Term.BAD2">
+  <!-- BAD2: excluded true, tie flow yes -->
+  <cim:ConnectivityNode rdf:ID="CN.BP.BAD2" />
+  <cim:ConnectivityNode rdf:ID="CN.IN.BAD2" />
+  <cim:ACLineSegment rdf:ID="LINE.BAD2" />
+  <cim:Terminal rdf:ID="T1.BAD2">
+    <cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber>
+    <cim:Terminal.ConductingEquipment rdf:resource="#LINE.BAD2" />
     <cim:Terminal.ConnectivityNode rdf:resource="#CN.BP.BAD2" />
   </cim:Terminal>
+  <cim:Terminal rdf:ID="T2.BAD2">
+    <cim:ACDCTerminal.sequenceNumber>2</cim:ACDCTerminal.sequenceNumber>
+    <cim:Terminal.ConductingEquipment rdf:resource="#LINE.BAD2" />
+    <cim:Terminal.ConnectivityNode rdf:resource="#CN.IN.BAD2" />
+  </cim:Terminal>
   <cim:TieFlow rdf:ID="TF.BAD2">
-    <cim:TieFlow.Terminal rdf:resource="#Term.BAD2" />
+    <cim:TieFlow.Terminal rdf:resource="#T1.BAD2" />
   </cim:TieFlow>
   <eu:BoundaryPoint rdf:ID="BP.BAD2">
     <eu:BoundaryPoint.ConnectivityNode rdf:resource="#CN.BP.BAD2" />
     <eu:BoundaryPoint.isExcludedFromAreaInterchange>true</eu:BoundaryPoint.isExcludedFromAreaInterchange>
+  </eu:BoundaryPoint>
+
+  <!-- BAD3: excluded None, tie flow no -->
+  <cim:ConnectivityNode rdf:ID="CN.BP.BAD3" />
+  <cim:ConnectivityNode rdf:ID="CN.IN.BAD3" />
+  <cim:ACLineSegment rdf:ID="LINE.BAD3" />
+  <cim:Terminal rdf:ID="T1.BAD3">
+    <cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber>
+    <cim:Terminal.ConductingEquipment rdf:resource="#LINE.BAD3" />
+    <cim:Terminal.ConnectivityNode rdf:resource="#CN.BP.BAD3" />
+  </cim:Terminal>
+  <cim:Terminal rdf:ID="T2.BAD3">
+    <cim:ACDCTerminal.sequenceNumber>2</cim:ACDCTerminal.sequenceNumber>
+    <cim:Terminal.ConductingEquipment rdf:resource="#LINE.BAD3" />
+    <cim:Terminal.ConnectivityNode rdf:resource="#CN.IN.BAD3" />
+  </cim:Terminal>
+  <eu:BoundaryPoint rdf:ID="BP.BAD3">
+    <eu:BoundaryPoint.ConnectivityNode rdf:resource="#CN.BP.BAD3" />
+  </eu:BoundaryPoint>
+
+  <!-- A boundary point on no line has nothing to check. -->
+  <cim:ConnectivityNode rdf:ID="CN.BP.LONE" />
+  <eu:BoundaryPoint rdf:ID="BP.LONE">
+    <eu:BoundaryPoint.ConnectivityNode rdf:resource="#CN.BP.LONE" />
   </eu:BoundaryPoint>
 </rdf:RDF>

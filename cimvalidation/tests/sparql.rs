@@ -29,9 +29,11 @@ fn sparql_dl_001() {
 
 #[test]
 fn sparql_eqbd_001() {
-    // isExcludedFromAreaInterchange=false requires TieFlow; true forbids TieFlow.
+    // isExcludedFromAreaInterchange=false (or absent) requires a TieFlow on the
+    // terminal of the line at the boundary point; true forbids one. A rule of
+    // the NotSolvedMAS file.
     let ds = common::load_dataset("../testdata/test_sparql_EQBD_001.xml");
-    let cfg = Config { profiles: vec!["EQBD".into()], ..Default::default() };
+    let cfg = Config { profiles: vec!["EQBD".into()], not_solved: true, ..Default::default() };
     let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("BP.OK1").map_or(0, |v| v.len()), 0,
@@ -42,6 +44,10 @@ fn sparql_eqbd_001() {
         "BP.BAD1: expected 1 violation, got: {:?}", by_id.get("BP.BAD1"));
     assert_eq!(by_id.get("BP.BAD2").map_or(0, |v| v.len()), 1,
         "BP.BAD2: expected 1 violation, got: {:?}", by_id.get("BP.BAD2"));
+    assert_eq!(by_id.get("BP.BAD3").map_or(0, |v| v.len()), 1,
+        "BP.BAD3: expected 1 violation, got: {:?}", by_id.get("BP.BAD3"));
+    assert_eq!(by_id.get("BP.LONE").map_or(0, |v| v.len()), 0,
+        "BP.LONE: expected 0 violations, got: {:?}", by_id.get("BP.LONE"));
 }
 
 #[test]

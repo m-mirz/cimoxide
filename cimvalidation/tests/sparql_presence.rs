@@ -344,3 +344,163 @@ fn not_solved_rules_read_absent_values_as_absent() {
     let interchange = format!("{CIM}ControlAreaTypeKind.Interchange");
     assert_eq!(ssh(&element("ControlArea", &[("ControlArea.type", &interchange), ("ControlArea.netInterchange", "100")]), rule, true), 0, "nothing to sum");
 }
+
+// ── equipment ──────────────────────────────────────────────────────────────
+
+/// An element with its own id; values starting `#` or `http` are references.
+fn obj(class: &str, id: &str, fields: &[(&str, &str)]) -> String {
+    element(class, fields).replacen("rdf:ID=\"_x\"", &format!("rdf:ID=\"{id}\""), 1)
+}
+
+fn terminal(id: &str, equipment: &str, sequence: Option<&str>) -> String {
+    let eq = format!("#{equipment}");
+    let mut f = vec![("Terminal.ConductingEquipment", eq.as_str())];
+    if let Some(n) = sequence {
+        f.push(("ACDCTerminal.sequenceNumber", n));
+    }
+    obj("Terminal", id, &f)
+}
+
+#[test]
+fn unnumbered_terminals_are_not_counted() {
+    let rule = "equ:ACDCTerminal.sequenceNumber-numbering";
+    let line = obj("ACLineSegment", "_l", &[]);
+    assert_eq!(count("EQ", &format!("{line}{}{}", terminal("_t1", "_l", Some("1")), terminal("_t2", "_l", None)), rule), 0);
+    assert_eq!(count("EQ", &format!("{line}{}{}", terminal("_t1", "_l", Some("1")), terminal("_t2", "_l", Some("1"))), rule), 1);
+}
+
+#[test]
+fn limit_durations_are_judged_by_presence() {
+    let olt = |fields: &[(&str, &str)]| element("OperationalLimitType", fields);
+    let usage = "equ:OperationalLimitType.acceptableDuration-usage";
+    let infinite = "equ:OperationalLimitType.isInfiniteDuration-usage";
+    assert_eq!(count("EQ", &olt(&[("OperationalLimitType.isInfiniteDuration", "true"), ("OperationalLimitType.acceptableDuration", "0")]), usage), 1);
+    assert_eq!(count("EQ", &olt(&[("OperationalLimitType.isInfiniteDuration", "false")]), infinite), 1);
+    assert_eq!(count("EQ", &olt(&[("OperationalLimitType.isInfiniteDuration", "false"), ("OperationalLimitType.acceptableDuration", "0")]), infinite), 0);
+    assert_eq!(count("EQ", &olt(&[("OperationalLimitType.acceptableDuration", "60")]), infinite), 0, "isInfiniteDuration absent");
+}
+
+fn transformer(ends: &[&[(&str, &str)]]) -> String {
+    let mut s = obj("PowerTransformer", "_pt", &[]);
+    for (i, fields) in ends.iter().enumerate() {
+        let mut f = vec![("PowerTransformerEnd.PowerTransformer", "#_pt")];
+        f.extend_from_slice(fields);
+        s += &obj("PowerTransformerEnd", &format!("_e{i}"), &f);
+    }
+    s
+}
+
+#[test]
+fn transformer_end_values_are_compared_when_given() {
+    let rule = "equ:PowerTransformerEnd.ratedS-valueRange2winding";
+    let end = |n: &'static str, s: Option<&'static str>| {
+        let mut f = vec![("TransformerEnd.endNumber", n)];
+        f.extend(s.map(|s| ("PowerTransformerEnd.ratedS", s)));
+        f
+    };
+    assert_eq!(count("EQ", &transformer(&[&end("1", Some("100")), &end("2", None)]), rule), 0);
+    assert_eq!(count("EQ", &transformer(&[&end("1", Some("100")), &end("2", Some("50"))]), rule), 1);
+
+    let rule = "equ:PowerTransformerEnd-secondWindingValues";
+    let second = [("TransformerEnd.endNumber", "2"), ("PowerTransformerEnd.r", "1"), ("PowerTransformerEnd.x", "1")];
+    assert_eq!(count("EQ", &transformer(&[&[("TransformerEnd.endNumber", "1")], &second]), rule), 0, "no r0, x0");
+
+    let rule = "eq452:PowerTransformerEnd.x-value";
+    let x = |n: &'static str, x: &'static str| [("TransformerEnd.endNumber", n), ("PowerTransformerEnd.x", x)];
+    assert_eq!(count("EQ", &transformer(&[&x("1", "5"), &x("2", "0")]), rule), 0);
+    assert_eq!(count("EQ", &transformer(&[&x("1", "5"), &x("2", "3")]), rule), 1, "end 2 carries x");
+    assert_eq!(count("EQ", &transformer(&[&x("1", "5"), &[("TransformerEnd.endNumber", "2")]]), rule), 0, "end 2 without x");
+}
+
+#[test]
+fn equivalent_branch_attributes_are_judged_by_presence() {
+    let eb = |fields: &[(&str, &str)]| element("EquivalentBranch", fields);
+    assert_eq!(count("EQ", &eb(&[("Equipment.aggregate", "false")]), "equ:Equipment.aggregate-notUsed"), 1);
+    assert_eq!(count("EQ", &eb(&[("EquivalentBranch.r21", "0"), ("EquivalentBranch.r", "1")]), "equ:EquivalentBranch.r21-usage"), 1);
+    assert_eq!(count("EQ", &eb(&[("EquivalentBranch.r21", "1")]), "equ:EquivalentBranch.r21-usage"), 0, "no r");
+}
+
+#[test]
+fn every_kind_of_generating_unit_is_reached() {
+    let rule = "eq452:SynchronousMachine-aggregate";
+    let body = |gu_aggregate: Option<&'static str>| {
+        let gu: Vec<(&str, &str)> = gu_aggregate.map(|a| ("Equipment.aggregate", a)).into_iter().collect();
+        format!("{}{}",
+            obj("ThermalGeneratingUnit", "_gu", &gu),
+            obj("SynchronousMachine", "_sm", &[("RotatingMachine.GeneratingUnit", "#_gu"), ("Equipment.aggregate", "true")]))
+    };
+    assert_eq!(count("EQ", &body(Some("false")), rule), 1);
+    assert_eq!(count("EQ", &body(None), rule), 0, "the unit's flag absent");
+}
+
+#[test]
+fn a_machine_without_a_curve_needs_both_q_limits() {
+    let rule = "eq452:SynchronousMachine-reactiveLimits";
+    assert_eq!(count("EQ", &element("SynchronousMachine", &[("SynchronousMachine.minQ", "-10")]), rule), 1);
+    assert_eq!(count("EQ", &element("SynchronousMachine", &[("SynchronousMachine.minQ", "-10"), ("SynchronousMachine.maxQ", "10")]), rule), 0);
+}
+
+#[test]
+fn a_generator_curve_has_no_negative_p() {
+    let rule = "eq452:ReactiveCapabilityCurve-reactiveCountP";
+    let generator = format!("{CIM}SynchronousMachineKind.generator");
+    let point = |id: &str, x: &str| obj("CurveData", id, &[("CurveData.Curve", "#_c"), ("CurveData.xvalue", x)]);
+    let body = |x1: &str| format!("{}{}{}{}",
+        obj("ReactiveCapabilityCurve", "_c", &[]),
+        obj("SynchronousMachine", "_sm", &[("SynchronousMachine.InitialReactiveCapabilityCurve", "#_c"), ("SynchronousMachine.type", &generator)]),
+        point("_p1", x1), point("_p2", "10"));
+    assert_eq!(count("EQ", &body("0"), rule), 0);
+    assert_eq!(count("EQ", &body("-5"), rule), 1);
+}
+
+#[test]
+fn a_limit_set_may_name_auxiliary_equipment() {
+    let rule = "eq452:OperationalLimitSet-limits";
+    let body = |class: &str| format!("{}{}{}",
+        obj(class, "_eq", &[]),
+        obj("Terminal", "_t", &[("Terminal.ConductingEquipment", "#_other")]),
+        obj("OperationalLimitSet", "_ols", &[("OperationalLimitSet.Terminal", "#_t"), ("OperationalLimitSet.Equipment", "#_eq")]));
+    assert_eq!(count("EQ", &body("SurgeArrester"), rule), 0);
+    assert_eq!(count("EQ", &body("ACLineSegment"), rule), 1);
+}
+
+fn eq_not_solved(body: &str, rule: &str) -> usize {
+    let xml = format!(
+        r##"<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/CIM100#">
+{body}
+</rdf:RDF>"##
+    );
+    let ds = cimmodel::CimDataset::decode_str(&xml).unwrap();
+    let cfg = Config { profiles: vec!["EQ".into()], not_solved: true, ..Default::default() };
+    cimvalidation::sparql::validate_profile_local(&ds, "EQ", &cfg).iter().filter(|v| v.rule_id == rule).count()
+}
+
+#[test]
+fn a_boundary_node_on_any_branch_class_has_a_branch() {
+    let body = |class: &str| format!("{}{}{}{}",
+        obj("ConnectivityNode", "_cn", &[("IdentifiedObject.name", "X")]),
+        obj("BoundaryPoint", "_bp", &[("BoundaryPoint.ConnectivityNode", "#_cn")]),
+        obj(class, "_eq", &[]),
+        obj("Terminal", "_t", &[("Terminal.ConductingEquipment", "#_eq"), ("Terminal.ConnectivityNode", "#_cn")]));
+    assert_eq!(eq_not_solved(&body("SeriesCompensator"), "eqn600:BoundaryPoint-bppl3"), 0);
+    assert_eq!(eq_not_solved(&body("EnergyConsumer"), "eqn600:BoundaryPoint-bppl3"), 1);
+    // An injection is expected only where a branch connects.
+    assert_eq!(eq_not_solved(&body("EnergyConsumer"), "eqn600:BoundaryPoint-bppl1Bppl2"), 0);
+    assert_eq!(eq_not_solved(&body("ACLineSegment"), "eqn600:BoundaryPoint-bppl1Bppl2"), 1);
+}
+
+#[test]
+fn an_injection_is_judged_only_at_a_boundary_point_known_to_be_ac() {
+    let rule = "eqn600:EquivalentInjection.regulationCapability-notHVDC";
+    let body = |dc: Option<&'static str>| {
+        let mut bp = vec![("BoundaryPoint.ConnectivityNode", "#_cn")];
+        bp.extend(dc.map(|d| ("BoundaryPoint.isDirectCurrent", d)));
+        format!("{}{}{}",
+            obj("BoundaryPoint", "_bp", &bp),
+            obj("EquivalentInjection", "_ei", &[("EquivalentInjection.regulationCapability", "true")]),
+            obj("Terminal", "_t", &[("Terminal.ConductingEquipment", "#_ei"), ("Terminal.ConnectivityNode", "#_cn")]))
+    };
+    assert_eq!(eq_not_solved(&body(Some("false")), rule), 1);
+    assert_eq!(eq_not_solved(&body(None), rule), 0);
+}

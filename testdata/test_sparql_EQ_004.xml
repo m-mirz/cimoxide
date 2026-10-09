@@ -87,6 +87,11 @@
     <cim:OperationalLimitType.kind rdf:resource="http://iec.ch/TC57/CIM100-European#LimitKind.tc"/>
     <cim:OperationalLimitType.acceptableDuration>60</cim:OperationalLimitType.acceptableDuration>
   </cim:OperationalLimitType>
+  <!-- A type is checked through the limits that use it. -->
+  <cim:CurrentLimit rdf:ID="CL.TC.BAD">
+    <cim:OperationalLimit.OperationalLimitType rdf:resource="#OLT.TC.BAD"/>
+    <cim:OperationalLimit.OperationalLimitSet rdf:resource="#OLS.1"/>
+  </cim:CurrentLimit>
 
   <!-- VoltageLimit: OK with a TATL type, BAD with a PATL type -->
   <cim:OperationalLimitType rdf:ID="OLT.TATL">

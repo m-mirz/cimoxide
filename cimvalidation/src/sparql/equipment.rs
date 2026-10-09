@@ -86,8 +86,8 @@ struct Terminals<'a> {
 /// several rules read the same few attributes of every terminal.
 #[derive(Clone, Copy)]
 struct Term<'a> {
-    /// `ACDCTerminal.sequenceNumber`, 0 when absent.
-    sequence_number: i64,
+    /// `ACDCTerminal.sequenceNumber`.
+    sequence_number: Option<i64>,
     phases: Option<&'a str>,
     connectivity_node: Option<&'a str>,
 }
@@ -101,7 +101,7 @@ impl<'a> Terminals<'a> {
                 continue;
             };
             let term = Term {
-                sequence_number: fields.i64("ACDCTerminal.sequenceNumber").unwrap_or(0),
+                sequence_number: fields.i64("ACDCTerminal.sequenceNumber"),
                 phases: fields.enumeration("Terminal.phases"),
                 connectivity_node: fields.reference("Terminal.ConnectivityNode"),
             };
@@ -114,6 +114,25 @@ impl<'a> Terminals<'a> {
         }
         Self { by_equipment, by_node }
     }
+}
+
+/// The two-terminal classes `equ:Terminal.phases-consistencyEquipment` and
+/// `eq452:Terminal-connection` target.
+const TWO_TERMINAL: &[&str] = &[
+    "ACLineSegment", "DCLineSegment", "DCSeriesDevice", "DCSwitch", "DCDisconnector", "DCBreaker",
+    "DCChopper", "Switch", "Disconnector", "Fuse", "GroundDisconnector", "Jumper", "Breaker",
+    "LoadBreakSwitch", "DisconnectingCircuitBreaker", "Cut", "SeriesCompensator", "EquivalentBranch",
+];
+
+/// The terminals numbered 1 and 2 of a two-terminal element. Where a number
+/// repeats, the last terminal with it wins.
+fn terminals_1_2<'a>(dataset: &CimDataset, terms: &'a Terminals, eq_id: &str) -> Option<(Term<'a>, Term<'a>)> {
+    let ts = terms.by_equipment.get(eq_id)?;
+    if !dataset.entries.get(eq_id).is_some_and(|e| TWO_TERMINAL.contains(&e.type_name())) {
+        return None;
+    }
+    let by_sn = |sn: i64| ts.iter().rev().find(|(_, t)| t.sequence_number == Some(sn)).map(|(_, t)| *t);
+    Some((by_sn(1)?, by_sn(2)?))
 }
 
 fn build_pt_ends(dataset: &CimDataset) -> HashMap<String, Vec<String>> {
@@ -129,24 +148,27 @@ fn build_pt_ends(dataset: &CimDataset) -> HashMap<String, Vec<String>> {
     map
 }
 
+/// Terminals and DC terminals are numbered separately (the SPARQL groups by
+/// the terminal's type), and a terminal without a number is not counted.
 fn check_acdcterminal_sequence_numbering(dataset: &CimDataset, terms: &Terminals) -> Vec<Violation> {
-    let mut equipment_sns: HashMap<&str, Vec<i64>> = HashMap::default();
-    for (eq_id, ts) in &terms.by_equipment {
-        equipment_sns.entry(eq_id).or_default().extend(ts.iter().map(|(_, t)| t.sequence_number));
-    }
+    let mut groups: Vec<(&str, Vec<i64>)> = terms.by_equipment.iter()
+        .map(|(eq_id, ts)| (*eq_id, ts.iter().filter_map(|(_, t)| t.sequence_number).collect()))
+        .collect();
+    let mut dc: HashMap<&str, Vec<i64>> = HashMap::default();
     for mrid in dataset.by_type.get("DCTerminal").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(dct) = Fields::of_class(entry, "DCTerminal")
-            && let Some(ce) = &dct.reference("DCTerminal.DCConductingEquipment") {
-                let eq_id = ce.trim_start_matches('#');
-                let sn = dct.i64("ACDCTerminal.sequenceNumber").unwrap_or(0);
-                equipment_sns.entry(eq_id).or_default().push(sn);
+            && let Some(ce) = dct.reference("DCTerminal.DCConductingEquipment")
+            && let Some(sn) = dct.i64("ACDCTerminal.sequenceNumber") {
+                dc.entry(ce.trim_start_matches('#')).or_default().push(sn);
             }
     }
+    groups.extend(dc);
+    let mut reported: HashSet<&str> = HashSet::default();
     let mut v = Vec::new();
-    for (eq_id, sns) in &equipment_sns {
+    for (eq_id, sns) in groups {
         let n = sns.len();
-        let min_sn = sns.iter().copied().min().unwrap_or(0);
+        let Some(min_sn) = sns.iter().copied().min() else { continue };
         let sum_sn: i64 = sns.iter().sum();
         let unique: HashSet<i64> = sns.iter().copied().collect();
         let failed = unique.len() != n
@@ -154,7 +176,7 @@ fn check_acdcterminal_sequence_numbering(dataset: &CimDataset, terms: &Terminals
             || (n == 1 && sum_sn != 1)
             || (n == 2 && sum_sn != 3)
             || (n == 3 && sum_sn != 6);
-        if failed {
+        if failed && reported.insert(eq_id) {
             v.push(Violation {
                 object_id: eq_id.to_string(), rule_id: "equ:ACDCTerminal.sequenceNumber-numbering".into(),
                 name: "C:301:EQ:ACDCTerminal.sequenceNumber:numbering".into(), class: "ConductingEquipment".into(),
@@ -167,16 +189,13 @@ fn check_acdcterminal_sequence_numbering(dataset: &CimDataset, terms: &Terminals
     v
 }
 
-fn check_terminal_phases_consistency_equipment(_dataset: &CimDataset, terms: &Terminals) -> Vec<Violation> {
+fn check_terminal_phases_consistency_equipment(dataset: &CimDataset, terms: &Terminals) -> Vec<Violation> {
     let abcn = "PhaseCode.ABCN";
     let n_code = "PhaseCode.N";
     let abc = "PhaseCode.ABC";
     let mut v = Vec::new();
-    for (eq_id, ts) in &terms.by_equipment {
-        // The last terminal with each sequence number wins, as when these were
-        // collected into a map keyed by it.
-        let by_sn = |sn: i64| ts.iter().rev().find(|(_, t)| t.sequence_number == sn).map(|(_, t)| *t);
-        let (Some(t1), Some(t2)) = (by_sn(1), by_sn(2)) else { continue };
+    for eq_id in terms.by_equipment.keys() {
+        let Some((t1, t2)) = terminals_1_2(dataset, terms, eq_id) else { continue };
         let val1 = t1.phases.unwrap_or("");
         let val2 = t2.phases.unwrap_or("");
         let failed = if !val1.is_empty() && !val2.is_empty() {
@@ -227,47 +246,33 @@ fn check_conducting_equipment_base_voltage_usage(dataset: &CimDataset) -> Vec<Vi
     v
 }
 
+/// Over the ends with both an endNumber and a ratedU: the numbers are unique,
+/// and the lowest-numbered end has the highest ratedU.
 fn check_power_transformer_end_number_unique(dataset: &CimDataset) -> Vec<Violation> {
     let pt_ends = build_pt_ends(dataset);
     let mut v = Vec::new();
     for (pt_id, end_ids) in &pt_ends {
-        let mut seen: HashMap<i64, bool> = HashMap::default();
-        let mut max_rated_u = -1.0f64;
-        let mut max_end_num = 0i64;
-        let mut duplicate = false;
-        for eid in end_ids {
-            let entry = match dataset.entries.get(eid) { Some(e) => e, None => continue };
-            let pte = match Fields::of_class(entry, "PowerTransformerEnd") { Some(p) => p, None => continue };
-            let en = pte.i64("TransformerEnd.endNumber").unwrap_or(0);
-            if seen.contains_key(&en) { duplicate = true; }
-            seen.insert(en, true);
-            let ru = pte.f64("PowerTransformerEnd.ratedU").unwrap_or(0.0);
-            if ru > max_rated_u { max_rated_u = ru; max_end_num = en; }
-        }
-        if duplicate {
-            v.push(Violation {
-                object_id: pt_id.clone(), rule_id: "equ:TransformerEnd.endNumber-unique".into(),
-                name: "C:301:EQ:TransformerEnd.endNumber:unique".into(), class: "PowerTransformer".into(),
-                property: "TransformerEnd.endNumber".into(),
-                message: "The PowerTransformer has TransformerEnd.endNumber which is not unique.".into(),
-                severity: "sh:Violation".into(), description: String::new(),
-            });
-        } else if max_rated_u > 0.0 && max_end_num != 1 {
-            let found_max_at_1 = end_ids.iter().any(|eid| {
-                dataset.entries.get(eid).and_then(|e| Fields::of_class(e, "PowerTransformerEnd"))
-                    .map(|p| p.f64("PowerTransformerEnd.ratedU").unwrap_or(0.0) == max_rated_u && p.i64("TransformerEnd.endNumber").unwrap_or(0) == 1)
-                    .unwrap_or(false)
-            });
-            if !found_max_at_1 {
-                v.push(Violation {
-                    object_id: pt_id.clone(), rule_id: "equ:TransformerEnd.endNumber-unique".into(),
-                    name: "C:301:EQ:TransformerEnd.endNumber:unique".into(), class: "PowerTransformer".into(),
-                    property: "TransformerEnd.endNumber".into(),
-                    message: "The PowerTransformerEnd with endNumber 1 is not the highest voltage winding.".into(),
-                    severity: "sh:Violation".into(), description: String::new(),
-                });
-            }
-        }
+        let ends: Vec<(i64, f64)> = end_ids.iter()
+            .filter_map(|eid| Fields::get(dataset, eid, "PowerTransformerEnd"))
+            .filter_map(|p| Some((p.i64("TransformerEnd.endNumber")?, p.f64("PowerTransformerEnd.ratedU")?)))
+            .collect();
+        let Some(&(_, first_u)) = ends.iter().min_by_key(|(n, _)| *n) else { continue };
+        let numbers: HashSet<i64> = ends.iter().map(|(n, _)| *n).collect();
+        let max_u = ends.iter().map(|(_, u)| *u).fold(f64::NEG_INFINITY, f64::max);
+        let message = if numbers.len() != ends.len() {
+            "The PowerTransformer has TransformerEnd.endNumber which is not unique."
+        } else if first_u != max_u {
+            "The PowerTransformerEnd with endNumber 1 is not the highest voltage winding."
+        } else {
+            continue;
+        };
+        v.push(Violation {
+            object_id: pt_id.clone(), rule_id: "equ:TransformerEnd.endNumber-unique".into(),
+            name: "C:301:EQ:TransformerEnd.endNumber:unique".into(), class: "PowerTransformer".into(),
+            property: "TransformerEnd.endNumber".into(),
+            message: message.into(),
+            severity: "sh:Violation".into(), description: String::new(),
+        });
     }
     v
 }
@@ -299,9 +304,12 @@ fn check_operational_limit_type_duration(dataset: &CimDataset) -> Vec<Violation>
     for mrid in dataset.by_type.get("OperationalLimitType").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         let olt = match Fields::of_class(entry, "OperationalLimitType") { Some(o) => o, None => continue };
-        let is_inf = olt.bool("OperationalLimitType.isInfiniteDuration").unwrap_or(false);
-        let dur = olt.f64("OperationalLimitType.acceptableDuration").unwrap_or(0.0);
-        if is_inf && dur != 0.0 {
+        // Both by presence; isInfiniteDuration must be given. The second rule's
+        // SPARQL binds acceptableDuration and then requires it to be absent,
+        // so it can never report; it is implemented as described.
+        let Some(is_inf) = olt.bool("OperationalLimitType.isInfiniteDuration") else { continue };
+        let has_dur = olt.has("OperationalLimitType.acceptableDuration");
+        if is_inf && has_dur {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "equ:OperationalLimitType.acceptableDuration-usage".into(),
                 name: "C:301:EQ:OperationalLimitType.acceptableDuration:usage".into(), class: "OperationalLimitType".into(),
@@ -310,7 +318,7 @@ fn check_operational_limit_type_duration(dataset: &CimDataset) -> Vec<Violation>
                 severity: "sh:Violation".into(), description: String::new(),
             });
         }
-        if !is_inf && dur == 0.0 {
+        if !is_inf && !has_dur {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "equ:OperationalLimitType.isInfiniteDuration-usage".into(),
                 name: "C:301:EQ:OperationalLimitType.isInfiniteDuration:usage".into(), class: "OperationalLimitType".into(),
@@ -326,16 +334,17 @@ fn check_operational_limit_type_duration(dataset: &CimDataset) -> Vec<Violation>
 fn check_power_transformer_two_winding_end_values(dataset: &CimDataset) -> Vec<Violation> {
     let pt_ends = build_pt_ends(dataset);
     let mut v = Vec::new();
+    // The target is a transformer without an end numbered 3; all four values
+    // are required patterns, so r0 and x0 (short-circuit data) must be given.
     for (pt_id, end_ids) in &pt_ends {
-        if end_ids.len() != 2 { continue; }
-        for eid in end_ids {
-            let pte = match dataset.entries.get(eid).and_then(|e| Fields::of_class(e, "PowerTransformerEnd")) { Some(p) => p, None => continue };
-            if pte.i64("TransformerEnd.endNumber").unwrap_or(0) == 2 {
-                let r = pte.f64("PowerTransformerEnd.r").unwrap_or(0.0);
-                let r0 = pte.f64("PowerTransformerEnd.r0").unwrap_or(0.0);
-                let x = pte.f64("PowerTransformerEnd.x").unwrap_or(0.0);
-                let x0 = pte.f64("PowerTransformerEnd.x0").unwrap_or(0.0);
-                if r != 0.0 || r0 != 0.0 || x != 0.0 || x0 != 0.0 {
+        let ends: Vec<Fields> = end_ids.iter().filter_map(|eid| Fields::get(dataset, eid, "PowerTransformerEnd")).collect();
+        if ends.iter().any(|p| p.i64("TransformerEnd.endNumber") == Some(3)) { continue; }
+        for pte in ends {
+            if pte.i64("TransformerEnd.endNumber") == Some(2)
+                && let (Some(r), Some(r0), Some(x), Some(x0)) = (
+                    pte.f64("PowerTransformerEnd.r"), pte.f64("PowerTransformerEnd.r0"),
+                    pte.f64("PowerTransformerEnd.x"), pte.f64("PowerTransformerEnd.x0"))
+                && (r != 0.0 || r0 != 0.0 || x != 0.0 || x0 != 0.0) {
                     v.push(Violation {
                         object_id: pt_id.clone(), rule_id: "equ:PowerTransformerEnd-secondWindingValues".into(),
                         name: "C:301:EQ:PowerTransformerEnd:secondWindingValues".into(), class: "PowerTransformer".into(),
@@ -344,7 +353,6 @@ fn check_power_transformer_two_winding_end_values(dataset: &CimDataset) -> Vec<V
                         severity: "sh:Violation".into(), description: String::new(),
                     });
                 }
-            }
         }
     }
     v
@@ -358,7 +366,7 @@ fn check_phase_tap_changer_linear_x_min_consistency(dataset: &CimDataset) -> Vec
         let x_min = match ptcl.f64("PhaseTapChangerLinear.xMin") { Some(x) => x, None => continue };
         let te_id = match ptcl.reference("PhaseTapChanger.TransformerEnd") { Some(r) => r.trim_start_matches('#').to_string(), None => continue };
         let pte = match dataset.entries.get(&te_id).and_then(|e| Fields::of_class(e, "PowerTransformerEnd")) { Some(p) => p, None => continue };
-        let end_x = pte.f64("PowerTransformerEnd.x").unwrap_or(0.0);
+        let Some(end_x) = pte.f64("PowerTransformerEnd.x") else { continue };
         if x_min != end_x {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "equ:PhaseTapChangerLinear.xMin-valueRangePair".into(),
@@ -387,7 +395,7 @@ fn check_phase_tap_changer_non_linear_x_min_consistency(dataset: &CimDataset) ->
             let x_min = match x_min { Some(x) => x, None => continue };
             let te_id = match te_id { Some(id) => id, None => continue };
             let pte = match dataset.entries.get(&te_id).and_then(|e| Fields::of_class(e, "PowerTransformerEnd")) { Some(p) => p, None => continue };
-            let end_x = pte.f64("PowerTransformerEnd.x").unwrap_or(0.0);
+            let Some(end_x) = pte.f64("PowerTransformerEnd.x") else { continue };
             if x_min != end_x {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "equ:PhaseTapChangerNonLinear.xMin-valueRangePair".into(),
@@ -407,8 +415,12 @@ fn check_power_transformer_end_rated_s_2winding(dataset: &CimDataset) -> Vec<Vio
     let mut v = Vec::new();
     for (pt_id, end_ids) in &pt_ends {
         if end_ids.len() != 2 { continue; }
-        let s0 = dataset.entries.get(&end_ids[0]).and_then(|e| Fields::of_class(e, "PowerTransformerEnd")).and_then(|p| p.f64("PowerTransformerEnd.ratedS")).unwrap_or(0.0);
-        let s1 = dataset.entries.get(&end_ids[1]).and_then(|e| Fields::of_class(e, "PowerTransformerEnd")).and_then(|p| p.f64("PowerTransformerEnd.ratedS")).unwrap_or(0.0);
+        // Ends 1 and 2 by number, each with its ratedS.
+        let rated_s = |n: i64| end_ids.iter()
+            .filter_map(|eid| Fields::get(dataset, eid, "PowerTransformerEnd"))
+            .find(|p| p.i64("TransformerEnd.endNumber") == Some(n))
+            .and_then(|p| p.f64("PowerTransformerEnd.ratedS"));
+        let (Some(s0), Some(s1)) = (rated_s(1), rated_s(2)) else { continue };
         if s0 != s1 {
             v.push(Violation {
                 object_id: pt_id.clone(), rule_id: "equ:PowerTransformerEnd.ratedS-valueRange2winding".into(),
@@ -427,11 +439,14 @@ fn check_power_transformer_end_r_value_range(dataset: &CimDataset) -> Vec<Violat
     for mrid in dataset.by_type.get("PowerTransformerEnd").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         let pte = match Fields::of_class(entry, "PowerTransformerEnd") { Some(p) => p, None => continue };
-        let r = pte.f64("PowerTransformerEnd.r").unwrap_or(0.0);
-        if r >= 0.0 { continue; }
-        let pt_id = match pte.reference("PowerTransformerEnd.PowerTransformer") { Some(r) => r.trim_start_matches('#').to_string(), None => continue };
-        let pt = match dataset.entries.get(&pt_id).and_then(|e| Fields::of_class(e, "PowerTransformer")) { Some(p) => p, None => continue };
-        if !pt.bool("Equipment.aggregate").unwrap_or(false) {
+        if !pte.f64("PowerTransformerEnd.r").is_some_and(|r| r < 0.0) { continue; }
+        // The SPARQL reads Equipment.aggregate on the end, which has none, so
+        // it would report every negative r; the description means the
+        // transformer's. An unknown transformer counts as not aggregated.
+        let aggregate = pte.reference("PowerTransformerEnd.PowerTransformer")
+            .and_then(|r| Fields::get(dataset, r.trim_start_matches('#'), "PowerTransformer"))
+            .and_then(|pt| pt.bool("Equipment.aggregate"));
+        if aggregate != Some(true) {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "equ:PowerTransformerEnd.r-valueRange".into(),
                 name: "C:301:EQ:PowerTransformerEnd.r:valueRange".into(), class: "PowerTransformerEnd".into(),
@@ -476,21 +491,8 @@ fn check_tap_changer_ltc_flag_control(dataset: &CimDataset) -> Vec<Violation> {
         "PhaseTapChangerTabular", "PhaseTapChangerAsymmetrical", "PhaseTapChangerSymmetrical"];
     for type_name in &tc_types {
         for mrid in dataset.by_type.get(*type_name).into_iter().flatten() {
-            let entry = &dataset.entries[mrid];
-            let (ltc_flag, has_tcc) = if let Some(o) = Fields::of_class(entry, "RatioTapChanger") {
-                (o.bool("TapChanger.ltcFlag").unwrap_or(true), o.reference("TapChanger.TapChangerControl").is_some())
-            } else if let Some(o) = Fields::of_class(entry, "PhaseTapChangerLinear") {
-                (o.bool("TapChanger.ltcFlag").unwrap_or(true), o.reference("TapChanger.TapChangerControl").is_some())
-            } else if let Some(o) = Fields::of_class(entry, "PhaseTapChangerNonLinear") {
-                (o.bool("TapChanger.ltcFlag").unwrap_or(true), o.reference("TapChanger.TapChangerControl").is_some())
-            } else if let Some(o) = Fields::of_class(entry, "PhaseTapChangerTabular") {
-                (o.bool("TapChanger.ltcFlag").unwrap_or(true), o.reference("TapChanger.TapChangerControl").is_some())
-            } else if let Some(o) = Fields::of_class(entry, "PhaseTapChangerAsymmetrical") {
-                (o.bool("TapChanger.ltcFlag").unwrap_or(true), o.reference("TapChanger.TapChangerControl").is_some())
-            } else if let Some(o) = Fields::of_class(entry, "PhaseTapChangerSymmetrical") {
-                (o.bool("TapChanger.ltcFlag").unwrap_or(true), o.reference("TapChanger.TapChangerControl").is_some())
-            } else { continue };
-            if !ltc_flag && has_tcc {
+            let o = Fields::of(&dataset.entries[mrid]);
+            if o.bool("TapChanger.ltcFlag") == Some(false) && o.has("TapChanger.TapChangerControl") {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "equ:TapChanger.ltcFlag-tapChangerControl".into(),
                     name: "C:301:EQ:TapChanger.ltcFlag:tapChangerControl".into(), class: "TapChanger".into(),
@@ -513,8 +515,8 @@ fn check_load_response_characteristic_exponent_model(dataset: &CimDataset) -> Ve
         let exp = match lrc.bool("LoadResponseCharacteristic.exponentModel") { Some(e) => e, None => continue };
 
         let exponent_bound = [
-            lrc.f64("LoadResponseCharacteristic.pFrequencyExponent").is_some(), lrc.f64("LoadResponseCharacteristic.pVoltageExponent").is_some(),
-            lrc.f64("LoadResponseCharacteristic.qFrequencyExponent").is_some(), lrc.f64("LoadResponseCharacteristic.qVoltageExponent").is_some(),
+            lrc.has("LoadResponseCharacteristic.pFrequencyExponent"), lrc.has("LoadResponseCharacteristic.pVoltageExponent"),
+            lrc.has("LoadResponseCharacteristic.qFrequencyExponent"), lrc.has("LoadResponseCharacteristic.qVoltageExponent"),
         ];
         let coeff_vals = [
             lrc.f64("LoadResponseCharacteristic.pConstantCurrent"), lrc.f64("LoadResponseCharacteristic.pConstantImpedance"), lrc.f64("LoadResponseCharacteristic.pConstantPower"),
@@ -575,7 +577,7 @@ fn check_nonlinear_shunt_compensator_point_count(dataset: &CimDataset) -> Vec<Vi
     for (nsc_id, count) in &point_count {
         let entry = match dataset.entries.get(nsc_id) { Some(e) => e, None => continue };
         let nsc = match Fields::of_class(entry, "NonlinearShuntCompensator") { Some(n) => n, None => continue };
-        let max_sec = nsc.i64("ShuntCompensator.maximumSections").unwrap_or(0);
+        let Some(max_sec) = nsc.i64("ShuntCompensator.maximumSections") else { continue };
         if max_sec != *count {
             v.push(Violation {
                 object_id: nsc_id.clone(), rule_id: "equ:ShuntCompensator.maximumSections-numberOfInstances".into(),
@@ -606,6 +608,8 @@ fn check_shunt_compensator_nom_u(dataset: &CimDataset) -> Vec<Violation> {
             let bv_id = match vl.reference("VoltageLevel.BaseVoltage") { Some(r) => r.trim_start_matches('#').to_string(), None => continue };
             let bv = match dataset.entries.get(&bv_id).and_then(|e| Fields::of_class(e, "BaseVoltage")) { Some(b) => b, None => continue };
             let nom_v = match bv.f64("BaseVoltage.nominalVoltage") { Some(v) => v, None => continue };
+            // The SPARQL joins the two bounds with `&&`, which nothing satisfies;
+            // the description is "more than 10%" either way.
             if nom_u < 0.9 * nom_v || nom_u > 1.1 * nom_v {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "equ:ShuntCompensator.nomU-nominalVoltageDifference".into(),
@@ -641,37 +645,29 @@ fn check_phase_tap_changer_asymmetrical_winding_connection_angle(dataset: &CimDa
     v
 }
 
+/// Two or three ends, numbered 1..: ratedU is positive and does not rise
+/// with the end number. Ends without a number or a ratedU are not compared.
 fn check_power_transformer_end_rated_u_value_range(dataset: &CimDataset) -> Vec<Violation> {
     let pt_ends = build_pt_ends(dataset);
     let mut v = Vec::new();
     for (pt_id, end_ids) in &pt_ends {
-        let mut max_rated_u = -1.0f64;
-        let mut end1_rated_u: Option<f64> = None;
-        for eid in end_ids {
-            let pte = match dataset.entries.get(eid).and_then(|e| Fields::of_class(e, "PowerTransformerEnd")) { Some(p) => p, None => continue };
-            let ru = pte.f64("PowerTransformerEnd.ratedU").unwrap_or(0.0);
-            if ru <= 0.0 {
-                v.push(Violation {
-                    object_id: pt_id.clone(), rule_id: "equ:PowerTransformerEnd.ratedU-valueRange".into(),
-                    name: "C:301:EQ:PowerTransformerEnd.ratedU:valueRange".into(), class: "PowerTransformer".into(),
-                    property: "PowerTransformerEnd.ratedU".into(),
-                    message: format!("The PowerTransformerEnd {} has a non-positive ratedU ({ru}).", pte.id()),
-                    severity: "sh:Violation".into(), description: String::new(),
-                });
-            }
-            if pte.i64("TransformerEnd.endNumber").unwrap_or(0) == 1 { end1_rated_u = pte.f64("PowerTransformerEnd.ratedU"); }
-            if ru > max_rated_u { max_rated_u = ru; }
+        let n = end_ids.len();
+        if n != 2 && n != 3 { continue; }
+        let rated_u = |k: i64| end_ids.iter()
+            .filter_map(|eid| Fields::get(dataset, eid, "PowerTransformerEnd"))
+            .find(|p| p.i64("TransformerEnd.endNumber") == Some(k))
+            .and_then(|p| p.f64("PowerTransformerEnd.ratedU"));
+        let Some(us) = (1..=n as i64).map(rated_u).collect::<Option<Vec<f64>>>() else { continue };
+        if us.iter().any(|u| *u <= 0.0) || us.windows(2).any(|w| w[0] < w[1]) {
+            let listed: Vec<String> = us.iter().map(|u| u.to_string()).collect();
+            v.push(Violation {
+                object_id: pt_id.clone(), rule_id: "equ:PowerTransformerEnd.ratedU-valueRange".into(),
+                name: "C:301:EQ:PowerTransformerEnd.ratedU:valueRange".into(), class: "PowerTransformer".into(),
+                property: "PowerTransformerEnd.ratedU".into(),
+                message: format!("The ratedU of the ends by endNumber ({}) is not positive or not descending.", listed.join(", ")),
+                severity: "sh:Violation".into(), description: String::new(),
+            });
         }
-        if let Some(e1u) = end1_rated_u
-            && e1u < max_rated_u {
-                v.push(Violation {
-                    object_id: pt_id.clone(), rule_id: "equ:PowerTransformerEnd.ratedU-valueRange".into(),
-                    name: "C:301:EQ:PowerTransformerEnd.ratedU:valueRange".into(), class: "PowerTransformer".into(),
-                    property: "PowerTransformerEnd.ratedU".into(),
-                    message: "The high voltage side (endNumber=1) does not have the highest ratedU.".into(),
-                    severity: "sh:Violation".into(), description: String::new(),
-                });
-            }
     }
     v
 }
@@ -776,8 +772,10 @@ fn check_connectivity_node_terminal_phases_consistency(_dataset: &CimDataset, te
     let mut v = Vec::new();
     'outer: for (node_id, ts) in &terms.by_node {
         if ts.len() < 2 { continue; }
+        // Every ordered pair: the rule is not symmetric (ABC beside ABCN fails
+        // one way round only).
         for i in 0..ts.len() {
-            for j in (i + 1)..ts.len() {
+            for j in (0..ts.len()).filter(|&j| j != i) {
                 let ((id_i, t_i), (id_j, t_j)) = (ts[i], ts[j]);
                 let val1 = t_i.phases.unwrap_or("");
                 let val2 = t_j.phases.unwrap_or("");
@@ -828,7 +826,7 @@ fn check_equipment_aggregate_not_used(dataset: &CimDataset) -> Vec<Violation> {
     for mrid in dataset.by_type.get("EquivalentBranch").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(eb) = Fields::of_class(entry, "EquivalentBranch")
-            && eb.bool("Equipment.aggregate").unwrap_or(false) {
+            && eb.has("Equipment.aggregate") {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "equ:Equipment.aggregate-notUsed".into(),
                     name: "C:301:EQ:Equipment.aggregate:notUsed".into(), class: "EquivalentBranch".into(),
@@ -841,7 +839,7 @@ fn check_equipment_aggregate_not_used(dataset: &CimDataset) -> Vec<Violation> {
     for mrid in dataset.by_type.get("EquivalentShunt").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(es) = Fields::of_class(entry, "EquivalentShunt")
-            && es.bool("Equipment.aggregate").unwrap_or(false) {
+            && es.has("Equipment.aggregate") {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "equ:Equipment.aggregate-notUsed".into(),
                     name: "C:301:EQ:Equipment.aggregate:notUsed".into(), class: "EquivalentShunt".into(),
@@ -854,7 +852,7 @@ fn check_equipment_aggregate_not_used(dataset: &CimDataset) -> Vec<Violation> {
     for mrid in dataset.by_type.get("EquivalentInjection").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(ei) = Fields::of_class(entry, "EquivalentInjection")
-            && ei.bool("Equipment.aggregate").unwrap_or(false) {
+            && ei.has("Equipment.aggregate") {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "equ:Equipment.aggregate-notUsed".into(),
                     name: "C:301:EQ:Equipment.aggregate:notUsed".into(), class: "EquivalentInjection".into(),
@@ -871,10 +869,9 @@ fn check_equivalent_branch_r21_usage(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("EquivalentBranch").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(eb) = Fields::of_class(entry, "EquivalentBranch") {
-            let r21 = eb.f64("EquivalentBranch.r21").unwrap_or(0.0);
-            let r = eb.f64("EquivalentBranch.r").unwrap_or(0.0);
-            if r21 != 0.0 && r21 != r {
+        if let Some(eb) = Fields::of_class(entry, "EquivalentBranch")
+            && let (Some(r21), Some(r)) = (eb.f64("EquivalentBranch.r21"), eb.f64("EquivalentBranch.r"))
+                && r21 != r {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "equ:EquivalentBranch.r21-usage".into(),
                     name: "C:301:EQ:EquivalentBranch.r21:usage".into(), class: "EquivalentBranch".into(),
@@ -883,7 +880,6 @@ fn check_equivalent_branch_r21_usage(dataset: &CimDataset) -> Vec<Violation> {
                     severity: "sh:Info".into(), description: String::new(),
                 });
             }
-        }
     }
     v
 }
@@ -892,10 +888,9 @@ fn check_equivalent_branch_x21_usage(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("EquivalentBranch").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(eb) = Fields::of_class(entry, "EquivalentBranch") {
-            let x21 = eb.f64("EquivalentBranch.x21").unwrap_or(0.0);
-            let x = eb.f64("EquivalentBranch.x").unwrap_or(0.0);
-            if x21 != 0.0 && x21 != x {
+        if let Some(eb) = Fields::of_class(entry, "EquivalentBranch")
+            && let (Some(x21), Some(x)) = (eb.f64("EquivalentBranch.x21"), eb.f64("EquivalentBranch.x"))
+                && x21 != x {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "equ:EquivalentBranch.x21-usage".into(),
                     name: "C:301:EQ:EquivalentBranch.x21:usage".into(), class: "EquivalentBranch".into(),
@@ -904,7 +899,6 @@ fn check_equivalent_branch_x21_usage(dataset: &CimDataset) -> Vec<Violation> {
                     severity: "sh:Info".into(), description: String::new(),
                 });
             }
-        }
     }
     v
 }
@@ -914,7 +908,7 @@ fn check_equivalent_injection_regulation_capability(dataset: &CimDataset) -> Vec
     for mrid in dataset.by_type.get("EquivalentInjection").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(ei) = Fields::of_class(entry, "EquivalentInjection")
-            && ei.reference("EquivalentInjection.ReactiveCapabilityCurve").is_some() && !ei.bool("EquivalentInjection.regulationCapability").unwrap_or(false) {
+            && ei.has("EquivalentInjection.ReactiveCapabilityCurve") && ei.bool("EquivalentInjection.regulationCapability") == Some(false) {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "equ:EquivalentInjection.regulationCapability-associatedCurve".into(),
                     name: "C:301:EQ:EquivalentInjection.regulationCapability:associatedCurve".into(), class: "EquivalentInjection".into(),
@@ -928,18 +922,20 @@ fn check_equivalent_injection_regulation_capability(dataset: &CimDataset) -> Vec
 }
 
 fn check_generating_unit_nominal_p(dataset: &CimDataset) -> Vec<Violation> {
+    // Each machine is compared on its own (a row per machine), so the
+    // smallest given ratedS decides.
     let mut rated_s_by_gu: HashMap<String, f64> = HashMap::default();
     for type_name in &["SynchronousMachine", "AsynchronousMachine"] {
         for mrid in dataset.by_type.get(*type_name).into_iter().flatten() {
             let entry = &dataset.entries[mrid];
             let (gu_id, rated_s) = if let Some(sm) = Fields::of_class(entry, "SynchronousMachine") {
-                (sm.reference("RotatingMachine.GeneratingUnit").map(|r| r.trim_start_matches('#').to_string()), sm.f64("RotatingMachine.ratedS").unwrap_or(0.0))
+                (sm.reference("RotatingMachine.GeneratingUnit").map(|r| r.trim_start_matches('#').to_string()), sm.f64("RotatingMachine.ratedS"))
             } else if let Some(am) = Fields::of_class(entry, "AsynchronousMachine") {
-                (am.reference("RotatingMachine.GeneratingUnit").map(|r| r.trim_start_matches('#').to_string()), am.f64("RotatingMachine.ratedS").unwrap_or(0.0))
+                (am.reference("RotatingMachine.GeneratingUnit").map(|r| r.trim_start_matches('#').to_string()), am.f64("RotatingMachine.ratedS"))
             } else { continue };
-            if let Some(gu_id) = gu_id {
-                let e = rated_s_by_gu.entry(gu_id).or_default();
-                if rated_s > *e { *e = rated_s; }
+            if let (Some(gu_id), Some(rated_s)) = (gu_id, rated_s) {
+                let e = rated_s_by_gu.entry(gu_id).or_insert(f64::INFINITY);
+                if rated_s < *e { *e = rated_s; }
             }
         }
     }
@@ -1031,16 +1027,19 @@ fn check_dc_converter_unit_cs_converter_power_transformer(dataset: &CimDataset) 
 
 fn check_limit_kind_patl_number_of_limit_type(dataset: &CimDataset) -> Vec<Violation> {
     let patl_uri = "LimitKind.patl";
+    // isInfiniteDuration is a required pattern; limits are counted per set
+    // across the three types together.
     let mut patl_olts: HashMap<String, bool> = HashMap::default();
     for mrid in dataset.by_type.get("OperationalLimitType").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(olt) = Fields::of_class(entry, "OperationalLimitType")
-            && olt.reference("OperationalLimitType.kind") == Some(patl_uri) {
-                patl_olts.insert(mrid.clone(), olt.bool("OperationalLimitType.isInfiniteDuration").unwrap_or(false));
+            && olt.reference("OperationalLimitType.kind") == Some(patl_uri)
+            && let Some(inf) = olt.bool("OperationalLimitType.isInfiniteDuration") {
+                patl_olts.insert(mrid.clone(), inf);
             }
     }
     if patl_olts.is_empty() { return Vec::new(); }
-    let mut patl_counts: HashMap<String, HashMap<(String, String), i64>> = HashMap::default();
+    let mut patl_counts: HashMap<String, HashMap<String, i64>> = HashMap::default();
     let get_olt_set = |entry: &cimmodel::Element| -> Option<(String, String)> {
         let block = entry;
         let olt_id = match block.fields().get("OperationalLimit.OperationalLimitType") {
@@ -1058,7 +1057,7 @@ fn check_limit_kind_patl_number_of_limit_type(dataset: &CimDataset) -> Vec<Viola
             let entry = &dataset.entries[mrid];
             if let Some((olt_id, set_id)) = get_olt_set(entry)
                 && patl_olts.contains_key(&olt_id) {
-                    *patl_counts.entry(olt_id).or_default().entry((set_id, limit_type.to_string())).or_default() += 1;
+                    *patl_counts.entry(olt_id).or_default().entry(set_id).or_default() += 1;
                 }
         }
     }
@@ -1082,17 +1081,19 @@ fn check_limit_kind_patl_number_of_limit_type(dataset: &CimDataset) -> Vec<Viola
 
 fn check_limit_kind_tc_duration(dataset: &CimDataset) -> Vec<Violation> {
     let tc_uri = "LimitKind.tc";
-    let mut tc_olts: HashMap<String, f64> = HashMap::default();
+    // A duration is reported only when given; with no limit of the type there
+    // is no row, so nothing is reported.
+    let mut tc_olts: HashMap<String, Option<f64>> = HashMap::default();
     for mrid in dataset.by_type.get("OperationalLimitType").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(olt) = Fields::of_class(entry, "OperationalLimitType")
             && olt.reference("OperationalLimitType.kind") == Some(tc_uri) {
-                tc_olts.insert(mrid.clone(), olt.f64("OperationalLimitType.acceptableDuration").unwrap_or(0.0));
+                tc_olts.insert(mrid.clone(), olt.f64("OperationalLimitType.acceptableDuration"));
             }
     }
     if tc_olts.is_empty() { return Vec::new(); }
     let mut counts_per_olt_set: HashMap<String, HashMap<String, i64>> = HashMap::default();
-    let add_limit = |counts: &mut HashMap<String, HashMap<String, i64>>, entry: &cimmodel::Element, tc_olts: &HashMap<String, f64>| {
+    let add_limit = |counts: &mut HashMap<String, HashMap<String, i64>>, entry: &cimmodel::Element, tc_olts: &HashMap<String, Option<f64>>| {
         let block = entry;
         let olt_id = match block.fields().get("OperationalLimit.OperationalLimitType") {
             Some(cimmodel::base::FieldValue::Resource(id)) => id.trim_start_matches('#').to_string(),
@@ -1112,8 +1113,10 @@ fn check_limit_kind_tc_duration(dataset: &CimDataset) -> Vec<Violation> {
     }
     let mut v = Vec::new();
     for (olt_id, dur) in &tc_olts {
-        let duplicate = counts_per_olt_set.get(olt_id).map(|m| m.values().any(|&c| c > 1)).unwrap_or(false);
-        if duplicate || *dur != 0.0 {
+        let Some(sets) = counts_per_olt_set.get(olt_id) else { continue };
+        let duplicate = sets.values().any(|&c| c > 1);
+        if duplicate || dur.is_some_and(|d| d != 0.0) {
+            let dur = dur.map_or_else(|| "absent".to_string(), |d| d.to_string());
             v.push(Violation {
                 object_id: olt_id.clone(), rule_id: "equ:LimitKind.tc-duration".into(),
                 name: "C:301:EQ:LimitKind.tc:duration".into(), class: "OperationalLimitType".into(),
@@ -1139,9 +1142,8 @@ fn check_synchronous_machine_aggregate(dataset: &CimDataset) -> Vec<Violation> {
     for (gu_id, sm_ids) in &gu_sms {
         if sm_ids.len() != 1 { continue; }
         let sm = match dataset.entries.get(&sm_ids[0]).and_then(|e| Fields::of_class(e, "SynchronousMachine")) { Some(s) => s, None => continue };
-        let gu = match dataset.entries.get(gu_id).and_then(|e| Fields::of_class(e, "GeneratingUnit")) { Some(g) => g, None => continue };
-        let sm_agg = sm.bool("Equipment.aggregate").unwrap_or(false);
-        let gu_agg = gu.bool("Equipment.aggregate").unwrap_or(false);
+        let gu = match dataset.entries.get(gu_id).map(Fields::of) { Some(g) => g, None => continue };
+        let (Some(sm_agg), Some(gu_agg)) = (sm.bool("Equipment.aggregate"), gu.bool("Equipment.aggregate")) else { continue };
         if sm_agg != gu_agg {
             v.push(Violation {
                 object_id: sm_ids[0].clone(), rule_id: "eq452:SynchronousMachine-aggregate".into(),
@@ -1168,9 +1170,8 @@ fn check_asynchronous_machine_aggregate(dataset: &CimDataset) -> Vec<Violation> 
     for (gu_id, am_ids) in &gu_ams {
         if am_ids.len() != 1 { continue; }
         let am = match dataset.entries.get(&am_ids[0]).and_then(|e| Fields::of_class(e, "AsynchronousMachine")) { Some(a) => a, None => continue };
-        let gu = match dataset.entries.get(gu_id).and_then(|e| Fields::of_class(e, "GeneratingUnit")) { Some(g) => g, None => continue };
-        let am_agg = am.bool("Equipment.aggregate").unwrap_or(false);
-        let gu_agg = gu.bool("Equipment.aggregate").unwrap_or(false);
+        let gu = match dataset.entries.get(gu_id).map(Fields::of) { Some(g) => g, None => continue };
+        let (Some(am_agg), Some(gu_agg)) = (am.bool("Equipment.aggregate"), gu.bool("Equipment.aggregate")) else { continue };
         if am_agg != gu_agg {
             v.push(Violation {
                 object_id: am_ids[0].clone(), rule_id: "eq452:AsynchronousMachine-aggregate".into(),
@@ -1205,44 +1206,30 @@ fn check_synchronous_machine_control_mode(dataset: &CimDataset) -> Vec<Violation
     v
 }
 
+/// All three findings need the compensator's control and its mode: the SPARQL
+/// binds them before testing the attributes.
 fn check_static_var_compensator_control_mode(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("StaticVarCompensator").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         let svc = match Fields::of_class(entry, "StaticVarCompensator") { Some(s) => s, None => continue };
-        if let Some(rc_ref) = &svc.reference("RegulatingCondEq.RegulatingControl") {
-            let rc_id = rc_ref.trim_start_matches('#');
-            if let Some(rc) = dataset.entries.get(rc_id).and_then(|e| Fields::of_class(e, "RegulatingControl"))
-                && let Some(mode) = &rc.enumeration("RegulatingControl.mode") {
-                    let uri = mode;
-                    if !uri.ends_with("voltage") && !uri.ends_with("reactivePower") {
-                        v.push(Violation {
-                            object_id: mrid.clone(), rule_id: "eq452:StaticVarCompensator-controlMode".into(),
-                            name: "C:452:EQ:StaticVarCompensator:controlMode".into(), class: "StaticVarCompensator".into(),
-                            property: "RegulatingCondEq.RegulatingControl".into(),
-                            message: format!("Unallowed regulating control mode '{uri}' for a StaticVarCompensator."),
-                            severity: "sh:Violation".into(), description: String::new(),
-                        });
-                    }
-                }
+        let Some(uri) = svc.reference("RegulatingCondEq.RegulatingControl")
+            .and_then(|r| dataset.entries.get(r.trim_start_matches('#')))
+            .and_then(|e| Fields::of(e).enumeration("RegulatingControl.mode")) else { continue };
+        let mut report = |property: &str, message: String| v.push(Violation {
+            object_id: mrid.clone(), rule_id: "eq452:StaticVarCompensator-controlMode".into(),
+            name: "C:452:EQ:StaticVarCompensator:controlMode".into(), class: "StaticVarCompensator".into(),
+            property: property.into(), message,
+            severity: "sh:Violation".into(), description: String::new(),
+        });
+        if !uri.ends_with("voltage") && !uri.ends_with("reactivePower") {
+            report("RegulatingCondEq.RegulatingControl", format!("Unallowed regulating control mode '{uri}' for a StaticVarCompensator."));
         }
-        if svc.reference("StaticVarCompensator.sVCControlMode").is_some() {
-            v.push(Violation {
-                object_id: mrid.clone(), rule_id: "eq452:StaticVarCompensator-controlMode".into(),
-                name: "C:452:EQ:StaticVarCompensator:controlMode".into(), class: "StaticVarCompensator".into(),
-                property: "StaticVarCompensator.sVCControlMode".into(),
-                message: "StaticVarCompensator.sVCControlMode attribute is not allowed.".into(),
-                severity: "sh:Violation".into(), description: String::new(),
-            });
+        if svc.has("StaticVarCompensator.sVCControlMode") {
+            report("StaticVarCompensator.sVCControlMode", "StaticVarCompensator.sVCControlMode attribute is not allowed.".into());
         }
-        if svc.f64("StaticVarCompensator.voltageSetPoint").unwrap_or(0.0) != 0.0 {
-            v.push(Violation {
-                object_id: mrid.clone(), rule_id: "eq452:StaticVarCompensator-controlMode".into(),
-                name: "C:452:EQ:StaticVarCompensator:controlMode".into(), class: "StaticVarCompensator".into(),
-                property: "StaticVarCompensator.voltageSetPoint".into(),
-                message: "StaticVarCompensator.voltageSetPoint attribute is not allowed.".into(),
-                severity: "sh:Violation".into(), description: String::new(),
-            });
+        if svc.has("StaticVarCompensator.voltageSetPoint") {
+            report("StaticVarCompensator.voltageSetPoint", "StaticVarCompensator.voltageSetPoint attribute is not allowed.".into());
         }
     }
     v
@@ -1337,45 +1324,44 @@ fn check_shunt_compensator_control_mode(dataset: &CimDataset) -> Vec<Violation> 
     v
 }
 
+/// With a curve: minQ and maxQ, when both are given, equal the lowest y1 and
+/// the highest y2 of the points with both y values. Without one: both are
+/// required. The SPARQL's second case joins a subquery over curve points, so a
+/// machine without a curve never reaches it; it is implemented as described.
 fn check_synchronous_machine_reactive_limits(dataset: &CimDataset) -> Vec<Violation> {
     let mut curve_cd: HashMap<String, Vec<(f64, f64)>> = HashMap::default();
     for mrid in dataset.by_type.get("CurveData").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(cd) = Fields::of_class(entry, "CurveData")
-            && let Some(r) = &cd.reference("CurveData.Curve") {
-                let c_id = r.trim_start_matches('#').to_string();
-                curve_cd.entry(c_id).or_default().push((cd.f64("CurveData.y1value").unwrap_or(0.0), cd.f64("CurveData.y2value").unwrap_or(0.0)));
+            && let Some(r) = &cd.reference("CurveData.Curve")
+            && let (Some(y1), Some(y2)) = (cd.f64("CurveData.y1value"), cd.f64("CurveData.y2value")) {
+                curve_cd.entry(r.trim_start_matches('#').to_string()).or_default().push((y1, y2));
             }
     }
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SynchronousMachine").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         let sm = match Fields::of_class(entry, "SynchronousMachine") { Some(s) => s, None => continue };
-        let rcc_id = match sm.reference("SynchronousMachine.InitialReactiveCapabilityCurve") { Some(r) => r.trim_start_matches('#').to_string(), None => continue };
-        let yvals = match curve_cd.get(&rcc_id) { Some(vals) if !vals.is_empty() => vals, _ => continue };
-        let min_y1 = yvals.iter().map(|(y1, _)| *y1).fold(f64::INFINITY, f64::min);
-        let max_y2 = yvals.iter().map(|(_, y2)| *y2).fold(f64::NEG_INFINITY, f64::max);
-        let eps = 1e-6;
-        let min_q = sm.f64("SynchronousMachine.minQ").unwrap_or(0.0);
-        let max_q = sm.f64("SynchronousMachine.maxQ").unwrap_or(0.0);
-        if min_q != 0.0 && (min_q < min_y1 - eps || min_q > min_y1 + eps) {
-            v.push(Violation {
-                object_id: mrid.clone(), rule_id: "eq452:SynchronousMachine-reactiveLimits".into(),
-                name: "C:452:EQ:SynchronousMachine:reactiveLimits".into(), class: "SynchronousMachine".into(),
-                property: "SynchronousMachine.minQ".into(),
-                message: format!("SynchronousMachine.minQ ({min_q}) is not equal to min of CurveData.y1value-s ({min_y1})."),
-                severity: "sh:Violation".into(), description: String::new(),
-            });
-        }
-        if max_q != 0.0 && (max_q < max_y2 - eps || max_q > max_y2 + eps) {
-            v.push(Violation {
-                object_id: mrid.clone(), rule_id: "eq452:SynchronousMachine-reactiveLimits".into(),
-                name: "C:452:EQ:SynchronousMachine:reactiveLimits".into(), class: "SynchronousMachine".into(),
-                property: "SynchronousMachine.maxQ".into(),
-                message: format!("SynchronousMachine.maxQ ({max_q}) is not equal to max of CurveData.y2value-s ({max_y2})."),
-                severity: "sh:Violation".into(), description: String::new(),
-            });
-        }
+        let (min_q, max_q) = (sm.f64("SynchronousMachine.minQ"), sm.f64("SynchronousMachine.maxQ"));
+        let message = match sm.reference("SynchronousMachine.InitialReactiveCapabilityCurve") {
+            None if min_q.is_none() || max_q.is_none() =>
+                "SynchronousMachine.minQ and maxQ are required without an InitialReactiveCapabilityCurve.".to_string(),
+            None => continue,
+            Some(r) => {
+                let Some(yvals) = curve_cd.get(r.trim_start_matches('#')) else { continue };
+                let (Some(min_q), Some(max_q)) = (min_q, max_q) else { continue };
+                let min_y1 = yvals.iter().map(|(y1, _)| *y1).fold(f64::INFINITY, f64::min);
+                let max_y2 = yvals.iter().map(|(_, y2)| *y2).fold(f64::NEG_INFINITY, f64::max);
+                if min_q == min_y1 && max_q == max_y2 { continue; }
+                format!("SynchronousMachine.minQ ({min_q}) and maxQ ({max_q}) are not the curve's lowest y1value ({min_y1}) and highest y2value ({max_y2}).")
+            }
+        };
+        v.push(Violation {
+            object_id: mrid.clone(), rule_id: "eq452:SynchronousMachine-reactiveLimits".into(),
+            name: "C:452:EQ:SynchronousMachine:reactiveLimits".into(), class: "SynchronousMachine".into(),
+            property: "rdf:type".into(), message,
+            severity: "sh:Violation".into(), description: String::new(),
+        });
     }
     v
 }
@@ -1409,7 +1395,8 @@ fn check_vs_capability_curve_count(dataset: &CimDataset) -> Vec<Violation> {
     }
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("VsCapabilityCurve").into_iter().flatten() {
-        let count = curve_count.get(mrid.as_str()).copied().unwrap_or(0);
+        // A curve without points has no row in the SPARQL's grouping.
+        let Some(&count) = curve_count.get(mrid.as_str()) else { continue };
         if count < 2 {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "eq452:VsCapabilityCurve-VsCapabilityCurveCount".into(),
@@ -1431,10 +1418,9 @@ fn check_vs_capability_curve_y_values(dataset: &CimDataset) -> Vec<Violation> {
         if let Some(cd) = Fields::of_class(entry, "CurveData")
             && let Some(r) = &cd.reference("CurveData.Curve") {
                 let c_id = r.trim_start_matches('#');
-                if vs_curves.contains(c_id) {
-                    let y1 = cd.f64("CurveData.y1value").unwrap_or(0.0);
-                    let y2 = cd.f64("CurveData.y2value").unwrap_or(0.0);
-                    if y2 <= y1 {
+                if vs_curves.contains(c_id)
+                    && let (Some(y1), Some(y2)) = (cd.f64("CurveData.y1value"), cd.f64("CurveData.y2value"))
+                        && y2 <= y1 {
                         v.push(Violation {
                             object_id: mrid.clone(), rule_id: "eq452:VsCapabilityCurve-yvalues".into(),
                             name: "C:452:EQ:CurveData.Curve:VsCapabilityCurve".into(), class: "CurveData".into(),
@@ -1443,7 +1429,6 @@ fn check_vs_capability_curve_y_values(dataset: &CimDataset) -> Vec<Violation> {
                             severity: "sh:Violation".into(), description: String::new(),
                         });
                     }
-                }
             }
     }
     v
@@ -1456,9 +1441,8 @@ fn check_generating_unit_type_dependency(dataset: &CimDataset) -> Vec<Violation>
         let sm = match Fields::of_class(entry, "SynchronousMachine") { Some(s) => s, None => continue };
         let gu_id = match sm.reference("RotatingMachine.GeneratingUnit") { Some(r) => r.trim_start_matches('#').to_string(), None => continue };
         let sm_type = match sm.enumeration("SynchronousMachine.type") { Some(t) => t, None => continue };
-        let gu = match dataset.entries.get(&gu_id).and_then(|e| Fields::of_class(e, "GeneratingUnit")) { Some(g) => g, None => continue };
-        let max_p = gu.f64("GeneratingUnit.maxOperatingP").unwrap_or(0.0);
-        let min_p = gu.f64("GeneratingUnit.minOperatingP").unwrap_or(0.0);
+        let gu = match dataset.entries.get(&gu_id).map(Fields::of) { Some(g) => g, None => continue };
+        let (Some(max_p), Some(min_p)) = (gu.f64("GeneratingUnit.maxOperatingP"), gu.f64("GeneratingUnit.minOperatingP")) else { continue };
         let msg = if sm_type.ends_with("condenser") {
             if max_p != 0.0 || min_p != 0.0 {
                 Some(format!("For condenser type, min/max operating P must be 0 (found min: {min_p}, max: {max_p})."))
@@ -1495,7 +1479,9 @@ fn check_curve_data_reactive_capability_limits(dataset: &CimDataset) -> Vec<Viol
         if let Some(sm) = Fields::of_class(entry, "SynchronousMachine")
             && let Some(r) = &sm.reference("SynchronousMachine.InitialReactiveCapabilityCurve") {
                 let c_id = r.trim_start_matches('#').to_string();
-                curve_rated_s.insert(c_id, sm.f64("RotatingMachine.ratedS").unwrap_or(0.0));
+                if let Some(rated_s) = sm.f64("RotatingMachine.ratedS") {
+                    curve_rated_s.insert(c_id, rated_s);
+                }
             }
     }
     let rcc_set: cimmodel::base::FastSet<String> = dataset.by_type.get("ReactiveCapabilityCurve").into_iter().flatten().cloned().collect();
@@ -1505,13 +1491,12 @@ fn check_curve_data_reactive_capability_limits(dataset: &CimDataset) -> Vec<Viol
         let cd = match Fields::of_class(entry, "CurveData") { Some(c) => c, None => continue };
         let c_id = match cd.reference("CurveData.Curve") { Some(r) => r.trim_start_matches('#').to_string(), None => continue };
         if !rcc_set.contains(&c_id) { continue; }
-        let rated_s = match curve_rated_s.get(&c_id) { Some(&s) if s != 0.0 => s, _ => continue };
-        let xv = cd.f64("CurveData.xvalue").unwrap_or(0.0);
-        let y1 = cd.f64("CurveData.y1value").unwrap_or(0.0);
-        let y2 = cd.f64("CurveData.y2value").unwrap_or(0.0);
+        let Some(&rated_s) = curve_rated_s.get(&c_id) else { continue };
+        let Some(xv) = cd.f64("CurveData.xvalue") else { continue };
         let s2 = rated_s * rated_s;
         let eps = 1e-4;
-        if xv * xv + y1 * y1 > s2 + eps {
+        if let Some(y1) = cd.f64("CurveData.y1value")
+            && xv * xv + y1 * y1 > s2 + eps {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "eq452:CurveData-equationY1".into(),
                 name: "C:452:EQ:CurveData.Curve:equationY1".into(), class: "CurveData".into(),
@@ -1520,7 +1505,8 @@ fn check_curve_data_reactive_capability_limits(dataset: &CimDataset) -> Vec<Viol
                 severity: "sh:Violation".into(), description: String::new(),
             });
         }
-        if xv * xv + y2 * y2 > s2 + eps {
+        if let Some(y2) = cd.f64("CurveData.y2value")
+            && xv * xv + y2 * y2 > s2 + eps {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "eq452:CurveData-equationY2".into(),
                 name: "C:452:EQ:CurveData.Curve:equationY2".into(), class: "CurveData".into(),
@@ -1549,10 +1535,12 @@ fn check_curve_data_reactive_consistency(dataset: &CimDataset) -> Vec<Violation>
     let mut v = Vec::new();
     for (curve_id, point_ids) in &curve_points {
         let mut all_same = true;
+        let mut compared = 0;
         for pid in point_ids {
             let cd = match dataset.entries.get(pid).and_then(|e| Fields::of_class(e, "CurveData")) { Some(c) => c, None => continue };
-            let y1 = cd.f64("CurveData.y1value").unwrap_or(0.0);
-            let y2 = cd.f64("CurveData.y2value").unwrap_or(0.0);
+            // A point lacking either value is not compared.
+            let (Some(y1), Some(y2)) = (cd.f64("CurveData.y1value"), cd.f64("CurveData.y2value")) else { continue };
+            compared += 1;
             if y2 < y1 {
                 v.push(Violation {
                     object_id: pid.clone(), rule_id: "eq452:CurveData-reactive".into(),
@@ -1564,7 +1552,7 @@ fn check_curve_data_reactive_consistency(dataset: &CimDataset) -> Vec<Violation>
             }
             if y2 != y1 { all_same = false; }
         }
-        if all_same && !point_ids.is_empty() {
+        if all_same && compared > 0 {
             v.push(Violation {
                 object_id: curve_id.clone(), rule_id: "eq452:CurveData-reactive".into(),
                 name: "C:452:EQ:CurveData.Curve:reactive".into(), class: "ReactiveCapabilityCurve".into(),
@@ -1582,8 +1570,9 @@ fn check_synchronous_machine_curve_x_value_consistency(dataset: &CimDataset) -> 
     for mrid in dataset.by_type.get("CurveData").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(cd) = Fields::of_class(entry, "CurveData")
-            && let Some(r) = &cd.reference("CurveData.Curve") {
-                curve_xvals.entry(r.trim_start_matches('#').to_string()).or_default().push(cd.f64("CurveData.xvalue").unwrap_or(0.0));
+            && let Some(r) = &cd.reference("CurveData.Curve")
+                && let Some(x) = cd.f64("CurveData.xvalue") {
+                curve_xvals.entry(r.trim_start_matches('#').to_string()).or_default().push(x);
             }
     }
     let mut v = Vec::new();
@@ -1592,13 +1581,12 @@ fn check_synchronous_machine_curve_x_value_consistency(dataset: &CimDataset) -> 
         let sm = match Fields::of_class(entry, "SynchronousMachine") { Some(s) => s, None => continue };
         let gu_id = match sm.reference("RotatingMachine.GeneratingUnit") { Some(r) => r.trim_start_matches('#').to_string(), None => continue };
         let rcc_id = match sm.reference("SynchronousMachine.InitialReactiveCapabilityCurve") { Some(r) => r.trim_start_matches('#').to_string(), None => continue };
-        let gu = match dataset.entries.get(&gu_id).and_then(|e| Fields::of_class(e, "GeneratingUnit")) { Some(g) => g, None => continue };
+        let gu = match dataset.entries.get(&gu_id).map(Fields::of) { Some(g) => g, None => continue };
         let xvals = match curve_xvals.get(&rcc_id) { Some(v) if !v.is_empty() => v, _ => continue };
         let min_x = xvals.iter().copied().fold(f64::INFINITY, f64::min);
         let max_x = xvals.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         let eps = 1e-6;
-        let min_p = gu.f64("GeneratingUnit.minOperatingP").unwrap_or(0.0);
-        let max_p = gu.f64("GeneratingUnit.maxOperatingP").unwrap_or(0.0);
+        let (Some(min_p), Some(max_p)) = (gu.f64("GeneratingUnit.minOperatingP"), gu.f64("GeneratingUnit.maxOperatingP")) else { continue };
         if (min_p - min_x).abs() > eps {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "eq452:CurveData.xvalue-value".into(),
@@ -1670,14 +1658,27 @@ fn check_switch_connection(dataset: &CimDataset) -> Vec<Violation> {
     v
 }
 
+const AUXILIARY_EQUIPMENT: &[&str] = &[
+    "CurrentTransformer", "PotentialTransformer", "PostLineSensor", "SurgeArrester", "WaveTrap", "FaultIndicator",
+];
+
+/// Equipment a limit set may name although the terminal is not its own.
+const NOT_TERMINAL_EQUIPMENT: &[&str] = &[
+    "CurrentTransformer", "PotentialTransformer", "PostLineSensor", "SurgeArrester", "WaveTrap", "FaultIndicator",
+    "PowerElectronicsWindUnit", "PhotoVoltaicUnit", "BatteryUnit", "HydroPump", "GeneratingUnit",
+    "HydroGeneratingUnit", "NuclearGeneratingUnit", "SolarGeneratingUnit", "ThermalGeneratingUnit",
+    "WindGeneratingUnit", "Equipment",
+];
+
 fn check_operational_limit_set_terminal(dataset: &CimDataset) -> Vec<Violation> {
+    // Terminals of any AuxiliaryEquipment.
     let mut aux_term_ids: HashSet<&str> = HashSet::default();
-    for mrid in dataset.by_type.get("CurrentTransformer").into_iter().flatten() {
-        let entry = &dataset.entries[mrid];
-        if let Some(ct) = Fields::of_class(entry, "CurrentTransformer")
-            && let Some(r) = &ct.reference("AuxiliaryEquipment.Terminal") {
+    for class in AUXILIARY_EQUIPMENT {
+        for mrid in dataset.by_type.get(*class).into_iter().flatten() {
+            if let Some(r) = Fields::of(&dataset.entries[mrid]).reference("AuxiliaryEquipment.Terminal") {
                 aux_term_ids.insert(r.trim_start_matches('#'));
             }
+        }
     }
     // The terminal's equipment, read from the terminal itself rather than from
     // a map of every terminal in the dataset.
@@ -1701,7 +1702,10 @@ fn check_operational_limit_set_terminal(dataset: &CimDataset) -> Vec<Violation> 
         }
         if let Some(eq_ref) = &ols.reference("OperationalLimitSet.Equipment") {
             let eq_id = eq_ref.trim_start_matches('#');
-            if term_eq(t_id) != Some(eq_id) {
+            // The equipment's type is a required pattern, so it must be in the
+            // dataset; the listed types are exempt.
+            let Some(eq_class) = dataset.entries.get(eq_id).map(|e| e.type_name()) else { continue };
+            if !NOT_TERMINAL_EQUIPMENT.contains(&eq_class) && term_eq(t_id) != Some(eq_id) {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "eq452:OperationalLimitSet-limits".into(),
                     name: "C:452:EQ:OperationalLimitSet:limits".into(), class: "OperationalLimitSet".into(),
@@ -1763,9 +1767,10 @@ fn check_reactive_capability_curve_x_value_unique(dataset: &CimDataset) -> Vec<V
     for mrid in dataset.by_type.get("CurveData").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(cd) = Fields::of_class(entry, "CurveData")
-            && let Some(r) = &cd.reference("CurveData.Curve") {
-                curve_xvals.entry(r.trim_start_matches('#').to_string()).or_default().push(cd.f64("CurveData.xvalue").unwrap_or(0.0));
-            }
+            && let Some(r) = &cd.reference("CurveData.Curve")
+                && let Some(x) = cd.f64("CurveData.xvalue") {
+                    curve_xvals.entry(r.trim_start_matches('#').to_string()).or_default().push(x);
+                }
     }
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("ReactiveCapabilityCurve").into_iter().flatten() {
@@ -1788,66 +1793,56 @@ fn check_reactive_capability_curve_x_value_unique(dataset: &CimDataset) -> Vec<V
     v
 }
 
+/// Two windings (no end numbered 3): end 1 has a positive x and end 2 an x of
+/// 0. Three: no end has an x of 0. The x values of the ends compared must be
+/// given. Reported on the transformer.
 fn check_power_transformer_end_resistance_x_value(dataset: &CimDataset) -> Vec<Violation> {
     let pt_ends = build_pt_ends(dataset);
     let mut v = Vec::new();
-    for end_ids in pt_ends.values() {
-        let n = end_ids.len();
-        if n == 2 {
-            for eid in end_ids {
-                let pte = match dataset.entries.get(eid).and_then(|e| Fields::of_class(e, "PowerTransformerEnd")) { Some(p) => p, None => continue };
-                if pte.i64("TransformerEnd.endNumber").unwrap_or(0) == 1 && pte.f64("PowerTransformerEnd.x").unwrap_or(0.0) <= 0.0 {
-                    let xv = pte.f64("PowerTransformerEnd.x").unwrap_or(0.0);
-                    v.push(Violation {
-                        object_id: eid.clone(), rule_id: "eq452:PowerTransformerEnd.x-value".into(),
-                        name: "C:452:EQ:PowerTransformerEnd.x:value".into(), class: "PowerTransformerEnd".into(),
-                        property: "PowerTransformerEnd.x".into(),
-                        message: format!("PowerTransformerEnd.x ({xv}) for winding 1 of a two-winding transformer must be positive."),
-                        severity: "sh:Violation".into(), description: String::new(),
-                    });
-                }
-            }
-        } else if n == 3 {
-            for eid in end_ids {
-                let pte = match dataset.entries.get(eid).and_then(|e| Fields::of_class(e, "PowerTransformerEnd")) { Some(p) => p, None => continue };
-                if pte.f64("PowerTransformerEnd.x").unwrap_or(0.0) == 0.0 {
-                    v.push(Violation {
-                        object_id: eid.clone(), rule_id: "eq452:PowerTransformerEnd.x-value".into(),
-                        name: "C:452:EQ:PowerTransformerEnd.x:value".into(), class: "PowerTransformerEnd".into(),
-                        property: "PowerTransformerEnd.x".into(),
-                        message: "PowerTransformerEnd.x cannot be zero for a three-winding transformer.".into(),
-                        severity: "sh:Violation".into(), description: String::new(),
-                    });
-                }
-            }
-        }
+    for (pt_id, end_ids) in &pt_ends {
+        let ends: Vec<Fields> = end_ids.iter().filter_map(|eid| Fields::get(dataset, eid, "PowerTransformerEnd")).collect();
+        let x_of = |n: i64| ends.iter().find(|p| p.i64("TransformerEnd.endNumber") == Some(n)).and_then(|p| p.f64("PowerTransformerEnd.x"));
+        let three = ends.iter().any(|p| p.i64("TransformerEnd.endNumber") == Some(3));
+        let (Some(x1), Some(x2)) = (x_of(1), x_of(2)) else { continue };
+        let message = if !three {
+            if x1 > 0.0 && x2 == 0.0 { continue; }
+            format!("For a two-winding transformer PowerTransformerEnd.x of end 1 ({x1}) must be positive and of end 2 ({x2}) zero.")
+        } else {
+            let Some(x3) = x_of(3) else { continue };
+            if x1 != 0.0 && x2 != 0.0 && x3 != 0.0 { continue; }
+            format!("PowerTransformerEnd.x cannot be zero for a three-winding transformer ({x1}, {x2}, {x3}).")
+        };
+        v.push(Violation {
+            object_id: pt_id.clone(), rule_id: "eq452:PowerTransformerEnd.x-value".into(),
+            name: "C:452:EQ:PowerTransformerEnd.x:value".into(), class: "PowerTransformer".into(),
+            property: "rdf:type".into(), message,
+            severity: "sh:Violation".into(), description: String::new(),
+        });
     }
     v
 }
 
+/// Every kind of unit; the sum is over the machines with a ratedS, and a unit
+/// without any is not compared.
 fn check_generating_unit_max_operating_p_rated_s(dataset: &CimDataset) -> Vec<Violation> {
     let mut gu_rated_s: HashMap<String, f64> = HashMap::default();
     for type_name in &["SynchronousMachine", "AsynchronousMachine"] {
         for mrid in dataset.by_type.get(*type_name).into_iter().flatten() {
-            let entry = &dataset.entries[mrid];
-            let (gu_id, rs) = if let Some(sm) = Fields::of_class(entry, "SynchronousMachine") {
-                (sm.reference("RotatingMachine.GeneratingUnit").map(|r| r.trim_start_matches('#').to_string()), sm.f64("RotatingMachine.ratedS").unwrap_or(0.0))
-            } else if let Some(am) = Fields::of_class(entry, "AsynchronousMachine") {
-                (am.reference("RotatingMachine.GeneratingUnit").map(|r| r.trim_start_matches('#').to_string()), am.f64("RotatingMachine.ratedS").unwrap_or(0.0))
-            } else { continue };
-            if let Some(id) = gu_id { *gu_rated_s.entry(id).or_default() += rs; }
+            let rm = Fields::of(&dataset.entries[mrid]);
+            if let (Some(gu), Some(rs)) = (rm.reference("RotatingMachine.GeneratingUnit"), rm.f64("RotatingMachine.ratedS")) {
+                *gu_rated_s.entry(gu.trim_start_matches('#').to_string()).or_default() += rs;
+            }
         }
     }
     let mut v = Vec::new();
-    for mrid in dataset.by_type.get("GeneratingUnit").into_iter().flatten() {
-        let entry = &dataset.entries[mrid];
-        if let Some(gu) = Fields::of_class(entry, "GeneratingUnit") {
-            let max_p = gu.f64("GeneratingUnit.maxOperatingP").unwrap_or(0.0);
-            let sum_rs = gu_rated_s.get(mrid.as_str()).copied().unwrap_or(0.0);
+    for class in GENERATING_UNITS {
+        for mrid in dataset.by_type.get(*class).into_iter().flatten() {
+            let gu = Fields::of(&dataset.entries[mrid]);
+            let (Some(max_p), Some(&sum_rs)) = (gu.f64("GeneratingUnit.maxOperatingP"), gu_rated_s.get(mrid.as_str())) else { continue };
             if max_p > sum_rs {
                 v.push(Violation {
                     object_id: mrid.clone(), rule_id: "eq452:GeneratingUnit.maxOperatingP-ratedS".into(),
-                    name: "C:452:EQ:GeneratingUnit:maxOperatingP:ratedS".into(), class: "GeneratingUnit".into(),
+                    name: "C:452:EQ:GeneratingUnit:maxOperatingP:ratedS".into(), class: class.to_string(),
                     property: "GeneratingUnit.maxOperatingP".into(),
                     message: format!("GeneratingUnit.maxOperatingP ({max_p}) is greater than sum of RotatingMachine.ratedS ({sum_rs})."),
                     severity: "sh:Violation".into(), description: String::new(),
@@ -1857,6 +1852,11 @@ fn check_generating_unit_max_operating_p_rated_s(dataset: &CimDataset) -> Vec<Vi
     }
     v
 }
+
+const GENERATING_UNITS: &[&str] = &[
+    "GeneratingUnit", "ThermalGeneratingUnit", "HydroGeneratingUnit", "WindGeneratingUnit",
+    "NuclearGeneratingUnit", "SolarGeneratingUnit",
+];
 
 fn check_hydro_generating_unit_energy_conversion_capability(dataset: &CimDataset) -> Vec<Violation> {
     let mut gu_sm: HashMap<String, String> = HashMap::default();
@@ -1896,10 +1896,10 @@ fn check_hydro_generating_unit_energy_conversion_capability(dataset: &CimDataset
     v
 }
 
-fn check_terminal_connection_same_node(_dataset: &CimDataset, terms: &Terminals) -> Vec<Violation> {
+fn check_terminal_connection_same_node(dataset: &CimDataset, terms: &Terminals) -> Vec<Violation> {
     let mut v = Vec::new();
-    for (eq_id, ts) in &terms.by_equipment {
-        let [(_, t1), (_, t2)] = ts.as_slice() else { continue };
+    for eq_id in terms.by_equipment.keys() {
+        let Some((t1, t2)) = terminals_1_2(dataset, terms, eq_id) else { continue };
         if let (Some(cn1), Some(cn2)) = (t1.connectivity_node, t2.connectivity_node)
             && cn1 == cn2 {
                 v.push(Violation {
@@ -1914,6 +1914,8 @@ fn check_terminal_connection_same_node(_dataset: &CimDataset, terms: &Terminals)
     v
 }
 
+/// Counted over the points with an x value; a curve without any is not
+/// checked. A condenser's curve is reported whenever it has points.
 fn check_reactive_capability_curve_reactive_count_p(dataset: &CimDataset) -> Vec<Violation> {
     let mut curve_sm: HashMap<String, String> = HashMap::default();
     for mrid in dataset.by_type.get("SynchronousMachine").into_iter().flatten() {
@@ -1923,12 +1925,13 @@ fn check_reactive_capability_curve_reactive_count_p(dataset: &CimDataset) -> Vec
                 curve_sm.insert(r.trim_start_matches('#').to_string(), mrid.clone());
             }
     }
-    let mut curve_xcount: HashMap<String, usize> = HashMap::default();
+    let mut curve_x: HashMap<String, Vec<f64>> = HashMap::default();
     for mrid in dataset.by_type.get("CurveData").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(cd) = Fields::of_class(entry, "CurveData")
-            && let Some(r) = &cd.reference("CurveData.Curve") {
-                *curve_xcount.entry(r.trim_start_matches('#').to_string()).or_default() += 1;
+            && let Some(r) = &cd.reference("CurveData.Curve")
+            && let Some(x) = cd.f64("CurveData.xvalue") {
+                curve_x.entry(r.trim_start_matches('#').to_string()).or_default().push(x);
             }
     }
     let mut v = Vec::new();
@@ -1936,16 +1939,21 @@ fn check_reactive_capability_curve_reactive_count_p(dataset: &CimDataset) -> Vec
         let sm_id = match curve_sm.get(mrid.as_str()) { Some(id) => id, None => continue };
         let sm = match dataset.entries.get(sm_id).and_then(|e| Fields::of_class(e, "SynchronousMachine")) { Some(s) => s, None => continue };
         let sm_type = match sm.enumeration("SynchronousMachine.type") { Some(t) => t, None => continue };
-        let count = curve_xcount.get(mrid.as_str()).copied().unwrap_or(0);
-        let msg = if sm_type.ends_with("condenser") {
-            if count > 0 { Some("SynchronousMachine of type condenser should not have a ReactiveCapabilityCurve.".to_string()) } else { None }
-        } else if sm_type.ends_with("generator") || sm_type.ends_with("generatorOrCondenser") {
-            if count < 2 { Some(format!("Generator type ReactiveCapabilityCurve needs at least 2 points (found {count}).")) } else { None }
-        } else if sm_type.ends_with("motor") || sm_type.ends_with("motorOrCondenser") {
-            if count < 2 { Some(format!("Motor type ReactiveCapabilityCurve needs at least 2 points (found {count}).")) } else { None }
-        } else if sm_type.ends_with("generatorOrMotor") || sm_type.ends_with("generatorOrCondenserOrMotor") {
-            if count < 3 { Some(format!("Combined type ReactiveCapabilityCurve needs at least 3 points (found {count}).")) } else { None }
-        } else { None };
+        let Some(xs) = curve_x.get(mrid.as_str()) else { continue };
+        let count = xs.len();
+        let min_x = xs.iter().copied().fold(f64::INFINITY, f64::min);
+        let max_x = xs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let kind = sm_type.rsplit('.').next().unwrap_or(sm_type);
+        let msg = match kind {
+            "condenser" => Some("SynchronousMachine of type condenser should not have a ReactiveCapabilityCurve.".to_string()),
+            "generator" | "generatorOrCondenser" if count < 2 || min_x < 0.0 =>
+                Some(format!("A generator's ReactiveCapabilityCurve needs at least 2 points, none with negative P ({count} points, lowest P {min_x}).")),
+            "motor" | "motorOrCondenser" if count < 2 || max_x > 0.0 =>
+                Some(format!("A motor's ReactiveCapabilityCurve needs at least 2 points, none with positive P ({count} points, highest P {max_x}).")),
+            "generatorOrMotor" | "generatorOrCondenserOrMotor" if count < 3 || !(max_x >= 0.0 && min_x <= 0.0) =>
+                Some(format!("A generator-or-motor's ReactiveCapabilityCurve needs at least 3 points spanning P = 0 ({count} points, P from {min_x} to {max_x}).")),
+            _ => None,
+        };
         if let Some(msg) = msg {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "eq452:ReactiveCapabilityCurve-reactiveCountP".into(),
@@ -1973,6 +1981,9 @@ fn check_reactive_capability_curve_units(dataset: &CimDataset) -> Vec<Violation>
         let xu = match rcc.enumeration("Curve.xUnit") { Some(r) => r, None => continue };
         let y1u = match rcc.enumeration("Curve.y1Unit") { Some(r) => r, None => continue };
         let y2u = match rcc.enumeration("Curve.y2Unit") { Some(r) => r, None => continue };
+        // The SPARQL binds y2Unit and then requires it absent, and joins the
+        // three tests with `&&`; it can never report. This is the description:
+        // x in W, both y in VAr.
         if !xu.ends_with('W') || !y1u.ends_with("VAr") || !y2u.ends_with("VAr") {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "eq600:ReactiveCapabilityCurve-units".into(),
@@ -2008,7 +2019,7 @@ fn check_tap_changer_neutral_u_value_range(dataset: &CimDataset) -> Vec<Violatio
     let mut v = Vec::new();
     let check = |v: &mut Vec<Violation>, mrid: &str, neutral_u: f64, te_id: &str, class: &str| {
         let pte = match dataset.entries.get(te_id).and_then(|e| Fields::of_class(e, "PowerTransformerEnd")) { Some(p) => p, None => return };
-        let rated_u = pte.f64("PowerTransformerEnd.ratedU").unwrap_or(0.0);
+        let Some(rated_u) = pte.f64("PowerTransformerEnd.ratedU") else { return };
         if (neutral_u - rated_u).abs() > EPS {
             v.push(Violation {
                 object_id: mrid.to_string(), rule_id: "eq600:TapChanger.neutralU-valueRangePair".into(),

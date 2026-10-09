@@ -63,7 +63,10 @@ pub fn validate_profile_local(dataset: &CimDataset, profile: &str, cfg: &Config)
             violations.extend(diagram_layout::validate(dataset));
         }
         "EQBD" => {
-            violations.extend(equipment_boundary::validate(dataset));
+            // The tie-flow rule is the EQBD NotSolvedMAS file's.
+            if cfg.not_solved {
+                violations.extend(equipment_boundary::validate(dataset));
+            }
             if let Some(ref eqbd_bv_ids) = cfg.eqbd_base_voltage_ids {
                 violations.extend(quality::check_base_voltage_in_eqbd_impl(dataset, eqbd_bv_ids));
             }
