@@ -33,8 +33,11 @@ fn check_terminal_phases_consistency_topological_node(dataset: &CimDataset) -> V
     let mut v = Vec::new();
     'outer: for (node_id, terms) in &node_terminals {
         if terms.len() < 2 { continue; }
+        // Every ordered pair: ABC beside ABCN fails one way round only. (The
+        // SPARQL's `HAVING (?terms>1)` counts the types of one terminal, so it
+        // never reports; this is the rule as described.)
         for i in 0..terms.len() {
-            for j in (i+1)..terms.len() {
+            for j in (0..terms.len()).filter(|&j| j != i) {
                 let val1 = &terms[i].1;
                 let val2 = &terms[j].1;
 
@@ -97,7 +100,7 @@ fn check_switch_same_topological_node(dataset: &CimDataset) -> Vec<Violation> {
     for class in SWITCHES {
         for mrid in dataset.by_type.get(*class).into_iter().flatten() {
             let Some(obj) = Fields::of_class(&dataset.entries[mrid], class) else { continue };
-            if !obj.bool("Switch.retained").unwrap_or(false) { continue; }
+            if obj.bool("Switch.retained") != Some(true) { continue; }
             let terms = match eq_terminals.get(mrid) { Some(t) => t, None => continue };
             let mut t1_tn: Option<String> = None;
             let mut t2_tn: Option<String> = None;

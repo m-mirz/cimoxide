@@ -504,3 +504,66 @@ fn an_injection_is_judged_only_at_a_boundary_point_known_to_be_ac() {
     assert_eq!(eq_not_solved(&body(Some("false")), rule), 1);
     assert_eq!(eq_not_solved(&body(None), rule), 0);
 }
+
+// ── state variables (solved) ───────────────────────────────────────────────
+
+fn sv_solved(body: &str, rule: &str) -> usize {
+    let xml = format!(
+        r##"<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/CIM100#">
+{body}
+</rdf:RDF>"##
+    );
+    let ds = cimmodel::CimDataset::decode_str(&xml).unwrap();
+    let cfg = Config { profiles: vec!["SV".into()], solved: true, ..Default::default() };
+    cimvalidation::sparql::validate_profile_local(&ds, "SV", &cfg).iter().filter(|v| v.rule_id == rule).count()
+}
+
+#[test]
+fn a_machine_flow_is_compared_in_the_generator_convention() {
+    let rule = "svs456:SvPowerFlow.p-synchronousMachine";
+    let body = |p: &str| format!("{}{}{}{}",
+        obj("ThermalGeneratingUnit", "_gu", &[("GeneratingUnit.minOperatingP", "0"), ("GeneratingUnit.maxOperatingP", "100")]),
+        obj("SynchronousMachine", "_sm", &[("RotatingMachine.GeneratingUnit", "#_gu")]),
+        obj("Terminal", "_t", &[("Terminal.ConductingEquipment", "#_sm")]),
+        obj("SvPowerFlow", "_pf", &[("SvPowerFlow.Terminal", "#_t"), ("SvPowerFlow.p", p)]));
+    // Load convention: a unit generating 50 MW has p = -50.
+    assert_eq!(sv_solved(&body("-50"), rule), 0);
+    assert_eq!(sv_solved(&body("50"), rule), 1);
+    assert_eq!(sv_solved(&body("-150"), rule), 1);
+}
+
+#[test]
+fn the_absolute_voltage_limit_applies_where_no_limits_are_set() {
+    let rule = "svs456:SvVoltage.v-absoluteLimit";
+    let limits = "svs456:SvVoltage.v-limits";
+    let base = format!("{}{}{}",
+        obj("BaseVoltage", "_bv", &[("BaseVoltage.nominalVoltage", "100")]),
+        obj("TopologicalNode", "_tn", &[("TopologicalNode.BaseVoltage", "#_bv")]),
+        obj("Terminal", "_t", &[("Terminal.TopologicalNode", "#_tn")]));
+    let voltage = |v: &str| obj("SvVoltage", "_sv", &[("SvVoltage.TopologicalNode", "#_tn"), ("SvVoltage.v", v)]);
+    let high = format!("{CIM}OperationalLimitDirectionKind.high");
+    let low = format!("{CIM}OperationalLimitDirectionKind.low");
+    let with_limits = format!("{}{}{}{}{}",
+        obj("OperationalLimitSet", "_ols", &[("OperationalLimitSet.Terminal", "#_t")]),
+        obj("OperationalLimitType", "_hi", &[("OperationalLimitType.direction", &high)]),
+        obj("OperationalLimitType", "_lo", &[("OperationalLimitType.direction", &low)]),
+        obj("VoltageLimit", "_vh", &[("OperationalLimit.OperationalLimitSet", "#_ols"), ("OperationalLimit.OperationalLimitType", "#_hi"), ("VoltageLimit.value", "110")]),
+        obj("VoltageLimit", "_vl", &[("OperationalLimit.OperationalLimitSet", "#_ols"), ("OperationalLimit.OperationalLimitType", "#_lo"), ("VoltageLimit.value", "20")]));
+    assert_eq!(sv_solved(&format!("{base}{}", voltage("30")), rule), 1);
+    assert_eq!(sv_solved(&format!("{base}{with_limits}{}", voltage("30")), rule), 0, "limits set");
+    assert_eq!(sv_solved(&format!("{base}{with_limits}{}", voltage("30")), limits), 0);
+    assert_eq!(sv_solved(&format!("{base}{with_limits}{}", voltage("15")), limits), 1);
+}
+
+#[test]
+fn an_injection_is_energized_through_its_connectivity_node() {
+    let rule = "svs456:SvPowerFlow-instance";
+    let body = format!("{}{}{}{}{}",
+        obj("EnergyConsumer", "_ec", &[]),
+        obj("SvStatus", "_st", &[("SvStatus.ConductingEquipment", "#_ec"), ("SvStatus.inService", "true")]),
+        obj("ConnectivityNode", "_cn", &[("ConnectivityNode.TopologicalNode", "#_tn")]),
+        obj("Terminal", "_t", &[("Terminal.ConductingEquipment", "#_ec"), ("Terminal.ConnectivityNode", "#_cn")]),
+        obj("TopologicalIsland", "_island", &[("TopologicalIsland.TopologicalNodes", "#_tn")]));
+    assert_eq!(sv_solved(&body, rule), 1);
+}
