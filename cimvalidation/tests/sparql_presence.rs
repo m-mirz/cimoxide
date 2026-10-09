@@ -242,3 +242,105 @@ fn controls_on_one_node_must_agree() {
     assert_eq!(solved(&format!("{nodes}{}{}", rc("_a", "_t1", "400"), rc("_b", "_t2", "410")), rule), ["_a", "_b"]);
     assert!(solved(&format!("{nodes}{}{}", rc("_a", "_t1", "400"), rc("_b", "_t2", "400")), rule).is_empty());
 }
+
+// ── steady state hypothesis ────────────────────────────────────────────────
+
+fn ssh(body: &str, rule: &str, not_solved: bool) -> usize {
+    let xml = format!(
+        r##"<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/CIM100#">
+{body}
+</rdf:RDF>"##
+    );
+    let ds = cimmodel::CimDataset::decode_str(&xml).unwrap();
+    let cfg = Config { profiles: vec!["SSH".into()], not_solved, ..Default::default() };
+    cimvalidation::sparql::validate_profile_local(&ds, "SSH", &cfg).iter().filter(|v| v.rule_id == rule).count()
+}
+
+const CIM: &str = "http://iec.ch/TC57/CIM100#";
+
+#[test]
+fn a_deadband_is_judged_by_presence() {
+    let rule = "sshu:RegulatingControl.targetDeadband-applicability";
+    let rc = |fields: &[(&str, &str)]| element("TapChangerControl", fields);
+    assert_eq!(ssh(&rc(&[("RegulatingControl.discrete", "true"), ("RegulatingControl.targetDeadband", "0")]), rule, false), 0);
+    assert_eq!(ssh(&rc(&[("RegulatingControl.discrete", "true")]), rule, false), 1);
+    assert_eq!(ssh(&rc(&[("RegulatingControl.targetDeadband", "1")]), rule, false), 0, "discrete absent");
+}
+
+#[test]
+fn converter_targets_are_required_by_presence() {
+    let cs = |extra: &[(&str, &str)]| {
+        let ctrl = format!("{CIM}CsPpccControlKind.dcCurrent");
+        let mut f = vec![("CsConverter.pPccControl", ctrl.as_str())];
+        f.extend_from_slice(extra);
+        element("CsConverter", &f)
+    };
+    let rule = "sshu:CsConverter.pPccControl-targetValueIdc";
+    assert_eq!(ssh(&cs(&[]), rule, false), 1);
+    assert_eq!(ssh(&cs(&[("CsConverter.targetIdc", "0")]), rule, false), 0);
+    let ctrl = format!("{CIM}VsPpccControlKind.udc");
+    let rule = "sshu:VsConverter.pPccControl-targetValueUdc";
+    assert_eq!(ssh(&element("VsConverter", &[("VsConverter.pPccControl", &ctrl)]), rule, false), 1);
+    assert_eq!(ssh(&element("VsConverter", &[("VsConverter.pPccControl", &ctrl), ("ACDCConverter.targetUdc", "0")]), rule, false), 0);
+}
+
+#[test]
+fn injection_limits_need_all_three_values() {
+    let rule = "sshn456:ExternalNetworkInjection.p-limits";
+    let eni = |fields: &[(&str, &str)]| element("ExternalNetworkInjection", fields);
+    assert_eq!(ssh(&eni(&[("ExternalNetworkInjection.p", "50")]), rule, true), 0, "no limits");
+    assert_eq!(ssh(&eni(&[("ExternalNetworkInjection.p", "50"), ("ExternalNetworkInjection.minP", "0"), ("ExternalNetworkInjection.maxP", "100")]), rule, true), 1, "-50 below 0");
+    assert_eq!(ssh(&eni(&[("ExternalNetworkInjection.p", "-50"), ("ExternalNetworkInjection.minP", "0"), ("ExternalNetworkInjection.maxP", "100")]), rule, true), 0);
+}
+
+#[test]
+fn a_voltage_target_is_positive_for_tap_changer_controls_too() {
+    let rule = "sshn456:RegulatingControl.targetValue-value";
+    let mode = format!("{CIM}RegulatingControlModeKind.voltage");
+    let tcc = |extra: &[(&str, &str)]| {
+        let mut f = vec![("RegulatingControl.mode", mode.as_str())];
+        f.extend_from_slice(extra);
+        element("TapChangerControl", &f)
+    };
+    assert_eq!(ssh(&tcc(&[("RegulatingControl.targetValue", "-1")]), rule, true), 1);
+    assert_eq!(ssh(&tcc(&[]), rule, true), 0, "no target");
+}
+
+#[test]
+fn one_unit_holds_the_highest_normal_pf() {
+    let rule = "sshn456:GeneratingUnit-singleActivePowerSlack";
+    let unit = |id: &str, pf: &str| format!(r#"<cim:ThermalGeneratingUnit rdf:ID="{id}"><cim:GeneratingUnit.normalPF>{pf}</cim:GeneratingUnit.normalPF></cim:ThermalGeneratingUnit>"#);
+    assert_eq!(ssh(&format!("{}{}", unit("_a", "1"), unit("_b", "0")), rule, true), 0);
+    assert_eq!(ssh(&format!("{}{}", unit("_a", "1"), unit("_b", "1")), rule, true), 1, "a tie, reported once");
+    assert_eq!(ssh(&format!("{}{}", unit("_a", "0"), unit("_b", "0")), rule, true), 1, "no slack");
+}
+
+#[test]
+fn not_solved_rules_read_absent_values_as_absent() {
+    let rule = "sshn301:ShuntCompensator.sections-valueLinear";
+    assert_eq!(ssh(&element("LinearShuntCompensator", &[("ShuntCompensator.sections", "5")]), rule, true), 0, "no maximum");
+    assert_eq!(ssh(&element("LinearShuntCompensator", &[("ShuntCompensator.sections", "5"), ("ShuntCompensator.maximumSections", "3")]), rule, true), 1);
+
+    let rule = "sshn301:ShuntCompensator.sections-valueNonLinear";
+    let point = |n: &str| format!(r##"<cim:NonlinearShuntCompensatorPoint rdf:ID="_p{n}"><cim:NonlinearShuntCompensatorPoint.NonlinearShuntCompensator rdf:resource="#_x"/><cim:NonlinearShuntCompensatorPoint.sectionNumber>{n}</cim:NonlinearShuntCompensatorPoint.sectionNumber></cim:NonlinearShuntCompensatorPoint>"##);
+    let nsc = |sections: &str| element("NonlinearShuntCompensator", &[("ShuntCompensator.sections", sections)]);
+    assert_eq!(ssh(&nsc("3"), rule, true), 0, "no points");
+    assert_eq!(ssh(&format!("{}{}{}", nsc("3"), point("1"), point("2")), rule, true), 1);
+    assert_eq!(ssh(&format!("{}{}{}", nsc("2"), point("1"), point("2")), rule, true), 0);
+
+    let rule = "sshn301:RegulatingControl-requiredAttributes";
+    let pf = format!("{CIM}RegulatingControlModeKind.powerFactor");
+    assert_eq!(ssh(&element("RegulatingControl", &[("RegulatingControl.mode", &pf), ("RegulatingControl.minAllowedTargetValue", "0"), ("RegulatingControl.maxAllowedTargetValue", "0")]), rule, true), 0);
+    assert_eq!(ssh(&element("RegulatingControl", &[("RegulatingControl.mode", &pf)]), rule, true), 1);
+
+    let rule = "sshn456:EquivalentInjection-regulation";
+    let ei = |fields: &[(&str, &str)]| element("EquivalentInjection", fields);
+    assert_eq!(ssh(&ei(&[("EquivalentInjection.regulationCapability", "true"), ("EquivalentInjection.regulationStatus", "true"), ("EquivalentInjection.regulationTarget", "0")]), rule, true), 0);
+    assert_eq!(ssh(&ei(&[("EquivalentInjection.regulationCapability", "true"), ("EquivalentInjection.regulationStatus", "true")]), rule, true), 1);
+    assert_eq!(ssh(&ei(&[("EquivalentInjection.regulationTarget", "1")]), rule, true), 0, "capability absent");
+
+    let rule = "sshn301:ControlArea-netInterchangeCalculation";
+    let interchange = format!("{CIM}ControlAreaTypeKind.Interchange");
+    assert_eq!(ssh(&element("ControlArea", &[("ControlArea.type", &interchange), ("ControlArea.netInterchange", "100")]), rule, true), 0, "nothing to sum");
+}
