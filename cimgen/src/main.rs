@@ -123,7 +123,7 @@ fn main() {
         std::process::exit(1);
     }
 
-    let mut spec = match schema::import::import_schema_files(&schema, &schema::family::CGMES, verbose) {
+    let spec = match schema::import::import_schema_files(&schema, &schema::family::CGMES, verbose) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("error importing schema: {e}");
@@ -156,7 +156,7 @@ fn main() {
         );
     }
 
-    if let Err(e) = generator::rust_gen::generate_rust(&mut spec, &bags, Path::new(&output)) {
+    if let Err(e) = generator::rust_gen::generate_rust(&spec, &bags, Path::new(&output)) {
         eprintln!("error generating code: {e}");
         std::process::exit(1);
     }

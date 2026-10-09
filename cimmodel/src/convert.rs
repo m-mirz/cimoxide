@@ -5,8 +5,7 @@ use std::sync::OnceLock;
 
 use crate::CimDataset;
 use crate::base::{Element, FieldValue};
-use crate::constants::CIM_NAMESPACES;
-use crate::profile_meta::{ATTR_ORIGINS, ATTR_RDF, PROFILE_URIS, TYPE_NS, TYPE_ORIGINS};
+use crate::base::{AttrKind, Schema};
 use crate::registry::type_registry;
 
 /// Prefix for a class or attribute absent from the generated tables — a third-party
@@ -22,12 +21,10 @@ struct AttrMeta {
     is_enum: bool,
 }
 
-/// The generated lookup tables, indexed once.
-///
-/// These were previously rebuilt from the raw slices on every call — ~450 type rows and
-/// ~3600 attribute rows per profile, so `write_xml_files(["EQ", "SSH", ...])` paid for it
-/// once per profile.
+/// The CGMES schema, indexed once for writing: prefixes, profile membership and the
+/// namespaces the decoder dropped.
 struct Tables {
+    schema: &'static Schema,
     type_origins: HashMap<&'static str, &'static [&'static str]>,
     attr_origins: HashMap<&'static str, &'static [&'static str]>,
     type_prefix: HashMap<&'static str, &'static str>,
@@ -41,31 +38,61 @@ struct Tables {
 fn tables() -> &'static Tables {
     static T: OnceLock<Tables> = OnceLock::new();
     T.get_or_init(|| {
-        // The decoder throws namespaces away, so `TYPE_NS`/`ATTR_RDF` are the only runtime
-        // source of them. Both tables draw on exactly the namespaces `CIM_NAMESPACES`
-        // declares, so this reverse map is total over them.
-        let prefix_of: HashMap<&str, &str> =
-            CIM_NAMESPACES.iter().map(|(p, ns)| (*ns, *p)).collect();
+        let schema = type_registry().schema("cgmes").expect("the CGMES family is registered");
+        // The decoder throws namespaces away, so the schema is the only runtime source of
+        // them; its classes and attributes draw on exactly the namespaces it binds, so this
+        // reverse map is total over them.
+        let prefix_of: HashMap<&str, &'static str> =
+            schema.namespaces.iter().map(|(p, ns)| (*ns, *p)).collect();
         let lookup = |ns: &str| prefix_of.get(ns).copied().unwrap_or(FALLBACK_PREFIX);
 
+        // An attribute's profiles over every class that declares it, the export's dominant
+        // profile first: EQ, then the rest alphabetically.
+        let mut attr_origins: HashMap<&'static str, Vec<&'static str>> = HashMap::new();
+        for a in schema.classes.iter().flat_map(|c| c.attrs).filter(|a| a.used) {
+            let merged = attr_origins.entry(a.id).or_default();
+            for o in a.origins {
+                if !merged.contains(o) {
+                    merged.push(o);
+                }
+            }
+        }
+        attr_origins.retain(|_, o| !o.is_empty());
+        let attr_origins: HashMap<&'static str, &'static [&'static str]> = attr_origins
+            .into_iter()
+            .map(|(id, mut o)| {
+                o.sort_by(|a, b| (*a != "EQ", *a).cmp(&(*b != "EQ", *b)));
+                (id, &*Vec::leak(o))
+            })
+            .collect();
+
+        let mut attrs: HashMap<&'static str, AttrMeta> = HashMap::new();
+        for a in schema.classes.iter().flat_map(|c| c.attrs).filter(|a| !a.ns.is_empty()) {
+            attrs.entry(a.id).or_insert(AttrMeta {
+                prefix: lookup(a.ns),
+                range: a.value_ns,
+                is_enum: a.kind == AttrKind::Enum,
+            });
+        }
+
         Tables {
-            type_origins: TYPE_ORIGINS.iter().map(|(k, v)| (*k, *v)).collect(),
-            attr_origins: ATTR_ORIGINS.iter().map(|(k, v)| (*k, *v)).collect(),
-            type_prefix: TYPE_NS.iter().map(|(t, ns)| (*t, lookup(ns))).collect(),
-            type_ns: TYPE_NS.iter().copied().collect(),
-            attrs: ATTR_RDF
+            schema,
+            type_origins: schema
+                .classes
                 .iter()
-                .map(|(id, ns, range, kind)| {
-                    (*id, AttrMeta { prefix: lookup(ns), range, is_enum: *kind == 2 })
-                })
+                .filter(|c| !c.origins.is_empty())
+                .map(|c| (c.local, c.origins))
                 .collect(),
-            self_defining: PROFILE_URIS
+            self_defining: schema
+                .profiles
                 .iter()
                 .map(|(code, _)| *code)
-                .filter(|code| {
-                    !ATTR_ORIGINS.iter().any(|(_, o)| o.first() == Some(code))
-                })
+                .filter(|code| !attr_origins.values().any(|o| o.first() == Some(code)))
                 .collect(),
+            attr_origins,
+            type_prefix: schema.classes.iter().map(|c| (c.local, lookup(c.ns))).collect(),
+            type_ns: schema.classes.iter().filter(|c| !c.ns.is_empty()).map(|c| (c.local, c.ns)).collect(),
+            attrs,
         }
     })
 }
@@ -83,7 +110,7 @@ fn type_ns_iri(type_name: &str) -> Option<&'static str> {
 /// RDF metadata for an `Element::fields` key owned by `type_name`.
 ///
 /// Most keys are already `Class.attr` and hit directly. A few arrive bare — the decoder's
-/// `local_name()` reduces `<dm:forwardDifferences>` to `forwardDifferences`, while `ATTR_RDF`
+/// `local_name()` reduces `<dm:forwardDifferences>` to `forwardDifferences`, while the schema
 /// holds `DifferenceModel.forwardDifferences` — so retry qualified before giving up.
 fn attr_meta(key: &str, type_name: &str) -> Option<AttrMeta> {
     let t = tables();
@@ -118,8 +145,8 @@ pub fn dataset_from_json(json: &str) -> Result<CimDataset, Box<dyn Error>> {
 
 /// True when the element belongs to a profile family this encoder cannot write.
 ///
-/// Only the default family has the per-attribute namespace tables
-/// (`profile_meta`) the RDF/XML writer needs. Other families
+/// The writer serves the CGMES schema — its profiles, its prefixes, its
+/// `md:FullModel` header. Other families
 /// carry a qualified type name (`nc:Contingency`); emitting one as
 /// `<cim:nc:Contingency>` would produce a malformed document, so they are
 /// skipped and reported instead.
@@ -131,7 +158,7 @@ pub fn dataset_to_xml(ds: &CimDataset) -> Result<String, Box<dyn Error>> {
     let mut out = String::new();
     out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     out.push_str("<rdf:RDF");
-    for (prefix, uri) in CIM_NAMESPACES {
+    for (prefix, uri) in tables().schema.namespaces {
         write!(out, " xmlns:{prefix}=\"{uri}\"")?;
     }
     out.push_str(">\n");
@@ -196,7 +223,7 @@ pub fn dataset_to_xml_for_profile(
     let mut out = String::new();
     out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     out.push_str("<rdf:RDF");
-    for (prefix, uri) in CIM_NAMESPACES {
+    for (prefix, uri) in tables.schema.namespaces {
         write!(out, " xmlns:{prefix}=\"{uri}\"")?;
     }
     out.push_str(">\n");
@@ -205,9 +232,9 @@ pub fn dataset_to_xml_for_profile(
     // decoded FullModel entry for this profile if the dataset has one (preserves
     // scenarioTime/modelingAuthoritySet/DependentOn/version/etc.), else fall back
     // to a minimal synthetic header.
-    if let Some(&(_, uri)) = PROFILE_URIS.iter().find(|(k, _)| *k == profile_code) {
-        // `md` via the same tables the body uses: TYPE_NS maps FullModel and ATTR_RDF maps
-        // every Model.* field onto the ModelDescription namespace. The header keeps only its
+    if let Some(&(_, uri)) = tables.schema.profiles.iter().find(|(k, _)| *k == profile_code) {
+        // `md` via the same tables the body uses: the schema puts FullModel and every
+        // Model.* field in the ModelDescription namespace. The header keeps only its
         // genuinely different behaviour — `rdf:about` with no `#`, and no fragment on
         // resource references.
         let hdr = prefix_for_type("FullModel");
@@ -453,7 +480,7 @@ fn write_carried_fields(
     Ok(())
 }
 
-/// Write one field, with its own namespace prefix taken from `ATTR_RDF`.
+/// Write one field, with its own namespace prefix taken from the schema.
 ///
 /// The prefix is per field, never inherited from the owning class: a single
 /// `eu:BoundaryPoint` carries both `eu:BoundaryPoint.toEndName` and
@@ -484,7 +511,7 @@ fn write_field(
         }
         // `eu:LimitKind` and `eu:SVCControlMode` are enumerations generated as marker structs
         // — `cims:stereotype` parsing is last-write-wins and their `European` stereotype
-        // overwrites the `enumeration` one — so `ATTR_RDF` marks them as plain references. A
+        // overwrites the `enumeration` one — so the schema marks them as plain references. A
         // value naming no entry but matching a known `Type.value` is that case; rebuild the
         // IRI the decoder stripped, as `cimsparql::iri::reference_iri` does on the way in.
         if !ds.entries.contains_key(r)

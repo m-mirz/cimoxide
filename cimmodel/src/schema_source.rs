@@ -17,12 +17,12 @@
 //! table **with a warning**. Silently serving a stale schema because a path had
 //! a typo is the worst outcome available here.
 
-use crate::base::ClassDef;
+use crate::base::Schema;
 
-/// Resolve the class table for a family.
+/// Resolve the schema for a family.
 ///
 /// `generated` is the table `cimgen` emitted, used unless something overrides it.
-pub fn resolve(family: &'static str, generated: &'static [ClassDef]) -> &'static [ClassDef] {
+pub fn resolve(family: &'static str, generated: &'static Schema) -> &'static Schema {
     #[cfg(feature = "dynamic-schema")]
     {
         dynamic::resolve(family, generated)
@@ -47,7 +47,7 @@ mod dynamic {
     use cimschema::family::{self, Family};
     use cimschema::model::{CimAttribute, CimSpecification};
 
-    use crate::base::{AttrDef, AttrKind, ClassDef};
+    use crate::base::{AttrDef, AttrKind, ClassDef, Schema};
 
     /// Environment variable naming RDFS directories — one, or several separated
     /// as in `PATH`, each serving the family whose vocabularies it holds.
@@ -80,8 +80,8 @@ mod dynamic {
 
     impl std::error::Error for SchemaError {}
 
-    fn explicit() -> &'static Mutex<HashMap<&'static str, &'static [ClassDef]>> {
-        static E: OnceLock<Mutex<HashMap<&'static str, &'static [ClassDef]>>> = OnceLock::new();
+    fn explicit() -> &'static Mutex<HashMap<&'static str, &'static Schema>> {
+        static E: OnceLock<Mutex<HashMap<&'static str, &'static Schema>>> = OnceLock::new();
         E.get_or_init(|| Mutex::new(HashMap::new()))
     }
 
@@ -112,8 +112,8 @@ mod dynamic {
 
     pub(super) fn resolve(
         family_id: &'static str,
-        generated: &'static [ClassDef],
-    ) -> &'static [ClassDef] {
+        generated: &'static Schema,
+    ) -> &'static Schema {
         RESOLVED.store(true, Ordering::SeqCst);
 
         if let Some(classes) = explicit().lock().unwrap().get(family_id) {
@@ -186,7 +186,7 @@ mod dynamic {
     ///
     /// Useful for inspecting what a schema directory would produce, and for
     /// checking it against the generated table.
-    pub fn load_table(family_id: &str, dir: &Path) -> Result<&'static [ClassDef], SchemaError> {
+    pub fn load_table(family_id: &str, dir: &Path) -> Result<&'static Schema, SchemaError> {
         let family = family::by_id(family_id)
             
             .ok_or_else(|| SchemaError::UnknownFamily(family_id.to_string()))?;
@@ -196,7 +196,7 @@ mod dynamic {
     fn load_family(
         family: &'static Family,
         dir: &Path,
-    ) -> Result<&'static [ClassDef], SchemaError> {
+    ) -> Result<&'static Schema, SchemaError> {
         // Reuse the family's own filename pattern so a directory of mixed
         // artefacts selects the same files cimgen would.
         let file_pattern = Path::new(family.default_schema)
@@ -234,27 +234,18 @@ mod dynamic {
         }
     }
 
-    // These three must mirror `cimgen::generator::classes_gen` exactly; the
-    // `runtime_table_matches_generated` test is what holds them together.
+    // Classification, ranges, datatypes and namespaces come from
+    // `cimschema::table`, which `cimgen::generator::classes_gen` calls too; the
+    // `runtime_table_matches_generated` tests check the rendering on top.
     fn attr_kind(a: &CimAttribute) -> AttrKind {
-        if a.is_enum_value {
-            AttrKind::Enum
-        } else if a.is_primitive || a.is_cim_datatype {
-            AttrKind::Literal
-        } else {
-            AttrKind::Association
+        match cimschema::table::attr_kind(a) {
+            cimschema::table::Kind::Literal => AttrKind::Literal,
+            cimschema::table::Kind::Association => AttrKind::Association,
+            cimschema::table::Kind::Enum => AttrKind::Enum,
         }
     }
 
-    fn attr_range(a: &CimAttribute) -> &str {
-        if a.rdf_range.is_empty() {
-            &a.cim_data_type
-        } else {
-            &a.rdf_range
-        }
-    }
-
-    fn build(spec: &CimSpecification) -> &'static [ClassDef] {
+    fn build(spec: &CimSpecification) -> &'static Schema {
         // Sorted key order, because the index in this vector is the class id
         // that `super_class` refers to.
         let mut ids: Vec<&String> = spec.types.keys().collect();
@@ -273,13 +264,15 @@ mod dynamic {
             let attrs: Vec<AttrDef> = t
                 .attributes
                 .iter()
-                .filter(|a| a.is_association_used)
                 .map(|a| AttrDef {
                     id: interner.intern(&a.id),
                     ns: interner.intern(&a.namespace),
                     kind: attr_kind(a),
-                    range: interner.intern(attr_range(a)),
+                    range: interner.intern(cimschema::table::attr_range(a)),
                     is_list: a.is_list,
+                    used: a.is_association_used,
+                    xsd: cimschema::table::xsd_type(a),
+                    value_ns: interner.intern(cimschema::table::value_namespace(spec, a)),
                     origins: interner.intern_all(&a.origins),
                 })
                 .collect();
@@ -296,6 +289,11 @@ mod dynamic {
             });
         }
 
-        Vec::leak(out)
+        let pairs = |interner: &mut Interner, v: Vec<(&str, &str)>| -> &'static [(&'static str, &'static str)] {
+            Vec::leak(v.into_iter().map(|(a, b)| (interner.intern(a), interner.intern(b))).collect())
+        };
+        let profiles = pairs(&mut interner, cimschema::table::profile_uris(spec));
+        let namespaces = pairs(&mut interner, cimschema::table::namespaces(spec));
+        Box::leak(Box::new(Schema { classes: Vec::leak(out), profiles, namespaces }))
     }
 }

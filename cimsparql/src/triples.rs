@@ -53,7 +53,7 @@ impl GraphOptions {
 pub struct Stats {
     pub quads: usize,
     pub elements: usize,
-    /// Occurrences (not distinct keys) of a field key absent from `ATTR_RDF`, emitted under
+    /// Occurrences (not distinct keys) of a field key absent from the schema, emitted under
     /// the fallback namespace as a plain literal. Non-zero means the generated tables and the
     /// data have drifted apart — a CIM version skew, or a third-party extension.
     pub unmapped_predicates: usize,

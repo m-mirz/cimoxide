@@ -7,8 +7,8 @@
 //! number or flag parsed and written back, a single reference only when it
 //! was given once. The rules' results depend on exactly that — an undeclared
 //! field, a value that did not parse, or a reference given twice was not in
-//! the view — so it is rebuilt here from the class table and the attribute
-//! ranges in `profile_meta::ATTR_RDF`.
+//! the view — so it is rebuilt here from the class table: the attributes a
+//! profile uses, and each literal's XSD type.
 //!
 //! An NC element's view was its fields unchanged: NC never had structs.
 //!
@@ -32,25 +32,29 @@ enum Literal {
     Boolean,
 }
 
-/// From the attribute's XSD range, the way the generator mapped it: double
+/// From the attribute's XSD type, the way the generator mapped it: double
 /// and decimal were `f64`, integer `i64`, boolean `bool`, everything else —
-/// string, the date types, anyURI, an unknown range — `String`.
+/// string, the date types, anyURI, an unknown type — `String`. The type is
+/// read from the attribute's first declaration in the CGMES schema, as the
+/// structs were generated from.
 fn literal_type(attr_id: &str) -> Literal {
     static TYPES: OnceLock<FastMap<&'static str, Literal>> = OnceLock::new();
     let types = TYPES.get_or_init(|| {
-        cimmodel::profile_meta::ATTR_RDF
-            .iter()
-            .filter(|(_, _, _, kind)| *kind == 0)
-            .map(|(id, _, range, _)| {
-                let t = match range.rsplit('#').next().unwrap_or("") {
+        let schema = cimmodel::registry::type_registry().schema("cgmes").expect("CGMES is registered");
+        let mut types = FastMap::default();
+        for a in schema.classes.iter().flat_map(|c| c.attrs).filter(|a| !a.ns.is_empty()) {
+            types.entry(a.id).or_insert(if a.kind != AttrKind::Literal {
+                None
+            } else {
+                Some(match a.xsd {
                     "double" | "decimal" => Literal::Float,
                     "integer" => Literal::Integer,
                     "boolean" => Literal::Boolean,
                     _ => Literal::Text,
-                };
-                (*id, t)
-            })
-            .collect()
+                })
+            });
+        }
+        types.into_iter().filter_map(|(id, t)| Some((id, t?))).collect()
     });
     types.get(attr_id).copied().unwrap_or(Literal::Text)
 }
@@ -59,8 +63,10 @@ fn is_nc(e: &Element) -> bool {
     e.type_name().starts_with("nc:")
 }
 
+/// The attribute `key` if the element's class declares it and a profile uses
+/// it — the structs had no field for an unused association end.
 fn declared(e: &Element, key: &str) -> Option<&'static AttrDef> {
-    cimmodel::registry::type_registry().attr(e.class(), key)
+    cimmodel::registry::type_registry().attr(e.class(), key).filter(|a| a.used)
 }
 
 /// Whether the struct held a value for `attr`, by the generated `from_block`'s
@@ -95,7 +101,7 @@ fn struct_order(e: &Element) -> FastMap<&'static str, usize> {
     let reg = cimmodel::registry::type_registry();
     let mut map: FastMap<&'static str, ()> = FastMap::default();
     for class in reg.chain(e.class()) {
-        for attr in class.attrs {
+        for attr in class.attrs.iter().filter(|a| a.used) {
             if in_view(e, attr) {
                 map.insert(attr.id, ());
             }

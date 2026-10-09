@@ -18,3 +18,4 @@ pub mod import;
 pub mod model;
 pub mod processing;
 pub mod shacl;
+pub mod table;

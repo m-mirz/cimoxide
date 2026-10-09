@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use cimmodel::base::ClassDef;
+use cimmodel::base::Schema;
 use cimmodel::schema_source;
 
 fn rdfs_dir() -> &'static Path {
@@ -18,17 +18,20 @@ fn cgmes_rdfs_dir() -> &'static Path {
 /// separate code paths. Nothing but this test stops them drifting apart.
 #[test]
 fn runtime_table_matches_generated() {
-    compare(schema_source::load_table("nc", rdfs_dir()).unwrap(), cimmodel::nc_classes::CLASSES);
+    compare(schema_source::load_table("nc", rdfs_dir()).unwrap(), &cimmodel::nc_classes::SCHEMA);
 }
 
 /// The same for CGMES, whose class table decoding has used since the
 /// generated structs went away.
 #[test]
 fn cgmes_runtime_table_matches_generated() {
-    compare(schema_source::load_table("cgmes", cgmes_rdfs_dir()).unwrap(), cimmodel::cgmes_classes::CLASSES);
+    compare(schema_source::load_table("cgmes", cgmes_rdfs_dir()).unwrap(), &cimmodel::cgmes_classes::SCHEMA);
 }
 
-fn compare(dynamic: &[ClassDef], generated: &[ClassDef]) {
+fn compare(dynamic: &Schema, generated: &Schema) {
+    assert_eq!(dynamic.profiles, generated.profiles, "profiles");
+    assert_eq!(dynamic.namespaces, generated.namespaces, "namespaces");
+    let (dynamic, generated) = (dynamic.classes, generated.classes);
     assert_eq!(
         dynamic.len(),
         generated.len(),
@@ -59,6 +62,9 @@ fn compare(dynamic: &[ClassDef], generated: &[ClassDef]) {
             assert_eq!(da.kind, ga.kind, "{}.{}: kind", g.qualified, ga.id);
             assert_eq!(da.range, ga.range, "{}.{}: range", g.qualified, ga.id);
             assert_eq!(da.is_list, ga.is_list, "{}.{}: is_list", g.qualified, ga.id);
+            assert_eq!(da.used, ga.used, "{}.{}: used", g.qualified, ga.id);
+            assert_eq!(da.xsd, ga.xsd, "{}.{}: xsd", g.qualified, ga.id);
+            assert_eq!(da.value_ns, ga.value_ns, "{}.{}: value_ns", g.qualified, ga.id);
             assert_eq!(da.origins, ga.origins, "{}.{}: origins", g.qualified, ga.id);
         }
     }

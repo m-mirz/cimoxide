@@ -59,7 +59,7 @@ fn type_index_parity() {
 }
 
 /// The decoder drops XML prefixes, so `cim:` and `eu:` attributes of the same element are
-/// indistinguishable in `Element::fields`. `ATTR_RDF` is what puts them back; if it
+/// indistinguishable in `Element::fields`. the schema is what puts them back; if it
 /// regresses, every `eu:` predicate silently moves into the `cim:` namespace.
 #[test]
 fn namespace_fidelity() {
@@ -289,7 +289,7 @@ fn include_types_scopes_the_graph() {
     );
 }
 
-/// Every predicate in the CGMES test configurations should be known to `ATTR_RDF`. A
+/// Every predicate in the CGMES test configurations should be known to the schema. A
 /// non-zero count means the generated tables and the data have drifted apart.
 #[test]
 fn all_predicates_are_mapped() {

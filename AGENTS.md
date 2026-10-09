@@ -47,8 +47,8 @@ git submodule update --init --recursive
 ### `cimgen` — Code Generator CLI
 Parses RDF schema files and SHACL TTL constraint files, then generates Rust code. Key modules:
 - `schema/` — RDF schema parsing and internal model (`CimType`, `CimAttribute`, `CimDatatype`)
-- `generator/rust_gen.rs` — Writes `cimmodel`'s generated module: a class table per family
-  (`generator/classes_gen.rs`), the CGMES version constants and the profile tables
+- `generator/rust_gen.rs` — Writes `cimmodel`'s generated module: a schema table per family
+  (`generator/classes_gen.rs`), and nothing else
 - `shacl/` — SHACL TTL parsing, constraint model, and validation code generation
 
 ### `cimmodel` — Data Model, Decoder and Converter
@@ -59,7 +59,17 @@ repeated. What a class declares is data — a class table per family — so an a
 class does not declare and a value that does not parse are kept, not dropped.
 
 The generated part lives in `src/generated/` (do not hand-edit): `cgmes_classes.rs`,
-`nc_classes.rs`, `constants.rs`, `profile_meta.rs` and a `mod.rs`. `.gitignore` and
+`nc_classes.rs` and a `mod.rs`. Each family file holds one `SCHEMA: Schema` — its classes
+(`ClassDef`/`AttrDef`), its profiles (code → URI) and its namespace bindings — and that is
+everything the crates know about a family: the decoder, validation, RDF/XML export and SPARQL
+all read it through `registry::type_registry()` (`schema(family)`, `attr_of`,
+`family_attr`). Up to 2026-10, CGMES export and SPARQL read separate generated tables
+(`profile_meta.rs`: `TYPE_NS`, `ATTR_RDF`, `TYPE_ORIGINS`, `ATTR_ORIGINS`, `PROFILE_URIS`;
+`constants.rs`), which a schema loaded from RDFS did not replace. An `AttrDef` carries
+what those held: `used` (an association end some profile exchanges; the others are in the
+table too, for their IRIs), `xsd` (a literal's XSD type) and `value_ns` (an enumeration's
+value namespace). Both `classes_gen.rs` and the runtime loader derive them through
+`cimschema::table`. `.gitignore` and
 `make clean` cover that directory alone; a new hand-written module goes directly in `src/`
 and is declared in the hand-written `lib.rs`.
 
@@ -123,7 +133,8 @@ hand-written. Entry points:
   `unwrap_or(0.0)` calls remain in `sparql/`; each is suspect. Three rules (float special values and mRID uniqueness in `common.rs`, dangling
   references in `common_solved_mas.rs`) read `sparql::view`, which rebuilds the structs'
   view — declared attributes only, in their typed form, iterated in the order a struct's
-  map produced — from the class table and `profile_meta::ATTR_RDF`
+  map produced — from the class table: the attributes a profile uses (`AttrDef::used`) and
+  each literal's `xsd`
 - `combined_config(...)` builds the `Config`
 - Profiles: `"EQ"`, `"OP"`, `"DY"`, `"SV"`, `"SSH"`, `"SC"`, `"GL"`, `"DL"`, `"EQBD"`
 
@@ -132,9 +143,9 @@ Materialises a `CimDataset` into an in-memory oxigraph store (`default-features 
 no RocksDB/C++ toolchain) and queries it:
 - `CimStore::from_dataset(&ds)` / `from_dataset_with(&ds, &GraphOptions)` / `.query(sparql)`
 - `quads(&ds, &opts, &mut stats)` streams quads without a store
-- Relies on the `TYPE_NS` / `ATTR_RDF` tables `cimgen` emits into `cimmodel`, which are the
-  only runtime source of per-attribute IRIs — the decoder resolves an element's class by
-  namespace but keeps field keys as bare `Class.attr`
+- Relies on the CGMES schema table for per-attribute IRIs, XSD types and enumeration
+  namespaces — the decoder resolves an element's class by namespace but keeps field keys as
+  bare `Class.attr`
 - `cimoxide-cli` (`cimcli query`) and `cimoxide-py` (`dataset.query(...)`) depend on it
   behind a default-on `sparql` feature
 
@@ -419,8 +430,8 @@ exercises only ClassCount and the dangling references.
 ## Codegen Stability Tests
 
 `cimgen/tests/codegen.rs` contains four hash-based tests that detect unintended generator drift:
-- `cimmodel_codegen_stable` — Hashes `cimmodel`'s regenerated module (class tables, constants,
-  profile tables) against a stored SHA-256
+- `cimmodel_codegen_stable` — Hashes `cimmodel`'s regenerated module (the schema tables)
+  against a stored SHA-256
 - `cgmes_shapes_codegen_stable` — Same for the CGMES shape table, which validation runs,
   and its profile index
 - `nc_classes_codegen_stable` — Hashes the NC class table alone, so a CGMES-only change

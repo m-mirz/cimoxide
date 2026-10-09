@@ -1,6 +1,6 @@
 //! The class registry the decoder resolves elements against.
 //!
-//! Built from the families' class tables — the generated ones, or tables read
+//! Built from the families' schemas — the generated ones, or tables read
 //! from RDFS at runtime (see [`crate::schema_source`]).
 
 use std::sync::OnceLock;
@@ -14,8 +14,8 @@ pub fn type_registry() -> &'static TypeRegistry {
         let mut reg = TypeRegistry::new();
         // CGMES alone takes the bare-name fallback: an unbound prefix cannot
         // tell the families apart, and CGMES is the historical default.
-        reg.add_family(crate::schema_source::resolve("cgmes", crate::cgmes_classes::CLASSES), true);
-        reg.add_family(crate::schema_source::resolve("nc", crate::nc_classes::CLASSES), false);
+        reg.add_family("cgmes", crate::schema_source::resolve("cgmes", &crate::cgmes_classes::SCHEMA), true);
+        reg.add_family("nc", crate::schema_source::resolve("nc", &crate::nc_classes::SCHEMA), false);
         reg
     })
 }

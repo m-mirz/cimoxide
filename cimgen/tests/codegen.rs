@@ -66,7 +66,7 @@ fn cimmodel_codegen_stable() {
     assert!(status.success(), "cimgen exited with failure");
 
     let hash = hash_dir(&out);
-    assert_eq!(hash, "b1c47f3adaa9d2799f22331b6d33323140144c46af1fc244e4a698f4ac8d32de", "cimmodel output drifted — rerun to update hash");
+    assert_eq!(hash, "5531a1b69b6d16a961c8380dc64209660ef8f7e97694c50706131607761da801", "cimmodel output drifted — rerun to update hash");
 }
 
 /// Hashes the NC shape table on its own, for the same reason
@@ -158,5 +158,5 @@ fn nc_classes_codegen_stable() {
     let mut h = Sha256::new();
     h.update(std::fs::read(out.join("nc_classes.rs")).unwrap());
     let hash: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
-    assert_eq!(hash, "637d0b191948a64e9dec994a7f5d175dd5d93b9b285164555fe67dbc1eb32e8d", "NC class table drifted — rerun to update hash");
+    assert_eq!(hash, "31b33d5e032cd91361ee7529bb6f1a479c19a5cf11f54b515fbc5c65d070a657", "NC class table drifted — rerun to update hash");
 }
