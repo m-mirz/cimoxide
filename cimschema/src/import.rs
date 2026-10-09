@@ -430,6 +430,11 @@ fn merge_types(target: &mut HashMap<String, CimType>, source: HashMap<String, Ci
             if !src.cim_stereotype.is_empty() {
                 existing.cim_stereotype = src.cim_stereotype;
             }
+            // The first profile (in file-name order) to describe a class or
+            // attribute gives its comment.
+            if existing.comment.is_empty() {
+                existing.comment = src.comment;
+            }
             existing.cim_categories.extend(src.cim_categories);
             if !src.origin.is_empty() {
                 existing.origins.push(src.origin);
@@ -437,6 +442,9 @@ fn merge_types(target: &mut HashMap<String, CimType>, source: HashMap<String, Ci
             existing.concrete_in.extend(src.concrete_in);
             for attr in src.attributes {
                 if let Some(idx) = existing.attributes.iter().position(|a| a.id == attr.id) {
+                    if existing.attributes[idx].comment.is_empty() {
+                        existing.attributes[idx].comment = attr.comment;
+                    }
                     existing.attributes[idx].origins.extend(attr.origins);
                     existing.attributes[idx]
                         .cim_categories
@@ -457,12 +465,17 @@ fn merge_enums(target: &mut HashMap<String, CimEnum>, source: HashMap<String, Ci
             if !src.cim_stereotype.is_empty() {
                 existing.cim_stereotype = src.cim_stereotype;
             }
+            if existing.comment.is_empty() {
+                existing.comment = src.comment;
+            }
             if !src.origin.is_empty() {
                 existing.origins.push(src.origin);
             }
             for val in src.values {
-                if !existing.values.iter().any(|v| v.id == val.id) {
-                    existing.values.push(val);
+                match existing.values.iter_mut().find(|v| v.id == val.id) {
+                    Some(v) if v.comment.is_empty() => v.comment = val.comment,
+                    Some(_) => {}
+                    None => existing.values.push(val),
                 }
             }
         } else {

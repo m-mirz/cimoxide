@@ -1,7 +1,7 @@
 {
   "name": "cimoxide",
   "displayName": "cimoxide — CGMES & NC",
-  "description": "SHACL validation, hover, go to definition and completion for ENTSO-E CGMES and Network Code RDF/XML",
+  "description": "SHACL validation, hover, go to definition and completion for ENTSO-E CGMES and Network Code RDF/XML — and an MCP server to ask a chat about your model",
   "version": "0.4.0",
   "publisher": "m-mirz",
   "license": "Apache-2.0",
@@ -20,13 +20,15 @@
   ],
   "categories": [
     "Linters",
-    "Programming Languages"
+    "Programming Languages",
+    "AI"
   ],
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.101.0"
   },
   "activationEvents": [
-    "onLanguage:xml"
+    "onLanguage:xml",
+    "onMcpServerDefinitionProvider:cimoxide"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -40,6 +42,12 @@
         "command": "cimoxide.restartServer",
         "title": "Restart language server",
         "category": "cimoxide"
+      }
+    ],
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "cimoxide",
+        "label": "cimoxide — CGMES & NC models"
       }
     ],
     "configuration": {
@@ -83,6 +91,16 @@
           "default": "",
           "markdownDescription": "SHACL directories to load shapes from instead of the built-in ones (`CIMOXIDE_SHACL_DIR`; a `PATH`-style list)."
         },
+        "cimoxide.mcp.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Offer the `cimmcp` MCP server to chat (Copilot agent mode and other MCP clients in VS Code): tools to list, summarise, search, validate and SPARQL-query the CGMES/NC model sets of the workspace."
+        },
+        "cimoxide.mcp.path": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to a `cimmcp` binary. Empty: the one bundled with the extension, else `cimmcp` on `PATH`."
+        },
         "cimoxide.trace.server": {
           "type": "string",
           "enum": [
@@ -108,7 +126,7 @@
   },
   "devDependencies": {
     "@types/node": "^18.19.0",
-    "@types/vscode": "~1.85.0",
+    "@types/vscode": "~1.101.0",
     "@vscode/vsce": "^3.2.0",
     "esbuild": "^0.24.0",
     "typescript": "^5.6.0"

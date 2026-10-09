@@ -6,6 +6,17 @@ use quick_xml::Reader;
 use crate::base::{intern, AttrDef, ClassDef, Element, FastMap, FastSet, FieldValue, TypeRegistry};
 use crate::registry;
 
+/// Whether `text` looks like CGMES or NC RDF/XML: it binds one of the two
+/// CIM namespaces near the top.
+pub fn is_cim(text: &str) -> bool {
+    let mut end = text.len().min(8192);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let head = &text[..end];
+    head.contains("http://iec.ch/TC57/") || head.contains("https://cim.ucaiug.io/ns#")
+}
+
 pub struct CimDataset {
     pub entries: FastMap<String, Element>,
     /// Maps `type_name()` → list of MRIDs of that type. Populated on insert, maintained on merge.

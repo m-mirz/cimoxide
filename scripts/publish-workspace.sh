@@ -3,7 +3,7 @@
 #
 # crates.io meters publishes per user account: a burst of 5 brand-new crate names and
 # then 1 per 10 minutes, a burst of 30 new versions of existing crates and then 1 per
-# minute (https://crates.io/docs/rate-limits). This workspace has 8 crates, so the
+# minute (https://crates.io/docs/rate-limits). This workspace has 9 crates, so the
 # first publish of a new name set always stalls part-way through and `cargo publish
 # --workspace` aborts with whatever already landed left on the registry.
 #

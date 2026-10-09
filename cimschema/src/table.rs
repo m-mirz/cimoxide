@@ -71,6 +71,14 @@ pub fn value_namespace<'a>(spec: &'a CimSpecification, a: &CimAttribute) -> &'a 
     spec.enums.get(&a.rdf_range).map_or("", |e| e.namespace.as_str())
 }
 
+/// The family's enumerations, sorted by name; each one's values in
+/// vocabulary order.
+pub fn enums(spec: &CimSpecification) -> Vec<&CimEnum> {
+    let mut v: Vec<&CimEnum> = spec.enums.values().collect();
+    v.sort_by(|a, b| a.id.cmp(&b.id));
+    v
+}
+
 /// Profile code → profile URI (the `owl:versionIRI` a dataset declares), sorted
 /// by code.
 pub fn profile_uris(spec: &CimSpecification) -> Vec<(&str, &str)> {

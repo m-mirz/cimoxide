@@ -1,6 +1,6 @@
 name: VS Code extension
 
-# One VSIX per platform, each bundling its own `cimlsp`, published to the
+# One VSIX per platform, each bundling its own `cimlsp` and `cimmcp`, published to the
 # Visual Studio Marketplace. Needs VSCE_PAT (Azure DevOps token with
 # Marketplace › Manage) in the `vscode-release` environment.
 
@@ -27,22 +27,27 @@ jobs:
             rust_target: x86_64-unknown-linux-musl
             vsce_target: linux-x64
             exe: cimlsp
+            mcp_exe: cimmcp
           - os: ubuntu-24.04-arm
             rust_target: aarch64-unknown-linux-musl
             vsce_target: linux-arm64
             exe: cimlsp
+            mcp_exe: cimmcp
           - os: windows-latest
             rust_target: x86_64-pc-windows-msvc
             vsce_target: win32-x64
             exe: cimlsp.exe
+            mcp_exe: cimmcp.exe
           - os: macos-latest
             rust_target: aarch64-apple-darwin
             vsce_target: darwin-arm64
             exe: cimlsp
+            mcp_exe: cimmcp
           - os: macos-latest
             rust_target: x86_64-apple-darwin
             vsce_target: darwin-x64
             exe: cimlsp
+            mcp_exe: cimmcp
 
     steps:
       - uses: actions/checkout@v4
@@ -69,8 +74,8 @@ jobs:
       - name: Generate cimmodel and cimvalidation
         run: make generate
 
-      - name: Build cimlsp
-        run: cargo build --release -p cimoxide-lsp --target ${{ matrix.rust_target }}
+      - name: Build cimlsp and cimmcp
+        run: cargo build --release -p cimoxide-lsp -p cimoxide-mcp --target ${{ matrix.rust_target }}
 
       - uses: actions/setup-node@v4
         with:
@@ -92,6 +97,7 @@ jobs:
         run: |
           mkdir -p server
           cp ../../target/${{ matrix.rust_target }}/release/${{ matrix.exe }} server/
+          cp ../../target/${{ matrix.rust_target }}/release/${{ matrix.mcp_exe }} server/
           npm ci
           npx vsce package --target ${{ matrix.vsce_target }}
 

@@ -1,0 +1,28 @@
+# The `cimmcp` binary as a Python wheel, so MCP clients can run it with
+# `uvx --from cimoxide-mcp cimmcp` and nothing installed beforehand. No Python
+# code: maturin puts the binary in each platform's wheel as a script.
+
+[build-system]
+requires = ["maturin>=1.4,<2"]
+build-backend = "maturin"
+
+[project]
+name = "cimoxide-mcp"
+dynamic = ["version"]
+description = "cimmcp: an MCP server that lets an LLM chat look up, validate and query ENTSO-E CGMES and NC models"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.8"
+keywords = ["mcp", "cim", "cgmes", "entsoe", "power-systems"]
+classifiers = [
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering",
+    "Environment :: Console",
+]
+
+[project.urls]
+Repository = "https://github.com/m-mirz/cimoxide"
+Issues = "https://github.com/m-mirz/cimoxide/issues"
+
+[tool.maturin]
+bindings = "bin"
