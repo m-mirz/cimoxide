@@ -6,7 +6,7 @@ use cimschema as schema;
 
 use std::path::Path;
 
-const DEFAULT_OUTPUT: &str = "cimstructs/src";
+const DEFAULT_OUTPUT: &str = "cimmodel/src/generated";
 const DEFAULT_SHACL: &str =
     "application-profiles-library/CGMES/SHACL/*.ttl";
 const DEFAULT_NC_SHACL: &str = "application-profiles-library/NCP/SHACL/*.ttl";
@@ -25,9 +25,9 @@ Options:
   --output <dir>                where generated structs are written
   --shacl <glob>                SHACL TTL glob
   --nc-shacl <glob>             NCP SHACL TTL glob (bag-family shape table)
-  --shacl-output <dir>          where generated validators are written
+  --shacl-output <dir>          where the shape tables are written
   --python-stubs-output <dir>   where types.pyi is written
-  --skip-shacl                  do not generate SHACL validators
+  --skip-shacl                  do not generate the shape tables
   --skip-python-stubs           do not generate Python stubs
   --skip-report                 suppress the SHACL skip report
   --rule-report                 print the SPARQL rule coverage report
@@ -118,12 +118,12 @@ fn main() {
         eprintln!("output dir     : {output}");
     }
 
-    if !families.iter().any(|f| f.typed) {
-        eprintln!("--families must include the typed family (cgmes)");
+    if !families.iter().any(|f| f.id == "cgmes") {
+        eprintln!("--families must include cgmes");
         std::process::exit(1);
     }
 
-    let mut spec = match schema::import::import_schema_files(&schema, &schema::family::CGMES, verbose) {
+    let spec = match schema::import::import_schema_files(&schema, &schema::family::CGMES, verbose) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("error importing schema: {e}");
@@ -131,11 +131,11 @@ fn main() {
         }
     };
 
-    // Property-bag families are imported into their own specification: the
-    // prefix-to-namespace maps collide (both bind `cim`, to different IRIs), so
-    // a merged import would silently mis-namespace whichever parsed second.
+    // Each family is imported into its own specification: the prefix-to-
+    // namespace maps collide (both bind `cim`, to different IRIs), so a merged
+    // import would silently mis-namespace whichever parsed second.
     let mut bag_specs: Vec<schema::model::CimSpecification> = Vec::new();
-    for family in families.iter().filter(|f| !f.typed) {
+    for family in families.iter().filter(|f| f.id != "cgmes") {
         let pattern = if family.id == "nc" { &nc_schema } else { family.default_schema };
         match schema::import::import_schema_files(pattern, family, verbose) {
             Ok(s) => bag_specs.push(s),
@@ -156,17 +156,12 @@ fn main() {
         );
     }
 
-    if let Err(e) = generator::rust_gen::generate_rust(&mut spec, &bags, Path::new(&output)) {
+    if let Err(e) = generator::rust_gen::generate_rust(&spec, &bags, Path::new(&output)) {
         eprintln!("error generating code: {e}");
         std::process::exit(1);
     }
 
-    eprintln!(
-        "generated {} structs, {} enums into {output}",
-        spec.types.len(),
-        spec.enums.len()
-    );
-    for bag in &bags {
+    for bag in std::iter::once(&&spec).chain(&bags) {
         eprintln!(
             "generated {} {} classes into {output}/{}_classes.rs",
             bag.types.len(),
@@ -175,8 +170,13 @@ fn main() {
         );
     }
 
-    if let (Some(glob), Some(out_dir)) = (shacl_glob, shacl_output.clone()) {
-        run_shacl(&spec, &glob, &out_dir, verbose, skip_report, rule_report);
+    if let (Some(glob), Some(out_dir)) = (shacl_glob.clone(), shacl_output.clone()) {
+        // The CGMES shape table, resolved with the bag families alongside for
+        // the cross-family class lists.
+        run_bag_shacl(&spec, &bags, &glob, &out_dir, verbose, skip_report);
+        if skip_report || rule_report {
+            run_cgmes_reports(&spec, &bags, &glob, verbose, skip_report, rule_report);
+        }
     }
 
     // Bag families get a shape *table* rather than generated check functions:
@@ -201,10 +201,17 @@ fn main() {
     }
 }
 
-fn run_shacl(
+/// The `--skip-report` and `--rule-report` output for the CGMES shape table.
+///
+/// Counts are per constraint file, so each file is resolved on its own here and
+/// its simplification and resolution skips attributed to it; the table itself
+/// is resolved in one pass by [`run_bag_shacl`], through the same
+/// `resolve_shapes`. Every TTL file is counted, whether or not the manifest
+/// runs it, so a file's total does not depend on dispatch.
+fn run_cgmes_reports(
     spec: &schema::model::CimSpecification,
+    others: &[&schema::model::CimSpecification],
     glob: &str,
-    out_dir: &str,
     verbose: bool,
     skip_report: bool,
     rule_report: bool,
@@ -247,32 +254,59 @@ fn run_shacl(
         }
     }
 
-    let simplify_skips = shacl::simplify::simplify(&mut results, &schema::family::CGMES);
+    let mut simplify_skips: std::collections::HashMap<String, Vec<shacl::skip::SkipEntry>> =
+        shacl::simplify::simplify(&mut results).into_iter().collect();
 
-    let (total_checks, mut file_skips) = match shacl::codegen::generate_validation(&results, spec, Path::new(out_dir)) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("error generating SHACL validation code: {e}");
-            std::process::exit(1);
-        }
-    };
+    // Resolve every file, under its manifest tags or a placeholder one.
+    let mut profiles_of: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    for (stem, tag) in schema::family::CGMES.shacl_manifest.unwrap_or(&[]) {
+        profiles_of.entry((*stem).to_string()).or_default().push((*tag).to_string());
+    }
+    for fr in &results {
+        profiles_of.entry(fr.file_name.clone()).or_insert_with(|| vec!["-".to_string()]);
+    }
 
-    // Merge simplify-stage skips into the per-file skip info.
-    for (file_name, s_skips) in simplify_skips {
-        if s_skips.is_empty() { continue; }
-        if let Some(fi) = file_skips.iter_mut().find(|f| f.file_name == file_name) {
-            fi.skips.extend(s_skips);
-        } else {
-            file_skips.push(shacl::skip::FileSkipInfo { file_name, check_count: 0, skips: s_skips });
+    let mut file_skips: Vec<shacl::skip::FileSkipInfo> = Vec::new();
+    let mut total_checks = 0;
+    for fr in &results {
+        let mut collector = shacl::skip::SkipCollector::new();
+        let (shapes, _) = schema::shacl::resolve::resolve_shapes(
+            spec, others, std::slice::from_ref(fr), &profiles_of, &mut collector,
+        );
+        // Distinct `(path, component, sh:name)` rule patterns, the unit the
+        // skips are counted in too: a property shape the file's node shapes
+        // share counts once, not once per node shape. Checked + skipped is
+        // then the number of constraints the file defines, independent of
+        // what either side can check.
+        let mut patterns: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for s in &shapes {
+            for p in &s.props {
+                for c in &p.checks {
+                    let kind = format!("{:?}", c.constraint);
+                    let kind = kind.split('(').next().unwrap_or("");
+                    patterns.insert(format!("{:?}|{kind}|{}", p.path, c.name));
+                }
+            }
+            for l in &s.logic {
+                patterns.insert(format!("logic|{:?}|{}", l.op, l.name));
+            }
+            if let Some(c) = &s.closed {
+                patterns.insert(format!("closed|{}", c.rule_id));
+            }
         }
+        let check_count = patterns.len();
+        total_checks += check_count;
+        let mut skips = collector.into_entries();
+        skips.extend(simplify_skips.remove(&fr.file_name).unwrap_or_default());
+        file_skips.push(shacl::skip::FileSkipInfo { file_name: fr.file_name.clone(), check_count, skips });
     }
 
     let total_skipped: usize = file_skips.iter().map(|f| f.skips.len()).sum();
     if !rule_report {
         // Under --rule-report, this exact total (and more, broken down by profile) is
-        // already in the "Generated SHACL Rules by Profile" table below.
+        // already in the "SHACL Rules by Profile" table below.
         eprintln!(
-            "shacl codegen: {} files, {} checks, {} skipped → {out_dir}",
+            "cgmes shape report: {} files, {} checks, {} skipped",
             results.len(), total_checks, total_skipped
         );
     }
@@ -296,7 +330,7 @@ fn run_shacl(
     }
 
     if rule_report {
-        // B1 — Skipped-constraints counts (generated SHACL side): same category totals as
+        // B1 — Skipped-constraints counts (shape table side): same category totals as
         // --skip-report, exposed without needing the verbose per-entry dump too.
         let mut global_counts: std::collections::HashMap<&'static str, usize> =
             std::collections::HashMap::new();
@@ -306,7 +340,7 @@ fn run_shacl(
         eprintln!("\n########## README rule-count report ##########");
         shacl::skip::print_global_summary(&global_counts);
 
-        // B1.5 — Generated SHACL rule counts (checks + skips), grouped by profile the same
+        // B1.5 — Shape-table rule counts (checks + skips), grouped by profile the same
         // way as the SPARQL Check Coverage table below, using the already-computed
         // per-file check_count/skips from file_skips.
         let mut group_checks: std::collections::HashMap<&'static str, usize> = std::collections::HashMap::new();
@@ -316,8 +350,8 @@ fn run_shacl(
             *group_checks.entry(group).or_insert(0) += fi.check_count;
             *group_skipped.entry(group).or_insert(0) += fi.skips.len();
         }
-        eprintln!("\n=== Generated SHACL Rules by Profile ===");
-        eprintln!("  {:32}  {:>9}  {:>7}  {:>6}", "Profile Group", "Generated", "Skipped", "Total");
+        eprintln!("\n=== SHACL Rules by Profile (shape table) ===");
+        eprintln!("  {:32}  {:>9}  {:>7}  {:>6}", "Profile Group", "Checks", "Skipped", "Total");
         let (mut gen_total, mut skip_total) = (0usize, 0usize);
         for g in shacl::ttl_report::TTL_GROUP_LABEL_ORDER {
             let checks = group_checks.get(g).copied().unwrap_or(0);
@@ -401,11 +435,12 @@ fn run_shacl(
 }
 
 
-/// Generate the shape table for one property-bag family.
+/// Generate the shape table for one family.
 ///
-/// Unlike `run_shacl`, the profile-to-file mapping is read rather than
-/// hardcoded: `NCP/SHACL/Validation/` ships one manifest per profile whose
-/// `owl:imports` list names exactly the constraint files that apply.
+/// The profile-to-file mapping comes from `Family::shacl_manifest` where the
+/// family has one (CGMES), and otherwise is read: `NCP/SHACL/Validation/`
+/// ships one manifest per profile whose `owl:imports` list names exactly the
+/// constraint files that apply.
 fn run_bag_shacl(
     spec: &schema::model::CimSpecification,
     others: &[&schema::model::CimSpecification],
@@ -473,7 +508,8 @@ fn run_bag_shacl(
             eprintln!("{}\t{e}", spec.family.id);
         }
     }
-    if verbose || skip_report {
+    // CGMES gets the per-file breakdown from `run_cgmes_reports` instead.
+    if (verbose || skip_report) && spec.family.shacl_manifest.is_none() {
         let mut counts: std::collections::HashMap<&'static str, usize> =
             std::collections::HashMap::new();
         shacl::skip::accumulate_counts(&mut counts, &skips);

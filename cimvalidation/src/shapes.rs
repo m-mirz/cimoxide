@@ -1,16 +1,11 @@
-//! The shape table a property-bag family is validated against.
+//! The shape table both families are validated against.
 //!
-//! CGMES validation is generated code: one function per check, each
-//! downcasting to a concrete struct and reading a typed field. NC classes have
-//! no struct to downcast to — they decode into
-//! [`cimstructs::base::GenericElement`] property bags — so there is nothing for
-//! that strategy to generate against.
-//!
-//! So the shapes become data and [`crate::bag`] interprets them, the same way
-//! NC classes became [`cimstructs::base::ClassDef`] rows interpreted by the
-//! decoder. `cimgen` emits the table into `nc_shapes.rs`; with the
-//! `dynamic-shapes` feature it can be built from the SHACL TTL files at
-//! runtime instead.
+//! Elements are property bags ([`cimmodel::Element`]) with no struct to
+//! downcast to, so the shapes are data and [`crate::bag`] interprets them, the
+//! same way classes are [`cimmodel::base::ClassDef`] rows interpreted by the
+//! decoder. `cimgen` emits the tables into `cgmes_shapes.rs` and
+//! `nc_shapes.rs`; with the `dynamic-shapes` feature they can be built from the
+//! SHACL TTL files at runtime instead.
 //!
 //! Everything a consumer would have to compute per element is resolved when
 //! the table is built: target classes are already family-qualified
@@ -20,7 +15,7 @@
 /// Where a property shape's values come from.
 ///
 /// Field keys are the local XML element name with the prefix stripped, which
-/// is exactly what the decoder puts in [`cimstructs::base::RdfBlock::fields`].
+/// is exactly what the decoder puts in [`cimmodel::Element::fields`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Path {
     /// A field on the element itself.
@@ -32,14 +27,33 @@ pub enum Path {
     /// `sh:alternativePath` — the union of every branch's values. A branch may
     /// itself be inverse, hence [`AltBranch`] rather than a plain name.
     Alternative(&'static [AltBranch]),
-    /// `sh:path ( nc:X.y rdf:type )` — follow the association, then look at the
-    /// referenced element's class. 170 of NCP's 178 property chains are this
-    /// shape, and they are its main association value-type check.
+    /// A sequence path: `( ^cim:Terminal.ConductingEquipment
+    /// cim:Terminal.phases )`, `( cim:Location.mainAddress
+    /// cim:StreetAddress.status cim:Status.dateTime )`, and — 170 of NCP's 178
+    /// chains, its main association value-type check — `( nc:X.y rdf:type )`.
     ///
-    /// The referenced element may belong to *either* family: these shapes list
-    /// CGMES classes (`cim17:ACLineSegment`) alongside NC ones, and
-    /// `CimElement::type_name` answers for both.
-    RefType(&'static str),
+    /// Stepping *from* an element absent from the dataset makes the result
+    /// unknown and every check on it silent: phase 1 runs per file, so leaving
+    /// the file is normal. A final `rdf:type` step needs nothing from the
+    /// elements it reaches, so they count even when absent, and class checks
+    /// skip the absent ones, as [`Constraint::RefClass`] describes.
+    ///
+    /// The referenced element may belong to *either* family: NCP's value-type
+    /// lists name CGMES classes (`cim17:ACLineSegment`) alongside NC ones, and
+    /// `Element::type_name` answers for both.
+    Chain(&'static [Step]),
+}
+
+/// One step of a [`Path::Chain`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    Forward(&'static str),
+    /// Needs the reverse index, like [`Path::Inverse`], but as a list of the
+    /// elements pointing here rather than a count.
+    Inverse(&'static str),
+    /// `rdf:type`, last only. Its values are the elements reached; the
+    /// constraints on such a path (`RefClass`, counts) read their classes.
+    Type,
 }
 
 /// One branch of an [`Path::Alternative`].
@@ -65,7 +79,7 @@ pub enum Constraint {
     MinCount(u32),
     MaxCount(u32),
     /// The xsd type's local name (`"integer"`, `"dateTime"`, …). A bag holds
-    /// strings, so this is a real parse check rather than the tautology it is
+    /// strings, so this is a real parse check rather than the tautology it was
     /// against a typed struct.
     Datatype(&'static str),
     NodeKind(NodeKind),
@@ -82,13 +96,34 @@ pub enum Constraint {
     MaxLength(u32),
     MinLength(u32),
     /// The referenced element's class must be one of these family-qualified
-    /// names. Produced by `sh:in` on a [`Path::RefType`].
+    /// names. Produced by `sh:in` on a path ending in `rdf:type`.
     ///
     /// Only checked when the referenced element is **present**. Phase-1
     /// validation runs per file, so a reference out of the current file is
     /// normal and is a different rule's business — reporting it here would make
     /// every cross-file association a value-type violation.
     RefClass(&'static [&'static str]),
+    /// `sh:minInclusive` and friends. Compared as `f64`; a value that does not
+    /// parse as a number is skipped, the way a typed numeric field that failed
+    /// to parse is `None` — malformed numbers are `sh:datatype`'s business.
+    MinInclusive(f64),
+    MaxInclusive(f64),
+    MinExclusive(f64),
+    MaxExclusive(f64),
+    /// `sh:lessThan` — this property's value must be below the named field's
+    /// on the same element. Only checked when both are present and numeric.
+    LessThan(&'static str),
+    LessThanOrEquals(&'static str),
+    /// `sh:not [ sh:class X ]` — the referenced element must not be an
+    /// instance of these family-qualified classes. Silent when the referenced
+    /// element is absent, like [`Constraint::Class`].
+    NotClass(&'static [&'static str]),
+    /// `sh:qualifiedValueShape [ sh:in (..) ]` with `sh:qualifiedMinCount` —
+    /// at least `min` values must be among `allowed`. NCP uses it to ask
+    /// whether a dataset declares conformance to one of a set of profiles.
+    QualifiedIn { allowed: &'static [&'static str], min: u32 },
+    /// `sh:length` — exactly this many characters, e.g. the 16 of an EIC code.
+    Length(u32),
 }
 
 /// One constraint together with how to report it.
@@ -131,6 +166,37 @@ pub enum Target {
     SubjectsOf(&'static str),
 }
 
+/// How a [`Logic`] combines its branches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogicOp {
+    And,
+    Or,
+    Xone,
+}
+
+/// One branch of a [`Logic`]. It conforms when none of its checks fail — or,
+/// for `[ sh:not X ]` (`negate`), when at least one does. NCP writes material
+/// implication that way: `sh:or ( [ sh:not conformsToNCProfile ] [ P required ] )`.
+#[derive(Debug)]
+pub struct Branch {
+    pub props: &'static [PropShape],
+    pub negate: bool,
+}
+
+/// A node-level `sh:and` / `sh:or` / `sh:xone`. The shape reports once, with
+/// its own name and message, when the combination does not hold; the branch
+/// checks carry no report text.
+#[derive(Debug)]
+pub struct Logic {
+    pub op: LogicOp,
+    pub branches: &'static [Branch],
+    pub rule_id: &'static str,
+    pub name: &'static str,
+    pub message: &'static str,
+    pub description: &'static str,
+    pub severity: &'static str,
+}
+
 /// One `sh:NodeShape`.
 #[derive(Debug)]
 pub struct ShapeDef {
@@ -148,6 +214,8 @@ pub struct ShapeDef {
     /// structs drop unknown properties at decode, leaving nothing to compare
     /// against. 823 NCP shapes use it.
     pub closed: Option<&'static ClosedShape>,
+    /// Node-level `sh:and` / `sh:or` / `sh:xone`.
+    pub logic: &'static [Logic],
     /// Every NC profile code whose manifest imports the file this shape came
     /// from. Plural because four shared constraint files are imported by 17 or
     /// 18 of the 18 manifests.

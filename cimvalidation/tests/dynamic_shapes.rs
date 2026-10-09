@@ -1,6 +1,6 @@
-//! Loading the NC shape table from SHACL at runtime.
+//! Loading the NC and CGMES shape tables from SHACL at runtime.
 //!
-//! Unlike `cimstructs`' equivalent, there is no second implementation to guard
+//! Unlike `cimmodel`'s equivalent, there is no second implementation to guard
 //! against: the generator and this loader both call
 //! `cimschema::shacl::resolve`, so they cannot resolve differently. What these
 //! tests check is the part that *is* duplicated — rendering the resolved model
@@ -29,8 +29,8 @@ fn shacl_dir() -> PathBuf {
 /// pointer identity or on the string pool's numbering.
 fn describe(s: &ShapeDef) -> String {
     format!(
-        "{:?}|{:?}|{:?}|{:?}|{}",
-        s.targets, s.props, s.closed, s.profiles, s.file
+        "{:?}|{:?}|{:?}|{:?}|{:?}|{}",
+        s.targets, s.props, s.closed, s.logic, s.profiles, s.file
     )
 }
 
@@ -55,13 +55,36 @@ fn the_runtime_table_matches_the_generated_one() {
     }
 }
 
+/// The same comparison for CGMES, through the same runtime path.
 #[test]
-fn a_non_bag_family_is_rejected() {
-    // CGMES is generated as typed structs; it has no shape table to load.
-    assert!(matches!(
-        load_table("cgmes", &shacl_dir()),
-        Err(ShapeError::UnknownFamily(_))
-    ));
+fn the_cgmes_table_matches_its_runtime_load() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("application-profiles-library/CGMES/SHACL");
+    let loaded = load_table("cgmes", &dir).expect("could not load CGMES shapes");
+    let generated = cimvalidation::cgmes_shapes::SHAPES;
+
+    assert_eq!(loaded.len(), generated.len(), "loaded {} shapes, generated has {}", loaded.len(), generated.len());
+    for (i, (a, b)) in loaded.iter().zip(generated.iter()).enumerate() {
+        assert_eq!(describe(a), describe(b), "shape {i} differs");
+    }
+}
+
+/// `CIMOXIDE_SHACL_DIR` may list several directories; each serves the family
+/// whose files it holds, so pointing it at NC's directory alone never makes
+/// CGMES try to load from there.
+#[test]
+fn a_directory_is_matched_to_its_family() {
+    use cimvalidation::shape_source::family_of_dir;
+    let lib = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("application-profiles-library");
+    assert_eq!(family_of_dir(&lib.join("NCP/SHACL")).map(|f| f.id), Some("nc"));
+    assert_eq!(family_of_dir(&lib.join("CGMES/SHACL")).map(|f| f.id), Some("cgmes"));
+    assert_eq!(family_of_dir(&lib.join("CGMES/RDFS")).map(|f| f.id), None);
+}
+
+#[test]
+fn an_unknown_family_is_rejected() {
     assert!(matches!(
         load_table("not-a-family", &shacl_dir()),
         Err(ShapeError::UnknownFamily(_))

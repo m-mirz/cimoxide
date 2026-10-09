@@ -7,7 +7,7 @@
 //! rule that runs and matches nothing rather than a compile error. So the clean
 //! case is the baseline and every other test names the rule it expects.
 
-use cimdecoder::CimDataset;
+use cimmodel::CimDataset;
 use cimvalidation::{validate_nc_profile, Config, Violation};
 
 /// A conforming Contingency dataset: a contingency, the contingency element
@@ -105,8 +105,7 @@ fn min_count_flags_a_missing_required_property() {
 }
 
 /// A bag keeps repeated elements as a `TextList`, so the count is directly
-/// available. The generated validators consult `duplicate_fields` instead,
-/// because a typed struct collapses the repeats before they can be counted.
+/// available.
 #[test]
 fn max_count_flags_a_repeated_property() {
     let v = check(
@@ -163,7 +162,7 @@ fn enum_values_outside_the_allowed_set_are_flagged() {
 
 /// `sh:path ( nc:X.y rdf:type )` — follow the association, then read the
 /// referenced element's class. The allowed list mixes CGMES classes with NC
-/// ones and `CimElement::type_name` answers for both, so this is the one place
+/// ones and `Element::type_name` answers for both, so this is the one place
 /// NC validation legitimately reaches across families.
 #[test]
 fn ref_type_checks_the_class_of_the_referenced_element() {
@@ -255,6 +254,32 @@ fn the_shape_table_is_populated() {
     assert!(checks > 10_000, "only {checks} checks");
 }
 
+/// The APL writes one closed `AllowedProperties` shape per class. A subclass
+/// with its own is held to that list alone: held to its superclass's as well,
+/// every property it adds would be reported — `PinTerminal.kind` against
+/// `GateInputPin`'s list, which relicapgrid's data showed.
+#[test]
+fn a_closed_shape_leaves_subclasses_with_their_own_to_them() {
+    use cimvalidation::shapes::Target;
+    let classes_of = |rule: &str| -> Vec<&'static str> {
+        let shape = cimvalidation::nc_shapes::SHAPES
+            .iter()
+            .find(|s| s.closed.as_ref().is_some_and(|c| c.rule_id == rule))
+            .unwrap_or_else(|| panic!("no closed shape {rule}"));
+        shape
+            .targets
+            .iter()
+            .flat_map(|t| match t {
+                Target::Class(c) => c.to_vec(),
+                _ => Vec::new(),
+            })
+            .collect()
+    };
+    let gate = classes_of("er:GateInputPin-AllowedProperties");
+    assert!(!gate.contains(&"nc:PinTerminal") && !gate.contains(&"nc:PinDCTerminal"), "{gate:?}");
+    assert!(classes_of("er:PinTerminal-AllowedProperties").contains(&"nc:PinTerminal"));
+}
+
 // ── profile detection ──────────────────────────────────────────────────────
 
 /// CGMES announces its profiles in an `md:FullModel` header. NC uses DCAT: a
@@ -310,6 +335,41 @@ fn base_and_version_iris_map_to_the_same_code() {
 fn the_conforming_fixture_validates_clean() {
     let ds = CimDataset::decode_file(std::path::Path::new("../testdata/test_nc_CO_002.xml"))
         .expect("fixture did not decode");
-    let v = validate_nc_profile(&ds, "CO", &Config::default());
+    let v = findings(validate_nc_profile(&ds, "CO", &Config::default()));
     assert!(v.is_empty(), "{v:#?}");
+}
+
+/// Everything but `sh:Info`, which is advisory: `ClassCount` reports every
+/// class of every dataset as Info, valid or not.
+fn findings(v: Vec<Violation>) -> Vec<Violation> {
+    v.into_iter().filter(|v| v.severity != "sh:Info").collect()
+}
+
+/// DatasetMetadata states several requirements as material implication:
+/// `sh:or ( [ sh:not dm:conformsToNCProfile ] [ sh:path P ; sh:minCount 1 ] )`
+/// — a dataset declaring conformance to an NC profile must carry P.
+fn fixture_without(property: &str) -> String {
+    let xml = std::fs::read_to_string("../testdata/test_nc_CO_002.xml").expect("fixture");
+    xml.lines().filter(|l| !l.contains(property)).collect::<Vec<_>>().join("\n")
+}
+
+#[test]
+fn an_nc_dataset_missing_a_required_metadata_property_is_flagged() {
+    let ds = CimDataset::decode_str(&fixture_without("dcterms:spatial")).expect("decode");
+    let v = findings(validate_nc_profile(&ds, "CO", &Config::default()));
+    // Both dcat:Dataset elements lost it.
+    assert_eq!(by_name(&v, "spatial-NC-cardinality").len(), 2, "{v:#?}");
+    assert_eq!(v.len(), 2, "only the removed property should be reported: {v:#?}");
+}
+
+/// The other branch of the implication: without conformance to an NC profile
+/// the property is not required. Swapping the profile IRI also stops CO
+/// detection, so the CO shapes are run explicitly.
+#[test]
+fn the_requirement_applies_only_to_nc_profiles() {
+    let xml = fixture_without("dcterms:spatial")
+        .replace("https://ap.cim4.eu/Contingency/2.3", "https://example.invalid/NotAProfile/1.0");
+    let ds = CimDataset::decode_str(&xml).expect("decode");
+    let v = validate_nc_profile(&ds, "CO", &Config::default());
+    assert!(by_name(&v, "spatial-NC-cardinality").is_empty(), "{v:#?}");
 }

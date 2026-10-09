@@ -1,4 +1,5 @@
-use cimdecoder::CimDataset;
+use cimmodel::CimDataset;
+use super::Fields;
 use crate::Violation;
 
 pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
@@ -14,11 +15,13 @@ fn check_series_compensator_varistor_usage(dataset: &CimDataset) -> Vec<Violatio
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SeriesCompensator").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let obj = match entry.element.as_any().downcast_ref::<cimstructs::SeriesCompensator>() {
+        let obj = match Fields::of_class(entry, "SeriesCompensator") {
             Some(o) => o, None => continue,
         };
-        if !obj.varistor_present.unwrap_or(false) {
-            if obj.varistor_rated_current.unwrap_or(0.0) != 0.0 {
+        // The SPARQL needs `varistorPresent` given and false, and the value
+        // present, whatever it is.
+        if obj.bool("SeriesCompensator.varistorPresent") == Some(false) {
+            if obj.has("SeriesCompensator.varistorRatedCurrent") {
                 v.push(Violation {
                     object_id:   mrid.clone(),
                     rule_id:     "scu:SeriesCompensator.varistorRatedCurrent-usage".into(),
@@ -30,7 +33,7 @@ fn check_series_compensator_varistor_usage(dataset: &CimDataset) -> Vec<Violatio
                     description: String::new(),
                 });
             }
-            if obj.varistor_voltage_threshold.unwrap_or(0.0) != 0.0 {
+            if obj.has("SeriesCompensator.varistorVoltageThreshold") {
                 v.push(Violation {
                     object_id:   mrid.clone(),
                     rule_id:     "scu:SeriesCompensator.varistorVoltageThreshold-usage".into(),
@@ -51,11 +54,13 @@ fn check_transformer_end_grounding(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("PowerTransformerEnd").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let obj = match entry.element.as_any().downcast_ref::<cimstructs::PowerTransformerEnd>() {
+        let obj = match Fields::of_class(entry, "PowerTransformerEnd") {
             Some(o) => o, None => continue,
         };
-        if obj.base.grounded.unwrap_or(false) {
-            if obj.base.rground.unwrap_or(0.0) == 0.0 && obj.base.xground.unwrap_or(0.0) == 0.0 {
+        // Either impedance absent, as the SPARQL's `!bound(..) || !bound(..)`;
+        // a value of zero is a value.
+        if obj.bool("TransformerEnd.grounded") == Some(true)
+            && (!obj.has("TransformerEnd.rground") || !obj.has("TransformerEnd.xground")) {
                 v.push(Violation {
                     object_id:   mrid.clone(),
                     rule_id:     "sc452:TransformerEnd-grounding".into(),
@@ -67,7 +72,6 @@ fn check_transformer_end_grounding(dataset: &CimDataset) -> Vec<Violation> {
                     description: String::new(),
                 });
             }
-        }
     }
     v
 }
@@ -76,11 +80,11 @@ fn check_synchronous_machine_earthing(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SynchronousMachine").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let obj = match entry.element.as_any().downcast_ref::<cimstructs::SynchronousMachine>() {
+        let obj = match Fields::of_class(entry, "SynchronousMachine") {
             Some(o) => o, None => continue,
         };
-        if obj.earthing.unwrap_or(false) {
-            if obj.earthing_star_point_r.unwrap_or(0.0) == 0.0 && obj.earthing_star_point_x.unwrap_or(0.0) == 0.0 {
+        if obj.bool("SynchronousMachine.earthing") == Some(true)
+            && (!obj.has("SynchronousMachine.earthingStarPointR") || !obj.has("SynchronousMachine.earthingStarPointX")) {
                 v.push(Violation {
                     object_id:   mrid.clone(),
                     rule_id:     "sc452:SynchronousMachine-attributes".into(),
@@ -92,7 +96,6 @@ fn check_synchronous_machine_earthing(dataset: &CimDataset) -> Vec<Violation> {
                     description: String::new(),
                 });
             }
-        }
     }
     v
 }
@@ -101,11 +104,11 @@ fn check_series_compensator_varistor_required(dataset: &CimDataset) -> Vec<Viola
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("SeriesCompensator").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        let obj = match entry.element.as_any().downcast_ref::<cimstructs::SeriesCompensator>() {
+        let obj = match Fields::of_class(entry, "SeriesCompensator") {
             Some(o) => o, None => continue,
         };
-        if obj.varistor_present.unwrap_or(false) {
-            if obj.varistor_rated_current.unwrap_or(0.0) == 0.0 {
+        if obj.bool("SeriesCompensator.varistorPresent") == Some(true) {
+            if !obj.has("SeriesCompensator.varistorRatedCurrent") {
                 v.push(Violation {
                     object_id:   mrid.clone(),
                     rule_id:     "sc600:SeriesCompensator.varistorRatedCurrent-required".into(),
@@ -117,7 +120,7 @@ fn check_series_compensator_varistor_required(dataset: &CimDataset) -> Vec<Viola
                     description: String::new(),
                 });
             }
-            if obj.varistor_voltage_threshold.unwrap_or(0.0) == 0.0 {
+            if !obj.has("SeriesCompensator.varistorVoltageThreshold") {
                 v.push(Violation {
                     object_id:   mrid.clone(),
                     rule_id:     "sc600:SeriesCompensator.varistorVoltageThreshold-required".into(),

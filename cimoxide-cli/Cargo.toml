@@ -14,10 +14,8 @@ name = "cimcli"
 path = "src/main.rs"
 
 [dependencies]
-cimoxide-decoder    = { workspace = true }
-cimoxide-structs    = { workspace = true, features = ["dynamic-schema"] }
+cimoxide-model      = { workspace = true, features = ["dynamic-schema"] }
 cimoxide-validation = { workspace = true, features = ["dynamic-shapes"] }
-cimoxide-convert    = { workspace = true }
 cimoxide-sparql     = { workspace = true, optional = true }
 serde_json     = "1"
 quick-xml      = { version = "0.37", features = ["encoding"] }
@@ -29,5 +27,4 @@ default = ["sparql"]
 sparql = ["dep:cimoxide-sparql"]
 
 [dev-dependencies]
-cimoxide-decoder = { workspace = true }
-cimoxide-structs = { workspace = true }
+cimoxide-model = { workspace = true }

@@ -608,12 +608,12 @@ pub struct ProfileInfo {
     pub iris: Vec<String>,
 }
 
-/// Read the profile descriptors in an `NCP/PROF`-style directory.
+/// Read the profile descriptors in a `PROF` directory (`NCP/PROF`,
+/// `CGMES/PROF`).
 ///
-/// These are the authority on profile identity. Without them a dataset's
-/// `dcterms:conformsTo` is an opaque IRI and nothing can say which shapes
-/// apply — the NC counterpart of `cimvalidation::detect`'s hardcoded CGMES
-/// profile URI table.
+/// These are the authority on profile identity. Without them the profile IRI a
+/// dataset declares — NC's `dcterms:conformsTo`, CGMES's `md:Model.profile` —
+/// is opaque, and nothing can say which shapes apply.
 pub fn import_profile_index(
     dir: &std::path::Path,
 ) -> Result<Vec<ProfileInfo>, Box<dyn std::error::Error>> {

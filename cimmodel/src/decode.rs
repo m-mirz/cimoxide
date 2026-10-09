@@ -1,21 +1,15 @@
-use std::collections::HashMap;
 use std::path::Path;
 
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 
-use cimstructs::base::{CimElement, FieldValue, RdfBlock, TypeEntry, TypeRegistry};
-use cimstructs::registry;
-
-pub struct CimEntry {
-    pub element: Box<dyn CimElement>,
-    pub block: RdfBlock,
-}
+use crate::base::{intern, AttrDef, ClassDef, Element, FastMap, FastSet, FieldValue, TypeRegistry};
+use crate::registry;
 
 pub struct CimDataset {
-    pub entries: HashMap<String, CimEntry>,
+    pub entries: FastMap<String, Element>,
     /// Maps `type_name()` → list of MRIDs of that type. Populated on insert, maintained on merge.
-    pub by_type: HashMap<String, Vec<String>>,
+    pub by_type: FastMap<String, Vec<String>>,
 }
 
 impl Default for CimDataset {
@@ -27,8 +21,8 @@ impl Default for CimDataset {
 impl CimDataset {
     pub fn new() -> Self {
         Self {
-            entries: HashMap::new(),
-            by_type: HashMap::new(),
+            entries: FastMap::default(),
+            by_type: FastMap::default(),
         }
     }
 
@@ -88,43 +82,54 @@ impl CimDataset {
             .unwrap_or_default())
     }
 
-    /// Merge another dataset into self, combining objects with the same MRID.
-    /// For conflicting MRIDs: merge RdfBlocks (later scalar wins, lists union),
-    /// then re-instantiate the typed element.
+    /// Merge another dataset into self, combining objects with the same MRID:
+    /// a later scalar wins, reference lists are joined. An object keeps the
+    /// class it was first decoded as.
+    ///
+    /// Where the files type an object differently — an SSH file writing
+    /// `cim:Equipment` for what the EQ file wrote as `cim:ACLineSegment` — the
+    /// object keeps every type, as the RDF union does ([`Element::types`]),
+    /// and its class (and `by_type` bucket) is the most specific, whichever
+    /// file came first. Of unrelated classes the first stays the class.
     pub fn merge(&mut self, other: CimDataset) {
         let reg = registry::type_registry();
+        let mut moved: FastMap<&'static str, FastSet<String>> = FastMap::default();
         for (mrid, incoming) in other.entries {
             if let Some(existing) = self.entries.get_mut(&mrid) {
-                existing.block.merge_from(&incoming.block);
-                if let Some(entry) = reg.by_type_name(&existing.block.type_name) {
-                    existing.element = entry.parse(&existing.block);
+                existing.merge_from(&incoming);
+                let old = existing.class();
+                let mut changed = false;
+                for t in incoming.types() {
+                    changed |= existing.add_type(t, reg);
+                }
+                if changed {
+                    moved.entry(old.qualified).or_default().insert(mrid.clone());
+                    self.by_type.entry(existing.type_name().to_string()).or_default().push(mrid);
                 }
             } else {
-                let type_name = incoming.element.type_name().to_string();
+                let type_name = incoming.type_name().to_string();
                 self.by_type.entry(type_name).or_default().push(mrid.clone());
                 self.entries.insert(mrid, incoming);
             }
         }
-    }
-
-    /// Release all RdfBlocks to free memory after the final merge.
-    pub fn drop_blocks(&mut self) {
-        for entry in self.entries.values_mut() {
-            entry.block = RdfBlock::default();
+        // One pass per bucket left, however many of its objects moved.
+        for (old, mrids) in moved {
+            if let Some(bucket) = self.by_type.get_mut(old) {
+                bucket.retain(|m| !mrids.contains(m));
+            }
         }
     }
 
     /// Insert or replace the element at `mrid`, keeping `by_type` consistent
     /// (including the case where `mrid` already exists under a different type).
-    pub fn set(&mut self, mrid: String, element: Box<dyn CimElement>) {
+    pub fn set(&mut self, mrid: String, element: Element) {
         let new_type = element.type_name().to_string();
         if let Some(old) = self.entries.get(&mrid) {
-            let old_type = old.element.type_name();
-            if old_type != new_type {
-                if let Some(v) = self.by_type.get_mut(old_type) {
+            let old_type = old.type_name();
+            if old_type != new_type
+                && let Some(v) = self.by_type.get_mut(old_type) {
                     v.retain(|m| m != &mrid);
                 }
-            }
         }
         let already_indexed = self
             .by_type
@@ -133,15 +138,14 @@ impl CimDataset {
         if !already_indexed {
             self.by_type.entry(new_type).or_default().push(mrid.clone());
         }
-        let block = element.to_block();
-        self.entries.insert(mrid, CimEntry { element, block });
+        self.entries.insert(mrid, element);
     }
 
     /// Remove the element at `mrid`, pruning it from `by_type`. Returns the
-    /// removed entry, or `None` if `mrid` was not present.
-    pub fn remove(&mut self, mrid: &str) -> Option<CimEntry> {
+    /// removed element, or `None` if `mrid` was not present.
+    pub fn remove(&mut self, mrid: &str) -> Option<Element> {
         let removed = self.entries.remove(mrid)?;
-        if let Some(v) = self.by_type.get_mut(removed.element.type_name()) {
+        if let Some(v) = self.by_type.get_mut(removed.type_name()) {
             v.retain(|m| m != mrid);
         }
         Some(removed)
@@ -152,7 +156,7 @@ impl CimDataset {
 
 /// Push an MRID onto its type bucket, allocating the key only when the bucket
 /// is new rather than once per element.
-fn index(by_type: &mut HashMap<String, Vec<String>>, type_name: &'static str, mrid: String) {
+fn index(by_type: &mut FastMap<String, Vec<String>>, type_name: &'static str, mrid: String) {
     if let Some(bucket) = by_type.get_mut(type_name) {
         bucket.push(mrid);
     } else {
@@ -160,7 +164,7 @@ fn index(by_type: &mut HashMap<String, Vec<String>>, type_name: &'static str, mr
     }
 }
 
-type Table = HashMap<&'static str, TypeEntry>;
+type Table = FastMap<&'static str, &'static ClassDef>;
 
 /// The document's `xmlns` bindings, resolved once to dispatch tables.
 ///
@@ -245,7 +249,7 @@ fn split_qname(raw: &[u8]) -> (Option<&[u8]>, &[u8]) {
     }
 }
 
-/// Resolve an element name to a parser.
+/// Resolve an element name to its class.
 ///
 /// The namespace wins when the document binds one we know. Otherwise we fall
 /// back to the bare local name, which is what every pre-namespace release did:
@@ -258,11 +262,11 @@ fn resolve(
     scope: &Scope,
     reg: &'static TypeRegistry,
     raw: &[u8],
-) -> Result<Option<TypeEntry>, Box<dyn std::error::Error>> {
+) -> Result<Option<&'static ClassDef>, Box<dyn std::error::Error>> {
     let (prefix, local_bytes) = split_qname(raw);
     let local = std::str::from_utf8(local_bytes)?;
-    if let Some(entry) = scope.table(prefix).and_then(|t| t.get(local)) {
-        return Ok(Some(*entry));
+    if let Some(class) = scope.table(prefix).and_then(|t| t.get(local)) {
+        return Ok(Some(*class));
     }
     Ok(reg.bare().get(local).copied())
 }
@@ -282,8 +286,17 @@ fn parse_rdf(
     let mut nested: Option<Scope> = None;
     // Resolved at the element's start tag, so an unregistered element never
     // accumulates fields.
-    let mut current: Option<(RdfBlock, TypeEntry)> = None;
-    let mut pending_key: Option<String> = None;
+    let mut current: Option<Element> = None;
+    // The attributes `current`'s class declares, which supply most field keys.
+    let mut declared: Option<&'static FastMap<&'static str, &'static AttrDef>> = None;
+    let mut pending_key: Option<&'static str> = None;
+    // The `xml:lang` of the field element whose text comes next.
+    let mut pending_lang: Option<String> = None;
+    // A field key as stored: the class table's id when the class declares it,
+    // else the interned name.
+    let key_of = |declared: Option<&'static FastMap<&'static str, &'static AttrDef>>, local: &str| {
+        declared.and_then(|d| d.get(local)).map_or_else(|| intern(local), |a| a.id)
+    };
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -307,30 +320,20 @@ fn parse_rdf(
                             nested = Some(std::mem::replace(&mut scope, inner));
                         }
 
-                        current = match resolve(&scope, reg, e.name().as_ref())? {
-                            Some(entry) => {
-                                Some((
-                                    RdfBlock {
-                                        type_name: entry.type_name.to_string(),
-                                        mrid,
-                                        fields: HashMap::new(),
-                                        duplicate_fields: std::collections::HashSet::new(),
-                                    },
-                                    entry,
-                                ))
-                            }
-                            None => None,
-                        };
+                        current = resolve(&scope, reg, e.name().as_ref())?.map(|class| Element::new(class, mrid));
+                        declared = current.as_ref().and_then(|c| reg.declared(c.class()));
                     }
                     3 => {
-                        if let Some((ref mut block, _)) = current {
+                        if let Some(element) = current.as_mut() {
                             let name = e.name();
                             let (_, local_bytes) = split_qname(name.as_ref());
-                            let local = std::str::from_utf8(local_bytes)?.to_string();
-                            if let Some(res) = find_resource(e.attributes())? {
-                                add_field(block, &local, FieldValue::Resource(res));
+                            let local = key_of(declared, std::str::from_utf8(local_bytes)?);
+                            let (res, lang) = field_attrs(e.attributes())?;
+                            if let Some(res) = res {
+                                element.add_field(local, FieldValue::Resource(res));
                             } else {
                                 pending_key = Some(local);
+                                pending_lang = lang;
                             }
                         }
                     }
@@ -357,57 +360,48 @@ fn parse_rdf(
                             None
                         };
                         let active = local_scope.as_ref().unwrap_or(&scope);
-                        if !mrid.is_empty() {
-                            if let Some(entry) = resolve(active, reg, e.name().as_ref())? {
-                                let block = RdfBlock {
-                                    type_name: entry.type_name.to_string(),
-                                    mrid: mrid.clone(),
-                                    fields: HashMap::new(),
-                                    duplicate_fields: std::collections::HashSet::new(),
-                                };
-                                let element = entry.parse(&block);
-                                index(&mut ds.by_type, entry.type_name, mrid.clone());
-                                ds.entries.insert(mrid, CimEntry { element, block });
+                        if !mrid.is_empty()
+                            && let Some(class) = resolve(active, reg, e.name().as_ref())? {
+                                index(&mut ds.by_type, class.qualified, mrid.clone());
+                                ds.entries.insert(mrid.clone(), Element::new(class, mrid));
                             }
-                        }
                     }
                     2 => {
                         // Self-closing field element within the current type block.
-                        if let Some((ref mut block, _)) = current {
-                            if let Some(res) = find_resource(e.attributes())? {
+                        if let Some(element) = current.as_mut()
+                            && let Some(res) = find_resource(e.attributes())? {
                                 let name = e.name();
                                 let (_, local_bytes) = split_qname(name.as_ref());
-                                let local = std::str::from_utf8(local_bytes)?;
-                                add_field(block, local, FieldValue::Resource(res));
+                                let local = key_of(declared, std::str::from_utf8(local_bytes)?);
+                                element.add_field(local, FieldValue::Resource(res));
                             }
-                        }
                     }
                     _ => {}
                 }
             }
 
             Ok(Event::Text(ref e)) => {
-                if depth == 3 {
-                    if let (Some((block, _)), Some(key)) = (&mut current, pending_key.take()) {
+                if depth == 3
+                    && let (Some(element), Some(key)) = (current.as_mut(), pending_key.take()) {
                         let text = e.unescape()?.trim().to_string();
                         if !text.is_empty() {
-                            add_field(block, &key, FieldValue::Text(text));
+                            element.add_field(key, FieldValue::Text(text));
+                            if let Some(lang) = pending_lang.take() {
+                                element.add_lang(key, &lang);
+                            }
                         }
                     }
-                }
             }
 
             Ok(Event::End(_)) => {
                 if depth == 2 {
                     pending_key = None;
-                    if let Some((block, entry)) = current.take() {
-                        if !block.mrid.is_empty() {
-                            let element = entry.parse(&block);
-                            index(&mut ds.by_type, entry.type_name, block.mrid.clone());
-                            ds.entries
-                                .insert(block.mrid.clone(), CimEntry { element, block });
+                    pending_lang = None;
+                    if let Some(element) = current.take()
+                        && !element.mrid().is_empty() {
+                            index(&mut ds.by_type, element.type_name(), element.mrid().to_string());
+                            ds.entries.insert(element.mrid().to_string(), element);
                         }
-                    }
                     if let Some(outer) = nested.take() {
                         scope = outer;
                     }
@@ -438,6 +432,22 @@ fn strip_fragment(s: &str) -> String {
 }
 
 
+/// A field element's `rdf:resource` (as [`find_resource`] gives it) and
+/// `xml:lang`, in one pass over its attributes.
+fn field_attrs(
+    attrs: quick_xml::events::attributes::Attributes<'_>,
+) -> Result<(Option<String>, Option<String>), Box<dyn std::error::Error>> {
+    let (mut res, mut lang) = (None, None);
+    for attr in attrs.flatten() {
+        match attr.key.as_ref() {
+            b"rdf:resource" => res = Some(strip_fragment(std::str::from_utf8(&attr.value)?)),
+            b"xml:lang" => lang = Some(std::str::from_utf8(&attr.value)?.to_string()),
+            _ => {}
+        }
+    }
+    Ok((res, lang))
+}
+
 /// Find the value of the "rdf:resource" attribute from an element.
 fn find_resource(
     attrs: quick_xml::events::attributes::Attributes<'_>,
@@ -449,53 +459,4 @@ fn find_resource(
         }
     }
     Ok(None)
-}
-
-/// Insert a field value, upgrading Resource → ResourceList and Text → TextList
-/// on repeated keys (e.g. the multiple md:Model.profile entries in a combined
-/// EQ+SC file header). Every repeated assignment is also recorded in
-/// `block.duplicate_fields` (the generated MaxCount=1 checks read that set).
-fn add_field(block: &mut RdfBlock, key: &str, val: FieldValue) {
-    match &val {
-        FieldValue::Resource(new_ref) => match block.fields.get_mut(key) {
-            Some(FieldValue::ResourceList(list)) => {
-                list.push(new_ref.clone());
-                block.duplicate_fields.insert(key.to_string());
-                return;
-            }
-            Some(existing @ FieldValue::Resource(_)) => {
-                let old = match existing {
-                    FieldValue::Resource(s) => s.clone(),
-                    _ => unreachable!(),
-                };
-                *existing = FieldValue::ResourceList(vec![old, new_ref.clone()]);
-                block.duplicate_fields.insert(key.to_string());
-                return;
-            }
-            _ => {}
-        },
-        FieldValue::Text(new_text) => match block.fields.get_mut(key) {
-            Some(FieldValue::TextList(list)) => {
-                list.push(new_text.clone());
-                block.duplicate_fields.insert(key.to_string());
-                return;
-            }
-            Some(existing @ FieldValue::Text(_)) => {
-                let old = match existing {
-                    FieldValue::Text(s) => s.clone(),
-                    _ => unreachable!(),
-                };
-                *existing = FieldValue::TextList(vec![old, new_text.clone()]);
-                block.duplicate_fields.insert(key.to_string());
-                return;
-            }
-            _ => {}
-        },
-        _ => {
-            if block.fields.contains_key(key) {
-                block.duplicate_fields.insert(key.to_string());
-            }
-        }
-    }
-    block.fields.insert(key.to_string(), val);
 }

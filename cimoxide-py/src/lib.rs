@@ -4,16 +4,16 @@ use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use cimdecoder::{CimDataset, CimEntry};
+use cimmodel::{CimDataset, Element};
 
 fn map_err<E: std::fmt::Display>(e: E) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
 }
 
-fn entry_to_python(py: Python<'_>, entry: &CimEntry) -> PyResult<PyObject> {
-    let mut val = entry.element.to_json_value();
+fn entry_to_python(py: Python<'_>, entry: &Element) -> PyResult<PyObject> {
+    let mut val = entry.to_json_value();
     if let Some(obj) = val.as_object_mut() {
-        obj.insert("_type".to_string(), entry.element.type_name().into());
+        obj.insert("_type".to_string(), entry.type_name().into());
     }
     pythonize::pythonize(py, &val)
         .map(|b| b.unbind())
@@ -100,31 +100,38 @@ impl PyCimDataset {
 
 #[pymethods]
 impl PyCimDataset {
-    /// Parse a single CGMES RDF/XML file.
+    /// Parse a single CGMES RDF/XML file. Releases the GIL while parsing.
     #[staticmethod]
-    fn decode_file(path: &str) -> PyResult<Self> {
-        let ds = CimDataset::decode_file(Path::new(path)).map_err(map_err)?;
+    fn decode_file(py: Python<'_>, path: &str) -> PyResult<Self> {
+        let ds = py
+            .allow_threads(|| CimDataset::decode_file(Path::new(path)).map_err(|e| e.to_string()))
+            .map_err(map_err)?;
         Ok(Self {
             inner: std::sync::Mutex::new(Inner::new(ds)),
         })
     }
 
     /// Parse multiple CGMES RDF/XML files, merging them into one dataset.
+    /// The files are parsed in parallel, one thread each, without the GIL.
     #[staticmethod]
-    fn decode_files(paths: Vec<String>) -> PyResult<Self> {
+    fn decode_files(py: Python<'_>, paths: Vec<String>) -> PyResult<Self> {
         let path_bufs: Vec<std::path::PathBuf> =
             paths.iter().map(std::path::PathBuf::from).collect();
         let path_refs: Vec<&Path> = path_bufs.iter().map(|p| p.as_path()).collect();
-        let ds = CimDataset::decode_files(&path_refs).map_err(map_err)?;
+        let ds = py
+            .allow_threads(|| CimDataset::decode_files_parallel(&path_refs).map_err(|e| e.to_string()))
+            .map_err(map_err)?;
         Ok(Self {
             inner: std::sync::Mutex::new(Inner::new(ds)),
         })
     }
 
-    /// Parse CGMES RDF/XML from a string.
+    /// Parse CGMES RDF/XML from a string. Releases the GIL while parsing.
     #[staticmethod]
-    fn decode_str(content: &str) -> PyResult<Self> {
-        let ds = CimDataset::decode_str(content).map_err(map_err)?;
+    fn decode_str(py: Python<'_>, content: &str) -> PyResult<Self> {
+        let ds = py
+            .allow_threads(|| CimDataset::decode_str(content).map_err(|e| e.to_string()))
+            .map_err(map_err)?;
         Ok(Self {
             inner: std::sync::Mutex::new(Inner::new(ds)),
         })
@@ -145,20 +152,6 @@ impl PyCimDataset {
         let mut guard = self.lock()?;
         guard.ds.merge(other_ds);
         guard.invalidate();
-        Ok(())
-    }
-
-    /// Release all RdfBlock memory after the final merge.
-    ///
-    /// This deliberately does *not* invalidate an already-built SPARQL store.
-    /// Materialisation reads `entry.block` when it is populated and falls back
-    /// to the lossy `CimElement::to_block()` once blocks are gone, so a store
-    /// built before this call is strictly better than one built after. Order
-    /// therefore matters: `query()` then `drop_blocks()` gives lossless
-    /// triples, the reverse gives rebuilt ones.
-    fn drop_blocks(&self) -> PyResult<()> {
-        let mut guard = self.lock()?;
-        guard.ds.drop_blocks();
         Ok(())
     }
 
@@ -203,11 +196,11 @@ impl PyCimDataset {
             .and_then(|v| v.as_str())
             .ok_or_else(|| PyValueError::new_err("element dict missing \"_type\" key"))?
             .to_string();
-        let reg = cimstructs::registry::json_registry();
-        let ctor = reg
-            .get(type_name.as_str())
+        let reg = cimmodel::registry::type_registry();
+        let class = reg
+            .by_type_name(&type_name)
             .ok_or_else(|| PyValueError::new_err(format!("unknown CIM type \"{type_name}\"")))?;
-        let element = ctor(json_val).map_err(map_err)?;
+        let element = Element::from_json(class, reg, &json_val).map_err(PyValueError::new_err)?;
         let mut guard = self.lock()?;
         guard.ds.set(mrid, element);
         guard.invalidate();
@@ -307,7 +300,7 @@ impl PyCimDataset {
     /// synthetic header is generated.
     fn to_xml_for_profile(&self, profile: &str) -> PyResult<String> {
         let ds = self.lock()?;
-        cimconvert::dataset_to_xml_for_profile(&ds, profile).map_err(map_err)
+        cimmodel::convert::dataset_to_xml_for_profile(&ds, profile).map_err(map_err)
     }
 
     /// Run a SPARQL 1.1 query over this dataset.
@@ -317,7 +310,7 @@ impl PyCimDataset {
     /// expensive than the rest. The cache is dropped whenever the dataset is
     /// mutated (`__setitem__`, `__delitem__`, `merge`) and can be released
     /// explicitly with `drop_sparql_store()` - it roughly doubles the dataset's
-    /// resident memory. See `drop_blocks()` for how the two interact.
+    /// resident memory.
     ///
     /// The CGMES namespaces (`cim:`, `eu:`, `md:`, `dm:`, `rdf:`) and `xsd:`
     /// are pre-bound.
@@ -385,7 +378,7 @@ impl PyCimDataset {
         let dir_path = Path::new(dir);
         std::fs::create_dir_all(dir_path).map_err(map_err)?;
         for profile in &profiles {
-            let xml = cimconvert::dataset_to_xml_for_profile(&ds, profile).map_err(map_err)?;
+            let xml = cimmodel::convert::dataset_to_xml_for_profile(&ds, profile).map_err(map_err)?;
             let path = dir_path.join(format!("{profile}.xml"));
             std::fs::write(&path, &xml).map_err(map_err)?;
         }

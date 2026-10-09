@@ -13,8 +13,7 @@ categories = ["science", "database"]
 name = "cimsparql"
 
 [dependencies]
-cimoxide-structs = { workspace = true }
-cimoxide-decoder = { workspace = true }
+cimoxide-model = { workspace = true }
 # `default-features = false` is load-bearing: oxigraph's default feature is `rocksdb`,
 # which pulls in oxrocksdb-sys and a C++ toolchain. Disabled, oxigraph is pure Rust and
 # `Store::new()` is the in-memory store.

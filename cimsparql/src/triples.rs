@@ -2,8 +2,8 @@
 
 use std::collections::HashSet;
 
-use cimdecoder::CimDataset;
-use cimstructs::base::{FieldValue, RdfBlock};
+use cimmodel::CimDataset;
+use cimmodel::base::FieldValue;
 use oxigraph::model::{GraphName, Literal, NamedNode, NamedNodeRef, Quad, Term};
 
 use crate::iri;
@@ -17,8 +17,8 @@ pub struct GraphOptions {
     /// Restrict materialisation to these type names. `None` emits everything.
     ///
     /// The merged RealGrid configuration is on the order of a million triples, held *in
-    /// addition to* the typed structs and `RdfBlock`s it was built from, so scoping the
-    /// graph is the main lever on memory.
+    /// addition to* the decoded elements it was built from, so scoping the graph is the
+    /// main lever on memory.
     pub include_types: Option<HashSet<String>>,
     /// Emit an `rdf:type` triple per element. On by default.
     pub emit_rdf_type: bool,
@@ -53,11 +53,7 @@ impl GraphOptions {
 pub struct Stats {
     pub quads: usize,
     pub elements: usize,
-    /// Elements whose `RdfBlock` had been freed by `CimDataset::drop_blocks()`, so their
-    /// fields were reconstructed with `CimElement::to_block()` — a lossy path that omits
-    /// predicates the typed struct did not recognise.
-    pub rebuilt_blocks: usize,
-    /// Occurrences (not distinct keys) of a field key absent from `ATTR_RDF`, emitted under
+    /// Occurrences (not distinct keys) of a field key absent from the schema, emitted under
     /// the fallback namespace as a plain literal. Non-zero means the generated tables and the
     /// data have drifted apart — a CIM version skew, or a third-party extension.
     pub unmapped_predicates: usize,
@@ -65,16 +61,15 @@ pub struct Stats {
 
 /// Streams the dataset as RDF quads in the default graph, without building a store.
 ///
-/// Fields come from `entry.block` where it is still populated: that is the lossless source,
-/// retaining predicates the typed struct's catch-all arm discarded. After
-/// `CimDataset::drop_blocks()` it falls back to `CimElement::to_block()`.
+/// Every field an element carries becomes a quad, including those its class does not
+/// declare.
 pub fn quads<'a>(
     ds: &'a CimDataset,
     opts: &'a GraphOptions,
     stats: &'a mut Stats,
 ) -> impl Iterator<Item = Quad> + 'a {
     ds.entries.iter().flat_map(move |(mrid, entry)| {
-        let type_name = entry.element.type_name();
+        let type_name = entry.type_name();
         if let Some(want) = &opts.include_types
             && !want.contains(type_name)
         {
@@ -86,17 +81,8 @@ pub fn quads<'a>(
             Err(_) => return Vec::new().into_iter(),
         };
 
-        // A populated block always has a type name; an empty one means `drop_blocks()` ran
-        // (or the entry was inserted via `set()`), so rebuild the fields from the struct.
-        let rebuilt = entry.block.type_name.is_empty();
-        let rebuilt_block: Option<RdfBlock> = rebuilt.then(|| entry.element.to_block());
-        let block = rebuilt_block.as_ref().unwrap_or(&entry.block);
-
-        let mut out = Vec::with_capacity(block.fields.len() + 1);
+        let mut out = Vec::with_capacity(entry.fields().len() + 1);
         stats.elements += 1;
-        if rebuilt {
-            stats.rebuilt_blocks += 1;
-        }
 
         if opts.emit_rdf_type
             && let Ok(class) = NamedNode::new(iri::type_iri(type_name))
@@ -104,7 +90,7 @@ pub fn quads<'a>(
             out.push(Quad::new(subject.clone(), RDF_TYPE, class, GraphName::DefaultGraph));
         }
 
-        for (key, value) in &block.fields {
+        for (key, value) in entry.fields() {
             let meta = iri::attr(key);
             if meta.is_none() {
                 stats.unmapped_predicates += 1;

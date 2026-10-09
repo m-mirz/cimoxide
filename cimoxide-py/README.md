@@ -31,15 +31,16 @@ ds = cimoxide.decode_files([
 len(ds)                       # total number of elements
 ds.by_type()                  # {"ACLineSegment": [mrid, ...], ...} — copies the whole index
 ds.count_type("ACLineSegment")  # 7561 — O(1), copies nothing
-ds.get_type("ACLineSegment")  # [{"_type": "ACLineSegment", "r": 0.12, ...}, ...]
+ds.get_type("ACLineSegment")  # [{"_type": "ACLineSegment", "ACLineSegment.r": "0.12", ...}, ...]
 
 for mrid in ds:
-    obj = ds[mrid]             # dict, e.g. {"_type": "BusbarSection", "name": "...", ...}
+    obj = ds[mrid]             # dict, e.g. {"_type": "BusbarSection", "IdentifiedObject.name": "...", ...}
 ```
 
-Each element is a plain Python `dict` with a `"_type"` key (the CIM class name) plus one
-key per populated attribute, snake_case, matching the JSON serialization of the underlying
-Rust structs. Reference fields (MRID associations) are plain MRID strings.
+Each element is a plain Python `dict` with `"_type"` (the CIM class name) and `"id"` (the
+mRID), plus one key per attribute the XML carried, named `"Class.attr"` as in the XML. Every
+value is the string the XML wrote — numbers are not parsed — and a reference is the referenced
+mRID; an attribute written more than once is a list of strings.
 
 ### Modify and re-encode
 
@@ -49,11 +50,12 @@ and write the result back out as CGMES profile XML:
 ```python
 # Edit an existing element (read, mutate the dict, assign it back).
 line = ds["ACLineSegment.1"]
-line["r"] = 0.15
+line["ACLineSegment.r"] = "0.15"
 ds["ACLineSegment.1"] = line
 
-# Add a brand-new element the same way — the "_type" key selects the CIM class.
-ds["BaseVoltage.NEW"] = {"_type": "BaseVoltage", "id": "BaseVoltage.NEW", "nominal_voltage": 110.0}
+# Add a brand-new element the same way — the "_type" key selects the CIM class, which
+# also says which keys are references.
+ds["BaseVoltage.NEW"] = {"_type": "BaseVoltage", "id": "BaseVoltage.NEW", "BaseVoltage.nominalVoltage": "110"}
 
 # Remove one.
 del ds["ACLineSegment.2"]
@@ -93,11 +95,10 @@ file individually, then cross-profile checks on the merged dataset. See the
 | Function / method | Description |
 |---|---|
 | `cimoxide.decode_file(path)` | Parse a single RDF/XML file. |
-| `cimoxide.decode_files(paths)` | Parse and merge multiple RDF/XML files. |
+| `cimoxide.decode_files(paths)` | Parse multiple RDF/XML files in parallel (one thread each, GIL released) and merge them. |
 | `cimoxide.decode_str(content)` | Parse RDF/XML from a string. |
 | `cimoxide.validate_files(paths, ...)` | Two-phase SHACL/SPARQL validation, returns `list[Violation]`. |
 | `CimDataset.merge(other)` | Merge another dataset into this one (`other` becomes empty). |
-| `CimDataset.drop_blocks()` | Free internal parse buffers after the final merge. |
 | `CimDataset[mrid]` / `.get(mrid)` | Fetch one element as a dict (`KeyError` / `None` if missing). |
 | `CimDataset[mrid] = {...}` | Insert or replace the element at `mrid`. |
 | `del CimDataset[mrid]` | Remove the element at `mrid` (`KeyError` if missing). |
@@ -115,8 +116,7 @@ file individually, then cross-profile checks on the merged dataset. See the
 is called and reuses it afterwards, so the first query costs far more than the
 rest — on a ~150k-element dataset, roughly 1.1 s then ~4 ms. The cache is dropped
 automatically whenever the dataset is mutated, and `drop_sparql_store()` releases
-it explicitly. Call `query()` before `drop_blocks()` if you need both: freeing the
-parse buffers first forces a lossy fallback when the graph is built.
+it explicitly.
 
 Full type stubs with per-method docstrings are in
 [`python/cimoxide/__init__.pyi`](python/cimoxide/__init__.pyi) and
@@ -167,7 +167,7 @@ pytest tests/
 
 - `tests/test_decode.py` — round-trip decode tests (`decode_file`/`decode_str`/`decode_files`,
   indexing, iteration).
-- `tests/test_api.py` — dataset API contract tests (`merge`, `drop_blocks`, mutation via
+- `tests/test_api.py` — dataset API contract tests (`merge`, mutation via
   `__setitem__`/`__delitem__`, error handling).
 - `tests/test_encode.py` — `to_xml_for_profile`/`write_xml_files` behavior, including
   `FullModel` header reuse against a real CGMES fixture.
@@ -177,8 +177,8 @@ pytest tests/
 ## Development
 
 This package is built from the [`cimoxide`](https://github.com/m-mirz/cimoxide) monorepo,
-where `cimoxide-py` lives alongside the Rust crates it binds (`cimdecoder`, `cimstructs`,
-`cimvalidation`, `cimconvert`). To build it from source:
+where `cimoxide-py` lives alongside the Rust crates it binds (`cimmodel`, `cimvalidation`,
+`cimsparql`). To build it from source:
 
 ```bash
 # for ubuntu

@@ -1,10 +1,9 @@
 target
 
-cimstructs/src/*.rs
-!cimstructs/src/base.rs
-!cimstructs/src/schema_source.rs
-cimvalidation/src/generated*
+cimmodel/src/generated/
 cimvalidation/src/nc_shapes.rs
+cimvalidation/src/cgmes_shapes.rs
+cimvalidation/src/cgmes_profiles.rs
 cimvalidation/src/nc_profiles.rs
 cimoxide-py/python/cimoxide/types.pyi
 

@@ -56,6 +56,26 @@ pub struct ConstraintInfo {
     pub rule_id: String,
 }
 
+/// Payload key on `sh:in` / `sh:hasValue` constraints: the values that were
+/// string literals in the TTL rather than IRIs.
+///
+/// Both flatten to `String` in the `in` / `hasValue` payload, and the
+/// difference decides how a value compares against decoded data: the decoder
+/// keeps element text verbatim but stores an `rdf:resource` as its fragment.
+/// Without it, `"urn:ogc:def:crs:EPSG::4326"` was cut to `4326` like an IRI.
+pub const LITERALS: &str = "literals";
+
+/// Payload key on node-level `sh:and` / `sh:or` / `sh:xone` constraints: the
+/// predicates a branch used that [`ConstraintInfo`] branches cannot carry
+/// (`sh:class`, `sh:not`, `sh:datatype`, ...). Non-empty means the branches as
+/// imported are weaker than the schema's, so the combination must not run.
+pub const UNSUPPORTED: &str = "unsupported";
+
+/// Payload key on node-level `sh:and` / `sh:or` / `sh:xone` constraints: the
+/// indices (as strings) of the branches written `[ sh:not X ]`, which conform
+/// when X does not.
+pub const NEGATED: &str = "negated";
+
 /// The target of a NodeShape (what objects it applies to).
 #[derive(Debug, Clone)]
 #[allow(dead_code)]

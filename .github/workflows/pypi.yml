@@ -28,7 +28,7 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-${{ matrix.target }}-
 
-      - name: Generate cimstructs and Python stubs
+      - name: Generate cimmodel and Python stubs
         run: make generate
 
       - uses: PyO3/maturin-action@v1
@@ -61,7 +61,7 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Generate cimstructs and Python stubs
+      - name: Generate cimmodel and Python stubs
         run: make generate
 
       - uses: PyO3/maturin-action@v1
@@ -95,7 +95,7 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-${{ matrix.target }}-
 
-      - name: Generate cimstructs and Python stubs
+      - name: Generate cimmodel and Python stubs
         run: make generate
 
       - uses: PyO3/maturin-action@v1
@@ -118,7 +118,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Generate cimstructs and Python stubs
+      - name: Generate cimmodel and Python stubs
         run: make generate
 
       - uses: PyO3/maturin-action@v1

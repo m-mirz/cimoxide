@@ -1,102 +1,187 @@
-//! Validates a property-bag family against a [`crate::shapes`] table.
+//! Validates a dataset against a [`crate::shapes`] table.
 //!
-//! The counterpart to the generated `generated_*_shacl.rs` validators, which
-//! read typed struct fields. Here the element is a
-//! [`cimstructs::base::GenericElement`] and every value is a string, so the
-//! checks the generated path treats as tautologies — `sh:datatype`,
-//! `sh:nodeKind` — are real, and `sh:closed` becomes answerable at all.
+//! It replaced generated per-check validators that read typed struct fields.
+//! Here every value is the string the XML carried, so the checks those treated
+//! as tautologies — `sh:datatype`, `sh:nodeKind` — are real, and `sh:closed`
+//! becomes answerable at all.
+//!
+//! Which elements a run reads is a [`Source`]: each family's shapes read that
+//! family's elements. Every element holds every field the XML carried, which
+//! is what lets one interpreter serve both.
 
-use std::collections::HashMap;
 
-use cimdecoder::CimDataset;
-use cimstructs::base::{FieldValue, GenericElement};
+use cimmodel::{CimDataset, Element};
+use cimmodel::base::{FastMap, FastSet, FieldMap, FieldValue};
 
 use crate::helpers;
-use crate::shapes::{AltBranch, Check, ClosedShape, Constraint, NodeKind, Path, PropShape, ShapeDef, Target};
+use crate::par::{par_concat, par_map, runs, threads_for};
+use crate::shapes::{
+    AltBranch, Branch, Check, ClosedShape, Constraint, Logic, LogicOp, NodeKind, Path, PropShape, ShapeDef, Step,
+    Target,
+};
 use crate::{Config, Violation};
 
 /// Maps a referenced mRID back to the elements pointing at it.
 ///
 /// `sh:inversePath` asks "how many things point at me", which the forward
-/// fields cannot answer. Built once per dataset in O(associations) rather than
-/// rescanned per shape, and only when some active shape needs it.
+/// fields cannot answer. Built once per call in O(associations) rather than
+/// rescanned per shape, and only over the fields some active shape asks about.
+///
+/// A plain inverse path needs only the count; an inverse step inside a
+/// [`Path::Chain`] has to continue from the elements themselves, so those
+/// fields keep the list. Keys borrow from the dataset: an owned key cost an
+/// allocation per reference at build time and another per lookup.
 #[derive(Default)]
-struct ReverseIndex {
+struct ReverseIndex<'a> {
     /// `(target mrid, field key)` → how many elements point at it that way.
-    counts: HashMap<(String, &'static str), u32>,
+    counts: FastMap<(&'a str, &'static str), u32>,
+    /// `(target mrid, field key)` → the elements pointing at it that way.
+    sources: FastMap<(&'a str, &'static str), Vec<&'a str>>,
 }
 
-impl ReverseIndex {
-    fn build(ds: &CimDataset, fields: &[&'static str]) -> Self {
-        let mut counts: HashMap<(String, &'static str), u32> = HashMap::new();
-        for entry in ds.entries.values() {
-            let Some(el) = entry.element.as_any().downcast_ref::<GenericElement>() else {
-                continue;
-            };
-            for field in fields {
-                for target in el.get_refs(field) {
-                    *counts.entry((target.clone(), *field)).or_insert(0) += 1;
-                }
-            }
-        }
-        Self { counts }
+impl<'a> ReverseIndex<'a> {
+    fn count(&self, mrid: &str, field: &'static str) -> u32 {
+        self.counts.get(&(mrid, field)).copied().unwrap_or(0)
     }
 
-    fn count(&self, mrid: &str, field: &'static str) -> u32 {
-        // The key borrows nothing, so look up by the owned pair. Shapes using
-        // inverse paths are a small minority, so this is not a hot path.
-        self.counts
-            .get(&(mrid.to_string(), field))
-            .copied()
-            .unwrap_or(0)
+    fn sources<'s>(&'s self, mrid: &'a str, field: &'static str) -> &'s [&'a str] {
+        self.sources.get(&(mrid, field)).map_or(&[], Vec::as_slice)
     }
+}
+
+/// Everything a check needs besides the element itself.
+struct Ctx<'a> {
+    ds: &'a CimDataset,
+    source: Source,
+    reverse: ReverseIndex<'a>,
+}
+
+/// What a [`Path::Chain`] collected.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Text,
+    Refs,
 }
 
 /// The values a path yields for one element, as far as a constraint needs them.
 enum Values<'a> {
-    /// Literal text values.
-    Text(Vec<&'a str>),
+    /// Literal text values. A slice of the stored field, so a single value
+    /// costs no allocation — this runs once per property per target.
+    Text(&'a [String]),
     /// `rdf:resource` references.
     Refs(&'a [String]),
     /// Only a count is available — an inverse or alternative path.
     Count(u32),
     Absent,
+    /// The end of a [`Path::Chain`]. Owned, because a chain gathers values
+    /// from several elements.
+    Chain(Kind, Vec<&'a str>),
+    /// A chain stepped onto an element this dataset does not hold. What lies
+    /// beyond is not known, so nothing can be said about it either way.
+    Unknown,
 }
 
-impl Values<'_> {
-    fn count(&self) -> u32 {
-        match self {
-            Values::Text(v) => v.len() as u32,
-            Values::Refs(v) => v.len() as u32,
+impl<'a> Values<'a> {
+    /// `None` when unknown: no cardinality can be asserted.
+    fn count(&self) -> Option<u32> {
+        Some(match self {
+            Values::Text(v) | Values::Refs(v) => v.len() as u32,
             Values::Count(n) => *n,
             Values::Absent => 0,
+            Values::Chain(_, v) => v.len() as u32,
+            Values::Unknown => return None,
+        })
+    }
+
+    /// Does `f` hold for any literal value?
+    fn any_text(&self, mut f: impl FnMut(&str) -> bool) -> bool {
+        match self {
+            Values::Text(vs) => vs.iter().any(|v| f(v)),
+            Values::Chain(Kind::Text, vs) => vs.iter().any(|v| f(v)),
+            _ => false,
         }
+    }
+
+    /// Does `f` hold for any referenced mRID?
+    fn any_ref(&self, mut f: impl FnMut(&str) -> bool) -> bool {
+        match self {
+            Values::Refs(vs) => vs.iter().any(|v| f(v)),
+            Values::Chain(Kind::Refs, vs) => vs.iter().any(|v| f(v)),
+            _ => false,
+        }
+    }
+
+    fn is_text(&self) -> bool {
+        matches!(self, Values::Text(_) | Values::Chain(Kind::Text, _))
+    }
+
+    fn is_refs(&self) -> bool {
+        matches!(self, Values::Refs(_) | Values::Chain(Kind::Refs, _))
     }
 }
 
-fn field_values<'a>(el: &'a GenericElement, field: &str) -> Values<'a> {
-    match el.get(field) {
-        Some(FieldValue::Text(s)) => Values::Text(vec![s.as_str()]),
-        Some(FieldValue::TextList(v)) => Values::Text(v.iter().map(String::as_str).collect()),
+type Fields = FieldMap;
+
+/// Which elements a shape table reads: its own family's.
+///
+/// Not a convenience — the families' shapes would otherwise reach each other's
+/// elements. NC has `sh:targetSubjectsOf` shapes on `IdentifiedObject.name`,
+/// so reading typed elements would make every named CGMES element in a mixed
+/// dataset an NC target; and an inverse-path count would include references
+/// from the other family.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    /// Network Code profile elements (`nc:` classes).
+    Nc,
+    /// CGMES elements.
+    Cgmes,
+}
+
+impl Source {
+    /// The element's fields, or `None` if it is another family's.
+    fn fields(self, entry: &Element) -> Option<&Fields> {
+        self.owns(entry).then(|| entry.fields())
+    }
+
+    /// Whether `entry` belongs to this source's family. Families are told
+    /// apart by their class names: NC's carry the `nc:` prefix.
+    fn owns(self, entry: &Element) -> bool {
+        entry.type_name().starts_with("nc:") == (self == Source::Nc)
+    }
+}
+
+fn refs_of<'a>(f: &'a Fields, field: &str) -> &'a [String] {
+    match f.get(field) {
+        Some(FieldValue::Resource(s)) => std::slice::from_ref(s),
+        Some(FieldValue::ResourceList(v)) => v.as_slice(),
+        _ => &[],
+    }
+}
+
+fn field_values<'a>(f: &'a Fields, field: &str) -> Values<'a> {
+    match f.get(field) {
+        Some(FieldValue::Text(s)) => Values::Text(std::slice::from_ref(s)),
+        Some(FieldValue::TextList(v)) => Values::Text(v.as_slice()),
         Some(FieldValue::Resource(_)) | Some(FieldValue::ResourceList(_)) => {
-            Values::Refs(el.get_refs(field))
+            Values::Refs(refs_of(f, field))
         }
         None => Values::Absent,
     }
 }
 
-fn resolve<'a>(
-    el: &'a GenericElement,
-    mrid: &str,
-    path: &Path,
-    reverse: Option<&ReverseIndex>,
-) -> Values<'a> {
+/// A numeric value, or `None` if it does not parse — a typed numeric field
+/// that failed to parse is `None` and skipped the same way.
+fn number(v: &str) -> Option<f64> {
+    v.trim().parse::<f64>().ok()
+}
+
+fn resolve<'a>(ctx: &Ctx<'a>, el: &'a Fields, mrid: &'a str, path: &Path) -> Values<'a> {
     match path {
-        Path::Forward(field) | Path::RefType(field) => field_values(el, field),
-        Path::Inverse(field) => match reverse {
-            Some(r) => Values::Count(r.count(mrid, field)),
-            None => Values::Absent,
-        },
+        Path::Forward(field) => field_values(el, field),
+        // `( X.y rdf:type )`: what the general walk below yields for it — the
+        // field's references, or its literal — without the allocations.
+        Path::Chain([Step::Forward(field), Step::Type]) => field_values(el, field),
+        Path::Inverse(field) => Values::Count(ctx.reverse.count(mrid, field)),
         Path::Alternative(branches) => {
             // The union across branches. Only the count is well defined: the
             // branches can mix literals, references and inverse hops, and every
@@ -104,15 +189,75 @@ fn resolve<'a>(
             let mut total = 0;
             for b in *branches {
                 total += match b {
-                    AltBranch::Forward(field) => field_values(el, field).count(),
-                    AltBranch::Inverse(field) => {
-                        reverse.map_or(0, |r| r.count(mrid, field))
-                    }
+                    AltBranch::Forward(field) => field_values(el, field).count().unwrap_or(0),
+                    AltBranch::Inverse(field) => ctx.reverse.count(mrid, field),
                 };
             }
             Values::Count(total)
         }
+        Path::Chain(steps) => chain(ctx, el, mrid, steps),
     }
+}
+
+/// Walk a sequence path from `mrid`.
+///
+/// Every element stepped *from* must be in the dataset and of this source,
+/// since its fields are read; otherwise the result is [`Values::Unknown`]. An
+/// inverse step never needs that — the reverse index holds what points here,
+/// and neither does a final `rdf:type` step. A literal reached before the last
+/// step ends that branch of the walk, unless `rdf:type` follows: then it is
+/// the value, the way a one-step path would report it.
+fn chain<'a>(ctx: &Ctx<'a>, focus: &'a Fields, mrid: &'a str, steps: &[Step]) -> Values<'a> {
+    let mut nodes: Vec<&'a str> = vec![mrid];
+    for (i, step) in steps.iter().enumerate() {
+        let last = i + 1 == steps.len();
+        match step {
+            Step::Forward(field) => {
+                let mut next: Vec<&'a str> = Vec::new();
+                let mut texts: Vec<&'a str> = Vec::new();
+                for &node in &nodes {
+                    let fields = if node == mrid {
+                        focus
+                    } else {
+                        match ctx.ds.entries.get(node).and_then(|e| ctx.source.fields(e)) {
+                            Some(f) => f,
+                            None => return Values::Unknown,
+                        }
+                    };
+                    match fields.get(*field) {
+                        Some(FieldValue::Text(s)) => texts.push(s),
+                        Some(FieldValue::TextList(v)) => texts.extend(v.iter().map(String::as_str)),
+                        Some(FieldValue::Resource(r)) => next.push(r),
+                        Some(FieldValue::ResourceList(v)) => next.extend(v.iter().map(String::as_str)),
+                        None => {}
+                    }
+                }
+                // A literal where the path continues to rdf:type is reported
+                // as the literal it is, so `sh:nodeKind sh:IRI` can flag it.
+                let before_type = matches!(steps.get(i + 1), Some(Step::Type));
+                if (last || before_type) && !texts.is_empty() {
+                    return Values::Chain(Kind::Text, texts);
+                }
+                if last {
+                    return Values::Chain(Kind::Refs, next);
+                }
+                nodes = next;
+            }
+            Step::Inverse(field) => {
+                let next: Vec<&'a str> =
+                    nodes.iter().flat_map(|n| ctx.reverse.sources(n, field).iter().copied()).collect();
+                if last {
+                    return Values::Chain(Kind::Refs, next);
+                }
+                nodes = next;
+            }
+            // The values are the elements reached. Nothing is read from them,
+            // so they count even when absent; the class constraints a type
+            // path carries look up the ones that are present.
+            Step::Type => return Values::Chain(Kind::Refs, nodes),
+        }
+    }
+    Values::Chain(Kind::Refs, nodes)
 }
 
 /// Is `s` a valid lexical form of this xsd type?
@@ -151,101 +296,197 @@ fn violation(mrid: &str, class: &str, property: &str, c: &Check) -> Violation {
     }
 }
 
-/// A path's field key, for the `property` column of a violation.
-fn path_label(path: &Path) -> &'static str {
+/// A path's field key, for the `property` column of a violation: the property
+/// of the focus element the path starts from.
+fn path_label(path: &Path) -> std::borrow::Cow<'static, str> {
+    use std::borrow::Cow;
+    // An inverse step reads as SHACL writes it: `^Terminal.ConductingEquipment`
+    // on a Switch means the terminals pointing at it, not an attribute of its own.
+    let inverse = |f: &str| Cow::Owned(format!("^{f}"));
     match path {
-        Path::Forward(f) | Path::RefType(f) | Path::Inverse(f) => f,
+        Path::Forward(f) => Cow::Borrowed(f),
+        Path::Inverse(f) => inverse(f),
         Path::Alternative(branches) => match branches.first() {
-            Some(AltBranch::Forward(f)) | Some(AltBranch::Inverse(f)) => f,
-            None => "",
+            Some(AltBranch::Forward(f)) => Cow::Borrowed(f),
+            Some(AltBranch::Inverse(f)) => inverse(f),
+            None => Cow::Borrowed(""),
+        },
+        Path::Chain(steps) => match steps.first() {
+            Some(Step::Forward(f)) => Cow::Borrowed(f),
+            Some(Step::Inverse(f)) => inverse(f),
+            _ => Cow::Borrowed(""),
         },
     }
 }
 
-fn check_prop(
-    ds: &CimDataset,
-    el: &GenericElement,
-    mrid: &str,
+/// A referenced element, whose types the class checks read, or `None` when
+/// it is not in this dataset. Class checks are silent then: phase 1 runs per file, so a
+/// reference out of the file is normal and belongs to a cross-profile rule.
+/// Reporting it would make every cross-file association a value-type
+/// violation.
+fn class_of<'a>(ctx: &Ctx<'a>, mrid: &str) -> Option<&'a cimmodel::Element> {
+    ctx.ds.entries.get(mrid)
+}
+
+/// Does `values` violate `constraint`? Unknown values violate nothing.
+fn fails(ctx: &Ctx<'_>, el: &Fields, values: &Values<'_>, constraint: &Constraint) -> bool {
+    if matches!(values, Values::Unknown) {
+        return false;
+    }
+    match constraint {
+        Constraint::MinCount(n) => values.count().is_some_and(|c| c < *n),
+        Constraint::MaxCount(n) => values.count().is_some_and(|c| c > *n),
+
+        // A literal constraint on a reference is a node-kind problem, which
+        // the shape's own sh:nodeKind check reports. Flagging it twice would
+        // double-count one mistake.
+        Constraint::Datatype(xsd) => values.any_text(|v| !datatype_ok(v, xsd)),
+
+        // An inverse or alternative path yields only a count, so there is no
+        // node to inspect.
+        Constraint::NodeKind(kind) => match kind {
+            NodeKind::Literal => values.is_refs() && values.count() != Some(0),
+            NodeKind::Iri => values.is_text() && values.count() != Some(0),
+            // A reference decodes the same whether the XML wrote an IRI or a
+            // blank node, so only a literal is certainly not one.
+            NodeKind::BlankNode => values.is_text() && values.count() != Some(0),
+        },
+
+        Constraint::In(allowed) => {
+            values.any_text(|v| !allowed.contains(&v.trim())) || values.any_ref(|r| !allowed.contains(&r))
+        }
+        Constraint::HasValue(want) => match values {
+            v if v.is_text() => !v.any_text(|t| t.trim() == *want),
+            v if v.is_refs() => !v.any_ref(|r| r == *want),
+            _ => false,
+        },
+
+        Constraint::MaxLength(n) => values.any_text(|v| v.chars().count() as u32 > *n),
+        Constraint::MinLength(n) => values.any_text(|v| (v.chars().count() as u32) < *n),
+        Constraint::Length(n) => values.any_text(|v| v.chars().count() as u32 != *n),
+
+        // An element merged from files that typed it differently has several
+        // types (`Element::types`). `sh:class` needs one of them to be an
+        // instance; `sh:in` on an `rdf:type` path tests each type, as each is
+        // a value of the path — a type outside the list fails it.
+        Constraint::Class(allowed) => values.any_ref(|r| {
+            class_of(ctx, r).is_some_and(|e| !e.types().any(|t| allowed.contains(&t.qualified)))
+        }),
+        Constraint::RefClass(allowed) => values.any_ref(|r| {
+            class_of(ctx, r).is_some_and(|e| e.types().any(|t| !allowed.contains(&t.qualified)))
+        }),
+        Constraint::NotClass(forbidden) => values.any_ref(|r| {
+            class_of(ctx, r).is_some_and(|e| e.types().any(|t| forbidden.contains(&t.qualified)))
+        }),
+        Constraint::QualifiedIn { allowed, min } => {
+            let mut n = 0u32;
+            values.any_text(|v| {
+                n += u32::from(allowed.contains(&v.trim()));
+                false
+            });
+            values.any_ref(|r| {
+                n += u32::from(allowed.contains(&r));
+                false
+            });
+            n < *min
+        }
+
+        Constraint::MinInclusive(b) => values.any_text(|v| number(v).is_some_and(|x| x < *b)),
+        Constraint::MaxInclusive(b) => values.any_text(|v| number(v).is_some_and(|x| x > *b)),
+        Constraint::MinExclusive(b) => values.any_text(|v| number(v).is_some_and(|x| x <= *b)),
+        Constraint::MaxExclusive(b) => values.any_text(|v| number(v).is_some_and(|x| x >= *b)),
+
+        // Every pairing of this property's values with the other's, as SHACL
+        // defines it. Silent unless both sides are present.
+        Constraint::LessThan(other) => pair(values, el, other, |a, b| a < b),
+        Constraint::LessThanOrEquals(other) => pair(values, el, other, |a, b| a <= b),
+    }
+}
+
+fn check_prop<'a>(
+    ctx: &Ctx<'a>,
+    el: &'a Fields,
+    class: &str,
+    mrid: &'a str,
     prop: &PropShape,
-    reverse: Option<&ReverseIndex>,
     out: &mut Vec<Violation>,
 ) {
-    let values = resolve(el, mrid, &prop.path, reverse);
-    let class = el.class_def().qualified;
-    let label = path_label(&prop.path);
-
+    let values = resolve(ctx, el, mrid, &prop.path);
     for c in prop.checks {
-        let failed = match &c.constraint {
-            Constraint::MinCount(n) => values.count() < *n,
-            Constraint::MaxCount(n) => values.count() > *n,
-
-            Constraint::Datatype(xsd) => match &values {
-                Values::Text(vs) => vs.iter().any(|v| !datatype_ok(v, xsd)),
-                // A literal constraint on a reference is a node-kind problem,
-                // which the shape's own sh:nodeKind check reports. Flagging it
-                // twice would double-count one mistake.
-                _ => false,
-            },
-
-            Constraint::NodeKind(kind) => match (&values, kind) {
-                (Values::Absent, _) => false,
-                (Values::Text(_), NodeKind::Literal) => false,
-                (Values::Refs(_), NodeKind::Iri) => false,
-                // An inverse or alternative path yields only a count, so there
-                // is no node to inspect.
-                (Values::Count(_), _) => false,
-                (Values::Text(_), _) | (Values::Refs(_), _) => true,
-            },
-
-            Constraint::In(allowed) => match &values {
-                Values::Text(vs) => vs.iter().any(|v| !allowed.contains(&v.trim())),
-                Values::Refs(rs) => rs.iter().any(|r| !allowed.contains(&r.as_str())),
-                _ => false,
-            },
-
-            Constraint::HasValue(want) => match &values {
-                Values::Text(vs) => !vs.iter().any(|v| v.trim() == *want),
-                Values::Refs(rs) => !rs.iter().any(|r| r == want),
-                _ => false,
-            },
-
-            Constraint::MaxLength(n) => match &values {
-                Values::Text(vs) => vs.iter().any(|v| v.chars().count() as u32 > *n),
-                _ => false,
-            },
-            Constraint::MinLength(n) => match &values {
-                Values::Text(vs) => vs.iter().any(|v| (v.chars().count() as u32) < *n),
-                _ => false,
-            },
-
-            // Both read the class of a referenced element, and both are silent
-            // when it is not in this dataset: phase 1 runs per file, so a
-            // reference out of the file is normal and belongs to a
-            // cross-profile rule, not here. Reporting it would make every
-            // cross-file association a value-type violation.
-            Constraint::Class(allowed) | Constraint::RefClass(allowed) => match &values {
-                Values::Refs(rs) => rs.iter().any(|r| {
-                    ds.entries
-                        .get(r)
-                        .is_some_and(|e| !allowed.contains(&e.element.type_name()))
-                }),
-                _ => false,
-            },
-        };
-
-        if failed {
-            out.push(violation(mrid, class, label, c));
+        if fails(ctx, el, &values, &c.constraint) {
+            out.push(violation(mrid, class, &path_label(&prop.path), c));
         }
     }
 }
 
+/// Does a [`Logic`] branch conform? `None` when a path in it left the
+/// dataset, so its conformance is not known.
+fn branch_conforms<'a>(ctx: &Ctx<'a>, el: &'a Fields, mrid: &'a str, branch: &Branch) -> Option<bool> {
+    let mut holds = true;
+    for prop in branch.props {
+        let values = resolve(ctx, el, mrid, &prop.path);
+        if matches!(values, Values::Unknown) {
+            return None;
+        }
+        if prop.checks.iter().any(|c| fails(ctx, el, &values, &c.constraint)) {
+            holds = false;
+            break;
+        }
+    }
+    Some(holds != branch.negate)
+}
+
+/// Node-level `sh:and` / `sh:or` / `sh:xone`. Reported with the node shape's
+/// name as the property, which is what the generated validators report.
+fn check_logic<'a>(
+    ctx: &Ctx<'a>,
+    el: &'a Fields,
+    class: &str,
+    mrid: &'a str,
+    logic: &Logic,
+    out: &mut Vec<Violation>,
+) {
+    let mut conforming = 0usize;
+    for branch in logic.branches {
+        match branch_conforms(ctx, el, mrid, branch) {
+            Some(true) => conforming += 1,
+            Some(false) => {}
+            // An unknown branch could tip any of the three either way.
+            None => return,
+        }
+    }
+    let holds = match logic.op {
+        LogicOp::And => conforming == logic.branches.len(),
+        LogicOp::Or => conforming >= 1,
+        LogicOp::Xone => conforming == 1,
+    };
+    if !holds {
+        out.push(Violation {
+            object_id: mrid.to_string(),
+            rule_id: logic.rule_id.to_string(),
+            class: class.to_string(),
+            property: logic.name.to_string(),
+            message: logic.message.to_string(),
+            severity: logic.severity.to_string(),
+            name: logic.name.to_string(),
+            description: logic.description.to_string(),
+        });
+    }
+}
+
+/// Does any pairing of this property's numbers with `other`'s fail `holds`?
+fn pair(values: &Values, el: &Fields, other: &str, holds: impl Fn(f64, f64) -> bool) -> bool {
+    let others = field_values(el, other);
+    values.any_text(|a| {
+        number(a).is_some_and(|a| others.any_text(|b| number(b).is_some_and(|b| !holds(a, b))))
+    })
+}
+
 /// `sh:closed` — report every field the profile does not allow on this class.
-fn check_closed(el: &GenericElement, mrid: &str, closed: &ClosedShape, out: &mut Vec<Violation>) {
-    let class = el.class_def().qualified;
+fn check_closed(el: &Fields, class: &str, mrid: &str, closed: &ClosedShape, out: &mut Vec<Violation>) {
     let mut extra: Vec<&str> = el
-        .fields()
         .keys()
-        .map(String::as_str)
+        .copied()
         .filter(|k| !closed.allowed.contains(k))
         .collect();
     // Deterministic order: HashMap iteration is not, and a violation list that
@@ -266,64 +507,150 @@ fn check_closed(el: &GenericElement, mrid: &str, closed: &ClosedShape, out: &mut
     }
 }
 
-/// Which elements carry a given field, for `sh:targetSubjectsOf`.
-///
-/// `by_type` answers class targets directly, but nothing indexes elements by
-/// the fields they have. Scanning the dataset per shape is what the obvious
-/// implementation does, and it is O(elements x shapes): on a 20k-element
-/// dataset that cost 10 ms *for a profile whose shapes matched nothing*, since
-/// the scan happens before anything can be ruled out. One pass up front, over
-/// only the fields some active shape asks about, removes that.
-#[derive(Default)]
-struct SubjectIndex {
-    by_field: HashMap<&'static str, Vec<String>>,
+/// A target element, resolved once per call: its mRID, its class, and the
+/// fields it is read through.
+#[derive(Clone, Copy)]
+struct Resolved<'a> {
+    mrid: &'a String,
+    class: &'static str,
+    fields: &'a Fields,
 }
 
-impl SubjectIndex {
-    fn build(ds: &CimDataset, fields: &[&'static str]) -> Self {
-        let mut by_field: HashMap<&'static str, Vec<String>> =
-            fields.iter().map(|f| (*f, Vec::new())).collect();
-        for (mrid, entry) in &ds.entries {
-            let Some(el) = entry.element.as_any().downcast_ref::<GenericElement>() else {
-                continue;
-            };
-            for field in fields {
-                if el.get(field).is_some() {
-                    by_field.get_mut(field).expect("seeded above").push(mrid.clone());
+/// Resolve `mrid` for `source`: `None` when it is missing or another family's
+/// element — e.g. a CGMES element under an NC shape, whose attributes that
+/// family does not define and would report as absent.
+fn resolve_target<'a>(ds: &'a CimDataset, source: Source, mrid: &'a String) -> Option<Resolved<'a>> {
+    let entry = ds.entries.get(mrid)?;
+    let fields = source.fields(entry)?;
+    Some(Resolved { mrid, class: entry.type_name(), fields })
+}
+
+/// The reverse index and the `sh:targetSubjectsOf` index, built in one pass.
+///
+/// Both need a walk over every element, and that walk — random access into a
+/// map of every element, then into each one's fields — was most of their
+/// cost; one pass does it once. Only fields some active shape asks about are
+/// indexed, and nothing is scanned when no shape asks.
+///
+/// `sh:targetSubjectsOf` has no `by_type` to answer it, and scanning per shape
+/// is O(elements x shapes): on a 20k-element dataset that cost 10 ms for a
+/// profile whose shapes matched nothing.
+fn build_indexes<'a>(
+    ds: &'a CimDataset,
+    source: Source,
+    count_fields: &[&'static str],
+    list_fields: &[&'static str],
+    subject_fields: &[&'static str],
+) -> (ReverseIndex<'a>, FastMap<&'static str, Vec<Resolved<'a>>>) {
+    if count_fields.is_empty() && list_fields.is_empty() && subject_fields.is_empty() {
+        return (ReverseIndex::default(), FastMap::default());
+    }
+    type Partial<'a> = (ReverseIndex<'a>, FastMap<&'static str, Vec<Resolved<'a>>>);
+    let index = |entries: &mut dyn Iterator<Item = (&'a String, &'a Element)>| -> Partial<'a> {
+        let mut reverse = ReverseIndex::default();
+        let mut subjects: FastMap<&'static str, Vec<Resolved<'a>>> =
+            subject_fields.iter().map(|f| (*f, Vec::new())).collect();
+        for (mrid, entry) in entries {
+            let Some(f) = source.fields(entry) else { continue };
+            for field in count_fields {
+                for target in refs_of(f, field) {
+                    *reverse.counts.entry((target.as_str(), *field)).or_insert(0) += 1;
+                }
+            }
+            for field in list_fields {
+                for target in refs_of(f, field) {
+                    reverse.sources.entry((target.as_str(), *field)).or_default().push(mrid);
+                }
+            }
+            for field in subject_fields {
+                if f.contains_key(*field) {
+                    let r = Resolved { mrid, class: entry.type_name(), fields: f };
+                    subjects.get_mut(field).expect("seeded above").push(r);
                 }
             }
         }
-        for v in by_field.values_mut() {
-            v.sort_unstable();
-        }
-        Self { by_field }
-    }
+        (reverse, subjects)
+    };
 
-    fn subjects(&self, field: &'static str) -> &[String] {
-        self.by_field.get(field).map_or(&[], Vec::as_slice)
+    let threads = threads_for(ds.entries.len());
+    if threads == 1 {
+        return index(&mut ds.entries.iter());
     }
+    // One pass split into contiguous runs of the map's own order, each indexed
+    // on its own thread, then merged in run order: the lists come out exactly
+    // as the single pass builds them.
+    let all: Vec<(&'a String, &'a Element)> = ds.entries.iter().collect();
+    let parts: Vec<Partial<'a>> = par_map(&runs(&all, threads, |_| 1), |run| index(&mut run.iter().copied()));
+    let mut parts = parts.into_iter();
+    let (mut reverse, mut subjects) = parts.next().expect("at least one run");
+    for (r, subj) in parts {
+        for (k, n) in r.counts {
+            *reverse.counts.entry(k).or_insert(0) += n;
+        }
+        for (k, list) in r.sources {
+            reverse.sources.entry(k).or_default().extend(list);
+        }
+        for (field, list) in subj {
+            subjects.get_mut(field).expect("seeded above").extend(list);
+        }
+    }
+    (reverse, subjects)
 }
 
-/// Every mRID a shape's targets select.
-fn targets_of(ds: &CimDataset, shape: &ShapeDef, subjects: &SubjectIndex) -> Vec<String> {
-    let mut mrids: Vec<String> = Vec::new();
+/// Every element a shape's targets select, in `by_type` order — for a shape
+/// that mixes target kinds; the others are walked element-major in
+/// [`validate_shapes`].
+///
+/// That order is reproducible from run to run: decoding appends in document
+/// order, and `merge` walks a map whose hasher has a fixed seed. A class's
+/// elements are resolved once per call and shared with the element-major walk.
+fn targets_of<'a>(
+    ds: &'a CimDataset,
+    source: Source,
+    shape: &ShapeDef,
+    subjects: &FastMap<&'static str, Vec<Resolved<'a>>>,
+    by_class: &mut FastMap<&'static str, Vec<Resolved<'a>>>,
+) -> Vec<Resolved<'a>> {
+    let mut out: Vec<Resolved<'a>> = Vec::new();
     for target in shape.targets {
         match target {
             Target::Class(classes) => {
                 for class in *classes {
-                    if let Some(list) = ds.by_type.get(*class) {
-                        mrids.extend(list.iter().cloned());
-                    }
+                    let list = by_class.entry(class).or_insert_with(|| {
+                        ds.by_type
+                            .get(*class)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|mrid| resolve_target(ds, source, mrid))
+                            .collect()
+                    });
+                    out.extend_from_slice(list);
                 }
             }
             Target::SubjectsOf(field) => {
-                mrids.extend(subjects.subjects(field).iter().cloned());
+                out.extend_from_slice(subjects.get(field).map_or(&[], Vec::as_slice));
             }
         }
     }
-    mrids.sort_unstable();
-    mrids.dedup();
-    mrids
+    // A shape's targets overlap whenever it lists a class and one of its
+    // subclasses (`cim:Switch, cim:Breaker`), and a subjectsOf target can pick
+    // any of them again. SHACL validates a focus node once per shape.
+    let mut seen = FastSet::default();
+    out.retain(|t| seen.insert(t.mrid));
+    out
+}
+
+/// Every check of one shape against one target.
+fn run_shape<'a>(ctx: &Ctx<'a>, shape: &ShapeDef, t: &Resolved<'a>, out: &mut Vec<Violation>) {
+    for prop in shape.props {
+        check_prop(ctx, t.fields, t.class, t.mrid, prop, out);
+    }
+    for logic in shape.logic {
+        check_logic(ctx, t.fields, t.class, t.mrid, logic, out);
+    }
+    if let Some(closed) = shape.closed {
+        check_closed(t.fields, t.class, t.mrid, closed, out);
+    }
 }
 
 /// Validate one profile's shapes against a dataset.
@@ -341,34 +668,54 @@ pub fn validate_profile(
         .iter()
         .filter(|s| s.profiles.contains(&profile))
         .collect();
+    validate_shapes(ds, Source::Nc, &active)
+}
+
+/// Elements per slice of a class's targets, the unit of work a thread takes.
+const SLICE: usize = 2048;
+
+/// Validate a dataset against shapes the caller has already selected.
+///
+/// The selection is the caller's because the families select differently: NC
+/// by the profile codes its manifests assign, CGMES by profile plus the
+/// solved/not-solved and local/cross-profile split its file names encode.
+///
+/// Targets outside `source` are skipped: a family's shapes describe its own
+/// elements.
+pub fn validate_shapes(ds: &CimDataset, source: Source, active: &[&ShapeDef]) -> Vec<Violation> {
     if active.is_empty() {
         return Vec::new();
     }
 
     // Build the reverse index only if something asks an inverse question, and
     // only over the fields that are actually asked about.
-    let mut inverse_fields: Vec<&'static str> = active
-        .iter()
-        .flat_map(|s| s.props.iter())
-        .flat_map(|p| match p.path {
-            Path::Inverse(f) => vec![f],
-            Path::Alternative(branches) => branches
-                .iter()
-                .filter_map(|b| match b {
-                    AltBranch::Inverse(f) => Some(*f),
-                    AltBranch::Forward(_) => None,
-                })
-                .collect(),
-            _ => Vec::new(),
-        })
-        .collect();
-    inverse_fields.sort_unstable();
-    inverse_fields.dedup();
-    let reverse = (!inverse_fields.is_empty())
-        .then(|| ReverseIndex::build(ds, &inverse_fields));
+    let mut count_fields: Vec<&'static str> = Vec::new();
+    let mut list_fields: Vec<&'static str> = Vec::new();
+    let paths = active.iter().flat_map(|s| {
+        s.props
+            .iter()
+            .map(|p| &p.path)
+            .chain(s.logic.iter().flat_map(|l| l.branches.iter().flat_map(|b| b.props.iter().map(|p| &p.path))))
+    });
+    for path in paths {
+        match path {
+            Path::Inverse(f) => count_fields.push(f),
+            Path::Alternative(branches) => count_fields.extend(branches.iter().filter_map(|b| match b {
+                AltBranch::Inverse(f) => Some(*f),
+                AltBranch::Forward(_) => None,
+            })),
+            Path::Chain(steps) => list_fields.extend(steps.iter().filter_map(|s| match s {
+                Step::Inverse(f) => Some(*f),
+                _ => None,
+            })),
+            Path::Forward(_) => {}
+        }
+    }
+    count_fields.sort_unstable();
+    count_fields.dedup();
+    list_fields.sort_unstable();
+    list_fields.dedup();
 
-    // The same treatment for sh:targetSubjectsOf: one pass over the fields any
-    // active shape targets, rather than a dataset scan per shape.
     let mut subject_fields: Vec<&'static str> = active
         .iter()
         .flat_map(|s| s.targets.iter())
@@ -379,29 +726,116 @@ pub fn validate_profile(
         .collect();
     subject_fields.sort_unstable();
     subject_fields.dedup();
-    let subjects = if subject_fields.is_empty() {
-        SubjectIndex::default()
-    } else {
-        SubjectIndex::build(ds, &subject_fields)
-    };
 
-    let mut out = Vec::new();
-    for shape in &active {
-        for mrid in targets_of(ds, shape, &subjects) {
-            let Some(entry) = ds.entries.get(&mrid) else { continue };
-            let Some(el) = entry.element.as_any().downcast_ref::<GenericElement>() else {
-                // A target that decoded as a typed CGMES struct. Its NC-only
-                // fields were dropped at decode, so anything asked of them
-                // would report absent values that the XML did carry.
-                continue;
-            };
-            for prop in shape.props {
-                check_prop(ds, el, &mrid, prop, reverse.as_ref(), &mut out);
+    let (reverse, subjects) = build_indexes(ds, source, &count_fields, &list_fields, &subject_fields);
+    let ctx = Ctx { ds, source, reverse };
+
+    // Element-major: visit each target once and apply every shape that
+    // targets it, rather than walking a class's elements once per shape. The
+    // cost per visit is reaching the element's fields — a cache miss into its
+    // own map — so doing it once for all of a class's shapes, not once per
+    // shape, is what pays. Shapes are grouped by their one kind of target; a
+    // shape mixing kinds can select an element twice and keeps the per-shape
+    // walk, which removes the duplicate. Within one kind, the classes are
+    // de-duplicated per shape: `sh:targetClass cim:Switch, cim:Breaker`
+    // expands `Switch` to its subclasses, Breaker among them, and a breaker
+    // must still be checked once.
+    let mut by_class_shapes: FastMap<&'static str, Vec<&ShapeDef>> = FastMap::default();
+    let mut by_subject_shapes: FastMap<&'static str, Vec<&ShapeDef>> = FastMap::default();
+    let mut mixed: Vec<&ShapeDef> = Vec::new();
+    for shape in active {
+        let all_class = shape.targets.iter().all(|t| matches!(t, Target::Class(_)));
+        match shape.targets {
+            _ if all_class => {
+                let mut classes: Vec<&'static str> = shape
+                    .targets
+                    .iter()
+                    .flat_map(|t| match t {
+                        Target::Class(cs) => cs.iter().copied(),
+                        Target::SubjectsOf(_) => [].iter().copied(),
+                    })
+                    .collect();
+                classes.sort_unstable();
+                classes.dedup();
+                for class in classes {
+                    by_class_shapes.entry(class).or_default().push(shape);
+                }
             }
-            if let Some(closed) = shape.closed {
-                check_closed(el, &mrid, closed, &mut out);
-            }
+            [Target::SubjectsOf(field)] => by_subject_shapes.entry(field).or_default().push(shape),
+            _ => mixed.push(shape),
         }
     }
+
+    // The class-targeted walk is most of the work, and it is memory-bound:
+    // each element costs a cache miss into its own field map, which threads
+    // overlap well. Each class's elements are cut into slices, and the slices,
+    // in order, are dealt out to threads in contiguous runs of about equal
+    // size. Concatenating the runs in order gives exactly the sequential
+    // result, order included.
+    let work: Vec<(&[&ShapeDef], &[String])> = by_class_shapes
+        .iter()
+        .flat_map(|(class, shapes)| {
+            ds.by_type
+                .get(*class)
+                .map_or(&[][..], Vec::as_slice)
+                .chunks(SLICE)
+                .map(move |mrids| (shapes.as_slice(), mrids))
+        })
+        .collect();
+    let total: usize = work.iter().map(|(_, m)| m.len()).sum();
+    let mut out = par_concat(&runs(&work, threads_for(total), |(_, m)| m.len()), |items| {
+        let mut out = Vec::new();
+        for (shapes, mrids) in items {
+            for t in mrids.iter().filter_map(|mrid| resolve_target(ds, source, mrid)) {
+                for shape in *shapes {
+                    run_shape(&ctx, shape, &t, &mut out);
+                }
+            }
+        }
+        out
+    });
+
+    // The same for `sh:targetSubjectsOf`, whose targets the index pass found.
+    let work: Vec<(&[&ShapeDef], &[Resolved])> = by_subject_shapes
+        .iter()
+        .flat_map(|(field, shapes)| {
+            subjects
+                .get(field)
+                .map_or(&[][..], Vec::as_slice)
+                .chunks(SLICE)
+                .map(move |targets| (shapes.as_slice(), targets))
+        })
+        .collect();
+    let total: usize = work.iter().map(|(_, t)| t.len()).sum();
+    out.extend(par_concat(&runs(&work, threads_for(total), |(_, t)| t.len()), |items| {
+        let mut out = Vec::new();
+        for (shapes, targets) in items {
+            for t in *targets {
+                for shape in *shapes {
+                    run_shape(&ctx, shape, t, &mut out);
+                }
+            }
+        }
+        out
+    }));
+    let mut by_class: FastMap<&'static str, Vec<Resolved>> = FastMap::default();
+    for shape in mixed {
+        for t in targets_of(ds, source, shape, &subjects, &mut by_class) {
+            run_shape(&ctx, shape, &t, &mut out);
+        }
+    }
+
+    // One result per element and rule. A property shape that several node
+    // shapes share — `eq:Switch.retained-cardinality` under both `eq:Switch`
+    // and `eq:Breaker` — reaches a breaker through each once `Switch` is
+    // expanded to its subclasses, and would report the same finding twice.
+    let mut seen = FastSet::default();
+    let keep: Vec<bool> = out
+        .iter()
+        .map(|v| seen.insert((v.object_id.as_str(), v.rule_id.as_str(), v.property.as_str(), v.message.as_str())))
+        .collect();
+    drop(seen);
+    let mut keep = keep.into_iter();
+    out.retain(|_| keep.next().unwrap_or(true));
     out
 }

@@ -98,7 +98,7 @@ def test_query_cache_sees_setitem():
     ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
     before = line_count(ds)  # populates the cache
     obj = dict(ds["ACLineSegment.OK"])
-    obj["id"] = obj["m_rid"] = "ACLineSegment.NEW"
+    obj["id"] = obj["IdentifiedObject.mRID"] = "ACLineSegment.NEW"
     ds["ACLineSegment.NEW"] = obj
     assert line_count(ds) == before + 1
 

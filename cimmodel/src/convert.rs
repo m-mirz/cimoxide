@@ -3,11 +3,10 @@ use std::error::Error;
 use std::fmt::Write as FmtWrite;
 use std::sync::OnceLock;
 
-use cimdecoder::CimDataset;
-use cimstructs::base::{FieldValue, RdfBlock};
-use cimstructs::constants::CIM_NAMESPACES;
-use cimstructs::profile_meta::{ATTR_ORIGINS, ATTR_RDF, PROFILE_URIS, TYPE_NS, TYPE_ORIGINS};
-use cimstructs::registry::json_registry;
+use crate::CimDataset;
+use crate::base::{Element, FieldValue};
+use crate::base::{AttrKind, Schema};
+use crate::registry::type_registry;
 
 /// Prefix for a class or attribute absent from the generated tables — a third-party
 /// extension, or a CIM version skew between the data and the schema it was generated from.
@@ -22,12 +21,10 @@ struct AttrMeta {
     is_enum: bool,
 }
 
-/// The generated lookup tables, indexed once.
-///
-/// These were previously rebuilt from the raw slices on every call — ~450 type rows and
-/// ~3600 attribute rows per profile, so `write_xml_files(["EQ", "SSH", ...])` paid for it
-/// once per profile.
+/// The CGMES schema, indexed once for writing: prefixes, profile membership and the
+/// namespaces the decoder dropped.
 struct Tables {
+    schema: &'static Schema,
     type_origins: HashMap<&'static str, &'static [&'static str]>,
     attr_origins: HashMap<&'static str, &'static [&'static str]>,
     type_prefix: HashMap<&'static str, &'static str>,
@@ -41,31 +38,61 @@ struct Tables {
 fn tables() -> &'static Tables {
     static T: OnceLock<Tables> = OnceLock::new();
     T.get_or_init(|| {
-        // The decoder throws namespaces away, so `TYPE_NS`/`ATTR_RDF` are the only runtime
-        // source of them. Both tables draw on exactly the namespaces `CIM_NAMESPACES`
-        // declares, so this reverse map is total over them.
-        let prefix_of: HashMap<&str, &str> =
-            CIM_NAMESPACES.iter().map(|(p, ns)| (*ns, *p)).collect();
+        let schema = type_registry().schema("cgmes").expect("the CGMES family is registered");
+        // The decoder throws namespaces away, so the schema is the only runtime source of
+        // them; its classes and attributes draw on exactly the namespaces it binds, so this
+        // reverse map is total over them.
+        let prefix_of: HashMap<&str, &'static str> =
+            schema.namespaces.iter().map(|(p, ns)| (*ns, *p)).collect();
         let lookup = |ns: &str| prefix_of.get(ns).copied().unwrap_or(FALLBACK_PREFIX);
 
+        // An attribute's profiles over every class that declares it, the export's dominant
+        // profile first: EQ, then the rest alphabetically.
+        let mut attr_origins: HashMap<&'static str, Vec<&'static str>> = HashMap::new();
+        for a in schema.classes.iter().flat_map(|c| c.attrs).filter(|a| a.used) {
+            let merged = attr_origins.entry(a.id).or_default();
+            for o in a.origins {
+                if !merged.contains(o) {
+                    merged.push(o);
+                }
+            }
+        }
+        attr_origins.retain(|_, o| !o.is_empty());
+        let attr_origins: HashMap<&'static str, &'static [&'static str]> = attr_origins
+            .into_iter()
+            .map(|(id, mut o)| {
+                o.sort_by(|a, b| (*a != "EQ", *a).cmp(&(*b != "EQ", *b)));
+                (id, &*Vec::leak(o))
+            })
+            .collect();
+
+        let mut attrs: HashMap<&'static str, AttrMeta> = HashMap::new();
+        for a in schema.classes.iter().flat_map(|c| c.attrs).filter(|a| !a.ns.is_empty()) {
+            attrs.entry(a.id).or_insert(AttrMeta {
+                prefix: lookup(a.ns),
+                range: a.value_ns,
+                is_enum: a.kind == AttrKind::Enum,
+            });
+        }
+
         Tables {
-            type_origins: TYPE_ORIGINS.iter().map(|(k, v)| (*k, *v)).collect(),
-            attr_origins: ATTR_ORIGINS.iter().map(|(k, v)| (*k, *v)).collect(),
-            type_prefix: TYPE_NS.iter().map(|(t, ns)| (*t, lookup(ns))).collect(),
-            type_ns: TYPE_NS.iter().copied().collect(),
-            attrs: ATTR_RDF
+            schema,
+            type_origins: schema
+                .classes
                 .iter()
-                .map(|(id, ns, range, kind)| {
-                    (*id, AttrMeta { prefix: lookup(ns), range, is_enum: *kind == 2 })
-                })
+                .filter(|c| !c.origins.is_empty())
+                .map(|c| (c.local, c.origins))
                 .collect(),
-            self_defining: PROFILE_URIS
+            self_defining: schema
+                .profiles
                 .iter()
                 .map(|(code, _)| *code)
-                .filter(|code| {
-                    !ATTR_ORIGINS.iter().any(|(_, o)| o.first() == Some(code))
-                })
+                .filter(|code| !attr_origins.values().any(|o| o.first() == Some(code)))
                 .collect(),
+            attr_origins,
+            type_prefix: schema.classes.iter().map(|c| (c.local, lookup(c.ns))).collect(),
+            type_ns: schema.classes.iter().filter(|c| !c.ns.is_empty()).map(|c| (c.local, c.ns)).collect(),
+            attrs,
         }
     })
 }
@@ -80,10 +107,10 @@ fn type_ns_iri(type_name: &str) -> Option<&'static str> {
     tables().type_ns.get(type_name).copied()
 }
 
-/// RDF metadata for an `RdfBlock.fields` key owned by `type_name`.
+/// RDF metadata for an `Element::fields` key owned by `type_name`.
 ///
 /// Most keys are already `Class.attr` and hit directly. A few arrive bare — the decoder's
-/// `local_name()` reduces `<dm:forwardDifferences>` to `forwardDifferences`, while `ATTR_RDF`
+/// `local_name()` reduces `<dm:forwardDifferences>` to `forwardDifferences`, while the schema
 /// holds `DifferenceModel.forwardDifferences` — so retry qualified before giving up.
 fn attr_meta(key: &str, type_name: &str) -> Option<AttrMeta> {
     let t = tables();
@@ -96,13 +123,8 @@ fn attr_meta(key: &str, type_name: &str) -> Option<AttrMeta> {
 pub fn dataset_to_json(ds: &CimDataset) -> serde_json::Value {
     let mut map = serde_json::Map::new();
     for (mrid, entry) in &ds.entries {
-        let mut obj = entry
-            .element
-            .to_json_value()
-            .as_object()
-            .cloned()
-            .unwrap_or_default();
-        obj.insert("_type".into(), entry.element.type_name().into());
+        let mut obj = entry.to_json_value().as_object().cloned().unwrap_or_default();
+        obj.insert("_type".into(), entry.type_name().into());
         map.insert(mrid.clone(), serde_json::Value::Object(obj));
     }
     serde_json::Value::Object(map)
@@ -110,13 +132,12 @@ pub fn dataset_to_json(ds: &CimDataset) -> serde_json::Value {
 
 pub fn dataset_from_json(json: &str) -> Result<CimDataset, Box<dyn Error>> {
     let root: serde_json::Map<String, serde_json::Value> = serde_json::from_str(json)?;
-    let reg = json_registry();
+    let reg = type_registry();
     let mut ds = CimDataset::new();
     for (mrid, val) in root {
-        let type_name = val["_type"].as_str().unwrap_or("").to_string();
-        if let Some(f) = reg.get(type_name.as_str()) {
-            let element = f(val)?;
-            ds.set(mrid, element);
+        let type_name = val["_type"].as_str().unwrap_or("");
+        if let Some(class) = reg.by_type_name(type_name) {
+            ds.set(mrid, Element::from_json(class, reg, &val)?);
         }
     }
     Ok(ds)
@@ -124,8 +145,8 @@ pub fn dataset_from_json(json: &str) -> Result<CimDataset, Box<dyn Error>> {
 
 /// True when the element belongs to a profile family this encoder cannot write.
 ///
-/// Only the default family is generated as typed structs with per-attribute
-/// namespace tables, which is what the RDF/XML writer needs. Other families
+/// The writer serves the CGMES schema — its profiles, its prefixes, its
+/// `md:FullModel` header. Other families
 /// carry a qualified type name (`nc:Contingency`); emitting one as
 /// `<cim:nc:Contingency>` would produce a malformed document, so they are
 /// skipped and reported instead.
@@ -137,7 +158,7 @@ pub fn dataset_to_xml(ds: &CimDataset) -> Result<String, Box<dyn Error>> {
     let mut out = String::new();
     out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     out.push_str("<rdf:RDF");
-    for (prefix, uri) in CIM_NAMESPACES {
+    for (prefix, uri) in tables().schema.namespaces {
         write!(out, " xmlns:{prefix}=\"{uri}\"")?;
     }
     out.push_str(">\n");
@@ -148,8 +169,8 @@ pub fn dataset_to_xml(ds: &CimDataset) -> Result<String, Box<dyn Error>> {
     let mut skipped = 0usize;
     for mrid in mrids {
         let entry = &ds.entries[mrid];
-        let block = &entry.block;
-        let type_name = block.type_name.as_str();
+        let block = entry;
+        let type_name = block.type_name();
         if is_foreign_family(type_name) {
             skipped += 1;
             continue;
@@ -158,8 +179,8 @@ pub fn dataset_to_xml(ds: &CimDataset) -> Result<String, Box<dyn Error>> {
         write!(out, "  <{ns}:{type_name} rdf:about=\"#{}\">", escape_attr(mrid))?;
 
         // Emit fields sorted for deterministic output
-        let mut fields: Vec<(&String, &FieldValue)> = block.fields.iter().collect();
-        fields.sort_by_key(|(k, _)| k.as_str());
+        let mut fields: Vec<(&&'static str, &FieldValue)> = block.fields().iter().collect();
+        fields.sort_by_key(|(k, _)| **k);
 
         let mut children = String::new();
         for (key, val) in fields {
@@ -202,7 +223,7 @@ pub fn dataset_to_xml_for_profile(
     let mut out = String::new();
     out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     out.push_str("<rdf:RDF");
-    for (prefix, uri) in CIM_NAMESPACES {
+    for (prefix, uri) in tables.schema.namespaces {
         write!(out, " xmlns:{prefix}=\"{uri}\"")?;
     }
     out.push_str(">\n");
@@ -211,17 +232,17 @@ pub fn dataset_to_xml_for_profile(
     // decoded FullModel entry for this profile if the dataset has one (preserves
     // scenarioTime/modelingAuthoritySet/DependentOn/version/etc.), else fall back
     // to a minimal synthetic header.
-    if let Some(&(_, uri)) = PROFILE_URIS.iter().find(|(k, _)| *k == profile_code) {
-        // `md` via the same tables the body uses: TYPE_NS maps FullModel and ATTR_RDF maps
-        // every Model.* field onto the ModelDescription namespace. The header keeps only its
+    if let Some(&(_, uri)) = tables.schema.profiles.iter().find(|(k, _)| *k == profile_code) {
+        // `md` via the same tables the body uses: the schema puts FullModel and every
+        // Model.* field in the ModelDescription namespace. The header keeps only its
         // genuinely different behaviour — `rdf:about` with no `#`, and no fragment on
         // resource references.
         let hdr = prefix_for_type("FullModel");
         if let Some((mrid, block)) = find_full_model_header(ds, uri) {
             write!(out, "  <{hdr}:FullModel rdf:about=\"{}\">", escape_attr(mrid))?;
 
-            let mut fields: Vec<(&String, &FieldValue)> = block.fields.iter().collect();
-            fields.sort_by_key(|(k, _)| k.as_str());
+            let mut fields: Vec<(&&'static str, &FieldValue)> = block.fields().iter().collect();
+            fields.sort_by_key(|(k, _)| **k);
 
             let mut children = String::new();
             for (key, val) in fields {
@@ -243,7 +264,7 @@ pub fn dataset_to_xml_for_profile(
 
     for mrid in mrids {
         let entry = &ds.entries[mrid];
-        let type_name = entry.element.type_name();
+        let type_name = entry.type_name();
 
         // Another family's element has no CGMES profile membership and no entry
         // in these tables, so it would fall through to `write_carried_fields`
@@ -254,13 +275,13 @@ pub fn dataset_to_xml_for_profile(
 
         let type_origins: &[&str] = type_map.get(type_name).copied().unwrap_or(&[]);
         if !type_origins.contains(&profile_code) {
-            write_carried_fields(&mut out, mrid, &entry.block, profile_code, type_map, attr_map, ds)?;
+            write_carried_fields(&mut out, mrid, entry, profile_code, type_map, attr_map, ds)?;
             continue;
         }
 
         let is_primary =
             self_defining || type_origins.first().map_or(false, |&o| o == profile_code);
-        let block = &entry.block;
+        let block = entry;
 
         let include_field = |key: &str| -> bool {
             let origins = attr_map.get(key).copied().unwrap_or(&[]);
@@ -271,8 +292,8 @@ pub fn dataset_to_xml_for_profile(
             }
         };
 
-        let mut fields: Vec<(&String, &FieldValue)> =
-            block.fields.iter().filter(|(k, _)| include_field(k)).collect();
+        let mut fields: Vec<(&&'static str, &FieldValue)> =
+            block.fields().iter().filter(|(k, _)| include_field(k)).collect();
 
         if fields.is_empty() {
             continue;
@@ -285,7 +306,7 @@ pub fn dataset_to_xml_for_profile(
             write!(out, "  <{ns}:{type_name} rdf:about=\"#{}\">", escape_attr(mrid))?;
         }
 
-        fields.sort_by_key(|(k, _)| k.as_str());
+        fields.sort_by_key(|(k, _)| **k);
         let mut children = String::new();
         for (key, val) in fields {
             write_field(&mut children, key, val, type_name, "#", ds)?;
@@ -336,14 +357,13 @@ fn write_synthesized_header(
         attr_meta(&format!("Model.{field}"), "FullModel").map_or(FALLBACK_PREFIX, |m| m.prefix)
     };
     let inherited = |field: &str| -> Option<String> {
-        let mut headers: Vec<(&String, &RdfBlock)> = ds
+        let mut headers: Vec<(&String, &Element)> = ds
             .entries
             .iter()
-            .filter(|(_, e)| e.element.type_name() == "FullModel")
-            .map(|(m, e)| (m, &e.block))
+            .filter(|(_, e)| e.type_name() == "FullModel")
             .collect();
         headers.sort_by_key(|(m, _)| m.as_str());
-        headers.into_iter().find_map(|(_, b)| match b.fields.get(&format!("Model.{field}")) {
+        headers.into_iter().find_map(|(_, b)| match b.fields().get(format!("Model.{field}").as_str()) {
             Some(FieldValue::Text(v)) if !v.is_empty() => Some(v.clone()),
             _ => None,
         })
@@ -392,13 +412,13 @@ fn header_urn(ds: &CimDataset, profile_code: &str) -> String {
 /// Find the decoded `FullModel` entry (if any) whose `Model.profile` field names
 /// `profile_uri`. If more than one matches, the lexicographically smallest MRID
 /// wins, for deterministic output.
-fn find_full_model_header<'a>(ds: &'a CimDataset, profile_uri: &str) -> Option<(&'a str, &'a RdfBlock)> {
-    let mut best: Option<(&str, &RdfBlock)> = None;
+fn find_full_model_header<'a>(ds: &'a CimDataset, profile_uri: &str) -> Option<(&'a str, &'a Element)> {
+    let mut best: Option<(&str, &Element)> = None;
     for (mrid, entry) in &ds.entries {
-        if entry.element.type_name() != "FullModel" {
+        if entry.type_name() != "FullModel" {
             continue;
         }
-        let matches = match entry.block.fields.get("Model.profile") {
+        let matches = match entry.fields().get("Model.profile") {
             Some(FieldValue::Text(s)) => s == profile_uri,
             Some(FieldValue::TextList(list)) => list.iter().any(|s| s == profile_uri),
             _ => false,
@@ -407,7 +427,7 @@ fn find_full_model_header<'a>(ds: &'a CimDataset, profile_uri: &str) -> Option<(
             continue;
         }
         if best.is_none_or(|(m, _)| mrid.as_str() < m) {
-            best = Some((mrid.as_str(), &entry.block));
+            best = Some((mrid.as_str(), entry));
         }
     }
     best
@@ -431,16 +451,16 @@ fn find_full_model_header<'a>(ds: &'a CimDataset, profile_uri: &str) -> Option<(
 fn write_carried_fields(
     out: &mut String,
     mrid: &str,
-    block: &RdfBlock,
+    block: &Element,
     profile_code: &str,
     type_map: &HashMap<&'static str, &'static [&'static str]>,
     attr_map: &HashMap<&'static str, &'static [&'static str]>,
     ds: &CimDataset,
 ) -> Result<(), Box<dyn Error>> {
-    let mut by_class: std::collections::BTreeMap<&str, Vec<(&String, &FieldValue)>> =
+    let mut by_class: std::collections::BTreeMap<&str, Vec<(&&'static str, &FieldValue)>> =
         std::collections::BTreeMap::new();
-    for (key, val) in &block.fields {
-        let only_here = attr_map.get(key.as_str()).is_some_and(|o| *o == [profile_code]);
+    for (key, val) in block.fields() {
+        let only_here = attr_map.get(*key).is_some_and(|o| *o == [profile_code]);
         let Some((class, _)) = key.split_once('.') else { continue };
         let class_in_profile = type_map.get(class).is_some_and(|o| o.contains(&profile_code));
         if only_here && class_in_profile {
@@ -450,7 +470,7 @@ fn write_carried_fields(
     for (class, mut fields) in by_class {
         let ns = prefix_for_type(class);
         write!(out, "  <{ns}:{class} rdf:about=\"#{}\">", escape_attr(mrid))?;
-        fields.sort_by_key(|(k, _)| k.as_str());
+        fields.sort_by_key(|(k, _)| **k);
         let mut children = String::new();
         for (key, val) in fields {
             write_field(&mut children, key, val, class, "#", ds)?;
@@ -460,7 +480,7 @@ fn write_carried_fields(
     Ok(())
 }
 
-/// Write one field, with its own namespace prefix taken from `ATTR_RDF`.
+/// Write one field, with its own namespace prefix taken from the schema.
 ///
 /// The prefix is per field, never inherited from the owning class: a single
 /// `eu:BoundaryPoint` carries both `eu:BoundaryPoint.toEndName` and
@@ -491,7 +511,7 @@ fn write_field(
         }
         // `eu:LimitKind` and `eu:SVCControlMode` are enumerations generated as marker structs
         // — `cims:stereotype` parsing is last-write-wins and their `European` stereotype
-        // overwrites the `enumeration` one — so `ATTR_RDF` marks them as plain references. A
+        // overwrites the `enumeration` one — so the schema marks them as plain references. A
         // value naming no entry but matching a known `Type.value` is that case; rebuild the
         // IRI the decoder stripped, as `cimsparql::iri::reference_iri` does on the way in.
         if !ds.entries.contains_key(r)

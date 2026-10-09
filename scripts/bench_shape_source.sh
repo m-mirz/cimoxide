@@ -7,14 +7,14 @@
 # question. There, a decoder already existed and the question was whether the
 # dynamic path made it slower. Here there was no NC validation at all, so the
 # first number to establish is the absolute cost of interpreting ~14,800 checks
-# — specifically whether it lands near the generated CGMES validators or an
-# order off. If it is close, the 260,900 generated lines could become a table
-# too; that is worth knowing and is not a decision this script makes.
+# — specifically whether it lands near CGMES validation or an order off. (It
+# did, and CGMES has since moved to a table too, replacing ~250,000 lines of
+# generated per-check functions.)
 #
 # Five sections:
 #
 #   1. validation throughput  — the absolute cost (criterion)
-#   2. CGMES comparison       — same machine, same corpus, generated validators
+#   2. CGMES comparison       — same machine, CGMES FullGrid through its table
 #   3. startup wall clock     — what a one-shot CLI run pays for the TTL load
 #   4. peak RSS               — the generated table is rodata, the loaded one heap
 #   5. table size             — generated source, and whether the binary moves
@@ -114,7 +114,7 @@ median() {
 }
 
 cgmes_dir="$repo_root/CGMES-Test-Configurations/v3.0/FullGrid/FullGrid-Merged"
-echo "=== 2. generated CGMES validators, for scale ==="
+echo "=== 2. CGMES validation, for scale ==="
 if [ -d "$cgmes_dir" ]; then
 	cg_ms=()
 	for ((i = 1; i <= repeat; i++)); do
@@ -124,8 +124,7 @@ if [ -d "$cgmes_dir" ]; then
 		cg_ms+=($(((end - start) / 1000000)))
 	done
 	echo "  cimcli validate, 7 CGMES files : $(median "${cg_ms[@]}") ms  (runs: ${cg_ms[*]})"
-	echo "  (260,900 lines of generated validators; NC's equivalent is a"
-	echo "   2.6 MB data table plus an interpreter)"
+	echo "  (CGMES runs the same interpreter over cgmes_shapes.rs)"
 else
 	echo "  (CGMES-Test-Configurations not present, skipped)"
 fi
@@ -175,13 +174,11 @@ echo
 # --- 5. table and binary size ----------------------------------------------
 
 echo "=== 5. table and binary size ==="
-for f in cimvalidation/src/nc_shapes.rs cimvalidation/src/nc_profiles.rs; do
+for f in cimvalidation/src/nc_shapes.rs cimvalidation/src/nc_profiles.rs cimvalidation/src/cgmes_shapes.rs; do
 	if [ -f "$f" ]; then
 		printf '  %-34s %s bytes\n' "$f" "$(stat -c '%s' "$f")"
 	fi
 done
-gen_total=$(find cimvalidation/src -name 'generated_*.rs' -printf '%s\n' | paste -sd+ | bc)
-echo "  cimvalidation/src/generated_*.rs   $gen_total bytes (CGMES, for comparison)"
 echo "  cimcli: $(stat -c '%s' "$cimcli") bytes"
 echo "  (the generated table stays compiled in as the fallback, so the binary is"
 echo "   expected to be unchanged by the dynamic-shapes feature)"

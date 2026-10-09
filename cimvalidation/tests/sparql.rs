@@ -3,7 +3,7 @@ mod common;
 use cimvalidation::Config;
 use cimvalidation::Violation;
 
-fn validate(ds: &cimdecoder::CimDataset, cfg: &Config) -> Vec<Violation> {
+fn validate(ds: &cimmodel::CimDataset, cfg: &Config) -> Vec<Violation> {
     let mut v = Vec::new();
     for profile in &cfg.profiles {
         v.extend(cimvalidation::sparql::validate_profile_local(ds, profile, cfg));
@@ -29,9 +29,11 @@ fn sparql_dl_001() {
 
 #[test]
 fn sparql_eqbd_001() {
-    // isExcludedFromAreaInterchange=false requires TieFlow; true forbids TieFlow.
+    // isExcludedFromAreaInterchange=false (or absent) requires a TieFlow on the
+    // terminal of the line at the boundary point; true forbids one. A rule of
+    // the NotSolvedMAS file.
     let ds = common::load_dataset("../testdata/test_sparql_EQBD_001.xml");
-    let cfg = Config { profiles: vec!["EQBD".into()], ..Default::default() };
+    let cfg = Config { profiles: vec!["EQBD".into()], not_solved: true, ..Default::default() };
     let vs = validate(&ds, &cfg);
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("BP.OK1").map_or(0, |v| v.len()), 0,
@@ -42,6 +44,10 @@ fn sparql_eqbd_001() {
         "BP.BAD1: expected 1 violation, got: {:?}", by_id.get("BP.BAD1"));
     assert_eq!(by_id.get("BP.BAD2").map_or(0, |v| v.len()), 1,
         "BP.BAD2: expected 1 violation, got: {:?}", by_id.get("BP.BAD2"));
+    assert_eq!(by_id.get("BP.BAD3").map_or(0, |v| v.len()), 1,
+        "BP.BAD3: expected 1 violation, got: {:?}", by_id.get("BP.BAD3"));
+    assert_eq!(by_id.get("BP.LONE").map_or(0, |v| v.len()), 0,
+        "BP.LONE: expected 0 violations, got: {:?}", by_id.get("BP.LONE"));
 }
 
 #[test]
@@ -154,7 +160,7 @@ fn sparql_sv_solved_002_angle_ref() {
     assert!(by_id.get("SM.BAD.NODE").map_or(0, |v| v.len()) >= 1,
         "SM.BAD.NODE: expected violation, got none");
     assert!(
-        by_id.get("global").map_or(false, |vs| vs.iter().any(|v| v.message.contains("Multiple machines"))),
+        by_id.get("global").is_some_and(|vs| vs.iter().any(|v| v.message.contains("Multiple machines"))),
         "global: expected violation for duplicate priority 1 machines, got: {:?}", by_id.get("global")
     );
     assert!(by_id.get("TN.OTHER").map_or(0, |v| v.len()) >= 1,
@@ -331,7 +337,8 @@ fn sparql_dy_003_302() {
         "LOAD.STATIC.Z.BAD",
         "SM.SAT.BAD",
         "SMS.BAD",
-        "MECH.BAD",
+        // MECH.BAD's missing association is an `sh:xone` shape, which the
+        // CGMES shape table runs, not these rules.
     ] {
         assert!(by_id.get(*id).map_or(0, |v| v.len()) >= 1,
             "{}: expected violation, got none", id);
@@ -341,9 +348,12 @@ fn sparql_dy_003_302() {
 #[test]
 fn sparql_common_001() {
     // Common CGMES rules: model header, UUID syntax, duplicate mRID, NaN, string lengths, EIC.
+    // The string-length and EIC rules are plain sh:maxLength / sh:length and run from the
+    // CGMES shape table, so this takes its cross-profile half too.
     let ds = common::load_dataset("../testdata/test_sparql_COMMON_001.xml");
     let cfg = Config { common: true, ..Default::default() };
-    let vs = validate(&ds, &cfg);
+    let mut vs = validate(&ds, &cfg);
+    vs.extend(cimvalidation::validate_crossprofile_shacl(&ds, &cfg));
     let by_id = common::violations_by_id(&vs);
     for id in &[
         "urn:uuid:header-1",
@@ -409,7 +419,7 @@ fn sparql_eq_002_6002() {
 #[test]
 fn quality_001_rc_target_voltage_mismatch() {
     // quality:RegulatingControl.targetVoltageMismatch — regression test for a bug where the
-    // mode comparison used a full CIM100 namespace URI constant, but cimdecoder strips every
+    // mode comparison used a full CIM100 namespace URI constant, but the decoder strips every
     // rdf:resource down to its bare local name, so the check never fired.
     let ds = common::load_dataset("../testdata/test_quality_001.xml");
     let cfg = Config { quality: true, ..Default::default() };
@@ -484,4 +494,212 @@ fn sparql_op_001() {
         "MEAS.TAP.BAD: expected 1 violation, got: {:?}", by_id.get("MEAS.TAP.BAD"));
     assert_eq!(by_id.get("MEAS.VOLT.BAD.ABSENT").map_or(0, |v| v.len()), 1,
         "MEAS.VOLT.BAD.ABSENT: expected 1 violation, got: {:?}", by_id.get("MEAS.VOLT.BAD.ABSENT"));
+}
+
+#[test]
+fn sparql_eq_004_enum_valued_rules() {
+    // PhaseCode and LimitKind values are written as full IRIs and stored as
+    // fragments. These rules compared against the full IRI and so never
+    // matched; each OK/BAD pair below would have reported nothing.
+    let ds = common::load_dataset("../testdata/test_sparql_EQ_004.xml");
+    let cfg = Config { profiles: vec!["EQ".into()], ..Default::default() };
+    let vs = validate(&ds, &cfg);
+    let count = |id: &str, rule: &str| vs.iter().filter(|v| v.object_id == id && v.rule_id == rule).count();
+
+    let phases_eq = "equ:Terminal.phases-consistencyEquipment";
+    assert_eq!(count("BRK.OK", phases_eq), 0, "{vs:#?}");
+    assert_eq!(count("BRK.BAD", phases_eq), 1, "{vs:#?}");
+
+    let phases_cn = "equ:Terminal.phases-consistencyConnectivityNode";
+    assert_eq!(count("CN.OK2", phases_cn), 0, "{vs:#?}");
+    assert_eq!(count("CN.BAD", phases_cn), 1, "{vs:#?}");
+
+    let patl = "equ:LimitKind.patl-numberOfLimitType";
+    assert_eq!(count("OLT.PATL.OK", patl), 0, "{vs:#?}");
+    assert_eq!(count("OLT.PATL.BAD", patl), 1, "{vs:#?}");
+
+    let tc = "equ:LimitKind.tc-duration";
+    assert_eq!(count("OLT.TC.OK", tc), 0, "{vs:#?}");
+    assert_eq!(count("OLT.TC.BAD", tc), 1, "{vs:#?}");
+
+    let vl = "equ:LimitKind.patl-allowedType";
+    assert_eq!(count("VL.OK", vl), 0, "{vs:#?}");
+    assert_eq!(count("VL.BAD", vl), 1, "{vs:#?}");
+}
+
+#[test]
+fn sparql_eq_geographical_region_count() {
+    // eq600:GeographicalRegion-EQ__4: at most one GeographicalRegion per EQ instance.
+    let xml = |regions: &str| format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/CIM100#">
+{regions}
+</rdf:RDF>"#);
+    let region = |id: &str| format!(r#"<cim:GeographicalRegion rdf:ID="{id}"><cim:IdentifiedObject.name>{id}</cim:IdentifiedObject.name></cim:GeographicalRegion>"#);
+    let cfg = Config { profiles: vec!["EQ".into()], ..Default::default() };
+    let count = |xml: String| {
+        let ds = cimmodel::CimDataset::decode_str(&xml).expect("decode");
+        validate(&ds, &cfg).iter().filter(|v| v.rule_id == "eq600:GeographicalRegion-EQ__4").count()
+    };
+    assert_eq!(count(xml(&region("_GR1"))), 0);
+    assert_eq!(count(xml(&(region("_GR1") + &region("_GR2")))), 1);
+}
+
+/// One CsConverter in `operatingMode`, carrying `fields`, validated as `profile`.
+fn cs_converter(profile: &str, mode: &str, fields: &str) -> Vec<Violation> {
+    let xml = format!(
+        r##"<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/CIM100#">
+  <cim:CsConverter rdf:ID="_CSC">
+    <cim:CsConverter.operatingMode rdf:resource="http://iec.ch/TC57/CIM100#CsOperatingModeKind.{mode}"/>
+{fields}  </cim:CsConverter>
+</rdf:RDF>"##
+    );
+    let ds = cimmodel::CimDataset::decode_str(&xml).unwrap();
+    let cfg = Config { profiles: vec![profile.into()], ..Default::default() };
+    validate(&ds, &cfg).into_iter().filter(|v| v.rule_id.contains("valueRangeTypical")).collect()
+}
+
+fn rules(v: &[Violation]) -> Vec<&str> {
+    let mut r: Vec<&str> = v.iter().map(|v| v.rule_id.split_once(':').unwrap().1).collect();
+    r.sort_unstable();
+    r
+}
+
+/// The SPARQL binds `$this $PATH ?value`, so an absent angle is not a
+/// violation, and `?value > ?max` with `?max` unbound is false, so an absent
+/// maximum leaves only the lower bound. Both used to read as 0.
+#[test]
+fn cs_converter_angle_ranges_ignore_absent_values() {
+    assert!(cs_converter("SSH", "rectifier", "").is_empty());
+    assert!(cs_converter("SSH", "inverter", "").is_empty());
+    assert!(cs_converter("SV", "rectifier", "").is_empty());
+    assert!(cs_converter("SV", "inverter", "").is_empty());
+    let field = |name: &str, v: &str| format!("    <cim:CsConverter.{name}>{v}</cim:CsConverter.{name}>\n");
+
+    // Present and in range, no maximum.
+    assert!(cs_converter("SSH", "rectifier", &field("minAlpha", "10")).is_empty());
+    assert!(cs_converter("SSH", "inverter", &field("minGamma", "17")).is_empty());
+    // Below the lower bound, no maximum.
+    assert_eq!(rules(&cs_converter("SSH", "rectifier", &field("minAlpha", "5"))), ["CsConverter.minAlpha-valueRangeTypical"]);
+    // Above the maximum given.
+    let v = cs_converter("SSH", "rectifier", &(field("minAlpha", "15") + &field("maxAlpha", "12")));
+    assert_eq!(rules(&v), ["CsConverter.minAlpha-valueRangeTypical"]);
+    let v = cs_converter("SSH", "inverter", &(field("minGamma", "18") + &field("maxGamma", "25")));
+    assert_eq!(rules(&v), ["CsConverter.maxGamma-valueRangeTypical"]);
+    // The state variables.
+    assert!(cs_converter("SV", "rectifier", &field("alpha", "15")).is_empty());
+    assert_eq!(rules(&cs_converter("SV", "rectifier", &field("alpha", "90"))), ["CsConverter.alpha-valueRangeTypical"]);
+    assert_eq!(rules(&cs_converter("SV", "inverter", &field("gamma", "5"))), ["CsConverter.gamma-valueRangeTypical"]);
+}
+
+/// FBOD4 matches the SPARQL's `#_…` fragments as the decoder stores them,
+/// `_…`, as well as `urn:uuid:` references. Testing the stored value for `#_`
+/// once let every fragment reference through.
+#[test]
+fn dangling_references_are_found_in_both_spellings() {
+    let xml = r##"<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/CIM100#">
+  <cim:ConnectivityNode rdf:ID="_cn"/>
+  <cim:Terminal rdf:ID="_t1">
+    <cim:Terminal.ConnectivityNode rdf:resource="#_cn"/>
+    <cim:Terminal.ConductingEquipment rdf:resource="#_gone"/>
+  </cim:Terminal>
+  <cim:Terminal rdf:ID="_t2">
+    <cim:Terminal.ConductingEquipment rdf:resource="urn:uuid:00000000-0000-0000-0000-00000000dead"/>
+  </cim:Terminal>
+</rdf:RDF>"##;
+    let ds = cimmodel::CimDataset::decode_str(xml).unwrap();
+    let cfg = Config { common: true, solved: true, ..Default::default() };
+    let mut found: Vec<(String, String)> = cimvalidation::sparql::validate_crossprofile(&ds, &cfg)
+        .into_iter()
+        .filter(|v| v.rule_id == "sm600:All-DanglingReferences")
+        .map(|v| (v.object_id, v.property))
+        .collect();
+    found.sort();
+    assert_eq!(found, [
+        ("_t1".to_string(), "Terminal.ConductingEquipment".to_string()),
+        ("_t2".to_string(), "Terminal.ConductingEquipment".to_string()),
+    ]);
+}
+
+/// NC elements are left to NC's own dangling-reference rule, which runs on the
+/// same merged dataset; reporting them here too would double every finding.
+#[test]
+fn cgmes_dangling_references_skip_nc_elements() {
+    let xml = r##"<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:nc="https://cim4.eu/ns/nc#">
+  <nc:BoundaryPoint rdf:ID="_bp"><nc:BoundaryPoint.BoundaryPointBorder rdf:resource="#_gone"/></nc:BoundaryPoint>
+</rdf:RDF>"##;
+    let ds = cimmodel::CimDataset::decode_str(xml).unwrap();
+    let cfg = Config { common: true, solved: true, ..Default::default() };
+    assert!(!cimvalidation::sparql::validate_crossprofile(&ds, &cfg)
+        .iter()
+        .any(|v| v.rule_id == "sm600:All-DanglingReferences"));
+}
+
+fn common_findings(body: &str, rule: &str) -> Vec<(String, String)> {
+    let xml = format!(
+        r##"<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/CIM100#">
+{body}
+</rdf:RDF>"##
+    );
+    let ds = cimmodel::CimDataset::decode_str(&xml).unwrap();
+    let cfg = Config { common: true, solved: true, ..Default::default() };
+    let mut v: Vec<(String, String)> = cimvalidation::sparql::validate_crossprofile(&ds, &cfg)
+        .into_iter()
+        .filter(|v| v.rule_id == rule)
+        .map(|v| (v.object_id, v.property))
+        .collect();
+    v.sort();
+    v
+}
+
+/// INF and NaN are reported in attributes the schema types as Float only: a
+/// name may read "NaN", and a field the class does not declare has no type.
+#[test]
+fn float_special_values_are_read_from_float_attributes_only() {
+    let found = common_findings(
+        r#"<cim:ACLineSegment rdf:ID="_l">
+    <cim:ACLineSegment.r>NaN</cim:ACLineSegment.r>
+    <cim:ACLineSegment.x>INF</cim:ACLineSegment.x>
+    <cim:ACLineSegment.b0ch>1.5</cim:ACLineSegment.b0ch>
+    <cim:IdentifiedObject.name>NaN</cim:IdentifiedObject.name>
+    <cim:Unknown.value>NaN</cim:Unknown.value>
+  </cim:ACLineSegment>"#,
+        "all600:Float-specialValues",
+    );
+    assert_eq!(found, [
+        ("_l".to_string(), "ACLineSegment.r".to_string()),
+        ("_l".to_string(), "ACLineSegment.x".to_string()),
+    ]);
+}
+
+/// GENC1 reads each element's mRID as written; every holder but the first, by
+/// object id, is reported.
+#[test]
+fn a_shared_mrid_is_reported_on_every_holder_but_the_first() {
+    let mrid = "<cim:IdentifiedObject.mRID>11111111-1111-1111-1111-111111111111</cim:IdentifiedObject.mRID>";
+    let found = common_findings(
+        &format!(r#"<cim:Terminal rdf:ID="_a">{mrid}</cim:Terminal>
+  <cim:BusbarSection rdf:ID="_b">{mrid}</cim:BusbarSection>
+  <cim:Terminal rdf:ID="_c"><cim:IdentifiedObject.mRID>22222222-2222-2222-2222-222222222222</cim:IdentifiedObject.mRID></cim:Terminal>"#),
+        "all600:All-GENC1",
+    );
+    assert_eq!(found, [("_b".to_string(), "IdentifiedObject.mRID".to_string())]);
+}
+
+/// FBOD4 reads every reference as written: a single-valued association given
+/// twice holds two references, and both must resolve.
+#[test]
+fn a_reference_given_twice_is_still_checked() {
+    let found = common_findings(
+        r##"<cim:Terminal rdf:ID="_t">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_gone1"/>
+    <cim:Terminal.ConductingEquipment rdf:resource="#_gone2"/>
+  </cim:Terminal>"##,
+        "sm600:All-DanglingReferences",
+    );
+    assert_eq!(found.len(), 2, "{found:?}");
 }

@@ -1,10 +1,10 @@
 //! SPARQL 1.1 querying over a decoded CGMES dataset.
 //!
-//! [`CimStore`] materialises a [`cimdecoder::CimDataset`] into an in-memory RDF store and
+//! [`CimStore`] materialises a [`cimmodel::CimDataset`] into an in-memory RDF store and
 //! runs SPARQL against it:
 //!
 //! ```no_run
-//! use cimdecoder::CimDataset;
+//! use cimmodel::CimDataset;
 //! use cimsparql::{CimStore, QueryResults};
 //!
 //! let ds = CimDataset::decode_file(std::path::Path::new("MicroGrid_EQ.xml"))?;
@@ -20,13 +20,13 @@
 //! ```
 //!
 //! Queries are run against the default graph. Per-profile named graphs are not possible:
-//! `CimEntry` records no source-file provenance.
+//! an `Element` records no source-file provenance.
 
 pub mod format;
 pub mod iri;
 pub mod triples;
 
-use cimdecoder::CimDataset;
+use cimmodel::CimDataset;
 use oxigraph::sparql::SparqlEvaluator;
 use oxigraph::store::Store;
 
@@ -152,7 +152,7 @@ impl CimStore {
         Ok(self.store.is_empty()?)
     }
 
-    /// What materialisation saw — unmapped predicates, rebuilt blocks, totals.
+    /// What materialisation saw — unmapped predicates and totals.
     pub fn stats(&self) -> Stats {
         self.stats
     }

@@ -2,7 +2,7 @@
 //!
 //! Reads the RDFS vocabularies of a profile family (CGMES, NCP) into a
 //! [`model::CimSpecification`]. `cimgen` uses this at build time to generate
-//! Rust sources; `cimstructs` uses it at runtime to load a class table from
+//! Rust sources; `cimmodel` uses it at runtime to load a class table from
 //! RDFS instead of the generated one.
 //!
 //! [`import::import_schema_files`] parses; [`processing::postprocess`] then
@@ -18,3 +18,4 @@ pub mod import;
 pub mod model;
 pub mod processing;
 pub mod shacl;
+pub mod table;

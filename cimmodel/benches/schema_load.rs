@@ -53,7 +53,7 @@ fn bench(c: &mut Criterion) {
     leaky.sample_size(10);
     leaky.warm_up_time(Duration::from_millis(500));
     leaky.bench_function("full_load", |b| {
-        b.iter(|| cimstructs::schema_source::load_table("nc", Path::new(RDFS_DIR)).unwrap())
+        b.iter(|| cimmodel::schema_source::load_table("nc", Path::new(RDFS_DIR)).unwrap())
     });
     leaky.finish();
 }

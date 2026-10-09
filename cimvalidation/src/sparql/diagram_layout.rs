@@ -1,4 +1,5 @@
-use cimdecoder::CimDataset;
+use cimmodel::CimDataset;
+use super::Fields;
 use crate::Violation;
 
 pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
@@ -16,17 +17,10 @@ fn check_diagram_object_identified_object_type(dataset: &CimDataset) -> Vec<Viol
     for type_name in &["DiagramObject", "TextDiagramObject"] {
         for mrid in dataset.by_type.get(*type_name).into_iter().flatten() {
             let entry = &dataset.entries[mrid];
-            let id_obj_ref = if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::DiagramObject>() {
-                o.identified_object_.as_ref()
-            } else if let Some(o) = entry.element.as_any().downcast_ref::<cimstructs::TextDiagramObject>() {
-                o.base.identified_object_.as_ref()
-            } else {
-                continue;
-            };
-
-            let id_obj_ref = match id_obj_ref { Some(r) => r, None => continue };
-            let target_id = id_obj_ref.mrid.trim_start_matches('#');
-            let target_type = match dataset.entries.get(target_id).map(|e| e.element.type_name()) {
+            let Some(o) = Fields::of_class(entry, type_name) else { continue };
+            let Some(id_obj_ref) = o.reference("DiagramObject.IdentifiedObject") else { continue };
+            let target_id = id_obj_ref.trim_start_matches('#');
+            let target_type = match dataset.entries.get(target_id).map(|e| e.type_name()) {
                 Some(t) => t, None => continue,
             };
             if DISALLOWED_TYPES.contains(&target_type) {

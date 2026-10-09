@@ -6,10 +6,11 @@ CimObject = dict[str, Any]
 """
 A parsed CIM element as a Python dict.
 
-Always contains ``"_type": str`` (the CIM class name) plus one key per
-populated CIM attribute (snake_case).  Numeric/bool fields are ``float``,
-``int``, or ``bool``; reference fields (MridRef) are plain MRID ``str``
-values; string fields are ``str``.
+Always contains ``"_type": str`` (the CIM class name) and ``"id": str`` (the
+mRID), plus one key per attribute the XML carried, named ``"Class.attr"``
+(e.g. ``"IdentifiedObject.name"``, ``"ACLineSegment.r"``). Every value is the
+``str`` the XML wrote — numbers are not parsed — and a reference is the
+referenced mRID; an attribute written more than once is a ``list[str]``.
 """
 
 class Violation:
@@ -43,17 +44,22 @@ class CimDataset:
 
     @staticmethod
     def decode_file(path: str) -> CimDataset:
-        """Parse a single CGMES RDF/XML file."""
+        """Parse a single CGMES RDF/XML file. Releases the GIL while parsing."""
         ...
 
     @staticmethod
     def decode_files(paths: list[str]) -> CimDataset:
-        """Parse multiple CGMES RDF/XML files, merging them into one dataset."""
+        """Parse multiple CGMES RDF/XML files, merging them into one dataset.
+
+        The files are parsed in parallel, one thread each, without holding the
+        GIL, then merged in the order given. ``by_type()`` lists each class's
+        elements in document order, the first file's first.
+        """
         ...
 
     @staticmethod
     def decode_str(content: str) -> CimDataset:
-        """Parse CGMES RDF/XML from a string."""
+        """Parse CGMES RDF/XML from a string. Releases the GIL while parsing."""
         ...
 
     def merge(self, other: CimDataset) -> None:
@@ -61,15 +67,6 @@ class CimDataset:
 
         Scalar fields: last-wins.  ResourceList fields: union.
         Do not pass the same object as both self and other.
-        """
-        ...
-
-    def drop_blocks(self) -> None:
-        """Release internal RdfBlock memory after the final merge.
-
-        Does not invalidate a graph already built by ``query()``. Building one
-        after this call falls back to a lossy reconstruction, so run ``query()``
-        first if you need both.
         """
         ...
 

@@ -3,6 +3,8 @@
 //! The output is what a property-bag validator needs and nothing more: target
 //! classes as family-qualified `by_type` keys, paths as the field keys the
 //! decoder stores, and class lists already expanded to concrete descendants.
+//! A target class matches itself when concrete and its concrete descendants
+//! when abstract ([`Resolver::targets_of`] says why).
 //!
 //! This lives here rather than in `cimgen` so the build-time generator and the
 //! runtime shape loader in `cimvalidation` resolve *identically* — the same
@@ -14,11 +16,11 @@
 //! because the element trait and the violation types demand it, and converting
 //! between the two is mechanical and total — an omission is a compile error.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::family::Family;
 use crate::model::{CimSpecification, CimType};
-use crate::shacl::model::{ConstraintInfo, FileResults, ShapeInfo};
+use crate::shacl::model::{ConstraintInfo, FileResults, ShapeInfo, LITERALS, NEGATED, UNSUPPORTED};
 use crate::shacl::skip::SkipCollector;
 
 // ---------------------------------------------------------------------------
@@ -36,9 +38,29 @@ pub enum Path {
     Forward(String),
     Inverse(String),
     Alternative(Vec<AltBranch>),
-    /// `sh:path ( nc:X.y rdf:type )` — follow the association, then read the
-    /// referenced element's class.
-    RefType(String),
+    /// A sequence path, e.g. `( ^cim:Terminal.ConductingEquipment
+    /// cim:Terminal.phases )`, or `( nc:X.y rdf:type )` — 170 of NCP's 178
+    /// chains are that last form, follow the association and read the class.
+    Chain(Vec<Step>),
+}
+
+/// One step of a [`Path::Chain`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Step {
+    Forward(String),
+    Inverse(String),
+    /// `rdf:type` — the classes of the elements reached so far. Last only.
+    Type,
+}
+
+impl Path {
+    /// Does the path end in `rdf:type`, so that its values are class names?
+    pub fn yields_types(&self) -> bool {
+        match self {
+            Path::Chain(steps) => matches!(steps.last(), Some(Step::Type)),
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,8 +81,56 @@ pub enum Constraint {
     HasValue(String),
     MaxLength(u32),
     MinLength(u32),
-    /// The referenced element's class, from `sh:in` on a [`Path::RefType`].
+    /// The referenced element's class, from `sh:in` on a path ending in
+    /// `rdf:type`.
     RefClass(Vec<String>),
+    MinInclusive(f64),
+    MaxInclusive(f64),
+    MinExclusive(f64),
+    MaxExclusive(f64),
+    /// `sh:lessThan` — the field key of the property this one must be below.
+    LessThan(String),
+    LessThanOrEquals(String),
+    /// `sh:not [ sh:class X ]` — the referenced element must *not* be an
+    /// instance of these (already expanded) classes.
+    NotClass(Vec<String>),
+    /// `sh:qualifiedValueShape [ sh:in (..) ]` with `sh:qualifiedMinCount` —
+    /// at least `min` values must be among `allowed`.
+    QualifiedIn { allowed: Vec<String>, min: u32 },
+    /// `sh:length` — exactly this many characters.
+    Length(u32),
+}
+
+/// One branch of a [`Logic`]: it conforms when none of its checks fail, or —
+/// for `[ sh:not X ]` — when at least one does.
+#[derive(Debug, Clone)]
+pub struct Branch {
+    pub props: Vec<PropShape>,
+    pub negate: bool,
+}
+
+/// How a node-level `sh:and` / `sh:or` / `sh:xone` combines its branches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogicOp {
+    And,
+    Or,
+    Xone,
+}
+
+/// A node-level `sh:and` / `sh:or` / `sh:xone` over anonymous property shapes.
+///
+/// A branch conforms when none of its checks fail. The checks inside a branch
+/// carry no report text of their own: the shape reports once, with the node
+/// shape's name and message, when the combination fails.
+#[derive(Debug, Clone)]
+pub struct Logic {
+    pub op: LogicOp,
+    pub branches: Vec<Branch>,
+    pub rule_id: String,
+    pub name: String,
+    pub message: String,
+    pub description: String,
+    pub severity: String,
 }
 
 #[derive(Debug, Clone)]
@@ -100,6 +170,7 @@ pub struct ShapeDef {
     pub targets: Vec<Target>,
     pub props: Vec<PropShape>,
     pub closed: Option<ClosedShape>,
+    pub logic: Vec<Logic>,
     pub profiles: Vec<String>,
     pub file: String,
 }
@@ -110,6 +181,7 @@ pub struct Stats {
     pub props: usize,
     pub checks: usize,
     pub closed: usize,
+    pub logic: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -130,14 +202,18 @@ pub struct Resolver {
     ///
     /// NCP's association value-type lists name CGMES classes
     /// (`cim17:ACLineSegment`) beside NC ones, and the referenced element can
-    /// be either — `CimElement::type_name` answers for both.
+    /// be either — `Element::type_name` answers for both.
     any_family: HashMap<(String, String), String>,
     any_concrete: HashMap<String, Vec<String>>,
+    /// Qualified class → itself and its ancestors, this family only.
+    ancestors: HashMap<String, Vec<String>>,
 }
 
-fn class_maps(
-    spec: &CimSpecification,
-) -> (HashMap<(String, String), String>, HashMap<String, Vec<String>>) {
+/// `(namespace, local)` → qualified class name, and qualified class → its
+/// concrete descendants.
+type ClassMaps = (HashMap<(String, String), String>, HashMap<String, Vec<String>>);
+
+fn class_maps(spec: &CimSpecification) -> ClassMaps {
     let prefix = spec.family.type_prefix;
     let qualified = |t: &CimType| format!("{prefix}{}", t.id);
     let by_ns = spec
@@ -191,7 +267,50 @@ impl Resolver {
             v.sort();
             v.dedup();
         }
-        Self { by_ns, concrete_of, any_family, any_concrete }
+        let prefix = spec.family.type_prefix;
+        let ancestors = spec
+            .types
+            .values()
+            .map(|t| {
+                let mut chain = Vec::new();
+                let mut cursor = Some(t);
+                // Bounded for the same reason as in `class_maps`.
+                while let Some(c) = cursor.filter(|_| chain.len() < 64) {
+                    chain.push(format!("{prefix}{}", c.id));
+                    cursor = spec.types.get(&c.super_type);
+                }
+                (format!("{prefix}{}", t.id), chain)
+            })
+            .collect();
+        Self { by_ns, concrete_of, any_family, any_concrete, ancestors }
+    }
+
+    /// The concrete classes a `sh:closed` shape on `target` governs: `target`
+    /// itself when it is concrete (see [`Self::targets_of`]); for an abstract
+    /// one, its concrete descendants less those below a class with a closed
+    /// shape of its own (`closed_classes`).
+    ///
+    /// The APL writes one closed `AllowedProperties` shape per class, listing
+    /// that class's properties, inherited ones included. A subclass with its
+    /// own is held to its own list; held to the superclass's as well, every
+    /// property the subclass adds would be reported. Below an abstract target,
+    /// a subclass without one still falls under the target's.
+    fn closed_concrete(&self, target: &str, closed_classes: &HashSet<String>) -> Vec<String> {
+        if self.is_concrete(target) {
+            return vec![target.to_string()];
+        }
+        let below_target = |c: &String| {
+            c != target && self.ancestors.get(c).is_some_and(|a| a.iter().any(|x| x == target))
+        };
+        self.concrete(target)
+            .iter()
+            .filter(|d| {
+                !self.ancestors.get(*d).is_some_and(|chain| {
+                    chain.iter().any(|a| closed_classes.contains(a) && below_target(a))
+                })
+            })
+            .cloned()
+            .collect()
     }
 
     /// Resolve a simplified IRI to this family's qualified class name.
@@ -208,6 +327,30 @@ impl Resolver {
 
     fn concrete(&self, qualified: &str) -> &[String] {
         self.concrete_of.get(qualified).map_or(&[], Vec::as_slice)
+    }
+
+    fn is_concrete(&self, qualified: &str) -> bool {
+        self.concrete(qualified).iter().any(|c| c == qualified)
+    }
+
+    /// The `by_type` keys `sh:targetClass q` matches: `q` alone when it is
+    /// concrete, else its concrete descendants.
+    ///
+    /// SHACL matches subclass instances only through `rdfs:subClassOf` triples
+    /// in the data graph, and CGMES and NC data carry none, so a target class
+    /// matches literally. The APL is written for that: the 600-2 Simple files
+    /// give every concrete class its own node shape repeating its inherited
+    /// properties, the Complex files enumerate subclasses by name, and
+    /// `RegulatingControl-RegulatingEquipment` describes `TapChangerControl` as
+    /// exempt. An abstract class has no instances, so a literal match would
+    /// check nothing; its target expands instead. Of 1,487 CGMES class targets
+    /// 3 are abstract (`Measurement`, `Control`).
+    fn targets_of(&self, qualified: &str) -> Vec<String> {
+        if self.is_concrete(qualified) {
+            vec![qualified.to_string()]
+        } else {
+            self.concrete(qualified).to_vec()
+        }
     }
 
     /// Every concrete class the listed IRIs allow, across all families.
@@ -243,16 +386,40 @@ fn field_key(iri: &str) -> &str {
     iri.rsplit_once(':').map_or(iri, |(_, local)| local)
 }
 
-/// An enum or IRI value as the decoder stores it.
+/// An `sh:in` / `sh:hasValue` member as the decoder would store it: a string
+/// literal verbatim, an IRI as [`iri_key`] gives it.
+fn value_key(c: &ConstraintInfo, v: &str, prefixes: &HashMap<String, String>) -> String {
+    let literal = c
+        .payload
+        .get(LITERALS)
+        .and_then(|l| l.as_list())
+        .is_some_and(|l| l.iter().any(|x| x == v));
+    if literal { v.to_string() } else { iri_key(v, prefixes) }
+}
+
+/// An IRI the way the decoder stores an `rdf:resource` (its
+/// `strip_fragment`): the part after the last `#`, or the whole IRI when it
+/// has none.
 ///
-/// `rdf:resource` values keep only the fragment (the decoder's
-/// `strip_fragment`), so `cim:Kind.value` and `<http://…#Kind.value>` must both
-/// compare as `Kind.value`.
-fn enum_fragment(v: &str) -> String {
-    let v = v.trim_start_matches('<').trim_end_matches('>');
-    match v.rsplit_once('#') {
-        Some((_, frag)) => frag.to_string(),
-        None => field_key(v).to_string(),
+/// A prefixed name is expanded through the file's prefixes first, so
+/// `cim:Kind.value` and `<http://…#Kind.value>` both come out as
+/// `Kind.value`, while `<https://ap.cim4.eu/Contingency/2.3>` — and a name in
+/// a namespace that ends in `/` — stays whole. An unknown prefix falls back to
+/// the local name.
+fn iri_key(v: &str, prefixes: &HashMap<String, String>) -> String {
+    let full = match v.strip_prefix('<') {
+        Some(inner) => inner.trim_end_matches('>').to_string(),
+        None => match v.split_once(':') {
+            Some((prefix, local)) => match prefixes.get(prefix) {
+                Some(ns) => format!("{ns}{local}"),
+                None => return local.to_string(),
+            },
+            None => v.to_string(),
+        },
+    };
+    match full.rfind('#') {
+        Some(i) => full[i + 1..].to_string(),
+        None => full,
     }
 }
 
@@ -277,12 +444,21 @@ pub fn resolve_shapes(
             Some(p) if !p.is_empty() => p.clone(),
             _ => {
                 collector.push("", &fr.file_name, "file", "",
-                    "not imported by any NC profile manifest");
+                    "not imported by any profile manifest");
                 continue;
             }
         };
+        // Classes this file gives a closed shape of their own.
+        let closed_classes: HashSet<String> = fr
+            .shapes
+            .iter()
+            .filter(|shape| shape.closed.is_some())
+            .flat_map(|shape| &shape.targets)
+            .filter(|t| t.kind == "targetClass")
+            .filter_map(|t| r.class(&t.value, &fr.prefixes).cloned())
+            .collect();
         for shape in &fr.shapes {
-            if let Some(def) = resolve_shape(shape, fr, &profiles, &r, collector, &mut stats) {
+            for def in resolve_shape(shape, fr, &profiles, &r, &closed_classes, collector, &mut stats) {
                 stats.shapes += 1;
                 out.push(def);
             }
@@ -296,30 +472,40 @@ fn resolve_shape(
     fr: &FileResults,
     profiles: &[String],
     r: &Resolver,
+    closed_classes: &HashSet<String>,
     collector: &mut SkipCollector,
     stats: &mut Stats,
-) -> Option<ShapeDef> {
+) -> Vec<ShapeDef> {
     let mut targets: Vec<Target> = Vec::new();
+    // The same, narrowed for the shape's `sh:closed` check.
+    let mut closed_targets: Vec<Target> = Vec::new();
     let mut target_classes: Vec<String> = Vec::new();
 
     for t in &shape.targets {
         match t.kind.as_str() {
             "targetClass" | "targetNode" => match r.class(&t.value, &fr.prefixes) {
                 Some(q) => {
-                    let concrete = r.concrete(q);
+                    let concrete = r.targets_of(q);
                     if concrete.is_empty() {
                         collector.push(&t.value, "", "sh:targetClass", &shape.name,
                             "class has no concrete subclass in this family");
                         continue;
                     }
                     target_classes.push(q.clone());
-                    targets.push(Target::Class(concrete.to_vec()));
+                    targets.push(Target::Class(concrete));
+                    if shape.closed.is_some() {
+                        let narrowed = r.closed_concrete(q, closed_classes);
+                        if !narrowed.is_empty() {
+                            closed_targets.push(Target::Class(narrowed));
+                        }
+                    }
                 }
                 None => {
                     // The cim16:/cim17: targets land here: NC shapes on CGMES
-                    // classes. The decoder builds a typed struct for those and
-                    // drops the NC attribute the shape constrains, so checking
-                    // them would report absent values that were in the XML.
+                    // classes. Their elements decode as CGMES, and these shapes
+                    // were skipped while CGMES structs dropped the NC attribute
+                    // they constrain. Elements now keep it, so they could run;
+                    // enabling them is a behaviour change left for later.
                     collector.push(&t.value, "", "sh:targetClass", &shape.name,
                         "target class is not in this family's schema (cross-family shape)");
                     continue;
@@ -327,6 +513,7 @@ fn resolve_shape(
             },
             "targetSubjectsOf" => {
                 targets.push(Target::SubjectsOf(field_key(&t.value).to_string()));
+                closed_targets.push(Target::SubjectsOf(field_key(&t.value).to_string()));
             }
             other => {
                 collector.push(&t.value, "", other, &shape.name,
@@ -335,7 +522,7 @@ fn resolve_shape(
         }
     }
     if targets.is_empty() {
-        return None;
+        return Vec::new();
     }
 
     let class_label = target_classes.first().cloned().unwrap_or_default();
@@ -360,18 +547,43 @@ fn resolve_shape(
         }
     });
 
-    if props.is_empty() && closed.is_none() {
-        return None;
+    let mut logic: Vec<Logic> = Vec::new();
+    for c in &shape.constraints {
+        if let Some(l) = resolve_logic(c, shape, fr, &class_label, r, collector) {
+            logic.push(l);
+        }
+    }
+    stats.logic += logic.len();
+
+    if props.is_empty() && closed.is_none() && logic.is_empty() {
+        return Vec::new();
     }
     stats.props += props.len();
 
-    Some(ShapeDef {
+    let def = |targets, props, closed, logic| ShapeDef {
         targets,
         props,
         closed,
+        logic,
         profiles: profiles.to_vec(),
         file: fr.file_name.clone(),
-    })
+    };
+    match closed {
+        None => vec![def(targets, props, None, logic)],
+        // The closed check runs on the narrowed targets; any other check on
+        // the shape keeps the full ones, so a closed shape that also carries
+        // constraints becomes two.
+        Some(closed) => {
+            let mut out = Vec::new();
+            if !props.is_empty() || !logic.is_empty() {
+                out.push(def(targets, props, None, logic));
+            }
+            if !closed_targets.is_empty() {
+                out.push(def(closed_targets, Vec::new(), Some(closed), Vec::new()));
+            }
+            out
+        }
+    }
 }
 
 fn resolve_prop(
@@ -382,27 +594,11 @@ fn resolve_prop(
     collector: &mut SkipCollector,
     stats: &mut Stats,
 ) -> Option<PropShape> {
-    let (seg, path) = match prop.path.as_slice() {
-        [one] => match decode_path(one) {
-            Some(p) => (one.as_str(), p),
-            None => {
-                collector.push(class_label, one, "sh:path", &prop.name, "unsupported path form");
-                return None;
-            }
-        },
-        // `( nc:X.y rdf:type )` — 170 of NCP's 178 chains.
-        [first, last] if last == "rdf:type" => {
-            (first.as_str(), Path::RefType(field_key(first).to_string()))
-        }
-        // Anything longer, or ending elsewhere, walks through intermediate
-        // objects. Guessing at one would be worse than reporting it.
-        segs if !segs.is_empty() => {
-            collector.push(class_label, &segs.join(" / "), "sh:path", &prop.name,
-                "multi-segment property path not supported for bag families");
-            return None;
-        }
-        _ => {
-            collector.push(class_label, "", "sh:path", &prop.name, "shape has no resolvable path");
+    let seg = prop.path.first().map_or("", String::as_str);
+    let path = match resolve_path(&prop.path) {
+        Ok(p) => p,
+        Err(reason) => {
+            collector.push(class_label, &prop.path.join(" / "), "sh:path", &prop.name, reason);
             return None;
         }
     };
@@ -418,7 +614,7 @@ fn resolve_prop(
     // cardinality shape on one would over-report. The shapes ship in the same
     // ENTSO-E release as the RDFS, so that would be a schema bug.
 
-    let is_ref_type = matches!(path, Path::RefType(_));
+    let is_ref_type = path.yields_types();
     let mut checks: Vec<Check> = Vec::new();
     for c in &prop.constraints {
         match resolve_constraint(c, r, &fr.prefixes, is_ref_type) {
@@ -449,6 +645,122 @@ fn resolve_prop(
     }
     stats.checks += checks.len();
     Some(PropShape { path, checks })
+}
+
+/// A property path as `extract_path` encodes it: one segment per step, each
+/// `"iri"`, `"^iri"` (inverse) or `"|a|b"` (alternative).
+fn resolve_path(segs: &[String]) -> Result<Path, &'static str> {
+    match segs {
+        [] => Err("shape has no resolvable path"),
+        // `sh:targetNode cim:X` with `[ sh:inversePath rdf:type ]` counts the
+        // instances of class X: the focus node is the class, not an element,
+        // which the table has no way to say. CGMES's three such rules are
+        // written by hand.
+        [one] if one == "^rdf:type" => {
+            Err("instance count of a class (`[ sh:inversePath rdf:type ]`), written by hand")
+        }
+        [one] => decode_path(one).ok_or("unsupported path form"),
+        _ => {
+            let mut steps = Vec::with_capacity(segs.len());
+            for (i, seg) in segs.iter().enumerate() {
+                let last = i + 1 == segs.len();
+                steps.push(match seg.as_str() {
+                    "rdf:type" if last => Step::Type,
+                    "rdf:type" => return Err("rdf:type before the end of a sequence path"),
+                    s if s.starts_with('|') => {
+                        return Err("alternative path inside a sequence path")
+                    }
+                    s => match s.strip_prefix('^') {
+                        Some(inv) => Step::Inverse(field_key(inv).to_string()),
+                        None => Step::Forward(field_key(s).to_string()),
+                    },
+                });
+            }
+            Ok(Path::Chain(steps))
+        }
+    }
+}
+
+/// Resolve a node-level `sh:and` / `sh:or` / `sh:xone`.
+///
+/// All or nothing: a branch that drops one of its constraints conforms more
+/// often than the schema says, which changes what the combination means rather
+/// than just checking less. So any part that does not resolve skips the whole
+/// combination, as does anything the importer saw in a branch but could not
+/// represent.
+fn resolve_logic(
+    c: &ConstraintInfo,
+    shape: &ShapeInfo,
+    fr: &FileResults,
+    class_label: &str,
+    r: &Resolver,
+    collector: &mut SkipCollector,
+) -> Option<Logic> {
+    let op = match c.component.as_str() {
+        "sh:AndConstraintComponent" => LogicOp::And,
+        "sh:OrConstraintComponent" => LogicOp::Or,
+        "sh:XoneConstraintComponent" => LogicOp::Xone,
+        _ => return None,
+    };
+    let mut skip = |reason: &str| {
+        collector.push(class_label, "", &c.component, &shape.name, reason);
+        None
+    };
+    if c.payload.get(UNSUPPORTED).and_then(|v| v.as_list()).is_some_and(|u| !u.is_empty()) {
+        return skip("logical branch uses a construct the importer does not represent");
+    }
+    let Some(raw) = c.payload.get("branches").and_then(|v| v.as_shapes()) else {
+        return skip("logical constraint without branches");
+    };
+
+    let negated: Vec<usize> = c
+        .payload
+        .get(NEGATED)
+        .and_then(|v| v.as_list())
+        .map(|l| l.iter().filter_map(|i| i.parse().ok()).collect())
+        .unwrap_or_default();
+    let mut branches: Vec<Branch> = Vec::new();
+    for (bi, raw_branch) in raw.iter().enumerate() {
+        // One branch may constrain several paths; group by path.
+        let mut props: Vec<PropShape> = Vec::new();
+        for bc in raw_branch {
+            let Ok(path) = resolve_path(&bc.path) else {
+                return skip("logical branch path does not resolve");
+            };
+            // minCount 0 is vacuous, and is how EnergySourcePQ spells "absent"
+            // next to its maxCount 0.
+            if bc.component == "sh:MinCountConstraintComponent"
+                && bc.payload.get("minCount").and_then(|v| v.as_int()) == Some(0)
+            {
+                continue;
+            }
+            let Some(constraint) = resolve_constraint(bc, r, &fr.prefixes, path.yields_types()) else {
+                return skip("logical branch constraint not supported for bag families");
+            };
+            let check = Check {
+                constraint,
+                rule_id: String::new(),
+                name: String::new(),
+                message: String::new(),
+                description: String::new(),
+                severity: String::new(),
+            };
+            match props.iter_mut().find(|p| p.path == path) {
+                Some(p) => p.checks.push(check),
+                None => props.push(PropShape { path, checks: vec![check] }),
+            }
+        }
+        branches.push(Branch { props, negate: negated.contains(&bi) });
+    }
+    Some(Logic {
+        op,
+        branches,
+        rule_id: c.rule_id.clone(),
+        name: c.name.clone(),
+        message: c.message.clone(),
+        description: c.description.clone(),
+        severity: if c.severity.is_empty() { "sh:Violation".to_string() } else { c.severity.clone() },
+    })
 }
 
 /// Decode the two encodings `extract_path` uses — `"^iri"` for inverse and
@@ -484,8 +796,9 @@ fn resolve_constraint(
     is_ref_type: bool,
 ) -> Option<Constraint> {
     let int = |key: &str| c.payload.get(key).and_then(|v| v.as_int());
+    let float = |key: &str| c.payload.get(key).and_then(|v| v.as_float());
 
-    // On a RefType path the values are class IRIs, so sh:in is a class
+    // On a path ending in rdf:type the values are class IRIs, so sh:in is a class
     // membership test rather than a literal comparison, and it has to resolve
     // across families.
     if is_ref_type {
@@ -543,16 +856,60 @@ fn resolve_constraint(
             let classes = r.any_classes(std::slice::from_ref(&cls), prefixes);
             (!classes.is_empty()).then_some(Constraint::Class(classes))
         }
+        // `sh:or ( [ sh:class A ] [ sh:class B ] )` on one property: each value
+        // must be an instance of one of them, which is `sh:class` over the
+        // union.
+        "sh:OrClassConstraintComponent" => {
+            let classes = r.any_classes(c.payload.get("classes")?.as_list()?, prefixes);
+            (!classes.is_empty()).then_some(Constraint::Class(classes))
+        }
+        // Only the one form the profiles use: a qualified shape that is a
+        // value list. Anything else in it is left unresolved.
+        "sh:QualifiedMinCountConstraintComponent" => {
+            let min = int("qualifiedMinCount")? as u32;
+            let inner = c.payload.get("shape")?.as_shapes()?.first()?;
+            let [ic] = inner.as_slice() else { return None };
+            let allowed: Vec<String> = match ic.component.as_str() {
+                "sh:InConstraintComponent" => {
+                    ic.payload.get("in")?.as_list()?.iter().map(|v| value_key(ic, v, prefixes)).collect()
+                }
+                "sh:HasValueConstraintComponent" => {
+                    vec![value_key(ic, ic.payload.get("hasValue")?.as_str()?, prefixes)]
+                }
+                _ => return None,
+            };
+            Some(Constraint::QualifiedIn { allowed, min })
+        }
+        "sh:NotClassConstraintComponent" => {
+            let cls = c.payload.get("class")?.as_str()?.to_string();
+            let classes = r.any_classes(std::slice::from_ref(&cls), prefixes);
+            (!classes.is_empty()).then_some(Constraint::NotClass(classes))
+        }
         "sh:InConstraintComponent" => {
             let values = c.payload.get("in")?.as_list()?;
-            Some(Constraint::In(values.iter().map(|v| enum_fragment(v)).collect()))
+            Some(Constraint::In(values.iter().map(|v| value_key(c, v, prefixes)).collect()))
         }
         "sh:HasValueConstraintComponent" => {
             let v = c.payload.get("hasValue")?.as_str()?;
-            Some(Constraint::HasValue(enum_fragment(v)))
+            Some(Constraint::HasValue(value_key(c, v, prefixes)))
         }
         "sh:MaxLengthConstraintComponent" => Some(Constraint::MaxLength(int("maxLength")? as u32)),
         "sh:MinLengthConstraintComponent" => Some(Constraint::MinLength(int("minLength")? as u32)),
+        "sh:LengthConstraintComponent" => Some(Constraint::Length(int("length")? as u32)),
+        "sh:MinInclusiveConstraintComponent" => Some(Constraint::MinInclusive(float("minInclusive")?)),
+        "sh:MaxInclusiveConstraintComponent" => Some(Constraint::MaxInclusive(float("maxInclusive")?)),
+        "sh:MinExclusiveConstraintComponent" => Some(Constraint::MinExclusive(float("minExclusive")?)),
+        "sh:MaxExclusiveConstraintComponent" => Some(Constraint::MaxExclusive(float("maxExclusive")?)),
+        // The other property is read from the same element, so it resolves to
+        // a field key exactly as the path does.
+        "sh:LessThanConstraintComponent" => {
+            let other = c.payload.get("lessThan")?.as_str()?;
+            Some(Constraint::LessThan(field_key(other).to_string()))
+        }
+        "sh:LessThanOrEqualsConstraintComponent" => {
+            let other = c.payload.get("lessThanOrEquals")?.as_str()?;
+            Some(Constraint::LessThanOrEquals(field_key(other).to_string()))
+        }
         _ => None,
     }
 }
@@ -594,7 +951,16 @@ pub fn load_shape_table(
         return Err(format!("no SHACL .ttl files in {}", dir.display()).into());
     }
 
-    let profiles_of = profile_files(&dir.join("Validation"))?;
+    let profiles_of: HashMap<String, Vec<String>> = match family.shacl_manifest {
+        Some(manifest) => {
+            let mut m: HashMap<String, Vec<String>> = HashMap::new();
+            for (stem, tag) in manifest {
+                m.entry((*stem).to_string()).or_default().push((*tag).to_string());
+            }
+            m
+        }
+        None => profile_files(&dir.join("Validation"))?,
+    };
 
     let mut files: Vec<FileResults> = Vec::new();
     for path in &ttl_paths {
@@ -606,7 +972,7 @@ pub fn load_shape_table(
     // Simplification drops constraints too (deactivated shapes, vacuous
     // minCount=0), and those belong in the same accounting as the resolution
     // skips — an unreported drop reads like a rule that passed.
-    for (_, entries) in crate::shacl::simplify::simplify(&mut files, family) {
+    for (_, entries) in crate::shacl::simplify::simplify(&mut files) {
         for e in entries {
             collector.push(
                 e.class_names.first().map(String::as_str).unwrap_or(""),
@@ -620,6 +986,9 @@ pub fn load_shape_table(
 
     let (shapes, stats) = resolve_shapes(spec, others, &files, &profiles_of, collector);
 
+    // Profile identity — which IRI a dataset declares, which code that is —
+    // comes from the PROF descriptors for every family. A dataset names them in
+    // `dcterms:conformsTo` (NC) or `md:Model.profile` (CGMES).
     let prof_dir = dir.parent().map_or_else(|| dir.join("PROF"), |p| p.join("PROF"));
     let index = crate::import::import_profile_index(&prof_dir)?;
     let mut profile_iris: Vec<(String, String)> = index
@@ -633,11 +1002,26 @@ pub fn load_shape_table(
     Ok(ShapeTable { shapes, profile_iris, profiles, stats })
 }
 
+/// The profile code given to files only the combined manifest imports.
+///
+/// NCP's per-profile manifests import the Simple files; every Complex file
+/// (`AssessedElement-AP-Con-Complex-SHACL.ttl`, …, and
+/// `NC-AP-Con-Complex-Common-SHACL.ttl`) is imported by the combined
+/// `NCP-AP-Con-Complex-Validation` manifest alone, whose keyword is `ALL`. Its
+/// rules relate datasets to one another, so they run once on the merged
+/// dataset (`cimvalidation::validate_crossprofile`) under this code.
+pub const MERGED_PROFILE: &str = "ALL";
+
 /// TTL base file name → the profile codes whose manifest imports it.
+///
+/// A file the combined manifest imports and no per-profile one does gets
+/// [`MERGED_PROFILE`]; one imported by both keeps only its per-profile codes,
+/// since those already run it on every file.
 pub fn profile_files(
     dir: &std::path::Path,
 ) -> Result<HashMap<String, Vec<String>>, Box<dyn std::error::Error>> {
     let mut map: HashMap<String, Vec<String>> = HashMap::new();
+    let mut merged_only: Vec<String> = Vec::new();
     let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
@@ -646,14 +1030,16 @@ pub fn profile_files(
     paths.sort();
     for path in &paths {
         let m = crate::shacl::ttl_import::import_manifest(path)?;
-        // The combined "ALL" manifest imports every file; recording it would
-        // put a redundant profile code on every shape.
-        if m.profile == "ALL" {
+        if m.profile == MERGED_PROFILE {
+            merged_only = m.imports;
             continue;
         }
         for file in m.imports {
             map.entry(file).or_default().push(m.profile.clone());
         }
+    }
+    for file in merged_only {
+        map.entry(file).or_insert_with(|| vec![MERGED_PROFILE.to_string()]);
     }
     for v in map.values_mut() {
         v.sort();

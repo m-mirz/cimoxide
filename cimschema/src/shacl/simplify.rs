@@ -1,22 +1,15 @@
 use super::model::*;
 use super::skip;
-use crate::family::Family;
 
 /// Apply the normalisation rules to every FileResults.
 ///
 /// Returns per-file skip entries for every constraint dropped here.
 ///
-/// `family` decides whether the type-system rules apply. Rules 1, 2 and 7 drop
-/// `sh:nodeKind` and `sh:datatype` on the grounds that a generated Rust struct
-/// cannot hold a violating value — true of an `f64`, false of a property bag's
-/// `FieldValue::Text(String)`. For a bag family those constraints are the only
-/// thing standing between a malformed literal and a silent accept, so they are
-/// kept. On the NCP schema that is the difference between 2,747 dropped
-/// constraints and 2,747 checked ones.
-pub fn simplify(
-    results: &mut Vec<FileResults>,
-    family: &'static Family,
-) -> Vec<(String, Vec<skip::SkipEntry>)> {
+/// `sh:nodeKind` and `sh:datatype` are always kept. Rules 1, 2 and 7 used to
+/// drop them for CGMES, because a generated struct field could not hold a
+/// violating value; validation now reads the text as written, where a malformed
+/// literal is real and only these constraints report it.
+pub fn simplify(results: &mut [FileResults]) -> Vec<(String, Vec<skip::SkipEntry>)> {
     let mut all_skips = Vec::new();
     for fr in results.iter_mut() {
         let mut collector = skip::SkipCollector::new();
@@ -30,7 +23,7 @@ pub fn simplify(
                 .map(|t| local_name(&t.value))
                 .filter(|n| !n.is_empty())
                 .collect();
-            simplify_shape(shape, &class_names, family, &mut collector);
+            simplify_shape(shape, &class_names, &mut collector);
         }
         all_skips.push((fr.file_name.clone(), collector.into_entries()));
     }
@@ -44,7 +37,6 @@ fn local_name(iri: &str) -> String {
 fn simplify_shape(
     shape: &mut ShapeInfo,
     class_names: &[String],
-    family: &'static Family,
     collector: &mut skip::SkipCollector,
 ) {
     // A shape the schema switched off contributes nothing, but it must be
@@ -80,7 +72,6 @@ fn simplify_shape(
             std::mem::take(&mut prop.constraints),
             class_names,
             path,
-            family,
             collector,
         );
     }
@@ -91,48 +82,17 @@ fn simplify_constraints(
     constraints: Vec<ConstraintInfo>,
     class_names: &[String],
     path: &str,
-    family: &'static Family,
     collector: &mut skip::SkipCollector,
 ) -> Vec<ConstraintInfo> {
-    // Pass 1: determine whether a sh:datatype is present on this shape's constraints.
-    let has_datatype = constraints
-        .iter()
-        .any(|c| c.component == "sh:DatatypeConstraintComponent");
-
     let mut out: Vec<ConstraintInfo> = Vec::with_capacity(constraints.len());
 
     for c in constraints {
         match c.component.as_str() {
-            // Rule 1: Drop NodeKind=Literal if any sh:datatype is present —
-            // the datatype already implies a literal node.
-            "sh:NodeKindConstraintComponent" if family.typed => {
-                let nk = c.payload.get("nodeKind").and_then(|v| v.as_str()).unwrap_or("");
-                if nk == "sh:Literal" && has_datatype {
-                    push_for_classes(collector, class_names, path, &c.component, &c.name,
-                        "NodeKind=Literal structurally satisfied: datatype constraint implies literal");
-                    continue;
-                }
-                // Rule 2: Drop NodeKind=BlankNodeOrIRI and NodeKind=IRI —
-                // MridRef / UriRef already enforce these in Rust.
-                if nk == "sh:BlankNodeOrIRI" || nk == "sh:IRI" {
-                    push_for_classes(collector, class_names, path, &c.component, &c.name,
-                        "NodeKind structurally satisfied by Rust type system (MridRef/UriRef)");
-                    continue;
-                }
-                out.push(c);
-            }
-
-            // Rule 7: Drop sh:datatype when Rust's type system already enforces it.
-            "sh:DatatypeConstraintComponent" if family.typed => {
-                let dt = c.payload.get("datatype").and_then(|v| v.as_str()).unwrap_or("");
-                if is_native_rust_type(dt) {
-                    push_for_classes(collector, class_names, path, &c.component, &c.name,
-                        "Datatype structurally satisfied by Rust type system");
-                    continue;
-                }
-                out.push(c);
-            }
-
+            // sh:nodeKind and sh:datatype are kept, for both families. The
+            // generated validators read parsed struct fields, against which
+            // both were tautologies (rules 1, 2 and 7, now gone); the shape
+            // table reads the text as written, where a malformed number or a
+            // literal in place of a reference is real and only these report.
             // Rules 3–5: Normalise cardinality constraints.
             "sh:MinCountConstraintComponent"
             | "sh:MaxCountConstraintComponent"
@@ -165,11 +125,14 @@ fn simplify_constraints(
             // Rule 6: Convert sh:in with a single value to sh:HasValue.
             "sh:InConstraintComponent" => {
                 let values = c.payload.get("in").and_then(|v| v.as_list());
-                if let Some(vals) = values {
-                    if vals.len() == 1 {
+                if let Some(vals) = values
+                    && vals.len() == 1 {
                         let single = vals[0].clone();
                         let mut payload = std::collections::HashMap::new();
                         payload.insert("hasValue".to_string(), ShaclValue::Str(single));
+                        if let Some(lits) = c.payload.get(LITERALS) {
+                            payload.insert(LITERALS.to_string(), lits.clone());
+                        }
                         out.push(ConstraintInfo {
                             component: "sh:HasValueConstraintComponent".to_string(),
                             payload,
@@ -177,7 +140,6 @@ fn simplify_constraints(
                         });
                         continue;
                     }
-                }
                 out.push(c);
             }
 
@@ -199,27 +161,4 @@ fn push_for_classes(
     for class in class_names {
         collector.push(class, prop, component, name, reason);
     }
-}
-
-/// Rule 7: datatypes whose validity is guaranteed by the Rust type system.
-fn is_native_rust_type(xsd_type: &str) -> bool {
-    matches!(
-        xsd_type,
-        "xsd:string"
-            | "xsd:boolean"
-            | "xsd:integer"
-            | "xsd:int"
-            | "xsd:long"
-            | "xsd:float"
-            | "xsd:double"
-            | "xsd:decimal"
-            | "<http://www.w3.org/2001/XMLSchema#string>"
-            | "<http://www.w3.org/2001/XMLSchema#boolean>"
-            | "<http://www.w3.org/2001/XMLSchema#integer>"
-            | "<http://www.w3.org/2001/XMLSchema#int>"
-            | "<http://www.w3.org/2001/XMLSchema#long>"
-            | "<http://www.w3.org/2001/XMLSchema#float>"
-            | "<http://www.w3.org/2001/XMLSchema#double>"
-            | "<http://www.w3.org/2001/XMLSchema#decimal>"
-    )
 }

@@ -1,4 +1,4 @@
-//! Where a bag family's shape table comes from.
+//! Where a family's shape table comes from.
 //!
 //! By default it is the table `cimgen` generated. With the `dynamic-shapes`
 //! feature, a directory of SHACL TTL files can supply it instead, so a new
@@ -7,14 +7,21 @@
 //! Resolution order, highest first:
 //!
 //! 1. [`load_from`] — an explicit call, for libraries and tests
-//! 2. `CIMOXIDE_SHACL_DIR` — for the CLI and the Python bindings
+//! 2. `CIMOXIDE_SHACL_DIR` — for the CLI and the Python bindings. It may list
+//!    several directories, separated as in `PATH`; each serves the family
+//!    whose files it holds (see [`family_of_dir`]), so `…/NCP/SHACL` alone
+//!    still loads only NC, as it always did
 //! 3. the generated table
+//!
+//! CGMES classes are compiled structs, so a CGMES table loaded from another
+//! release can name classes this build cannot decode; shapes on those simply
+//! match nothing.
 //!
 //! A directory that is missing or fails to parse falls back to the generated
 //! table **with a warning**. Silently validating against a stale profile
 //! because a path had a typo is the worst outcome available here.
 //!
-//! This mirrors [`cimstructs::schema_source`] closely enough that the two
+//! This mirrors [`cimmodel::schema_source`] closely enough that the two
 //! should be read side by side. The one difference that matters: there, the
 //! generator and the loader build the table by separate code paths and a test
 //! compares them. Here both call `cimschema::shacl::resolve`, so there is no
@@ -23,7 +30,7 @@
 
 use crate::shapes::ShapeDef;
 
-/// Resolve the shape table for a bag family.
+/// Resolve the shape table for a family.
 ///
 /// `generated` is the table `cimgen` emitted, used unless something overrides
 /// it.
@@ -61,7 +68,7 @@ pub fn resolve_profiles(
 }
 
 #[cfg(feature = "dynamic-shapes")]
-pub use dynamic::{load_from, load_table, ShapeError, SHACL_DIR_ENV};
+pub use dynamic::{family_of_dir, intern_shapes, load_from, load_table, ShapeError, SHACL_DIR_ENV};
 
 #[cfg(feature = "dynamic-shapes")]
 mod dynamic {
@@ -75,11 +82,13 @@ mod dynamic {
     use cimschema::shacl::skip::SkipCollector;
 
     use crate::shapes::{
-        AltBranch, Check, ClosedShape, Constraint, NodeKind, Path as SPath, PropShape, ShapeDef,
-        Target,
+        AltBranch, Branch, Check, ClosedShape, Constraint, Logic, LogicOp, NodeKind, Path as SPath,
+        PropShape, ShapeDef, Step, Target,
     };
 
-    /// Environment variable naming a directory of SHACL constraint files.
+    /// Environment variable naming SHACL constraint directories — one, or
+    /// several separated as in `PATH`, each serving the family whose files it
+    /// holds.
     pub const SHACL_DIR_ENV: &str = "CIMOXIDE_SHACL_DIR";
 
     #[derive(Debug)]
@@ -88,7 +97,7 @@ mod dynamic {
         TooLate,
         /// A table was already loaded for this family.
         AlreadyLoaded,
-        /// No family with this id, or it is not a bag family.
+        /// No family with this id.
         UnknownFamily(String),
         /// The RDFS the shapes resolve against could not be read.
         Schema(String),
@@ -103,7 +112,7 @@ mod dynamic {
                     "the shape table is already resolved; load the shapes before validating"
                 ),
                 Self::AlreadyLoaded => write!(f, "shapes are already loaded for this family"),
-                Self::UnknownFamily(id) => write!(f, "unknown or non-bag family: {id}"),
+                Self::UnknownFamily(id) => write!(f, "unknown family: {id}"),
                 Self::Schema(e) => write!(f, "cannot read the schema the shapes resolve against: {e}"),
                 Self::Parse(e) => write!(f, "{e}"),
             }
@@ -141,7 +150,7 @@ mod dynamic {
     /// first validation: the table is memoized, so afterwards this returns
     /// [`ShapeError::TooLate`] rather than being quietly ignored.
     ///
-    /// As in `cimstructs::schema_source`, the guard is best-effort — there is a
+    /// As in `cimmodel::schema_source`, the guard is best-effort — there is a
     /// narrow race between the check and the insert — and is documented rather
     /// than locked, because the contract is "call before validating".
     pub fn load_from(family_id: &str, dir: &Path) -> Result<(), ShapeError> {
@@ -165,9 +174,21 @@ mod dynamic {
     }
 
     fn bag_family(id: &str) -> Result<&'static Family, ShapeError> {
-        family::by_id(id)
-            .filter(|f| !f.typed)
-            .ok_or_else(|| ShapeError::UnknownFamily(id.to_string()))
+        family::by_id(id).ok_or_else(|| ShapeError::UnknownFamily(id.to_string()))
+    }
+
+    /// Which family's constraint files a SHACL directory holds: NC ships
+    /// per-profile manifests in `Validation/`, CGMES files named in its
+    /// written-out manifest. `None` when it is neither.
+    pub fn family_of_dir(dir: &Path) -> Option<&'static Family> {
+        if dir.join("Validation").is_dir() {
+            return family::by_id("nc");
+        }
+        family::FAMILIES.iter().copied().find(|f| {
+            f.shacl_manifest.is_some_and(|m| {
+                m.iter().any(|(stem, _)| dir.join(format!("{stem}.ttl")).is_file())
+            })
+        })
     }
 
     pub(super) fn resolve(
@@ -199,21 +220,36 @@ mod dynamic {
             return *cached;
         }
 
-        let loaded = match std::env::var_os(SHACL_DIR_ENV) {
-            None => None,
-            Some(dir) => match bag_family(family_id) {
-                Err(_) => None,
-                Ok(family) => match load(family, &PathBuf::from(dir)) {
-                    Ok(l) => Some(l),
-                    Err(e) => {
-                        eprintln!(
-                            "warning: {SHACL_DIR_ENV} set but the {family_id} shapes could not \
-                             be loaded ({e}); falling back to the generated shape table"
-                        );
-                        None
-                    }
-                },
+        // The directory, if any, that holds this family's files. A directory
+        // holding neither family's files is reported once, by the first family
+        // to look, rather than silently ignored.
+        let dir: Option<PathBuf> = std::env::var_os(SHACL_DIR_ENV).and_then(|dirs| {
+            let dirs: Vec<PathBuf> = std::env::split_paths(&dirs).collect();
+            static REPORTED: AtomicBool = AtomicBool::new(false);
+            if !REPORTED.swap(true, Ordering::SeqCst) {
+                for d in dirs.iter().filter(|d| family_of_dir(d).is_none()) {
+                    eprintln!(
+                        "warning: {SHACL_DIR_ENV} names {}, which holds no NC or CGMES \
+                         constraint files; ignoring it",
+                        d.display()
+                    );
+                }
+            }
+            dirs.into_iter().find(|d| family_of_dir(d).is_some_and(|f| f.id == family_id))
+        });
+        let loaded = match (dir, bag_family(family_id)) {
+            (Some(dir), Ok(family)) => match load(family, &dir) {
+                Ok(l) => Some(l),
+                Err(e) => {
+                    eprintln!(
+                        "warning: {SHACL_DIR_ENV} names {} but the {family_id} shapes could not \
+                         be loaded ({e}); falling back to the generated shape table",
+                        dir.display()
+                    );
+                    None
+                }
             },
+            _ => None,
         };
         cache.insert(family_id, loaded);
         loaded
@@ -222,7 +258,7 @@ mod dynamic {
     /// Read and intern one family's shapes and profile index.
     ///
     /// The shapes resolve against the family's RDFS, which
-    /// `cimstructs::schema_source` already knows how to find: a shape naming a
+    /// `cimmodel::schema_source` already knows how to find: a shape naming a
     /// class this workspace has no schema for cannot be checked, so the two
     /// have to agree on what the family contains.
     fn load(family: &'static Family, dir: &Path) -> Result<Loaded, ShapeError> {
@@ -330,14 +366,12 @@ mod dynamic {
             .and_then(|p| p.file_name())
             .zip(Path::new(f.default_schema).parent().and_then(Path::parent).and_then(|p| p.file_name()))
             .is_some_and(|(a, b)| a == b)
-        {
-            if let Some(dir) = std::env::var_os(cimstructs::schema_source::RDFS_DIR_ENV) {
+            && let Some(dir) = std::env::var_os(cimmodel::schema_source::RDFS_DIR_ENV) {
                 return PathBuf::from(dir)
                     .join(file_name(f.default_schema))
                     .to_string_lossy()
                     .into_owned();
             }
-        }
 
         // `application-profiles-library/CGMES/RDFS/<glob>` → `<root>/CGMES/RDFS/<glob>`.
         let tail: Option<PathBuf> = Path::new(f.default_schema)
@@ -359,6 +393,14 @@ mod dynamic {
             }
             _ => f.default_schema.to_string(),
         }
+    }
+
+    /// Convert an already-resolved table into the `&'static` IR, for a caller
+    /// that resolved the shapes itself (e.g. with its own profile mapping).
+    /// Leaked once per call.
+    pub fn intern_shapes(shapes: &[r::ShapeDef]) -> &'static [ShapeDef] {
+        let mut interner = Interner::default();
+        Vec::leak(shapes.iter().map(|s| shape(s, &mut interner)).collect())
     }
 
     /// Interns resolved strings so they satisfy the `&'static` signatures the
@@ -398,6 +440,7 @@ mod dynamic {
                     .collect::<Vec<_>>(),
             ),
             closed: s.closed.as_ref().map(|c| &*Box::leak(Box::new(closed(c, i)))),
+            logic: Vec::leak(s.logic.iter().map(|l| logic(l, i)).collect::<Vec<_>>()),
             profiles: i.intern_all(&s.profiles),
             file: i.intern(&s.file),
         }
@@ -421,7 +464,16 @@ mod dynamic {
         match p {
             r::Path::Forward(f) => SPath::Forward(i.intern(f)),
             r::Path::Inverse(f) => SPath::Inverse(i.intern(f)),
-            r::Path::RefType(f) => SPath::RefType(i.intern(f)),
+            r::Path::Chain(steps) => SPath::Chain(Vec::leak(
+                steps
+                    .iter()
+                    .map(|s| match s {
+                        r::Step::Forward(f) => Step::Forward(i.intern(f)),
+                        r::Step::Inverse(f) => Step::Inverse(i.intern(f)),
+                        r::Step::Type => Step::Type,
+                    })
+                    .collect::<Vec<_>>(),
+            )),
             r::Path::Alternative(branches) => SPath::Alternative(Vec::leak(
                 branches
                     .iter()
@@ -461,6 +513,41 @@ mod dynamic {
             r::Constraint::Class(v) => Constraint::Class(i.intern_all(v)),
             r::Constraint::RefClass(v) => Constraint::RefClass(i.intern_all(v)),
             r::Constraint::In(v) => Constraint::In(i.intern_all(v)),
+            r::Constraint::MinInclusive(v) => Constraint::MinInclusive(*v),
+            r::Constraint::MaxInclusive(v) => Constraint::MaxInclusive(*v),
+            r::Constraint::MinExclusive(v) => Constraint::MinExclusive(*v),
+            r::Constraint::MaxExclusive(v) => Constraint::MaxExclusive(*v),
+            r::Constraint::LessThan(f) => Constraint::LessThan(i.intern(f)),
+            r::Constraint::LessThanOrEquals(f) => Constraint::LessThanOrEquals(i.intern(f)),
+            r::Constraint::NotClass(v) => Constraint::NotClass(i.intern_all(v)),
+            r::Constraint::Length(n) => Constraint::Length(*n),
+            r::Constraint::QualifiedIn { allowed, min } => {
+                Constraint::QualifiedIn { allowed: i.intern_all(allowed), min: *min }
+            }
+        }
+    }
+
+    fn logic(l: &r::Logic, i: &mut Interner) -> Logic {
+        Logic {
+            op: match l.op {
+                r::LogicOp::And => LogicOp::And,
+                r::LogicOp::Or => LogicOp::Or,
+                r::LogicOp::Xone => LogicOp::Xone,
+            },
+            branches: Vec::leak(
+                l.branches
+                    .iter()
+                    .map(|b| Branch {
+                        props: Vec::leak(b.props.iter().map(|p| prop(p, i)).collect::<Vec<_>>()),
+                        negate: b.negate,
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            rule_id: i.intern(&l.rule_id),
+            name: i.intern(&l.name),
+            message: i.intern(&l.message),
+            description: i.intern(&l.description),
+            severity: i.intern(&l.severity),
         }
     }
 

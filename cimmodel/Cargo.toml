@@ -1,6 +1,6 @@
 [package]
-name = "cimoxide-structs"
-description = "Generated Rust structs for the IEC 61970/61968 Common Information Model as profiled by ENTSO-E CGMES"
+name = "cimoxide-model"
+description = "The IEC 61970/61968 Common Information Model as profiled by ENTSO-E CGMES: generated Rust structs, a streaming RDF/XML decoder, and conversion to RDF/XML and JSON"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,12 +11,12 @@ categories.workspace = true
 include = ["src/**/*.rs", "Cargo.toml"]
 
 [lib]
-name = "cimstructs"
+name = "cimmodel"
 
 [features]
 default = []
 # Load a bag family's class table from RDFS at runtime. Off by default: it
-# pulls an XML parser, and the six crates that depend on cimstructs for its
+# pulls the RDFS importer, and the crates that depend on cimmodel for its
 # types have no use for one.
 dynamic-schema = ["dep:cimoxide-schema"]
 
@@ -24,6 +24,8 @@ dynamic-schema = ["dep:cimoxide-schema"]
 cimoxide-schema = { workspace = true, optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+quick-xml  = { version = "0.37", features = ["encoding"] }
+sha1       = "0.11"   # deterministic (v5) UUIDs for synthesized FullModel headers
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -31,3 +33,12 @@ criterion = { version = "0.5", features = ["html_reports"] }
 [[bench]]
 name = "schema_load"
 harness = false
+
+[[bench]]
+name = "real_grid"
+harness = false
+
+[[bench]]
+name = "nc_decode"
+harness = false
+required-features = ["dynamic-schema"]

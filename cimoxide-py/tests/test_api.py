@@ -1,4 +1,4 @@
-"""API contract tests: merge, drop_blocks, iteration, error handling."""
+"""API contract tests: merge, iteration, mutation, error handling."""
 
 import os
 import pytest
@@ -19,16 +19,6 @@ def test_merge_combines_datasets():
     # After merge: ds1 contains the union of both MRID sets, ds2 is empty.
     assert set(ds1.mrids()) == expected_mrids
     assert len(ds2) == 0
-
-
-def test_drop_blocks_doesnt_lose_entries():
-    ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
-    count = len(ds)
-    ds.drop_blocks()
-    assert len(ds) == count
-    for mrid in ds:
-        obj = ds[mrid]
-        assert "_type" in obj
 
 
 def test_iteration_covers_all():
@@ -91,9 +81,9 @@ def test_decode_file_missing_raises():
 def test_setitem_updates_existing_field():
     ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
     obj = ds["ACLineSegment.OK"]
-    obj["r"] = 999.5
+    obj["ACLineSegment.r"] = "999.5"
     ds["ACLineSegment.OK"] = obj
-    assert ds["ACLineSegment.OK"]["r"] == 999.5
+    assert ds["ACLineSegment.OK"]["ACLineSegment.r"] == "999.5"
 
 
 def test_setitem_new_mrid_adds_entry():
@@ -101,7 +91,7 @@ def test_setitem_new_mrid_adds_entry():
     before = len(ds)
     obj = dict(ds["ACLineSegment.OK"])
     obj["id"] = "ACLineSegment.NEW"
-    obj["m_rid"] = "ACLineSegment.NEW"
+    obj["IdentifiedObject.mRID"] = "ACLineSegment.NEW"
     ds["ACLineSegment.NEW"] = obj
     assert len(ds) == before + 1
     assert "ACLineSegment.NEW" in ds.by_type()["ACLineSegment"]
@@ -138,7 +128,7 @@ def test_setitem_unknown_type_raises_value_error():
 def test_setitem_then_encode_reflects_change():
     ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
     obj = ds["ACLineSegment.OK"]
-    obj["r"] = 12345.5
+    obj["ACLineSegment.r"] = "12345.5"
     ds["ACLineSegment.OK"] = obj
     xml = ds.to_xml_for_profile("EQ")
     assert "12345.5" in xml

@@ -5,7 +5,23 @@
     <cim:ControlArea.type rdf:resource="http://iec.ch/TC57/CIM100#ControlAreaTypeKind.Interchange" />
     <cim:ControlArea.netInterchange>100.0</cim:ControlArea.netInterchange>
   </cim:ControlArea>
-  <!-- No EquivalentInjections connected to BoundaryPoints, sum is 0. Expected violation. -->
+  <!-- One tie flow to an EquivalentInjection at a BoundaryPoint, p = 60 against
+       netInterchange 100. Expected violation. (Without a tie flow the SPARQL has
+       nothing to sum and reports nothing.) -->
+  <cim:TieFlow rdf:ID="CA.INTERCHANGE.BAD.TF">
+    <cim:TieFlow.ControlArea rdf:resource="#CA.INTERCHANGE.BAD" />
+    <cim:TieFlow.Terminal rdf:resource="#CA.INTERCHANGE.BAD.T" />
+  </cim:TieFlow>
+  <cim:Terminal rdf:ID="CA.INTERCHANGE.BAD.T">
+    <cim:Terminal.ConnectivityNode rdf:resource="#CA.INTERCHANGE.BAD.CN" />
+    <cim:Terminal.ConductingEquipment rdf:resource="#CA.INTERCHANGE.BAD.EI" />
+  </cim:Terminal>
+  <eu:BoundaryPoint rdf:ID="CA.INTERCHANGE.BAD.BP">
+    <eu:BoundaryPoint.ConnectivityNode rdf:resource="#CA.INTERCHANGE.BAD.CN" />
+  </eu:BoundaryPoint>
+  <cim:EquivalentInjection rdf:ID="CA.INTERCHANGE.BAD.EI">
+    <cim:EquivalentInjection.p>60.0</cim:EquivalentInjection.p>
+  </cim:EquivalentInjection>
 
   <!-- 2. CsConverter target applicability -->
   <cim:CsConverter rdf:ID="CSC.INV.BAD.ALPHA">
@@ -23,6 +39,11 @@
     <cim:ShuntCompensator.sections>6.0</cim:ShuntCompensator.sections>
   </cim:LinearShuntCompensator>
 
+  <!-- A non-integer count under an enabled, discrete control. -->
+  <cim:RegulatingControl rdf:ID="RC.DISCRETE">
+    <cim:RegulatingControl.discrete>true</cim:RegulatingControl.discrete>
+    <cim:RegulatingControl.enabled>true</cim:RegulatingControl.enabled>
+  </cim:RegulatingControl>
   <cim:LinearShuntCompensator rdf:ID="LSC.NONINT.SECTIONS">
     <cim:RegulatingCondEq.RegulatingControl rdf:resource="#RC.DISCRETE" />
     <cim:ShuntCompensator.sections>1.5</cim:ShuntCompensator.sections>

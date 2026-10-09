@@ -38,7 +38,7 @@ jobs:
           python -m venv .venv
           .venv/bin/pip install maturin pytest
 
-      - name: Generate cimstructs and Python stubs
+      - name: Generate cimmodel and Python stubs
         run: make generate
 
       - name: Build Python extension

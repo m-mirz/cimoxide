@@ -65,9 +65,10 @@ fn shacl_eq_001() {
 
 #[test]
 fn shacl_ssh_001_battery_unit() {
-    // BatteryUnit.storedE must be < ratedE (sh:lessThan) — in notsolvedmas file.
+    // BatteryUnit.storedE must be < ratedE (sh:lessThan) — in the NotSolvedMAS
+    // file, whose rules run on the merged dataset.
     let ds = common::load_dataset("../testdata/test_shacl_SSH_001.xml");
-    let vs = validate_profile_local(&ds, "SSH", &Config { profiles: vec!["SSH".to_string()], not_solved: true, ..Config::default() });
+    let vs = cimvalidation::validate_crossprofile_shacl(&ds, &Config { profiles: vec!["SSH".to_string()], not_solved: true, ..Config::default() });
     let by_id = common::violations_by_id(&vs);
     assert_eq!(by_id.get("BatteryUnit.OK").map_or(0, |v| v.len()), 0,
         "BatteryUnit.OK (storedE=50 < ratedE=100): expected 0 violations, got: {:?}", by_id.get("BatteryUnit.OK"));

@@ -5,8 +5,7 @@ SHACL_GLOB := application-profiles-library/CGMES/SHACL/*.ttl
 all: generate build test
 
 generate:
-	mkdir -p cimstructs/src cimvalidation/src cimoxide-py/python/cimoxide
-	touch cimstructs/src/lib.rs
+	mkdir -p cimmodel/src/generated cimvalidation/src cimoxide-py/python/cimoxide
 	cargo run -p cimoxide-gen
 
 build:
@@ -23,5 +22,5 @@ python-build:
 
 clean:
 	cargo clean
-	find cimstructs/src -name '*.rs' ! -name 'base.rs' ! -name 'schema_source.rs' -delete
-	rm -f cimvalidation/src/generated_*.rs cimvalidation/src/generated_lib.rs
+	rm -rf cimmodel/src/generated
+	rm -f cimvalidation/src/cgmes_shapes.rs cimvalidation/src/cgmes_profiles.rs cimvalidation/src/nc_shapes.rs cimvalidation/src/nc_profiles.rs
