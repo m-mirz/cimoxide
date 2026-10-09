@@ -630,3 +630,69 @@ fn cgmes_dangling_references_skip_nc_elements() {
         .iter()
         .any(|v| v.rule_id == "sm600:All-DanglingReferences"));
 }
+
+fn common_findings(body: &str, rule: &str) -> Vec<(String, String)> {
+    let xml = format!(
+        r##"<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/CIM100#">
+{body}
+</rdf:RDF>"##
+    );
+    let ds = cimmodel::CimDataset::decode_str(&xml).unwrap();
+    let cfg = Config { common: true, solved: true, ..Default::default() };
+    let mut v: Vec<(String, String)> = cimvalidation::sparql::validate_crossprofile(&ds, &cfg)
+        .into_iter()
+        .filter(|v| v.rule_id == rule)
+        .map(|v| (v.object_id, v.property))
+        .collect();
+    v.sort();
+    v
+}
+
+/// INF and NaN are reported in attributes the schema types as Float only: a
+/// name may read "NaN", and a field the class does not declare has no type.
+#[test]
+fn float_special_values_are_read_from_float_attributes_only() {
+    let found = common_findings(
+        r#"<cim:ACLineSegment rdf:ID="_l">
+    <cim:ACLineSegment.r>NaN</cim:ACLineSegment.r>
+    <cim:ACLineSegment.x>INF</cim:ACLineSegment.x>
+    <cim:ACLineSegment.b0ch>1.5</cim:ACLineSegment.b0ch>
+    <cim:IdentifiedObject.name>NaN</cim:IdentifiedObject.name>
+    <cim:Unknown.value>NaN</cim:Unknown.value>
+  </cim:ACLineSegment>"#,
+        "all600:Float-specialValues",
+    );
+    assert_eq!(found, [
+        ("_l".to_string(), "ACLineSegment.r".to_string()),
+        ("_l".to_string(), "ACLineSegment.x".to_string()),
+    ]);
+}
+
+/// GENC1 reads each element's mRID as written; every holder but the first, by
+/// object id, is reported.
+#[test]
+fn a_shared_mrid_is_reported_on_every_holder_but_the_first() {
+    let mrid = "<cim:IdentifiedObject.mRID>11111111-1111-1111-1111-111111111111</cim:IdentifiedObject.mRID>";
+    let found = common_findings(
+        &format!(r#"<cim:Terminal rdf:ID="_a">{mrid}</cim:Terminal>
+  <cim:BusbarSection rdf:ID="_b">{mrid}</cim:BusbarSection>
+  <cim:Terminal rdf:ID="_c"><cim:IdentifiedObject.mRID>22222222-2222-2222-2222-222222222222</cim:IdentifiedObject.mRID></cim:Terminal>"#),
+        "all600:All-GENC1",
+    );
+    assert_eq!(found, [("_b".to_string(), "IdentifiedObject.mRID".to_string())]);
+}
+
+/// FBOD4 reads every reference as written: a single-valued association given
+/// twice holds two references, and both must resolve.
+#[test]
+fn a_reference_given_twice_is_still_checked() {
+    let found = common_findings(
+        r##"<cim:Terminal rdf:ID="_t">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_gone1"/>
+    <cim:Terminal.ConductingEquipment rdf:resource="#_gone2"/>
+  </cim:Terminal>"##,
+        "sm600:All-DanglingReferences",
+    );
+    assert_eq!(found.len(), 2, "{found:?}");
+}

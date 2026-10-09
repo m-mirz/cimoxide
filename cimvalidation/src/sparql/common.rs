@@ -44,42 +44,16 @@ fn check_per_entry_block_checks(dataset: &CimDataset) -> Vec<Violation> {
             v.extend(id_uuid_violation(id, entry));
             v.extend(id_deprecated_violation(id, entry));
 
-            // Fast path. These checks read the element's typed view
-            // (`super::view`), which is costlier than its raw fields. The raw
-            // fields hold every value that view does, as written, so if
-            // nothing in them could fail a check, nothing in the view can
-            // either. Only elements with a candidate pay for the view.
-            if !may_fail_entry_checks(entry.fields()) {
-                if let Some(cimmodel::base::FieldValue::Text(m_rid)) = entry.fields().get("IdentifiedObject.mRID")
-                    && !m_rid.is_empty() {
-                        // Unconfirmed: re-read through the view if it turns out
-                        // to be a duplicate, below.
-                        buckets[bucket_of(m_rid)].push((Cow::Borrowed(m_rid.as_str()), (id, entry.type_name(), entry)));
-                    }
-                continue;
-            }
-
             // --- mRID uniqueness (all600:All-GENC1), collected ---
-            if let Some(m_rid) = super::view::mrid(entry) {
+            if let Some(m_rid) = mrid(entry) {
                 buckets[bucket_of(m_rid)].push((Cow::Borrowed(m_rid), (id, entry.type_name(), entry)));
             }
 
-            for (key, s) in super::view::texts(entry) {
-
-                // --- float special values (all600:Float-specialValues) ---
-                if let Ok(f) = s.trim().parse::<f64>()
-                    && (f.is_nan() || f.is_infinite()) {
-                        v.push(Violation {
-                            object_id: id.clone(),
-                            rule_id:   "all600:Float-specialValues".into(),
-                            name:      "C:301:ALL:Float:specialValues".into(),
-                            class:     entry.type_name().to_string(),
-                            property:  key.to_string(),
-                            message:   "INF or NaN used in an attribute defined as float.".into(),
-                            severity:  "sh:Violation".into(),
-                            description: String::new(),
-                        });
-                    }
+            // --- float special values (all600:Float-specialValues) ---
+            // The byte scan rules out nearly every element before a field's
+            // attribute is looked up.
+            if may_be_non_finite(entry.fields()) {
+                v.extend(float_special_values(id, entry));
             }
         }
         (v, buckets)
@@ -116,14 +90,7 @@ fn check_per_entry_block_checks(dataset: &CimDataset) -> Vec<Violation> {
             // The smallest object id counts as the original and every other
             // one is reported, so the result does not depend on iteration
             // order.
-            for (m_rid, owners) in by_mrid.iter_mut() {
-                // Duplicates are rare, so confirm each owner against the
-                // typed view, which is what decides here; the fast path read
-                // the raw fields.
-                owners.retain(|(_, _, entry)| super::view::mrid(entry) == Some(m_rid.as_ref()));
-                if owners.len() < 2 {
-                    continue;
-                }
+            for owners in by_mrid.values_mut() {
                 owners.sort_unstable_by(|a, b| a.0.cmp(b.0));
                 for (id, class, _) in owners.drain(1..) {
                     out.push(Violation {
@@ -148,14 +115,54 @@ fn check_per_entry_block_checks(dataset: &CimDataset) -> Vec<Violation> {
     v
 }
 
-/// Could any value in this raw field map fail one of the per-entry checks?
+/// An element's `IdentifiedObject.mRID`, the last value if it is repeated;
+/// `None` when absent or empty.
+fn mrid(entry: &cimmodel::Element) -> Option<&str> {
+    let m = match entry.fields().get("IdentifiedObject.mRID")? {
+        cimmodel::base::FieldValue::Text(s) => s.as_str(),
+        cimmodel::base::FieldValue::TextList(v) => v.last()?.as_str(),
+        _ => return None,
+    };
+    (!m.is_empty()).then_some(m)
+}
+
+/// `C:301:ALL:Float:specialValues`: an attribute the schema types as Float
+/// (`xsd:double`) holding INF or NaN. A field the class does not declare has
+/// no type to read, and a text attribute may spell `NaN` freely.
+fn float_special_values(id: &str, entry: &cimmodel::Element) -> Vec<Violation> {
+    let reg = cimmodel::registry::type_registry();
+    let non_finite = |s: &String| s.trim().parse::<f64>().is_ok_and(|f| !f.is_finite());
+    let mut keys: Vec<&&'static str> = entry
+        .fields()
+        .iter()
+        .filter(|(_, value)| match value {
+            cimmodel::base::FieldValue::Text(s) => non_finite(s),
+            cimmodel::base::FieldValue::TextList(vs) => vs.iter().any(non_finite),
+            _ => false,
+        })
+        .filter(|(key, _)| reg.attr(entry.class(), key).is_some_and(|a| a.xsd == "double"))
+        .map(|(key, _)| key)
+        .collect();
+    keys.sort_unstable();
+    keys.into_iter()
+        .map(|key| Violation {
+            object_id: id.to_string(),
+            rule_id:   "all600:Float-specialValues".into(),
+            name:      "C:301:ALL:Float:specialValues".into(),
+            class:     entry.type_name().to_string(),
+            property:  key.to_string(),
+            message:   "INF or NaN used in an attribute defined as float.".into(),
+            severity:  "sh:Violation".into(),
+            description: String::new(),
+        })
+        .collect()
+}
+
+/// Could any text value in this field map be a non-finite number?
 ///
-/// A superset test: every text value the struct's view holds is in the raw map
-/// as written (the last of a repeated one included), and a typed float is the
-/// raw text parsed the same way. A float is only non-finite for `nan`/`inf`
-/// spellings or an overflowing exponent, so the byte scan skips the parse for
-/// almost every value.
-fn may_fail_entry_checks(fields: &cimmodel::base::FieldMap) -> bool {
+/// A float is only non-finite for `nan`/`inf` spellings or an overflowing
+/// exponent, so the byte scan skips the parse for almost every value.
+fn may_be_non_finite(fields: &cimmodel::base::FieldMap) -> bool {
     // Only `nan` / `inf` / `infinity` spellings, or a number that overflows
     // — which needs an exponent or an absurd digit count — parse as
     // non-finite. Anything else, a name above all, is ruled out from its first
@@ -172,7 +179,6 @@ fn may_fail_entry_checks(fields: &cimmodel::base::FieldMap) -> bool {
     };
     fields.values().any(|val| match val {
         cimmodel::base::FieldValue::Text(s) => non_finite(s),
-        // A repeated value: the struct keeps one of them, so any could matter.
         cimmodel::base::FieldValue::TextList(vs) => vs.iter().any(|s| non_finite(s)),
         _ => false,
     })

@@ -175,33 +175,32 @@ fn check_dangling_references(dataset: &CimDataset) -> Vec<Violation> {
 }
 
 fn dangling_in(dataset: &CimDataset, run: &[(&String, &cimmodel::Element)]) -> Vec<Violation> {
+    use cimmodel::base::FieldValue;
     let mut v = Vec::new();
     for &(id, entry) in run {
-        // The rule reads the element's typed view (`super::view`). Its
-        // references are a subset of the raw fields', so an element with no
-        // dangling reference among those has none in the view.
-        if !entry.fields().values().any(|val| match val {
-                cimmodel::base::FieldValue::Resource(r) => is_dangling(dataset, r),
-                cimmodel::base::FieldValue::ResourceList(rs) => rs.iter().any(|r| is_dangling(dataset, r)),
-                _ => false,
+        let mut fields: Vec<(&&'static str, &[String])> = entry
+            .fields()
+            .iter()
+            .filter_map(|(k, val)| match val {
+                FieldValue::Resource(r) => Some((k, std::slice::from_ref(r))),
+                FieldValue::ResourceList(rs) => Some((k, rs.as_slice())),
+                _ => None,
             })
-        {
-            continue;
-        }
-        for (field, refs) in super::view::references(entry) {
-            for target in refs {
-                if is_dangling(dataset, target) {
-                    v.push(Violation {
-                        object_id:   id.clone(),
-                        rule_id:     "sm600:All-DanglingReferences".into(),
-                        name:        "C:600:ALL:NA:FBOD4".into(),
-                        class:       entry.type_name().to_string(),
-                        property:    field.to_string(),
-                        message:     format!("Dangling reference to '{}'.", target),
-                        severity:    "sh:Violation".into(),
-                        description: String::new(),
-                    });
-                }
+            .filter(|(_, refs)| refs.iter().any(|r| is_dangling(dataset, r)))
+            .collect();
+        fields.sort_unstable_by_key(|(k, _)| **k);
+        for (field, refs) in fields {
+            for target in refs.iter().filter(|r| is_dangling(dataset, r)) {
+                v.push(Violation {
+                    object_id:   id.clone(),
+                    rule_id:     "sm600:All-DanglingReferences".into(),
+                    name:        "C:600:ALL:NA:FBOD4".into(),
+                    class:       entry.type_name().to_string(),
+                    property:    field.to_string(),
+                    message:     format!("Dangling reference to '{}'.", target),
+                    severity:    "sh:Violation".into(),
+                    description: String::new(),
+                });
             }
         }
     }

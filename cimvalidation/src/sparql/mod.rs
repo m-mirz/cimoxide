@@ -1,6 +1,5 @@
 pub mod common;
 mod fields;
-mod view;
 pub(crate) use fields::Fields;
 pub mod common_solved_mas;
 pub mod equipment;

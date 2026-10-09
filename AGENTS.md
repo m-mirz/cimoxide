@@ -130,11 +130,12 @@ hand-written. Entry points:
   and `?x > ?max` is false when `?max` is unbound, so a rule must not default a
   missing number to 0 — the CsConverter angle ranges did, and fired on every
   rectifier and inverter in SSH files, whose limits are EQ attributes. About 170
-  `unwrap_or(0.0)` calls remain in `sparql/`; each is suspect. Three rules (float special values and mRID uniqueness in `common.rs`, dangling
-  references in `common_solved_mas.rs`) read `sparql::view`, which rebuilds the structs'
-  view — declared attributes only, in their typed form, iterated in the order a struct's
-  map produced — from the class table: the attributes a profile uses (`AttrDef::used`) and
-  each literal's `xsd`
+  `unwrap_or(0.0)` calls remain in `sparql/`; each is suspect. Float special values
+  (`common.rs`) are checked on attributes the schema types as Float (`AttrDef::xsd`
+  `double`) only, GENC1 reads any element's `IdentifiedObject.mRID`, and FBOD4
+  (`common_solved_mas.rs`) every reference as written. Until 2026-10 these three read
+  `sparql::view`, a rebuild of the generated structs' view kept for byte-identical
+  output; it flagged a name spelled `NaN` as a Float and skipped a reference given twice
 - `combined_config(...)` builds the `Config`
 - Profiles: `"EQ"`, `"OP"`, `"DY"`, `"SV"`, `"SSH"`, `"SC"`, `"GL"`, `"DL"`, `"EQBD"`
 
