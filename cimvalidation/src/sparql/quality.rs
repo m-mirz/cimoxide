@@ -9,14 +9,15 @@ pub fn check_base_voltage_in_eqbd_impl(dataset: &CimDataset, eqbd_bv_ids: &std::
         if eqbd_bv_ids.contains(mrid.as_str()) { continue; }
         let entry = &dataset.entries[mrid];
         let nominal_voltage = Fields::of_class(entry, "BaseVoltage")
-            .and_then(|bv| bv.f64("BaseVoltage.nominalVoltage")).unwrap_or(0.0);
+            .and_then(|bv| bv.f64("BaseVoltage.nominalVoltage"))
+            .map_or_else(|| "no nominal voltage".to_string(), |u| format!("{u:.4} kV"));
         v.push(Violation {
             object_id:   mrid.clone(),
             rule_id:     "eqbd2:EQBD2".into(),
             name:        "EQBD2".into(),
             class:       "BaseVoltage".into(),
             property:    "rdf:type".into(),
-            message:     format!("BaseVoltage ({:.4} kV) is not defined in Boundary EQ.", nominal_voltage),
+            message:     format!("BaseVoltage ({nominal_voltage}) is not defined in Boundary EQ."),
             severity:    "sh:Warning".into(),
             description: "The BaseVoltage is not defined in Boundary EQ.".into(),
         });
@@ -216,8 +217,7 @@ fn check_ac_line_segment_xr_ratio(dataset: &CimDataset) -> Vec<Violation> {
     for mrid in dataset.by_type.get("ACLineSegment").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(seg) = Fields::of_class(entry, "ACLineSegment") {
-            let r = seg.f64("ACLineSegment.r").unwrap_or(0.0);
-            let x = seg.f64("ACLineSegment.x").unwrap_or(0.0);
+            let (Some(r), Some(x)) = (seg.f64("ACLineSegment.r"), seg.f64("ACLineSegment.x")) else { continue };
             if r == 0.0 || x == 0.0 { continue; }
             let ratio = x / r;
             if ratio > THRESHOLD {
@@ -241,8 +241,9 @@ fn check_base_voltage_duplicate_nominal_voltage(dataset: &CimDataset) -> Vec<Vio
     let mut by_voltage: HashMap<u64, Vec<String>> = HashMap::default();
     for mrid in dataset.by_type.get("BaseVoltage").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
-        if let Some(bv) = Fields::of_class(entry, "BaseVoltage") {
-            let v = bv.f64("BaseVoltage.nominalVoltage").unwrap_or(0.0);
+        // A BaseVoltage without a nominal voltage shares nothing.
+        if let Some(bv) = Fields::of_class(entry, "BaseVoltage")
+            && let Some(v) = bv.f64("BaseVoltage.nominalVoltage") {
             let key = v.to_bits();
             by_voltage.entry(key).or_default().push(mrid.clone());
         }
@@ -272,9 +273,10 @@ fn check_power_transformer_ends_same_nominal_voltage(dataset: &CimDataset) -> Ve
     for mrid in dataset.by_type.get("PowerTransformerEnd").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         if let Some(end) = Fields::of_class(entry, "PowerTransformerEnd")
-            && let Some(r) = &end.reference("PowerTransformerEnd.PowerTransformer") {
+            && let Some(r) = &end.reference("PowerTransformerEnd.PowerTransformer")
+            && let Some(rated_u) = end.f64("PowerTransformerEnd.ratedU") {
                 let pt_id = r.trim_start_matches('#').to_string();
-                ends_by_pt.entry(pt_id).or_default().push(end.f64("PowerTransformerEnd.ratedU").unwrap_or(0.0));
+                ends_by_pt.entry(pt_id).or_default().push(rated_u);
             }
     }
     let mut v = Vec::new();
@@ -474,8 +476,9 @@ fn check_regulating_control_target_voltage_mismatch(dataset: &CimDataset) -> Vec
         let vl = match dataset.entries.get(cont_id).and_then(|e| Fields::of_class(e, "VoltageLevel")) { Some(v) => v, None => continue };
         let bv_id = match vl.reference("VoltageLevel.BaseVoltage") { Some(r) => r.trim_start_matches('#'), None => continue };
         let bv = match dataset.entries.get(bv_id).and_then(|e| Fields::of_class(e, "BaseVoltage")) { Some(b) => b, None => continue };
-        let nominal = bv.f64("BaseVoltage.nominalVoltage").unwrap_or(0.0);
-        cn_nominal_kv.insert(cn_mrid, nominal);
+        if let Some(nominal) = bv.f64("BaseVoltage.nominalVoltage") {
+            cn_nominal_kv.insert(cn_mrid, nominal);
+        }
     }
     // Terminal → CN
     let mut term_cn: HashMap<&str, &str> = HashMap::default();
@@ -492,12 +495,13 @@ fn check_regulating_control_target_voltage_mismatch(dataset: &CimDataset) -> Vec
         let entry = &dataset.entries[mrid];
         let rc = match Fields::of_class(entry, "RegulatingControl") { Some(r) => r, None => continue };
         if rc.enumeration("RegulatingControl.mode").is_none_or(|m| m != VOLTAGE_URI) { continue; }
-        if !rc.bool("RegulatingControl.enabled").unwrap_or(false) { continue; }
+        if rc.bool("RegulatingControl.enabled") != Some(true) { continue; }
         let term_id = match rc.reference("RegulatingControl.Terminal") { Some(r) => r.trim_start_matches('#'), None => continue };
         let cn_id = match term_cn.get(term_id) { Some(c) => c, None => continue };
         let nominal_kv = match cn_nominal_kv.get(cn_id) { Some(&n) if n != 0.0 => n, _ => continue };
-        let target_kv = apply_unit_multiplier(rc.f64("RegulatingControl.targetValue").unwrap_or(0.0), rc.enumeration("RegulatingControl.targetValueUnitMultiplier"));
-        if target_kv == 0.0 { continue; }
+        // A target of 0 is a target, 100% off; an absent one is not compared.
+        let Some(target) = rc.f64("RegulatingControl.targetValue") else { continue };
+        let target_kv = apply_unit_multiplier(target, rc.enumeration("RegulatingControl.targetValueUnitMultiplier"));
         let deviation = (target_kv - nominal_kv).abs() / nominal_kv;
         if deviation < DEV_WARN { continue; }
         v.push(Violation {

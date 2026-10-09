@@ -567,3 +567,37 @@ fn an_injection_is_energized_through_its_connectivity_node() {
         obj("TopologicalIsland", "_island", &[("TopologicalIsland.TopologicalNodes", "#_tn")]));
     assert_eq!(sv_solved(&body, rule), 1);
 }
+
+// ── quality ────────────────────────────────────────────────────────────────
+
+fn quality(body: &str, rule: &str) -> usize {
+    let xml = format!(
+        r##"<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/CIM100#">
+{body}
+</rdf:RDF>"##
+    );
+    let ds = cimmodel::CimDataset::decode_str(&xml).unwrap();
+    let cfg = Config { quality: true, ..Default::default() };
+    cimvalidation::sparql::validate_crossprofile(&ds, &cfg).iter().filter(|v| v.rule_id == rule).count()
+}
+
+#[test]
+fn values_a_quality_rule_compares_must_be_given() {
+    let rule = "quality:BaseVoltage.duplicateNominalVoltage";
+    let bv = |id: &str, u: Option<&'static str>| {
+        let f: Vec<(&str, &str)> = u.map(|u| ("BaseVoltage.nominalVoltage", u)).into_iter().collect();
+        obj("BaseVoltage", id, &f)
+    };
+    assert_eq!(quality(&format!("{}{}", bv("_a", None), bv("_b", None)), rule), 0);
+    assert_eq!(quality(&format!("{}{}", bv("_a", Some("110")), bv("_b", Some("110"))), rule), 2);
+
+    let rule = "quality:PowerTransformer.endsSameNominalVoltage";
+    let end = |id: &str, u: Option<&'static str>| {
+        let mut f = vec![("PowerTransformerEnd.PowerTransformer", "#_pt")];
+        f.extend(u.map(|u| ("PowerTransformerEnd.ratedU", u)));
+        obj("PowerTransformerEnd", id, &f)
+    };
+    assert_eq!(quality(&format!("{}{}", end("_e1", Some("110")), end("_e2", None)), rule), 0, "one end compared");
+    assert_eq!(quality(&format!("{}{}", end("_e1", Some("110")), end("_e2", Some("110"))), rule), 1);
+}
