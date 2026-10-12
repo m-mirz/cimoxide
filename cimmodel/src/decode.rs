@@ -234,22 +234,27 @@ impl Scope {
 
 }
 
-/// One pass over an element's attributes, yielding both things the parser needs:
-/// the MRID and whether the element redeclares any namespace. Scanning twice
+/// One pass over an element's attributes, yielding what the parser needs: the
+/// MRID, whether the element only describes the object (`rdf:about`, no
+/// `rdf:ID`) and whether it redeclares any namespace. Scanning twice
 /// costs more than the nested-`xmlns` case it would serve, because every element
 /// pays for it and almost none declare one.
-fn scan_attrs(e: &BytesStart) -> Result<(String, bool), Box<dyn std::error::Error>> {
+fn scan_attrs(e: &BytesStart) -> Result<(String, bool, bool), Box<dyn std::error::Error>> {
     let mut mrid = String::new();
+    let mut described = false;
+    let mut defined = false;
     let mut has_xmlns = false;
     for attr in e.attributes().flatten() {
         let key = attr.key.as_ref();
         if key == b"rdf:about" || key == b"rdf:ID" {
             mrid = strip_fragment(std::str::from_utf8(&attr.value)?);
+            described |= key == b"rdf:about";
+            defined |= key == b"rdf:ID";
         } else if key.starts_with(b"xmlns") {
             has_xmlns = true;
         }
     }
-    Ok((mrid, has_xmlns))
+    Ok((mrid, described && !defined, has_xmlns))
 }
 
 /// Split a qualified name into its prefix and local part.
@@ -321,7 +326,7 @@ fn parse_rdf(
                         // root, but a nested redeclaration is legal RDF/XML, so
                         // honour one when it appears. The End arm restores the
                         // outer scope.
-                        let (mrid, has_xmlns) = scan_attrs(e)?;
+                        let (mrid, described, has_xmlns) = scan_attrs(e)?;
                         if has_xmlns {
                             let mut inner = Scope {
                                 prefixes: scope.prefixes.clone(),
@@ -331,7 +336,13 @@ fn parse_rdf(
                             nested = Some(std::mem::replace(&mut scope, inner));
                         }
 
-                        current = resolve(&scope, reg, e.name().as_ref())?.map(|class| Element::new(class, mrid));
+                        current = resolve(&scope, reg, e.name().as_ref())?.map(|class| {
+                            let mut element = Element::new(class, mrid);
+                            if described {
+                                element.mark_described();
+                            }
+                            element
+                        });
                         declared = current.as_ref().and_then(|c| reg.declared(c.class()));
                     }
                     3 => {
@@ -359,7 +370,7 @@ fn parse_rdf(
                         // It can carry its own xmlns; with no children there is
                         // nothing to restore afterwards, so resolve against a
                         // throwaway scope.
-                        let (mrid, has_xmlns) = scan_attrs(e)?;
+                        let (mrid, described, has_xmlns) = scan_attrs(e)?;
                         let local_scope = if has_xmlns {
                             let mut inner = Scope {
                                 prefixes: scope.prefixes.clone(),
@@ -374,7 +385,11 @@ fn parse_rdf(
                         if !mrid.is_empty()
                             && let Some(class) = resolve(active, reg, e.name().as_ref())? {
                                 index(&mut ds.by_type, class.qualified, mrid.clone());
-                                ds.entries.insert(mrid.clone(), Element::new(class, mrid));
+                                let mut element = Element::new(class, mrid.clone());
+                                if described {
+                                    element.mark_described();
+                                }
+                                ds.entries.insert(mrid, element);
                             }
                     }
                     2 => {

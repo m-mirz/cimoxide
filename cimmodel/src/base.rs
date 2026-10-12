@@ -138,6 +138,10 @@ pub struct Element {
     /// `class` is the most specific. `None` for nearly every element, so it
     /// costs a pointer, like `langs`.
     also: Option<Box<Types>>,
+    /// Every file that wrote the object only described it (`rdf:about`) and
+    /// none defined it (`rdf:ID`): an SSH file's `inService` for equipment
+    /// the EQ file defines. Elements not decoded from RDF/XML are defined.
+    described: bool,
 }
 
 /// `(field key, xml:lang)` for each tagged text value of an element.
@@ -148,11 +152,11 @@ type Types = Vec<&'static ClassDef>;
 
 impl Element {
     pub fn new(class: &'static ClassDef, mrid: String) -> Self {
-        Self { class, mrid, fields: FieldMap::default(), duplicate_fields: FastSet::default(), langs: None, also: None }
+        Self { class, mrid, fields: FieldMap::default(), duplicate_fields: FastSet::default(), langs: None, also: None, described: false }
     }
 
     pub fn with_fields(class: &'static ClassDef, mrid: String, fields: FieldMap) -> Self {
-        Self { class, mrid, fields, duplicate_fields: FastSet::default(), langs: None, also: None }
+        Self { class, mrid, fields, duplicate_fields: FastSet::default(), langs: None, also: None, described: false }
     }
 
     pub fn class(&self) -> &'static ClassDef {
@@ -177,6 +181,17 @@ impl Element {
         let kept = if promote { std::mem::replace(&mut self.class, other) } else { other };
         self.also.get_or_insert_with(Default::default).push(kept);
         promote
+    }
+
+    /// Whether some file defined the object (`rdf:ID`) rather than only
+    /// describing one defined elsewhere (`rdf:about`).
+    pub fn defined(&self) -> bool {
+        !self.described
+    }
+
+    /// Record that the file only described the object (`rdf:about`).
+    pub fn mark_described(&mut self) {
+        self.described = true;
     }
 
     pub fn mrid(&self) -> &str {
@@ -309,6 +324,7 @@ impl Element {
     /// Combine another file's view of the same object: a later scalar wins,
     /// reference lists are joined. Duplicate tracking stays per file.
     pub fn merge_from(&mut self, other: &Element) {
+        self.described &= other.described;
         for (k, v) in &other.fields {
             match v {
                 FieldValue::ResourceList(new_list) => match self.fields.get_mut(k) {

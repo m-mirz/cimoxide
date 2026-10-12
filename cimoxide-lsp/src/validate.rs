@@ -5,7 +5,8 @@
 //! CIM RDF/XML file in one directory, which is how the CGMES test
 //! configurations and most exchanges are laid out. The set runs through
 //! [`cimvalidation::validate_files`], exactly as `cimcli validate` does, and
-//! each finding is placed on every file that writes its object.
+//! each finding is placed on the file it was found in, or for one found on
+//! the merged set, on every file that writes its object.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -99,12 +100,17 @@ pub fn validate(files: &[(PathBuf, Arc<str>)], opts: &Options) -> (ModelSet, Vec
 
     let mut set = ModelSet::default();
     let mut datasets = Vec::new();
+    // The set file each dataset was decoded from.
+    let mut origin = Vec::new();
     let mut out: Vec<(Url, Vec<Diagnostic>)> = Vec::new();
     for ((path, _), (ds, index)) in files.iter().zip(decoded) {
         let Ok(url) = Url::from_file_path(path) else { continue };
         let mut diags = Vec::new();
         match ds {
-            Ok(ds) => datasets.push(ds),
+            Ok(ds) => {
+                datasets.push(ds);
+                origin.push(set.files.len());
+            }
             // A file that does not decode drops out of the set; say why.
             Err(e) => diags.push(Diagnostic {
                 range: Range::default(),
@@ -132,7 +138,8 @@ pub fn validate(files: &[(PathBuf, Arc<str>)], opts: &Options) -> (ModelSet, Vec
 
     if !datasets.is_empty() {
         let cfg = cimvalidation::combined_config(&datasets, None, None, opts.common, opts.quality, opts.silence.clone());
-        let violations = cimvalidation::validate_files(datasets, &cfg);
+        let violations = cimvalidation::validate_files_traced(datasets, &cfg);
+        let violations: Vec<_> = violations.into_iter().map(|(d, v)| (d.map(|d| origin[d]), v)).collect();
         place(&set, &violations, &mut out);
     }
     (set, out)
@@ -140,17 +147,26 @@ pub fn validate(files: &[(PathBuf, Arc<str>)], opts: &Options) -> (ModelSet, Vec
 
 /// Put each finding on the files that write its object: where the finding's
 /// field is written if any file writes it, else at the object's definition,
-/// else on every element describing it. A finding about no object in the
-/// set (a dataset-wide count) goes to the top of the first file.
-fn place(set: &ModelSet, violations: &[Violation], out: &mut [(Url, Vec<Diagnostic>)]) {
+/// else on every element describing it. A finding from one file looks only
+/// there — an SSH file's `cim:Equipment` lacking the mRID that the EQ file
+/// writes belongs on the SSH element, not on the EQ field. A finding about
+/// no object in the set (a header check, a dataset-wide count) goes to the
+/// top of its file, else of the first.
+fn place(set: &ModelSet, violations: &[(Option<usize>, Violation)], out: &mut [(Url, Vec<Diagnostic>)]) {
     let mut by_mrid: HashMap<&str, Vec<(usize, usize)>> = HashMap::new();
     for (fi, f) in set.files.iter().enumerate() {
         for (ei, el) in f.index.elements.iter().enumerate() {
             by_mrid.entry(el.mrid.as_str()).or_default().push((fi, ei));
         }
     }
-    for v in violations {
-        let sites = by_mrid.get(v.object_id.as_str()).map_or(&[][..], Vec::as_slice);
+    for (file, v) in violations {
+        let all = by_mrid.get(v.object_id.as_str()).map_or(&[][..], Vec::as_slice);
+        let local: Vec<(usize, usize)> = all.iter().filter(|s| Some(s.0) == *file).copied().collect();
+        let (sites, def) = if local.is_empty() {
+            (all, set.defs.get(v.object_id.as_str()))
+        } else {
+            (local.as_slice(), None)
+        };
         let key = v.property.trim_start_matches('^');
         let mut placed: Vec<(usize, Range)> = sites
             .iter()
@@ -164,13 +180,13 @@ fn place(set: &ModelSet, violations: &[Violation], out: &mut [(Url, Vec<Diagnost
                 let el = &set.files[fi].index.elements[ei];
                 (fi, el.id_range.unwrap_or(el.head))
             };
-            placed = match set.defs.get(v.object_id.as_str()) {
+            placed = match def {
                 Some(def) => vec![at(def)],
                 None => sites.iter().map(at).collect(),
             };
         }
         if placed.is_empty() && !out.is_empty() {
-            placed.push((0, Range::new(Position::new(0, 0), Position::new(0, 0))));
+            placed.push((file.unwrap_or(0), Range::new(Position::new(0, 0), Position::new(0, 0))));
         }
         for (fi, range) in placed {
             out[fi].1.push(diagnostic(v, range));
@@ -201,5 +217,45 @@ fn diagnostic(v: &Violation, range: Range) -> Diagnostic {
         // The finding as `cimcli validate --format json` names it.
         data: Some(serde_json::json!({ "object_id": v.object_id, "property": v.property })),
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn doc(profile: &str, body: &str) -> Arc<str> {
+        Arc::from(format!(
+            r##"<rdf:RDF xmlns:cim="http://iec.ch/TC57/CIM100#" xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <md:FullModel rdf:about="urn:uuid:{profile}">
+    <md:Model.profile>http://iec.ch/TC57/ns/CIM/{profile}/3.0</md:Model.profile>
+  </md:FullModel>
+{body}
+</rdf:RDF>"##
+        ))
+    }
+
+    #[test]
+    fn a_finding_stays_in_the_file_it_was_found_in() {
+        // The SSH file lacks the mRID the EQ file writes: the finding is the
+        // SSH file's, so it must not land on the EQ file's mRID field.
+        let eq = doc("CoreEquipment-EU", r#"  <cim:BusbarSection rdf:ID="_b">
+    <cim:IdentifiedObject.mRID>b</cim:IdentifiedObject.mRID>
+  </cim:BusbarSection>"#);
+        let ssh = doc("SteadyStateHypothesis-EU", r#"  <cim:Equipment rdf:ID="_b">
+    <cim:Equipment.inService>true</cim:Equipment.inService>
+  </cim:Equipment>"#);
+        let dir = std::env::temp_dir();
+        let files = vec![(dir.join("x_EQ.xml"), eq), (dir.join("x_SSH.xml"), ssh)];
+        let (_, out) = validate(&files, &Options::default());
+        let mrid = |i: usize| -> Vec<Range> {
+            out[i].1.iter()
+                .filter(|d| d.code == Some(NumberOrString::String("ido:IdentifiedObject.mRID-cardinality".into())))
+                .map(|d| d.range)
+                .collect()
+        };
+        assert!(mrid(0).is_empty(), "{:?}", out[0].1);
+        // On the SSH element's `rdf:ID` value.
+        assert_eq!(mrid(1), [Range::new(Position::new(4, 25), Position::new(4, 27))]);
     }
 }

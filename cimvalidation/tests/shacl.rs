@@ -164,3 +164,23 @@ fn shacl_eqbd_001() {
     assert_eq!(iso_violations("BoundaryPoint.BAD"), 1,
         "BoundaryPoint.BAD (fromEndIsoCode=XX): expected 1 violation, got: {:?}", by_id.get("BoundaryPoint.BAD"));
 }
+
+#[test]
+fn shacl_ssh_mrid_only_where_defined() {
+    // The SSH shapes require an mRID on `cim:Equipment`. An object the SSH
+    // file only describes (`rdf:about`) has its mRID where it is defined.
+    let ds = cimmodel::CimDataset::decode_str(r##"<rdf:RDF xmlns:cim="http://iec.ch/TC57/CIM100#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <cim:Equipment rdf:about="#_described">
+    <cim:Equipment.inService>true</cim:Equipment.inService>
+  </cim:Equipment>
+  <cim:Equipment rdf:ID="_defined">
+    <cim:Equipment.inService>true</cim:Equipment.inService>
+  </cim:Equipment>
+</rdf:RDF>"##).unwrap();
+    let vs = validate_profile_local(&ds, "SSH", &cfg("SSH"));
+    let mrid: Vec<&str> = vs.iter()
+        .filter(|v| v.rule_id == "ido:IdentifiedObject.mRID-cardinality")
+        .map(|v| v.object_id.as_str())
+        .collect();
+    assert_eq!(mrid, ["_defined"]);
+}

@@ -165,6 +165,9 @@ Semantics to preserve:
   path (`RefClass`) tests every type.
 - Paths are **not** verified against the class table (data may carry keys the table lacks).
 - Stepping a `Path::Chain` from an absent element makes the checks silent.
+- `sh:minCount` on `IdentifiedObject.mRID` skips a CGMES element no file defined (`rdf:ID`),
+  only described (`rdf:about`; `Element::defined`): the SSH SHACL asks every `cim:Equipment`
+  for an mRID the EQ file writes. NC defines objects with `rdf:about`, so NC is exempt.
 - A finding is reported once per element and rule. Its `property` is the path's first field
   key, `^Field` when inverse. `sh:targetNode` + `[ sh:inversePath rdf:type ]` (instance
   counts) is hand-written in `sparql/`, labelled `^rdf:type`.
@@ -198,7 +201,8 @@ XML file in a document's directory, open buffers taking precedence over disk; it
 validated with `validate_files` + `combined_config`, as `cimcli validate` does, on a worker
 thread with a 300 ms debounce. The decoder keeps no positions, so `src/index.rs` makes its
 own quick-xml pass per document (ranges of elements, fields, `rdf:resource` values; mRID =
-text after the last `#`, as in `decode.rs`). Each diagnostic's `data` carries `object_id`
+text after the last `#`, as in `decode.rs`). A per-file finding is placed only in the file it
+was found in (`validate_files_traced`). Each diagnostic's `data` carries `object_id`
 and `property`; its `code` is the `rule_id`. Diagnostics must stay equal to
 `cimcli validate --format json` as sets of `(object_id, rule_id, property)` per directory.
 

@@ -263,7 +263,15 @@ pub fn combined_config(
 ///
 /// Consumes `per_file` since it merges them into one dataset for phase 2.
 pub fn validate_files(per_file: Vec<cimmodel::CimDataset>, cfg: &Config) -> Vec<Violation> {
-    let mut violations: Vec<Violation> = std::thread::scope(|s| {
+    validate_files_traced(per_file, cfg).into_iter().map(|(_, v)| v).collect()
+}
+
+/// [`validate_files`], with each finding's origin: the index into `per_file`
+/// of the file it was found in, or `None` for a finding on the merged dataset.
+/// An object several files write is reported against one of them, which
+/// `cimlsp` needs to put the finding there.
+pub fn validate_files_traced(per_file: Vec<cimmodel::CimDataset>, cfg: &Config) -> Vec<(Option<usize>, Violation)> {
+    let mut violations: Vec<(Option<usize>, Violation)> = std::thread::scope(|s| {
         per_file
             .iter()
             .map(|ds| {
@@ -279,7 +287,8 @@ pub fn validate_files(per_file: Vec<cimmodel::CimDataset>, cfg: &Config) -> Vec<
             })
             .collect::<Vec<_>>()
             .into_iter()
-            .flat_map(|h| h.join().expect("validation thread panicked"))
+            .enumerate()
+            .flat_map(|(i, h)| h.join().expect("validation thread panicked").into_iter().map(move |v| (Some(i), v)))
             .collect()
     });
 
@@ -287,11 +296,11 @@ pub fn validate_files(per_file: Vec<cimmodel::CimDataset>, cfg: &Config) -> Vec<
     for ds in per_file {
         merged.merge(ds);
     }
-    violations.extend(validate_crossprofile(&merged, cfg));
+    violations.extend(validate_crossprofile(&merged, cfg).into_iter().map(|v| (None, v)));
 
     if !cfg.silenced_rules.is_empty() {
         let silenced: HashSet<&str> = cfg.silenced_rules.iter().map(String::as_str).collect();
-        violations.retain(|v| !silenced.contains(v.rule_id.as_str()));
+        violations.retain(|(_, v)| !silenced.contains(v.rule_id.as_str()));
     }
     violations
 }

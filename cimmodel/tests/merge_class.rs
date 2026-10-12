@@ -48,3 +48,23 @@ fn unrelated_classes_keep_the_first() {
     assert_eq!(a.entries["_x"].type_name(), "Breaker");
     assert_eq!(a.entries["_x"].types().count(), 2);
 }
+
+#[test]
+fn an_object_any_file_defines_is_defined() {
+    let defined = || {
+        CimDataset::decode_str(
+            r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/CIM100#">
+  <cim:ACLineSegment rdf:ID="_x"><cim:ACLineSegment.r>1</cim:ACLineSegment.r></cim:ACLineSegment>
+</rdf:RDF>"##,
+        )
+        .unwrap()
+    };
+    assert!(defined().entries["_x"].defined());
+    assert!(!ssh().entries["_x"].defined(), "rdf:about only describes");
+    let mut a = ssh();
+    a.merge(defined());
+    assert!(a.entries["_x"].defined());
+    let mut b = defined();
+    b.merge(ssh());
+    assert!(b.entries["_x"].defined());
+}

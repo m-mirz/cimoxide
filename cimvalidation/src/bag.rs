@@ -403,16 +403,36 @@ fn fails(ctx: &Ctx<'_>, el: &Fields, values: &Values<'_>, constraint: &Constrain
     }
 }
 
+/// `IdentifiedObject.mRID`'s field key.
+const MRID: &str = "IdentifiedObject.mRID";
+
+/// Is `prop` an mRID cardinality the element need not meet here?
+///
+/// A CGMES object's mRID is exchanged where the object is defined
+/// (`rdf:ID`), not in the files that only add to it (`rdf:about`). The SSH
+/// SHACL nevertheless requires one on its `ssh:Equipment` shape, so every
+/// SSH file that writes `inService` under `cim:Equipment` — the ENTSO-E
+/// MicroGrid and Svedala among them — fails it once per piece of equipment.
+/// Only the minimum is skipped. NC objects are defined with `rdf:about`, so
+/// this never applies to them.
+fn mrid_exempt(t: &Resolved<'_>, prop: &PropShape) -> bool {
+    t.described && prop.path == Path::Forward(MRID)
+}
+
 fn check_prop<'a>(
     ctx: &Ctx<'a>,
     el: &'a Fields,
     class: &str,
     mrid: &'a str,
     prop: &PropShape,
+    no_min: bool,
     out: &mut Vec<Violation>,
 ) {
     let values = resolve(ctx, el, mrid, &prop.path);
     for c in prop.checks {
+        if no_min && matches!(c.constraint, Constraint::MinCount(_)) {
+            continue;
+        }
         if fails(ctx, el, &values, &c.constraint) {
             out.push(violation(mrid, class, &path_label(&prop.path), c));
         }
@@ -507,13 +527,22 @@ fn check_closed(el: &Fields, class: &str, mrid: &str, closed: &ClosedShape, out:
     }
 }
 
-/// A target element, resolved once per call: its mRID, its class, and the
-/// fields it is read through.
+/// A target element, resolved once per call: its mRID, its class, the
+/// fields it is read through, and whether it is a CGMES object no file
+/// defined ([`mrid_exempt`]).
 #[derive(Clone, Copy)]
 struct Resolved<'a> {
     mrid: &'a String,
     class: &'static str,
     fields: &'a Fields,
+    described: bool,
+}
+
+impl<'a> Resolved<'a> {
+    fn new(source: Source, mrid: &'a String, entry: &'a Element, fields: &'a Fields) -> Self {
+        let described = source == Source::Cgmes && !entry.defined();
+        Resolved { mrid, class: entry.type_name(), fields, described }
+    }
 }
 
 /// Resolve `mrid` for `source`: `None` when it is missing or another family's
@@ -522,7 +551,7 @@ struct Resolved<'a> {
 fn resolve_target<'a>(ds: &'a CimDataset, source: Source, mrid: &'a String) -> Option<Resolved<'a>> {
     let entry = ds.entries.get(mrid)?;
     let fields = source.fields(entry)?;
-    Some(Resolved { mrid, class: entry.type_name(), fields })
+    Some(Resolved::new(source, mrid, entry, fields))
 }
 
 /// The reverse index and the `sh:targetSubjectsOf` index, built in one pass.
@@ -564,7 +593,7 @@ fn build_indexes<'a>(
             }
             for field in subject_fields {
                 if f.contains_key(*field) {
-                    let r = Resolved { mrid, class: entry.type_name(), fields: f };
+                    let r = Resolved::new(source, mrid, entry, f);
                     subjects.get_mut(field).expect("seeded above").push(r);
                 }
             }
@@ -643,7 +672,7 @@ fn targets_of<'a>(
 /// Every check of one shape against one target.
 fn run_shape<'a>(ctx: &Ctx<'a>, shape: &ShapeDef, t: &Resolved<'a>, out: &mut Vec<Violation>) {
     for prop in shape.props {
-        check_prop(ctx, t.fields, t.class, t.mrid, prop, out);
+        check_prop(ctx, t.fields, t.class, t.mrid, prop, mrid_exempt(t, prop), out);
     }
     for logic in shape.logic {
         check_logic(ctx, t.fields, t.class, t.mrid, logic, out);
