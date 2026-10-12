@@ -1,8 +1,9 @@
 name: VS Code extension
 
 # One VSIX per platform, each bundling its own `cimlsp` and `cimmcp`, published to the
-# Visual Studio Marketplace. Needs VSCE_PAT (Azure DevOps token with
-# Marketplace › Manage) in the `vscode-release` environment.
+# Visual Studio Marketplace and Open VSX. Needs VSCE_PAT (Azure DevOps token with
+# Marketplace › Manage) and OVSXAT (open-vsx.org access token) in the `vscode-release`
+# environment. --skip-duplicate lets a run that failed half-way be re-run as-is.
 
 on:
   push:
@@ -115,4 +116,9 @@ jobs:
       - name: Publish to the Visual Studio Marketplace
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: npx --yes @vscode/vsce@3 publish --packagePath *.vsix
+        run: npx --yes @vscode/vsce@3 publish --skip-duplicate --packagePath *.vsix
+
+      - name: Publish to Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSXAT }}
+        run: npx --yes ovsx@0 publish --skip-duplicate --packagePath *.vsix

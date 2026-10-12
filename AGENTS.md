@@ -241,6 +241,6 @@ Version, license and internal dependency versions live once in the root `Cargo.t
 run can be re-run as-is.
 
 `vscode.yml` builds `cimlsp` and `cimmcp` for three targets (Linux x64 as static musl, Windows x64, macOS arm64), packages one VSIX per
-platform and publishes them to the Visual Studio Marketplace (`VSCE_PAT` in the
-`vscode-release` environment). `editors/vscode/package.json`'s version is
+platform and publishes them to the Visual Studio Marketplace and Open VSX (`VSCE_PAT` and
+`OVSXAT` in the `vscode-release` environment). `editors/vscode/package.json`'s version is
 bumped by hand with the workspace's; the workflow fails when they differ.
