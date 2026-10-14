@@ -109,11 +109,12 @@ impl Prefixes {
     }
 }
 
-/// The dataset's header for `profile_uri`: a `dcat:Dataset` or
-/// `DifferenceSet` whose `conformsTo` names the same application profile.
-/// The smallest mRID wins if several do.
-fn header_for<'a>(ds: &'a CimDataset, profile_uri: &str) -> Option<&'a Element> {
-    let name = profile_name(profile_uri)?;
+/// The dataset's headers for `profile_uri`: every `dcat:Dataset` or
+/// `DifferenceSet` whose `conformsTo` names the same application profile, by
+/// mRID. A file may hold more than one — the dataset and the series its
+/// `isVersionOf` names.
+fn headers_for<'a>(ds: &'a CimDataset, profile_uri: &str) -> Vec<&'a Element> {
+    let Some(name) = profile_name(profile_uri) else { return Vec::new() };
     let mut headers: Vec<&Element> = HEADERS
         .iter()
         .flat_map(|t| ds.by_type.get(*t).into_iter().flatten())
@@ -124,14 +125,15 @@ fn header_for<'a>(ds: &'a CimDataset, profile_uri: &str) -> Option<&'a Element> 
         })
         .collect();
     headers.sort_by_key(|e| e.mrid());
-    headers.first().copied()
+    headers
 }
 
 /// Export the elements of NC profile `code` (`CO`, `AE`, …) as RDF/XML.
 ///
-/// - The header is the dataset's own for this profile when it has one, else a
-///   minimal `dcat:Dataset` naming the profile, identified by a v5 UUID of the
-///   dataset as CGMES's synthesized headers are.
+/// - The headers are the dataset's own for this profile when it has any (a
+///   file may hold a dataset and its series), else a minimal `dcat:Dataset`
+///   naming the profile, identified by a v5 UUID of the dataset as CGMES's
+///   synthesized headers are.
 /// - An element whose class the profile exchanges is written with the fields
 ///   the profile exchanges, and every field the class table does not declare
 ///   (data may carry what the table lacks).
@@ -144,10 +146,12 @@ pub fn dataset_to_xml_for_nc_profile(ds: &CimDataset, code: &str) -> Result<Stri
     let mut prefixes = Prefixes::seeded(ds, &[]);
     let mut body = String::new();
 
-    let header = header_for(ds, profile_uri);
-    match header {
-        Some(h) => write_element(&mut body, &mut prefixes, ds, h, h.class().ns, |_| true)?,
-        None => write_synthesized_header(&mut body, &mut prefixes, ds, code, profile_uri)?,
+    let headers = headers_for(ds, profile_uri);
+    if headers.is_empty() {
+        write_synthesized_header(&mut body, &mut prefixes, ds, code, profile_uri)?;
+    }
+    for h in headers {
+        write_element(&mut body, &mut prefixes, ds, h, h.class().ns, |_| true)?;
     }
 
     let mut mrids: Vec<&str> = ds.entries.keys().map(String::as_str).collect();

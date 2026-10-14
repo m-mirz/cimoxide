@@ -1,7 +1,10 @@
-"""Tests for encoding a CimDataset back to CGMES profile XML."""
+"""Tests for encoding a CimDataset back to CGMES and NC profile XML."""
 
 import os
 import re
+
+import pytest
+
 import cimoxide
 
 TESTDATA = os.path.join(os.path.dirname(__file__), "../../testdata")
@@ -36,10 +39,26 @@ def test_to_xml_for_profile_round_trip():
     assert len(ds2) > 0
 
 
-def test_to_xml_for_profile_unknown_yields_empty_rdf():
+def test_to_xml_for_profile_unknown_is_an_error():
     ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
-    xml = ds.to_xml_for_profile("UNKNOWN_PROFILE")
-    assert "<cim:" not in xml
+    with pytest.raises(RuntimeError, match="UNKNOWN_PROFILE"):
+        ds.to_xml_for_profile("UNKNOWN_PROFILE")
+
+
+def test_to_xml_for_an_nc_profile():
+    """Every NC object comes back, both dataset headers among them; the CGMES
+    breaker the contingency names belongs to the CGMES profiles."""
+    ds = cimoxide.decode_file(td("test_nc_CO_002.xml"))
+    again = cimoxide.decode_str(ds.to_xml_for_profile("CO"))
+    nc = [m for m, e in ds.entries().items() if e["_type"].startswith("nc:")]
+    assert sorted(again.mrids()) == sorted(nc)
+    assert len(nc) == len(ds) - 1
+
+
+def test_to_xml_writes_the_whole_dataset():
+    ds = cimoxide.decode_file(td("test_shacl_EQ_001.xml"))
+    again = cimoxide.decode_str(ds.to_xml())
+    assert sorted(again.mrids()) == sorted(ds.mrids())
 
 
 def test_write_xml_files_writes_and_reloads(tmp_path):

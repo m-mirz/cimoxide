@@ -11,6 +11,8 @@ mRID), plus one key per attribute the XML carried, named ``"Class.attr"``
 (e.g. ``"IdentifiedObject.name"``, ``"ACLineSegment.r"``). Every value is the
 ``str`` the XML wrote — numbers are not parsed — and a reference is the
 referenced mRID; an attribute written more than once is a ``list[str]``.
+When a text value carried an ``xml:lang``, ``"_lang"`` maps its key to the
+tags, in value order (``{"IdentifiedObject.description": ["en"]}``).
 """
 
 class Violation:
@@ -90,7 +92,10 @@ class CimDataset:
         ``value`` must be a dict shaped like the ones returned by
         ``__getitem__`` (a ``"_type"`` key naming a known CIM class, plus
         attribute keys). Raises ``ValueError`` if ``"_type"`` is missing or
-        not a recognized CIM type.
+        not a recognized CIM type. Whether a string is a reference or text
+        follows how the dataset holds that attribute on objects of the same
+        class (a DCAT header's ``conformsTo`` is a reference, its
+        ``dcat:version`` text), else the class table; one neither knows is text.
         """
         ...
 
@@ -104,6 +109,23 @@ class CimDataset:
 
     def mrids(self) -> list[str]:
         """Return all MRIDs as a list."""
+        ...
+
+    def defined_mrids(self) -> list[str]:
+        """The MRIDs of the objects this dataset defines (``rdf:ID``), as opposed
+        to only describing objects another dataset defines (``rdf:about``).
+        After a merge, an object is defined if any merged file defined it."""
+        ...
+
+    def types(self, mrid: str) -> list[str]:
+        """Every type the files wrote ``mrid`` under: its class first, then any
+        other a merged file used (an SSH file's ``Equipment`` for an EQ
+        ``ACLineSegment``). Raises ``KeyError`` if not found."""
+        ...
+
+    def type_conflicts(self) -> list[tuple[str, list[str]]]:
+        """The objects merged files typed with unrelated classes (neither an
+        ancestor of the other), as ``[(mrid, [types])]``, sorted."""
         ...
 
     def by_type(self) -> dict[str, list[str]]:
@@ -141,6 +163,13 @@ class CimDataset:
         """
         ...
 
+    def foreign(self) -> dict[str, CimObject]:
+        """Objects of classes no CIM class table knows — reference data's SKOS
+        concepts, PROV agents, DCAT catalogues — keyed by identifier as written
+        (a full IRI, or ``_:`` and a blank node's label); ``"_type"`` is the
+        class IRI. They are not in ``entries()`` and not validated."""
+        ...
+
     def query(self, sparql: str) -> list[dict[str, str]] | bool | list[tuple[str, str, str]]:
         """Run a SPARQL 1.1 query over this dataset.
 
@@ -160,13 +189,19 @@ class CimDataset:
         """
         ...
 
-    def to_xml_for_profile(self, profile: str) -> str:
-        """Encode this dataset as a single CGMES profile's RDF/XML text.
+    def to_xml(self) -> str:
+        """Encode the whole dataset as RDF/XML: CGMES elements, then NC
+        elements and ``foreign()`` objects as they were read."""
+        ...
 
-        Only elements/fields whose CIM schema origin includes ``profile``
-        (e.g. ``"EQ"``, ``"SSH"``) are emitted. If the dataset contains a
-        decoded ``FullModel`` header for this profile, it is reused verbatim;
-        otherwise a minimal synthetic header is generated.
+    def to_xml_for_profile(self, profile: str) -> str:
+        """Encode this dataset as one profile's RDF/XML text: a CGMES profile
+        (``"EQ"``, ``"SSH"``, …) or an NC one (``"CO"``, ``"AE"``, …).
+
+        Only elements/fields the profile exchanges are emitted, with the
+        dataset's own header for the profile when it has one (``md:FullModel``
+        for CGMES, ``dcat:Dataset`` for NC), else a synthesized one. An unknown
+        profile code raises ``RuntimeError``.
         """
         ...
 
