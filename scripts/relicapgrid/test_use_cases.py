@@ -34,8 +34,9 @@ class Model:
         paths = sorted({str(p) for g in globs for p in root.glob(g)
                         if "GridSituation" not in str(p) and "Dataset_version_dependency" not in str(p)})
         assert paths, globs
-        entries = cimoxide.CimDataset.decode_files(paths).entries()
-        return cls({harness.norm(k): v for k, v in entries.items()})
+        dataset = cimoxide.CimDataset.decode_files(paths)
+        objects = {**dataset.entries(), **dataset.foreign()}
+        return cls({harness.norm(k): v for k, v in objects.items()})
 
     def get(self, mrid):
         return self.objects.get(harness.norm(mrid))
@@ -184,13 +185,14 @@ RD_KEYS = ("publisher", "isVersionOf", "spatial", "wasGeneratedBy", "license", "
 
 
 def check_rd(m):
-    """Every NC header's reference-data URI is defined in referenceData."""
-    problems = []
+    """Every NC header's reference-data URI is defined in referenceData: per header
+    property, how many of the URIs the headers name are not."""
     defined = {v["id"] for v in m.objects.values()} | set(m.objects)
-    for header in m.of_type("Dataset"):
-        for key in RD_KEYS:
-            for uri in m.values(header, key):
-                expect(problems, uri in defined, f"{header} {key} {uri} not in reference data")
+    problems = []
+    for key in RD_KEYS:
+        uris = [uri for header in m.of_type("Dataset") for uri in m.values(header, key)]
+        missing = [uri for uri in uris if uri not in defined]
+        expect(problems, not missing, f"{key}: {len(missing)} of {len(uris)} not in reference data")
     return problems
 
 
@@ -509,7 +511,7 @@ USE_CASES = [
             lambda m: m.without(*[k for k in m.objects if k.startswith("Belgovia:")]), load=bds_model),
     UseCase("CD_UC1", COMMON, check_cd, lambda m: m.without(*m.of_type("TieCorridor"))),
     UseCase("RD_UC1", ALL_NC + ("referenceData/NetworkCode/cimxml/*.xml",), check_rd,
-            lambda m: m),
+            lambda m: m.without(m.value(m.of_type("Dataset")[0], "accessRights"))),
     UseCase("CO_UC1", ALL_NC + ALL_GRID, check_co,
             lambda m: m.without(*m.referrers("ContingencyElement.Contingency", CONTINGENCIES[0][0]))),
     *[UseCase(f"ER_UC1[{a}]", (), check_er,
@@ -565,6 +567,16 @@ USE_CASES = [
 
 # Problems the data or the TestUseCases docs have, by use case: (why, problems).
 KNOWN = {
+    "RD_UC1": (
+        "The headers name reference data the referenceData files do not define: licences at "
+        "creativecommons.org (they define .../License/...), frames as Test/Frame/X-Power-Transmission-"
+        "System (test/frame/X-Transmission), activities as Activity/CGM-IAM (activity/AC-IAM), no "
+        "model of the model collection, and parties RCC-Jotunheim, Britheim and www.entsoe.eu.",
+        ["publisher: 37 of 71 not in reference data",
+         "isVersionOf: 71 of 71 not in reference data",
+         "spatial: 41 of 41 not in reference data",
+         "wasGeneratedBy: 65 of 65 not in reference data",
+         "license: 71 of 71 not in reference data"]),
     "BDS_UC1": (
         "Madgar1-3/Lysaborg1-3 (Boundary_Border-Espheim-Portheim.xml) have no Portheim terminal, and "
         "Madgar4-Leyva1 (Boundary_Border-Svedala-Espheim.xml) only the HVDC IGM's: topology gaps at "
@@ -601,12 +613,7 @@ def known(case):
     return problems
 
 
-RD_DROPPED = pytest.mark.xfail(strict=True, reason="cimoxide drops the SKOS/PROV/DCAT objects "
-                                                   "reference data consists of")
-
-
-@pytest.mark.parametrize("case", [pytest.param(c, marks=RD_DROPPED) if c.name == "RD_UC1" else c
-                                  for c in USE_CASES], ids=lambda c: c.name)
+@pytest.mark.parametrize("case", USE_CASES, ids=lambda c: c.name)
 def test_use_case(case):
     problems = case.check(load(case))
     expected = known(case)
@@ -616,7 +623,7 @@ def test_use_case(case):
         assert problems == expected
 
 
-@pytest.mark.parametrize("case", [c for c in USE_CASES if c.name != "RD_UC1"], ids=lambda c: c.name)
+@pytest.mark.parametrize("case", USE_CASES, ids=lambda c: c.name)
 def test_use_case_notices_breakage(case):
     real = load(case)
     assert case.check(case.mutate(real)) != case.check(real)

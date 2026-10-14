@@ -32,8 +32,8 @@ triplets results are cached per dataset commit in `.cache/`.
 
 | Test | Checks |
 |---|---|
-| `test_import.py` | every file decoded by cimoxide equals triplets' triples (non-CIM objects aside) |
-| `test_export.py` | each CGMES file round-trips through `to_xml_for_profile`; each NC file's export is the same RDF graph |
+| `test_import.py` | every file decoded by cimoxide (`entries()` and `foreign()`) equals triplets' triples |
+| `test_export.py` | each CGMES file round-trips through `to_xml_for_profile`; each NC file's profile export, and each file's `to_xml()`, is the same RDF graph |
 | `test_validation.py` | every finding the tools disagree on has a cause in `harness.TRIAGE` |
 | `test_use_cases.py` | the report's 22 use cases (Annex 1), on what cimoxide decodes, each also on broken data |
 | `test_mutations.py` | broken copies (report Table 2, §5.2, §13.1): which rules each tool newly reports |

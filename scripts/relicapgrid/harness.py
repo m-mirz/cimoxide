@@ -62,14 +62,19 @@ def vi():
 
 def norm(value):
     """The comparable form of an id or value, applied to both tools alike: text
-    after the last '#', without 'urn:uuid:' or a leading '_'."""
+    after the last '#', without 'urn:uuid:' or a leading '_'; a blank node by its
+    label (cimoxide's '_:A1', triplets' 'A1')."""
     value = str(value)
     if "#" in value:
         value = value.rsplit("#", 1)[1]
-    return value.removeprefix("urn:uuid:").removeprefix("_")
+    return value.removeprefix("_:").removeprefix("urn:uuid:").removeprefix("_")
 
 
 def bare_type(type_name):
+    """A class's local name: after the family prefix (`nc:Dataset`), or after the
+    last '#' or '/' of a foreign object's class IRI (`http://www.w3.org/ns/prov#Agent`)."""
+    if "://" in type_name:
+        return re.split(r"[#/]", type_name)[-1]
     return type_name.split(":", 1)[1] if ":" in type_name else type_name
 
 
@@ -439,8 +444,8 @@ def validation_diff(grp):
 def import_diff(path):
     instance_id = instance_ids()[path]
     reference_triples = triplets_triples(instance_id)
-    entries = cimoxide.CimDataset.decode_file(str(relicap_dir() / path)).entries()
-    ours = cimoxide_triples(entries)
+    dataset = cimoxide.CimDataset.decode_file(str(relicap_dir() / path))
+    ours = cimoxide_triples({**dataset.entries(), **dataset.foreign()})
     return ImportDiff(path, sum(reference_triples.values()), sum(ours.values()),
                       reference_triples - ours, ours - reference_triples)
 
@@ -535,7 +540,8 @@ ANNEX_1 = [
     ("BDS_UC1", "import, validate*", "*boundary header declares no profile (EQ forced as in ReliCapGrid CI); "
                 "4 boundary points reached from one IGM"),
     ("CD_UC1", "import, validate, export", ""),
-    ("RD_UC1", "-", "reference data is SKOS/PROV/DCAT, which cimoxide drops"),
+    ("RD_UC1", "import, export", "SKOS/PROV/DCAT kept apart from CIM objects (foreign()), not validated; "
+               "285 of 390 header URIs name reference data the files do not define"),
     ("CO_UC1", "import, validate, export", "all 11 contingency -> equipment pairs resolve; edit not exercised"),
     ("ER_UC1", "import, validate, export", ""),
     ("RA_UC1..7", "import, validate, export", "RA_UC2/4/5/7 data differs from the docs; RA_UC4 edit not exercised"),

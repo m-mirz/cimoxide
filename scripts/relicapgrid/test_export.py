@@ -78,3 +78,19 @@ def test_nc_round_trip(fi):
     assert not after - before
     dropped = {key for p, key in NOT_IN_PROFILE if p == fi.path}
     assert {re.split(r"[#/]", predicate.rstrip(">"))[-1] for _, predicate, _ in before - after} <= dropped
+
+
+def every_file():
+    try:
+        return harness.reference().infos
+    except RuntimeError:
+        return []
+
+
+@pytest.mark.parametrize("fi", every_file(), ids=lambda fi: fi.path)
+def test_whole_round_trip(fi):
+    """Each file, exported whole (to_xml: CGMES, NC and the objects no CIM table
+    knows, as read), is the same RDF graph."""
+    path = harness.relicap_dir() / fi.path
+    xml = cimoxide.CimDataset.decode_file(str(path)).to_xml()
+    assert graph(xml) == graph(path.read_text(encoding="utf-8"))
