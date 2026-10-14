@@ -245,6 +245,34 @@ impl PyCimDataset {
         Ok(self.lock()?.entries.keys().cloned().collect())
     }
 
+    /// The MRIDs of the objects this dataset defines (`rdf:ID`), as opposed to
+    /// only describing objects another dataset defines (`rdf:about`). After a
+    /// merge, an object is defined if any merged file defined it.
+    fn defined_mrids(&self) -> PyResult<Vec<String>> {
+        let ds = self.lock()?;
+        Ok(ds.entries.iter().filter(|(_, e)| e.defined()).map(|(m, _)| m.clone()).collect())
+    }
+
+    /// Every type the files wrote `mrid` under: its class first, then any other
+    /// a merged file used (an SSH file's `Equipment` for an EQ
+    /// `ACLineSegment`). Raises `KeyError` if not found.
+    fn types(&self, mrid: &str) -> PyResult<Vec<String>> {
+        let ds = self.lock()?;
+        let entry = ds.entries.get(mrid).ok_or_else(|| PyKeyError::new_err(mrid.to_string()))?;
+        Ok(entry.types().map(|c| c.qualified.to_string()).collect())
+    }
+
+    /// The objects merged files typed with unrelated classes (neither an
+    /// ancestor of the other), as `[(mrid, [types])]`, sorted.
+    fn type_conflicts(&self) -> PyResult<Vec<(String, Vec<String>)>> {
+        let ds = self.lock()?;
+        Ok(ds
+            .type_conflicts()
+            .into_iter()
+            .map(|(m, t)| (m.to_string(), t.into_iter().map(str::to_string).collect()))
+            .collect())
+    }
+
     /// Return a `dict[str, list[str]]` mapping type names to lists of MRIDs.
     ///
     /// No elements are deserialized, but the whole index is copied out: one

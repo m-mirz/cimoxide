@@ -269,6 +269,30 @@ impl CimDataset {
         }
         Some(removed)
     }
+
+    /// The objects the files typed with classes of which neither is the
+    /// other's ancestor, sorted, each with its types: what a merge of datasets
+    /// that disagree about an object leaves ([`CimDataset::merge`] keeps every
+    /// type). An SSH file's `cim:Equipment` for an EQ `cim:ACLineSegment` is a
+    /// superclass, not a conflict.
+    pub fn type_conflicts(&self) -> Vec<(&str, Vec<&'static str>)> {
+        let reg = registry::type_registry();
+        let related = |a: &ClassDef, b: &ClassDef| {
+            reg.chain(a).iter().any(|c| c.qualified == b.qualified)
+                || reg.chain(b).iter().any(|c| c.qualified == a.qualified)
+        };
+        let mut out: Vec<(&str, Vec<&'static str>)> = self
+            .entries
+            .iter()
+            .filter_map(|(mrid, e)| {
+                let types: Vec<&'static ClassDef> = e.types().collect();
+                let conflict = types.iter().enumerate().any(|(i, a)| types[i + 1..].iter().any(|b| !related(a, b)));
+                conflict.then(|| (mrid.as_str(), types.iter().map(|c| c.qualified).collect()))
+            })
+            .collect();
+        out.sort_unstable();
+        out
+    }
 }
 
 // --- XML streaming parser ---------------------------------------------------

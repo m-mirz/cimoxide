@@ -74,6 +74,8 @@ file-name order wins; `cimlsp` hover and `cimmcp describe_class` show it); both
   `decode_files`, `decode_str`. `merge`: a later scalar wins, reference lists join, duplicate
   tracking stays per file. An object typed differently by different files keeps every type
   (`Element::types`); its class and `by_type` bucket are the most specific one.
+  `CimDataset::type_conflicts` lists objects whose types are unrelated (neither an ancestor of the
+  other).
 - `convert.rs` — RDF/XML export (`dataset_to_xml`, `dataset_to_xml_for_profile`) and JSON
   (`{mrid: {"_type", "id", "Class.attr": "value" | [...], "_lang"?: {key: [tags]}}}`).
   JSON cannot say whether a string is a reference; `CimDataset::element_from_json` (used by

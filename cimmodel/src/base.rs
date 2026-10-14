@@ -389,9 +389,8 @@ impl Element {
     }
 
     /// `{"id": mRID, "Class.attr": value, ...}`: a value is a string, a
-    /// repeated one an array of strings.
-    /// The element as JSON: `"id"`, each field by key, and, when any text
-    /// value had an `xml:lang`, `"_lang"`: key → its tags in value order.
+    /// repeated one an array of strings; when any text value had an
+    /// `xml:lang`, `"_lang"`: key → its tags in value order.
     pub fn to_json_value(&self) -> serde_json::Value {
         let mut map = serde_json::Map::with_capacity(self.fields.len() + 2);
         map.insert("id".to_string(), serde_json::Value::String(self.mrid.clone()));
