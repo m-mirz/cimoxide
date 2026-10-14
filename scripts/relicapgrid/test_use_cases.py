@@ -206,8 +206,31 @@ CD_CLASSES = ("BiddingZone", "BiddingZoneBorder", "CapacityCalculationRegion",
 
 def check_cd(m):
     """The classes CD_UC1 lists are present (the report's "CapacityCalculationCalculator"
-    is CoordinatedCapacityCalculator)."""
-    return [f"no {c}" for c in CD_CLASSES if not m.of_type(c)]
+    is CoordinatedCapacityCalculator); common data is defined once: no other dataset
+    defines a common data object again; and its associations resolve."""
+    problems = [f"no {c}" for c in CD_CLASSES if not m.of_type(c)]
+    for mrid, files in sorted(m.facts["defined_by"].items()):
+        common = [f for f in files if f in m.facts["common_files"]]
+        others = sorted(set(files) - set(common))
+        if common and others:
+            problems.append(f"{m.type(mrid)} {mrid} of {', '.join(common)} also defined by {', '.join(others)}")
+    return problems + m.unresolved(sorted(m.facts["common"]))
+
+
+def cd_model():
+    """Every dataset merged, each object tagged with the datasets that define it, and
+    which of them are common data."""
+    root = harness.relicap_dir() / "Instance"
+    globs = COMMON + BOUNDARY + ALL_GRID + ALL_NC
+    paths = sorted({p for g in globs for p in root.glob(g)
+                    if "GridSituation" not in str(p) and "Dataset_version_dependency" not in str(p)})
+    common_files = {p.name for g in COMMON for p in root.glob(g)}
+    defined_by = {}
+    for path in paths:
+        for mrid in cimoxide.CimDataset.decode_file(str(path)).defined_mrids():
+            defined_by.setdefault(harness.norm(mrid), []).append(path.name)
+    return Model(model(*globs).objects, defined_by=defined_by, common_files=common_files,
+                 common={k for k, fs in defined_by.items() if set(fs) & common_files})
 
 
 RD_KEYS = ("publisher", "isVersionOf", "spatial", "wasGeneratedBy", "license", "accessRights")
@@ -277,7 +300,23 @@ def topology_actions(m, remedial_action):
             if m.type(ga) == "TopologyAction"]
 
 
+def applied(m, remedial_action):
+    """The switch states applying *remedial_action* sets: each TopologyAction's switch,
+    open when its StaticPropertyRange on Switch.open gives an absolute value other than 0.
+    None for a switch whose action gives no such value."""
+    states = {}
+    for action in topology_actions(m, remedial_action):
+        values = [m.value(r, "RangeConstraint.normalValue")
+                  for r in m.referrers("RangeConstraint.GridStateAlteration", action)
+                  if m.value(r, "StaticPropertyRange.PropertyReference") == "Switch.open"
+                  and m.value(r, "RangeConstraint.valueKind") == "ValueOffsetKind.absolute"]
+        states[m.ref(action, "TopologyAction.Switch")] = (float(values[-1]) != 0) if values else None
+    return states
+
+
 def check_ra1(m):
+    """The remedial action has one topology action on the switch, which is closed in SSH;
+    applying it opens the switch."""
     ra, switch = "6d2c8901-d068-4d22-8ce9-7379644b4f17", "176d262c-701c-4ced-99b2-a155c136e787"
     problems = []
     expect_type(problems, m, ra, "GridStateAlterationRemedialAction")
@@ -286,11 +325,16 @@ def check_ra1(m):
     expect(problems, [m.ref(a, "TopologyAction.Switch") for a in actions] == [switch],
            f"{ra}: switches {[m.ref(a, 'TopologyAction.Switch') for a in actions]}, expected {switch}")
     expect(problems, m.value(switch, "Switch.open") == "false", f"switch {switch} not closed in SSH")
+    expect(problems, applied(m, ra).get(switch) is True,
+           f"applying {ra}: switch {switch} open = {applied(m, ra).get(switch)}, expected True")
     return problems
 
 
 def check_ra2(m):
-    problems, switch_sets = [], []
+    """Two exclusive dependencies, each on a remedial action with several topology
+    actions; the two act on the same four switches and, applied, set different
+    configurations."""
+    problems, configurations, actions_of = [], [], []
     for dependency in ("598ab84e-a575-40ad-bf66-c1ab41c65093", "13c29cc3-3d99-4c5b-abac-085f0d319eab"):
         expect(problems, m.value(dependency, "RemedialActionDependency.kind")
                == "RemedialActionDependencyKind.exclusive", f"{dependency} not exclusive")
@@ -298,9 +342,14 @@ def check_ra2(m):
         expect_type(problems, m, ra, "GridStateAlterationRemedialAction")
         actions = topology_actions(m, ra)
         expect(problems, len(actions) > 1, f"{ra}: {len(actions)} topology actions, expected several")
-        switch_sets.append({m.ref(a, "TopologyAction.Switch") for a in actions})
+        actions_of.append(ra)
+        configurations.append(applied(m, ra))
+    switch_sets = [set(c) for c in configurations]
     expect(problems, len(switch_sets) == 2 and switch_sets[0] == switch_sets[1] and len(switch_sets[0]) == 4,
-           f"switch sets {switch_sets}, expected the same four")
+           f"switch sets {[sorted(s) for s in switch_sets]}, expected the same four")
+    expect(problems, len(set(actions_of)) == 2, f"both dependencies on {actions_of[0]}")
+    expect(problems, len(configurations) == 2 and configurations[0] != configurations[1],
+           "both remedial actions set the same configuration")
     return problems
 
 
@@ -317,6 +366,9 @@ def check_ra3(m):
     states = {m.value(p, "GridStateAlterationTimePoint.enabled") for p in points}
     expect(problems, len(points) > 1 and states == {"true", "false"},
            f"{schedule}: {len(points)} time points, enabled {sorted(states - {None})}")
+    # SSI: the action described with its state, without a schedule.
+    expect(problems, m.value(action, "GridStateAlteration.enabled") in ("true", "false"),
+           f"{action}: no GridStateAlteration.enabled from SSI")
     return problems
 
 
@@ -382,6 +434,20 @@ def check_ra6(m):
     expect(problems, m.ref(power_schedule, "PowerSchedule.GeneratingUnit") == unit,
            f"{power_schedule} not on {unit}")
     expect(problems, m.ref(bids, "PowerBidSchedule.PowerRemedialAction") == ra, f"{bids} not on {ra}")
+    problems += complete_points(m, power_schedule, "PowerTimePoint", "PowerSchedule", ("activatedP",))
+    problems += complete_points(m, bids, "PowerBidScheduleTimePoint", "PowerBidSchedule", ("p", "price"))
+    return problems
+
+
+def complete_points(m, schedule, point_class, schedule_key, values):
+    """The time points of *schedule* exist, each with a distinct atTime and *values*."""
+    points = m.referrers(f"{point_class}.{schedule_key}", schedule)
+    problems = [] if points else [f"{schedule}: no {point_class}"]
+    times = [m.value(p, f"{point_class}.atTime") for p in points]
+    expect(problems, None not in times and len(set(times)) == len(times), f"{schedule}: times {sorted(map(str, times))}")
+    for p in points:
+        for value in values:
+            expect(problems, m.value(p, f"{point_class}.{value}") is not None, f"{p}: no {value}")
     return problems
 
 
@@ -407,12 +473,15 @@ def check_ra7(m):
                             "PowerBidSchedule.PowerRemedialAction")
     expect(problems, distribution_ra == variant2,
            f"variant 2: {distribution} reaches {distribution_ra}, expected {variant2}")
+    problems += complete_points(m, bids, "PowerBidScheduleTimePoint", "PowerBidSchedule", ("p", "price"))
     return problems
 
 
 # --- AS, AE ------------------------------------------------------------------
 
 def check_as(m):
+    """The availability remedial action has the schedule, which is cancelled; the
+    resulting window is the schedule's AvailabilityTimePoints."""
     ra, schedule = "14b2b671-e92b-40e6-abf8-ad37811b33c7", "d394295f-9d18-4d9f-9808-bd23282bf60f"
     problems = []
     expect_type(problems, m, ra, "AvailabilityRemedialAction")
@@ -420,6 +489,8 @@ def check_as(m):
     expect(problems, m.ref(schedule, "AvailabilitySchedule.RemedialAction") == ra, f"{schedule} not on {ra}")
     expect(problems, m.value(schedule, "AvailabilitySchedule.cancelledDateTime"),
            f"{schedule}: neither cancelled, shortened nor rescheduled")
+    points = m.referrers("AvailabilityTimePoint.AvailabilitySchedule", schedule)
+    expect(problems, points, f"{schedule}: no AvailabilityTimePoint, so no window to cancel")
     return problems
 
 
@@ -454,6 +525,7 @@ def check_ae3(m):
     expect(problems, m.ref(point, "AssessedElementTimePoint.AssessedElementSchedule") == schedule,
            f"{point} not on {schedule}")
     expect(problems, m.value(point, "AssessedElementTimePoint.enabled") == "false", f"{point} does not disable")
+    expect(problems, m.value(point, "AssessedElementTimePoint.atTime"), f"{point}: no atTime")
     return problems
 
 
@@ -488,6 +560,9 @@ def check_ae6(m):
     problems = []
     expect(problems, m.ref(link, "AssessedElementWithRemedialAction.AssessedElement") == ae, f"{link} not on {ae}")
     expect(problems, m.ref(link, "AssessedElementWithRemedialAction.RemedialAction") == ra, f"{link} not on {ra}")
+    expect(problems, m.value(link, "AssessedElementWithRemedialAction.combinationConstraintKind")
+           in ("ElementCombinationConstraintKind.included", "ElementCombinationConstraintKind.excluded",
+               "ElementCombinationConstraintKind.considered"), f"{link}: no inclusion kind")
     expect_type(problems, m, ra, "GridStateAlterationRemedialAction")
     return problems
 
@@ -539,7 +614,7 @@ USE_CASES = [
     UseCase("BDS_UC1", (), check_bds,
             lambda m: m.without(*[k for k, v in m.objects.items() if v.get("_area") == "Belgovia"]),
             load=bds_model),
-    UseCase("CD_UC1", COMMON, check_cd, lambda m: m.without(*m.of_type("TieCorridor"))),
+    UseCase("CD_UC1", (), check_cd, lambda m: m.without(*m.of_type("TieCorridor")), load=cd_model),
     UseCase("RD_UC1", ALL_NC + ("referenceData/NetworkCode/cimxml/*.xml",), check_rd,
             lambda m: m.without(m.value(m.of_type("Dataset")[0], "accessRights"))),
     UseCase("CO_UC1", ALL_NC + ALL_GRID, check_co,
@@ -597,6 +672,25 @@ USE_CASES = [
 
 # Problems the data or the TestUseCases docs have, by use case: (why, problems).
 KNOWN = {
+    "CD_UC1": (
+        "Common data is not defined once: Belgovia_ER.xml defines the common data's SchedulingArea and "
+        "BiddingZone again, Nordheim's EQ its GeographicalRegion.",
+        ["SchedulingArea 297f533e-77a7-42d9-a683-32babcf6c82f of Org-NineRealms_CD.xml also defined by "
+         "Belgovia_ER.xml",
+         "BiddingZone 87fb9f56-fd86-446f-b35d-c0abba19925f of Org-NineRealms_CD.xml also defined by "
+         "Belgovia_ER.xml",
+         "GeographicalRegion 9356077b-f716-0d6c-0cac-32c074bd8fa3 of Grid_CommonData_CGM-CD.xml also defined "
+         "by 20220615T2230Z__Nordheim_EQ_1.xml"]),
+    "RA_UC1": (
+        "The description has the remedial action open the switch; its one GridStateAlteration sets "
+        "Switch.open through StaticPropertyRange caaa9307 to the absolute value 0.0, not open, and the "
+        "switch is already closed: applying it changes nothing.",
+        ["applying 6d2c8901-d068-4d22-8ce9-7379644b4f17: switch 176d262c-701c-4ced-99b2-a155c136e787 "
+         "open = False, expected True"]),
+    "AS_UC1": (
+        "The availability schedule has no AvailabilityTimePoint: the outage window exists only as the "
+        "text 'Maintenance performed from 10:00h to 18:00h', so the resulting window cannot be verified.",
+        ["d394295f-9d18-4d9f-9808-bd23282bf60f: no AvailabilityTimePoint, so no window to cancel"]),
     "RD_UC1": (
         "The headers name reference data the referenceData files do not define: licences at "
         "creativecommons.org (they define .../License/...), frames as Test/Frame/X-Power-Transmission-"

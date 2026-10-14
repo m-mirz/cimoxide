@@ -548,16 +548,17 @@ ANNEX_1 = [
     ("BDS_UC1", "import, validate*", "*boundary header declares no profile (EQ forced as in ReliCapGrid CI); "
                 "merged into the CGM: 4 boundary points reached from one IGM, Portheim outside the CGM "
                 "topology, 8 objects defined twice"),
-    ("CD_UC1", "import, validate, export", ""),
+    ("CD_UC1", "import, validate, export", "3 common data objects defined again by other datasets"),
     ("RD_UC1", "import, export", "SKOS/PROV/DCAT kept apart from CIM objects (foreign()), not validated; "
                "285 of 390 header URIs name reference data the files do not define"),
     ("CO_UC1", "import, validate, edit, export", "all 11 contingency -> equipment pairs resolve; "
                "an N-1 made N-2 exports and validates (test_edits)"),
     ("ER_UC1", "import, validate, export", ""),
-    ("RA_UC1..7", "import, validate, edit, export", "RA_UC2/5/7 data differs from the docs; RA_UC4's "
+    ("RA_UC1..7", "import, validate, edit, export", "RA_UC1's action leaves its switch closed; RA_UC2/5/7 data "
+                  "differs from the docs; RA_UC4's "
                   "refusal and counter-proposal built and validated (test_edits), its documented "
                   "kind none contradicts the APL"),
-    ("AS_UC1", "import, validate, export", ""),
+    ("AS_UC1", "import, validate, export", "the schedule is cancelled but has no window (AvailabilityTimePoint)"),
     ("AE_UC1..6", "import, validate, export", ""),
     ("OR_UC1", "import, validate, export", ""),
     ("SAR_UC1", "import, validate", "the report's export means producing a SAR, which needs contingency "

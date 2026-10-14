@@ -142,20 +142,31 @@ Objects defined by more than one dataset, identically in each:
 
 ### 2.9.2. CD_UC1: Common Data Importing and exporting
 
-**Report.** Import and export the common data; the twelve classes it lists are present.
+**Report.** Import the common data; verify the twelve classes it lists. Common data is "defined
+once, with unique identifiers and agreed attribute values, to ensure consistency and prevent
+duplication".
 
 **What cimoxide does.**
-1. Decodes `commonData/Grid/cimxml/*.xml` and `commonData/NetworkCode/cimxml/*.xml`.
+1. Decodes every dataset of ReliCapGrid (common data, boundary, every IGM and NC dataset) into one
+   merged dataset, and each file on its own for the objects it defines (`defined_mrids()`).
 2. Checks that each listed class has instances: BiddingZone, BiddingZoneBorder,
    CapacityCalculationRegion, CoordinatedCapacityCalculator, Organisation,
    TransmissionSystemOperator, SecurityCoordinator, LoadFrequencyControlArea, SynchronousArea,
    SchedulingArea, LoadFrequencyControlBlock, TieCorridor.
-3. Validates the NC common data (group `nc-commonData`).
-4. Exports each file: the NC files (`Org-NineRealms_CD.xml` for ER, `Org-NineRealms_CD_OR.xml`
+3. Checks that no other dataset defines a common data object again, and that every association of
+   a common data object resolves.
+4. Validates the NC common data (group `nc-commonData`).
+5. Exports each file: the NC files (`Org-NineRealms_CD.xml` for ER, `Org-NineRealms_CD_OR.xml`
    for OR) per profile and whole; the CGMES common data whole.
 
-**Result.** import, validate, export. All twelve classes present; every export is the same RDF
-graph.
+**Result.** import, validate, export. All twelve classes present, every association resolves, and
+every export is the same RDF graph. Common data is not defined once:
+
+| Common data object | Defined again by |
+|---|---|
+| SchedulingArea `297f533e…` (`Org-NineRealms_CD.xml`) | `Belgovia_ER.xml` |
+| BiddingZone `87fb9f56…` (`Org-NineRealms_CD.xml`) | `Belgovia_ER.xml` |
+| GeographicalRegion `9356077b…` (`Grid_CommonData_CGM-CD.xml`) | Nordheim's EQ |
 
 **Notes.** The report's "CapacityCalculationCalculator" is the class
 CoordinatedCapacityCalculator.
@@ -263,17 +274,29 @@ and 5; Espheim for RA_UC3; Belgovia for RA_UC6 and 7), and validate them in the 
 
 ### 5.9. RA_UC1: Topology Remedial Action with One Topology Action
 
-**What cimoxide does.** Checks that GridStateAlterationRemedialAction `6d2c8901…` has exactly one
-TopologyAction, that it operates switch `176d262c…`, and that the switch is closed in SSH
-(`Switch.open` false).
+**Report.** Import the RA with the IGM; the remedial action has exactly one topology action;
+execute it: the switch changes from closed to open.
 
-**Result.** import, validate, export. As described.
+**What cimoxide does.**
+1. Checks that GridStateAlterationRemedialAction `6d2c8901…` has exactly one TopologyAction, on
+   switch `176d262c…`, which is closed in SSH (`Switch.open` false).
+2. **Execution**: applies the remedial action to the switch states. For each TopologyAction, the
+   StaticPropertyRange on `Switch.open` with an absolute value gives the state (any value but 0
+   is open).
+
+**Result.** import, validate, export. Applying the remedial action leaves the switch closed: its
+TopologyAction `b61d5cd5…` sets `Switch.open` through StaticPropertyRange `caaa9307…` to 0.0. The
+description has it open the switch.
+
+**Notes.** cimoxide computes the switch states the action sets; it does not recompute the
+topology (TP) of the changed grid.
 
 ### 5.10. RA_UC2: Dependent Topology Remedial Actions with Multiple Topology Actions
 
-**What cimoxide does.** Checks that dependencies `598ab84e…` and `13c29cc3…` are exclusive, that
-each names a GridStateAlterationRemedialAction with several TopologyActions, and that both act on
-the same four switches.
+**What cimoxide does.** Checks that dependencies `598ab84e…` and `13c29cc3…` are exclusive and
+name two different GridStateAlterationRemedialActions, each with several TopologyActions; applies
+each (as in RA_UC1) and checks that both act on the same four switches and set different
+configurations.
 
 **Result.** import, validate, export. The data differs from the description: it describes two
 remedial actions on the same four switches of Substation A; the data's are
@@ -282,10 +305,12 @@ remedial actions on the same four switches of Substation A; the data's are
 ### 5.11. RA_UC3: Modification Prior to RAO of a Topology Remedial Action
 
 **What cimoxide does.** Checks that GridStateAlterationRemedialAction `d856a2a2…` has
-TopologyAction `4d3757fd…`, that GridStateAlterationSchedule `f5205bd4…` schedules it, and that
-the schedule's time points both enable and disable it.
+TopologyAction `4d3757fd…`; through SIS, that GridStateAlterationSchedule `f5205bd4…` schedules
+it with time points that both enable and disable it; through SSI, that `Espheim_SSI.xml` gives
+the action's `GridStateAlteration.enabled`.
 
-**Result.** import, validate, export. As described.
+**Result.** import, validate, export. The action is enabled at 2022-06-15T22:30Z, disabled at
+23:30Z and enabled again at 2022-06-16T00:30Z (SIS); SSI enables it.
 
 ### 5.12. RA_UC4: Proposing Modifications of a Topology Remedial Action After RAO
 
@@ -326,7 +351,9 @@ both schedules are active at 2024-11-20T00:30Z, 01:30Z and 02:30Z.
 ### 5.14. RA_UC6: Countertrade Remedial Action
 
 **What cimoxide does.** Checks that CountertradeRemedialAction `30f6377d…` has PowerSchedule
-`27940387…` for GeneratingUnit `413bbc8a…`, and PowerBidSchedule `ae6a5ddd…`.
+`27940387…` for GeneratingUnit `413bbc8a…` (variant 1) and PowerBidSchedule `ae6a5ddd…`
+(variant 2), and that their time points are consistent: each PowerTimePoint has a distinct time
+and an `activatedP`, each PowerBidScheduleTimePoint a distinct time, a `p` and a `price`.
 
 **Result.** import, validate, export. As described.
 
@@ -336,9 +363,10 @@ subclasses; both tools report it.
 ### 5.15. RA_UC7: Redispatch Remedial Action
 
 **What cimoxide does.** Checks that variant 1's RedispatchRemedialAction `fa73cfee…` has
-PowerBidSchedule `6c0ba4c5…` with time point `250e37a5…`; that PowerShiftKeySchedule `3b5748de…`
-is on machine `3a3b27be…`'s unit and distribution `7ab20445…` belongs to it; and that the
-distribution leads to variant 2's `9d72d12a…`.
+PowerBidSchedule `6c0ba4c5…` whose time points (time point `250e37a5…` among them) each have a
+distinct time, a `p` and a `price`; that PowerShiftKeySchedule `3b5748de…` is on machine
+`3a3b27be…`'s unit and distribution `7ab20445…` belongs to it; and that the distribution leads to
+variant 2's `9d72d12a…`.
 
 **Result.** import, validate, export. The data differs from the description: variant 2's
 `9d72d12a…` is linked to no power shift key object; distribution `7ab20445…` leads through
@@ -348,11 +376,17 @@ PowerBidSchedule `6c0ba4c5…` to variant 1's `fa73cfee…`.
 
 ### 6.2. AS_UC1: Availability Remedial Action
 
-**What cimoxide does.** Decodes Svedala's grid, NC and common data; checks that
-AvailabilityRemedialAction `14b2b671…` has AvailabilitySchedule `d394295f…` and that the schedule
-is cancelled (`AvailabilitySchedule.cancelledDateTime`).
+**Report.** The availability remedial action cancels, shortens or reschedules an availability
+schedule; verify that the resulting availability window matches the intent.
 
-**Result.** import, validate, export. As described.
+**What cimoxide does.** Decodes Svedala's grid, NC and common data; checks that
+AvailabilityRemedialAction `14b2b671…` has AvailabilitySchedule `d394295f…`, that the schedule is
+cancelled (`AvailabilitySchedule.cancelledDateTime`), and looks for its window: the
+AvailabilityTimePoints the AS profile defines for it.
+
+**Result.** import, validate, export. The schedule is cancelled at 2022-06-16T08:34Z, but it has no
+AvailabilityTimePoint: the outage window exists only as the text "Maintenance performed from
+10:00h to 18:00h", so the resulting window cannot be verified.
 
 ## 7. Assessed Element
 
@@ -363,10 +397,10 @@ group `nc-Belgovia`, and export each file per profile and whole.
 |---|---|---|
 | 7.1. AE_UC1 Secured | AssessedElement `992c2de6…` is in the base case and secured for region `56d81c91…` | import, validate, export |
 | 7.2. AE_UC2 Scanned | `1eb2eb03…` is not in the base case, scanned and secured, with an exclusion reason; `d463cbba…` is scanned only | import, validate, export |
-| 7.3. AE_UC3 Disable | AssessedElementSchedule `7221ae31…` on `992c2de6…`, whose time point `a26e3ae0…` disables it | import, validate, export |
+| 7.3. AE_UC3 Disable | AssessedElementSchedule `7221ae31…` on `992c2de6…`, whose time point `a26e3ae0…` disables it from 2023-07-22T16:00Z | import, validate, export |
 | 7.4. AE_UC4 Exclude | `1eb2eb03…` is excluded through ScannedForRegion | import, validate, export |
 | 7.5. AE_UC5 With contingency | `d17943b5…` is in the base case and combinable; AssessedElementWithContingency `1f38d403…` excludes and `deb4c65f…` includes a contingency that exists; `663c6c3c…` is not combinable | import, validate, export |
-| 7.6. AE_UC6 With remedial action | AssessedElementWithRemedialAction `66f786ce…` links `13d17257…` to GridStateAlterationRemedialAction `70b696ac…` | import, validate, export |
+| 7.6. AE_UC6 With remedial action | AssessedElementWithRemedialAction `66f786ce…` links `13d17257…` to GridStateAlterationRemedialAction `70b696ac…`, as included | import, validate, export |
 
 **Notes.** The AEs' `ConductingEquipment` are in the IGMs' EQ files; both tools check their type
 there and agree on 316 findings, raised by the SSH files typing the same equipment `cim:Equipment`.
@@ -505,6 +539,9 @@ Changes made to cimoxide while testing with ReliCapGrid:
 | ReliCapGrid data | Madgar1-3/Lysaborg1-3 have no Portheim terminal; Madgar4-Leyva1 only the HVDC IGM's. |
 | ReliCapGrid data | The CGM's topology and state leave Portheim out, so BP Portheim-Espheim is joined on one side only. |
 | ReliCapGrid data | Eight boundary and region objects are defined again by IGMs or the common data (VoltageLevel `0c4f41f8…` by three datasets). |
+| ReliCapGrid data | Common data defined again: SchedulingArea and BiddingZone by `Belgovia_ER.xml`, a GeographicalRegion by Nordheim's EQ. |
+| ReliCapGrid data | RA_UC1's remedial action sets the switch to closed (`Switch.open` 0.0), which it already is. |
+| ReliCapGrid data | AS_UC1's availability schedule has no AvailabilityTimePoint; its window is text only. |
 | ReliCapGrid data | `Espheim_CO.xml`'s header reuses remedial action `5898c268…`'s UUID. |
 | ReliCapGrid data | 285 of 390 header URIs name reference data the reference data files do not define. |
 | ReliCapGrid data | A plain GeneratingUnit or RegulatingControl where a subclass is required (RA_UC6, PowerShiftKeySchedule, RegulatingControlAction). |
