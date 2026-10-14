@@ -20,7 +20,9 @@ cargo run -p cimoxide-gen                 # regenerate cimmodel and cimvalidatio
 ```
 
 Submodules: `application-profiles-library/` (ENTSO-E RDFS and SHACL) and
-`CGMES-Test-Configurations/` (real test datasets).
+`CGMES-Test-Configurations/` (real test datasets). `relicapgrid/` (ENTSO-E's ReliCapGrid,
+for `scripts/relicapgrid`'s harness) is `update = none`: fetch it with
+`git submodule update --init --checkout relicapgrid`.
 
 ## Crates
 

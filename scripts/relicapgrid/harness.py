@@ -2,7 +2,8 @@
 
 The file groups and the triplets validation come from ReliCapGrid's
 buildScripts/validate_instances.py, imported from the checkout named by
-RELICAPGRID_DIR, so both tools see the same files under the same policies.
+RELICAPGRID_DIR, else cimoxide's relicapgrid submodule, so both tools see the
+same files under the same policies.
 
     python harness.py --report out/
 """
@@ -33,11 +34,19 @@ TRIPLETS_META_TYPES = {"Distribution", "NamespaceMap"}
 TRIPLETS_META_KEYS = {"label", "xml_base"}
 
 
+RELICAPGRID_SUBMODULE = CIMOXIDE_ROOT / "relicapgrid"
+
+
 def relicap_dir():
+    """The ReliCapGrid checkout: RELICAPGRID_DIR, else the relicapgrid submodule once
+    checked out (it is not by default: `git submodule update --init --checkout relicapgrid`)."""
     path = os.environ.get("RELICAPGRID_DIR")
-    if not path:
-        raise RuntimeError("set RELICAPGRID_DIR to a relicapgrid checkout")
-    return Path(path).resolve()
+    if path:
+        return Path(path).resolve()
+    if (RELICAPGRID_SUBMODULE / "Instance").is_dir():
+        return RELICAPGRID_SUBMODULE
+    raise RuntimeError("check out the relicapgrid submodule "
+                       "(git submodule update --init --checkout relicapgrid) or set RELICAPGRID_DIR")
 
 
 @contextlib.contextmanager

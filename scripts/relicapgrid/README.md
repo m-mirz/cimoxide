@@ -8,15 +8,20 @@ with it. File groups and the triplets validation are imported from ReliCapGrid's
 
 ## Setup
 
+ReliCapGrid is cimoxide's `relicapgrid` submodule, pinned to the commit the results here are for.
+It is not checked out by `git submodule update --init --recursive`; fetch it explicitly:
+
 ```bash
-git clone https://github.com/entsoe/relicapgrid.git ../relicapgrid   # default branch: cgmes-3.0_ncp-2.5_tc-2.0
+git submodule update --init --checkout relicapgrid    # entsoe/relicapgrid, cgmes-3.0_ncp-2.5_tc-2.0
 cd scripts/relicapgrid
 python3 -m venv .venv
 .venv/bin/pip install 'triplets[polars,oxigraph,validation]==0.2.0' 'pandas!=2.3.3' pytest maturin
 (cd ../../cimoxide-py && VIRTUAL_ENV=$PWD/../scripts/relicapgrid/.venv \
     PATH=$PWD/../scripts/relicapgrid/.venv/bin:$PATH maturin develop --release)
-export RELICAPGRID_DIR=$PWD/../../../relicapgrid
 ```
+
+`RELICAPGRID_DIR` points the harness at another checkout instead. `KNOWN`, `TRIAGE`, the edits and
+mutations name mRIDs and files of the pinned commit; moving the submodule means reviewing them.
 
 The APL is cimoxide's `application-profiles-library` submodule (override with
 `CIMOXIDE_APL_DIR`); it carries the CGMES 3.0 and NCP 2.5 that ReliCapGrid's CI uses.
@@ -24,7 +29,7 @@ The APL is cimoxide's `application-profiles-library` submodule (override with
 ## Run
 
 ```bash
-.venv/bin/python -m pytest -q                 # all tests; skipped without RELICAPGRID_DIR
+.venv/bin/python -m pytest -q                 # all tests; skipped without a ReliCapGrid checkout
 .venv/bin/python harness.py --report out/     # import_diff.csv, validation_diff.csv, summary.md
 ```
 
