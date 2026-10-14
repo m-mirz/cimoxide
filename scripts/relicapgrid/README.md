@@ -43,10 +43,10 @@ disagreement's cause in `harness.TRIAGE`. A new entry in either is a new differe
 
 ## Policies taken from ReliCapGrid
 
-- Boundary files declare no application profile; ReliCapGrid's CI validates them as
-  `CoreEquipment-EU/3.0`. cimoxide reads CGMES profiles from `md:Model.profile` only, so the
-  harness validates copies with an `md:FullModel` header declaring it (and
-  `EquipmentBoundary-EU/3.0` for the boundary group).
+- Boundary files declare no application profile: their `dcat:Dataset` header's
+  `dcterms:conformsTo` names vocabularies only (`CIM100#`, `nc/2.4#`). ReliCapGrid's CI
+  validates them as `CoreEquipment-EU/3.0`; the harness gives cimoxide copies whose header
+  adds that profile to `conformsTo` (and `EquipmentBoundary-EU/3.0` for the boundary group).
 - `Instance/Jotunheim/GridSituation/` duplicates `Jotunheim/NetworkCode/` and is skipped.
 - Findings are compared as `(object, rule local name)`; two shapes sharing a local name
   (e.g. `eq:` and `equ:ACDCConverter.PccTerminal-valueType`) compare as one.

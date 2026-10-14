@@ -225,28 +225,25 @@ def patched_dir():
 
 
 def with_declared_profile(path, boundary_shapes=False):
-    """ReliCapGrid's BOUNDARY_PROFILE_FIX for cimoxide: its boundary files have a
-    dcat:Dataset header declaring no application profile, and cimoxide reads
-    CGMES profiles from md:Model.profile only. The copy adds an md:FullModel
-    about the same dataset declaring CoreEquipment-EU/3.0, and EquipmentBoundary-EU/3.0
-    with *boundary_shapes*: ReliCapGrid keeps those shapes for its boundary group only."""
+    """ReliCapGrid's BOUNDARY_PROFILE_FIX for cimoxide: its boundary files' dcat:Dataset
+    header names vocabularies only (CIM100#, nc/2.4#), no application profile, so no
+    tool knows which shapes apply. ReliCapGrid's CI validates them as CoreEquipment-EU/3.0;
+    the copy adds that profile to the header's dcterms:conformsTo, and
+    EquipmentBoundary-EU/3.0 with *boundary_shapes*: ReliCapGrid keeps those shapes for
+    its boundary group only."""
     prefix, profile = vi().BOUNDARY_PROFILE_FIX
     source = relicap_dir() / path
     if not path.startswith(prefix):
         return str(source)
     text = source.read_text(encoding="utf-8")
-    if "Model.profile" in text:
+    if profile in text:
         return str(source)
-    instance_id = instance_ids()[path]
     profiles = [profile, BOUNDARY_PROFILE] if boundary_shapes else [profile]
-    header = (f'<md:FullModel xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#" '
-              f'rdf:about="urn:uuid:{instance_id}">'
-              + "".join(f"<md:Model.profile>{p}</md:Model.profile>" for p in profiles)
-              + "</md:FullModel>")
-    opening = re.search(r"<rdf:RDF\b[^>]*>", text)
+    declared = "".join(f'<dcterms:conformsTo rdf:resource="{p}"/>' for p in profiles)
+    header = re.search(r"<dcat:Dataset\b[^>]*>", text)
     target = patched_dir() / ("eqbd" if boundary_shapes else "eq") / path
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(text[:opening.end()] + header + text[opening.end():], encoding="utf-8")
+    target.write_text(text[:header.end()] + declared + text[header.end():], encoding="utf-8")
     return str(target)
 
 
