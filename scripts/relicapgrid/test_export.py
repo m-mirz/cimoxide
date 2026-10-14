@@ -36,7 +36,8 @@ def round_trip(path, profile):
 def test_cgmes_round_trip(fi):
     lost, added = round_trip(fi.path, cgmes_profile(fi))
     # SSH writes the class it declares Equipment.inService on: an object the file
-    # types BusbarSection or PowerTransformer comes back as cim:Equipment.
+    # types BusbarSection or PowerTransformer, classes the SSH vocabulary lacks, comes
+    # back as cim:Equipment, as the ENTSO-E test configurations write it.
     retyped = {(s, k, v) for (s, k, v) in lost if k == "Type"}
     assert {(s, k, "Equipment") for (s, k, _) in retyped} == set(added)
     assert set(lost) == retyped

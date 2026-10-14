@@ -4,11 +4,6 @@ import pytest
 
 import harness
 
-# What cimoxide is known to read differently; anything else fails the test.
-# - whitespace: cimoxide trims a literal's leading and trailing whitespace.
-# - empty: cimoxide drops an element with empty text.
-EXPECTED_KINDS = {"whitespace", "empty"}
-
 # Files whose other differences are known: cimoxide keeps CIM/NC classes and
 # dataset headers only, so SKOS, PROV and DCAT objects are dropped.
 DROPS_NON_CIM = {
@@ -39,5 +34,5 @@ def test_import_matches_triplets(path):
         assert other, "cimoxide now keeps this file's non-CIM objects; drop it from DROPS_NON_CIM"
         assert all(side == "-" for side, *_ in other), [t for t in other if t[0] == "+"][:5]
         pytest.xfail("cimoxide drops SKOS/PROV/DCAT objects")
-    assert not other, other[:10]
-    assert set(kinds) <= EXPECTED_KINDS
+    # A literal is kept as written: no trimmed ("whitespace") or dropped ("empty") ones.
+    assert not kinds, {kind: triples[:10] for kind, triples in kinds.items()}
