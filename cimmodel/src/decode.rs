@@ -308,6 +308,10 @@ fn parse_rdf(
     let mut pending_key: Option<&'static str> = None;
     // The `xml:lang` of the field element whose text comes next.
     let mut pending_lang: Option<String> = None;
+    // The literal field's text so far. Stored at its end tag, as written —
+    // untrimmed, and empty for `<cim:X></cim:X>` — since a comment or CDATA
+    // section splits it into several events.
+    let mut pending_text = String::new();
     // A field key as stored: the class table's id when the class declares it,
     // else the interned name.
     let key_of = |declared: Option<&'static FastMap<&'static str, &'static AttrDef>>, local: &str| {
@@ -350,16 +354,19 @@ fn parse_rdf(
                             let name = e.name();
                             let (_, local_bytes) = split_qname(name.as_ref());
                             let local = key_of(declared, std::str::from_utf8(local_bytes)?);
-                            let (res, lang) = field_attrs(e.attributes())?;
+                            let (res, lang, nodes) = field_attrs(e.attributes())?;
                             if let Some(res) = res {
                                 element.add_field(local, FieldValue::Resource(res));
-                            } else {
+                            } else if !nodes {
                                 pending_key = Some(local);
                                 pending_lang = lang;
+                                pending_text.clear();
                             }
                         }
                     }
-                    _ => {}
+                    // A child element: the field holds statements or XML
+                    // (`rdf:parseType`), not a literal.
+                    _ => pending_key = None,
                 }
             }
 
@@ -393,33 +400,48 @@ fn parse_rdf(
                             }
                     }
                     2 => {
-                        // Self-closing field element within the current type block.
-                        if let Some(element) = current.as_mut()
-                            && let Some(res) = find_resource(e.attributes())? {
-                                let name = e.name();
-                                let (_, local_bytes) = split_qname(name.as_ref());
-                                let local = key_of(declared, std::str::from_utf8(local_bytes)?);
-                                element.add_field(local, FieldValue::Resource(res));
+                        // Self-closing field element within the current type
+                        // block: a reference, or else an empty literal.
+                        if let Some(element) = current.as_mut() {
+                            let name = e.name();
+                            let (_, local_bytes) = split_qname(name.as_ref());
+                            let local = key_of(declared, std::str::from_utf8(local_bytes)?);
+                            match field_attrs(e.attributes())? {
+                                (Some(res), _, _) => element.add_field(local, FieldValue::Resource(res)),
+                                (None, _, true) => {}
+                                (None, lang, false) => {
+                                    element.add_field(local, FieldValue::Text(String::new()));
+                                    if let Some(lang) = lang {
+                                        element.add_lang(local, &lang);
+                                    }
+                                }
                             }
+                        }
                     }
-                    _ => {}
+                    _ => pending_key = None,
                 }
             }
 
             Ok(Event::Text(ref e)) => {
-                if depth == 3
-                    && let (Some(element), Some(key)) = (current.as_mut(), pending_key.take()) {
-                        let text = e.unescape()?.trim().to_string();
-                        if !text.is_empty() {
-                            element.add_field(key, FieldValue::Text(text));
-                            if let Some(lang) = pending_lang.take() {
-                                element.add_lang(key, &lang);
-                            }
-                        }
-                    }
+                if depth == 3 && pending_key.is_some() {
+                    pending_text.push_str(&e.unescape()?);
+                }
+            }
+
+            Ok(Event::CData(ref e)) => {
+                if depth == 3 && pending_key.is_some() {
+                    pending_text.push_str(std::str::from_utf8(e)?);
+                }
             }
 
             Ok(Event::End(_)) => {
+                if depth == 3
+                    && let (Some(element), Some(key)) = (current.as_mut(), pending_key.take()) {
+                        element.add_field(key, FieldValue::Text(std::mem::take(&mut pending_text)));
+                        if let Some(lang) = pending_lang.take() {
+                            element.add_lang(key, &lang);
+                        }
+                    }
                 if depth == 2 {
                     pending_key = None;
                     pending_lang = None;
@@ -458,31 +480,21 @@ fn strip_fragment(s: &str) -> String {
 }
 
 
-/// A field element's `rdf:resource` (as [`find_resource`] gives it) and
-/// `xml:lang`, in one pass over its attributes.
+/// A field element's `rdf:resource` (the text after its last `#`),
+/// `xml:lang`, and whether its `rdf:parseType` makes its content nodes rather
+/// than a literal (`Resource`, `Collection`, a difference model's
+/// `Statements`; not `Literal`), in one pass over its attributes.
 fn field_attrs(
     attrs: quick_xml::events::attributes::Attributes<'_>,
-) -> Result<(Option<String>, Option<String>), Box<dyn std::error::Error>> {
-    let (mut res, mut lang) = (None, None);
+) -> Result<(Option<String>, Option<String>, bool), Box<dyn std::error::Error>> {
+    let (mut res, mut lang, mut nodes) = (None, None, false);
     for attr in attrs.flatten() {
         match attr.key.as_ref() {
             b"rdf:resource" => res = Some(strip_fragment(std::str::from_utf8(&attr.value)?)),
             b"xml:lang" => lang = Some(std::str::from_utf8(&attr.value)?.to_string()),
+            b"rdf:parseType" => nodes = attr.value.as_ref() != b"Literal",
             _ => {}
         }
     }
-    Ok((res, lang))
-}
-
-/// Find the value of the "rdf:resource" attribute from an element.
-fn find_resource(
-    attrs: quick_xml::events::attributes::Attributes<'_>,
-) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    for attr in attrs.flatten() {
-        let key = std::str::from_utf8(attr.key.as_ref())?;
-        if key == "rdf:resource" {
-            return Ok(Some(strip_fragment(std::str::from_utf8(&attr.value)?)));
-        }
-    }
-    Ok(None)
+    Ok((res, lang, nodes))
 }
