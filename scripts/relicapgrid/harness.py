@@ -546,7 +546,8 @@ def write_validation_report(out):
 ANNEX_1 = [
     ("PF_UC1", "import, validate, export", "no power flow; SV covers every energised TopologicalNode"),
     ("BDS_UC1", "import, validate*", "*boundary header declares no profile (EQ forced as in ReliCapGrid CI); "
-                "4 boundary points reached from one IGM"),
+                "merged into the CGM: 4 boundary points reached from one IGM, Portheim outside the CGM "
+                "topology, 8 objects defined twice"),
     ("CD_UC1", "import, validate, export", ""),
     ("RD_UC1", "import, export", "SKOS/PROV/DCAT kept apart from CIM objects (foreign()), not validated; "
                "285 of 390 header URIs name reference data the files do not define"),

@@ -25,8 +25,11 @@ AREAS = ("Belgovia", "Britheim", "DC-Espheim-Svedala", "DC-Nordheim-Galia", "Esp
 class Model:
     """What cimoxide decoded from a set of files, keyed by normalised id."""
 
-    def __init__(self, objects):
+    def __init__(self, objects, **facts):
         self.objects = objects
+        # What a check needs beyond the objects (a merge's duplicates, ...),
+        # kept by the mutations.
+        self.facts = facts
 
     @classmethod
     def load(cls, globs):
@@ -87,7 +90,7 @@ class Model:
     # mutations, on a copy
     def without(self, *mrids):
         drop = {harness.norm(m) for m in mrids}
-        return Model({k: v for k, v in self.objects.items() if k not in drop})
+        return Model({k: v for k, v in self.objects.items() if k not in drop}, **self.facts)
 
     def with_value(self, mrid, key, value):
         objects = copy.copy(self.objects)
@@ -97,7 +100,7 @@ class Model:
         else:
             obj[key] = value
         objects[harness.norm(mrid)] = obj
-        return Model(objects)
+        return Model(objects, **self.facts)
 
 
 @functools.cache
@@ -146,27 +149,53 @@ def check_pf(m):
 
 
 def check_bds(m):
-    """Every BoundaryPoint's ConnectivityNode is reached by terminals of two IGMs."""
+    """The boundary merged with every IGM into the CGM, as ReliCapGrid assembles it
+    (group cgmes-CGM-Jotunheim): every BoundaryPoint's ConnectivityNode is reached
+    by terminals of two IGMs, and all of them sit on one TopologicalNode of the
+    CGM's topology that has a voltage; no object is defined by two datasets, and
+    none typed with unrelated classes."""
     problems = []
-    for bp in m.of_type("BoundaryPoint"):
+    voltages = {m.ref(v, "SvVoltage.TopologicalNode") for v in m.of_type("SvVoltage")}
+    for bp in sorted(m.of_type("BoundaryPoint"), key=lambda bp: m.value(bp, "IdentifiedObject.name")):
+        name = m.value(bp, "IdentifiedObject.name")
         node = m.ref(bp, "CommonResponsibilityPoint.ConnectivityNode")
-        expect(problems, node in m.objects, f"{m.value(bp, 'IdentifiedObject.name')}: node {node} absent")
-        areas = {m.value(t, "_area") for t in m.referrers("Terminal.ConnectivityNode", node)} - {None}
-        expect(problems, len(areas) >= 2,
-               f"{m.value(bp, 'IdentifiedObject.name')}: reached from {sorted(areas)} only")
+        expect(problems, node in m.objects, f"{name}: node {node} absent")
+        terminals = m.referrers("Terminal.ConnectivityNode", node)
+        areas = sorted({m.value(t, "_area") for t in terminals} - {None})
+        expect(problems, len(areas) >= 2, f"{name}: reached from {areas} only")
+        topological = {m.ref(t, "Terminal.TopologicalNode") for t in terminals} | {
+            m.ref(node, "ConnectivityNode.TopologicalNode")}
+        placed = topological - {None}
+        expect(problems, len(placed) == 1 and None not in topological,
+               f"{name}: {len(placed)} TopologicalNode(s) in the CGM, "
+               f"{sum(m.ref(t, 'Terminal.TopologicalNode') is None for t in terminals)} of "
+               f"{len(terminals)} terminals on none")
+        expect(problems, not placed or placed <= voltages, f"{name}: no SvVoltage in the CGM")
+    for mrid, files in sorted(m.facts["defined_by"].items()):
+        expect(problems, len(files) == 1, f"{m.type(mrid)} {mrid} defined by {', '.join(sorted(files))}")
+    for mrid, types in m.facts["type_conflicts"]:
+        problems.append(f"{mrid} typed {' and '.join(types)}")
     return problems
 
 
 def bds_model():
-    """The boundary plus every IGM's EQ, terminals tagged with their area."""
-    objects = dict(model(*BOUNDARY).objects)
-    for area in AREAS:
-        for mrid, obj in model(f"{area}/Grid/cimxml/*EQ*.xml").objects.items():
-            if harness.bare_type(obj["_type"]) == "Terminal":
-                obj = dict(obj, _area=area)
-                mrid = f"{area}:{mrid}"
-            objects.setdefault(mrid, obj)
-    return Model(objects)
+    """ReliCapGrid's CGM (group cgmes-CGM-Jotunheim: the boundary, every IGM's EQ and
+    updated SSH, Jotunheim's CGM topology and state, the common data) merged by
+    cimoxide; each terminal tagged with the IGM whose EQ defines it, and each object
+    with the datasets that define it."""
+    root = harness.relicap_dir()
+    files = harness.group("cgmes-CGM-Jotunheim").files
+    cgm = cimoxide.CimDataset.decode_files([str(root / f.path) for f in files])
+    objects = {harness.norm(k): v for k, v in cgm.entries().items()}
+    defined_by = {}
+    for f in files:
+        dataset = cimoxide.CimDataset.decode_file(str(root / f.path))
+        for mrid in dataset.defined_mrids():
+            defined_by.setdefault(harness.norm(mrid), []).append(f.path.rsplit("/", 1)[-1])
+            if "_EQ_" in f.path and objects[harness.norm(mrid)]["_type"] == "Terminal":
+                objects[harness.norm(mrid)] = dict(objects[harness.norm(mrid)], _area=f.area)
+    return Model(objects, defined_by=defined_by,
+                 type_conflicts=[(harness.norm(k), t) for k, t in cgm.type_conflicts()])
 
 
 CD_CLASSES = ("BiddingZone", "BiddingZoneBorder", "CapacityCalculationRegion",
@@ -508,7 +537,8 @@ USE_CASES = [
     *[UseCase(f"PF_UC1[{a}]", grid(a), check_pf, lambda m: m.without(*m.of_type("SvVoltage")[:1]))
       for a in AREAS],
     UseCase("BDS_UC1", (), check_bds,
-            lambda m: m.without(*[k for k in m.objects if k.startswith("Belgovia:")]), load=bds_model),
+            lambda m: m.without(*[k for k, v in m.objects.items() if v.get("_area") == "Belgovia"]),
+            load=bds_model),
     UseCase("CD_UC1", COMMON, check_cd, lambda m: m.without(*m.of_type("TieCorridor"))),
     UseCase("RD_UC1", ALL_NC + ("referenceData/NetworkCode/cimxml/*.xml",), check_rd,
             lambda m: m.without(m.value(m.of_type("Dataset")[0], "accessRights"))),
@@ -578,13 +608,33 @@ KNOWN = {
          "wasGeneratedBy: 65 of 65 not in reference data",
          "license: 71 of 71 not in reference data"]),
     "BDS_UC1": (
-        "Madgar1-3/Lysaborg1-3 (Boundary_Border-Espheim-Portheim.xml) have no Portheim terminal, and "
-        "Madgar4-Leyva1 (Boundary_Border-Svedala-Espheim.xml) only the HVDC IGM's: topology gaps at "
-        "the border.",
-        ["Madgar4-Leyva1: reached from ['DC-Espheim-Svedala'] only",
-         "Madgar3-Lysaborg3: reached from ['Espheim'] only",
+        "In ReliCapGrid's CGM: Madgar1-3/Lysaborg1-3 (Boundary_Border-Espheim-Portheim.xml) have no "
+        "Portheim terminal, and Madgar4-Leyva1 (Boundary_Border-Svedala-Espheim.xml) only the HVDC IGM's; "
+        "the CGM's topology leaves Portheim out (1 of its 121 terminals on a TopologicalNode), so BP "
+        "Portheim-Espheim is joined only on Espheim's side; and the boundary's containers and one "
+        "ConnectivityNode are defined again, identically, by Espheim's, Portheim's and Nordheim's EQ, "
+        "one GeographicalRegion by Nordheim's EQ and the common data.",
+        ["BP Portheim-Espheim: 1 TopologicalNode(s) in the CGM, 9 of 11 terminals on none",
          "Madgar1-Lysaborg1: reached from ['Espheim'] only",
-         "Madgar2-Lysaborg2: reached from ['Espheim'] only"]),
+         "Madgar2-Lysaborg2: reached from ['Espheim'] only",
+         "Madgar3-Lysaborg3: reached from ['Espheim'] only",
+         "Madgar4-Leyva1: reached from ['DC-Espheim-Svedala'] only",
+         "VoltageLevel 0c4f41f8-9797-44eb-bdbe-1a28efa083b9 defined by 20220615T2230Z__Espheim_EQ_1.xml, "
+         "20241223T0642Z_2D_Portheim_EQ_1.xml, Boundary_Border-Espheim-Portheim.xml",
+         "Substation 42b7f03a-db7a-415a-9e15-25f634f5ea9c defined by 20220615T2230Z__Espheim_EQ_1.xml, "
+         "20241223T0642Z_2D_Portheim_EQ_1.xml, Boundary_Border-Espheim-Portheim.xml",
+         "SubGeographicalRegion 77467625-a8fe-8792-7cf2-06c5dfd5fba9 defined by 20220615T2230Z__Nordheim_EQ_1.xml, "
+         "Boundary_Border-Galia-Nordheim.xml",
+         "ConnectivityNode 892ef502-162b-469f-b93f-266aae828227 defined by 20220615T2230Z__Nordheim_EQ_1.xml, "
+         "Boundary_Border-Galia-Nordheim.xml",
+         "GeographicalRegion 9356077b-f716-0d6c-0cac-32c074bd8fa3 defined by 20220615T2230Z__Nordheim_EQ_1.xml, "
+         "Grid_CommonData_CGM-CD.xml",
+         "Substation c39c3eb8-9cce-4778-9069-6952a117ba2b defined by 20220615T2230Z__Nordheim_EQ_1.xml, "
+         "Boundary_Border-Galia-Nordheim.xml",
+         "VoltageLevel e61f8ecf-8129-4702-a3a2-826bdf5ad13d defined by 20220615T2230Z__Nordheim_EQ_1.xml, "
+         "Boundary_Border-Galia-Nordheim.xml",
+         "SubGeographicalRegion f69de45f-9681-4147-9d1f-9e0336fc8635 defined by 20220615T2230Z__Espheim_EQ_1.xml, "
+         "20241223T0642Z_2D_Portheim_EQ_1.xml, Boundary_Border-Espheim-Portheim.xml"]),
     "RA_UC2": (
         "The docs describe two remedial actions on the same four switches of Substation A; the data's "
         "are 'RA SubstationB_2N' and 'RA SubstationA_quarterbar1B', four different switches each.",
