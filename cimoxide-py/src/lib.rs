@@ -292,12 +292,33 @@ impl PyCimDataset {
         Ok(dict.into_any().unbind())
     }
 
-    /// Encode this dataset as a single CGMES profile's RDF/XML text.
+    /// Objects of classes no CIM class table knows — reference data's SKOS
+    /// concepts, PROV agents, DCAT catalogues — as a `dict[str, dict]` keyed by
+    /// identifier as written (a full IRI, or `_:` and a blank node's label).
+    /// `_type` is the class IRI. They are not in `entries()` and not validated.
+    fn foreign(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let ds = self.lock()?;
+        let dict = PyDict::new(py);
+        for (id, entry) in &ds.foreign {
+            dict.set_item(id, entry_to_python(py, entry)?)?;
+        }
+        Ok(dict.into_any().unbind())
+    }
+
+    /// Encode the whole dataset as RDF/XML: CGMES elements, then NC elements
+    /// and `foreign()` objects as they were read.
+    fn to_xml(&self) -> PyResult<String> {
+        let ds = self.lock()?;
+        cimmodel::convert::dataset_to_xml(&ds).map_err(map_err)
+    }
+
+    /// Encode this dataset as one profile's RDF/XML text: a CGMES profile
+    /// (`"EQ"`, `"SSH"`, …) or an NC one (`"CO"`, `"AE"`, …).
     ///
-    /// Only elements/fields whose CIM schema origin includes `profile` (e.g.
-    /// `"EQ"`, `"SSH"`) are emitted. If the dataset contains a decoded `FullModel`
-    /// header for this profile, it is reused verbatim; otherwise a minimal
-    /// synthetic header is generated.
+    /// Only elements/fields the profile exchanges are emitted, with the
+    /// dataset's own header for the profile when it has one (`md:FullModel`
+    /// for CGMES, `dcat:Dataset` for NC), else a synthesized one. An unknown
+    /// profile code raises `RuntimeError`.
     fn to_xml_for_profile(&self, profile: &str) -> PyResult<String> {
         let ds = self.lock()?;
         cimmodel::convert::dataset_to_xml_for_profile(&ds, profile).map_err(map_err)

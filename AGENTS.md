@@ -74,14 +74,21 @@ file-name order wins; `cimlsp` hover and `cimmcp describe_class` show it); both
   `decode_files`, `decode_str`. `merge`: a later scalar wins, reference lists join, duplicate
   tracking stays per file. An object typed differently by different files keeps every type
   (`Element::types`); its class and `by_type` bucket are the most specific one.
-- `convert.rs` — RDF/XML export (`dataset_to_xml`, `dataset_to_xml_for_profile`) and JSON;
-  `convert_nc.rs` — one NC profile's export (DCAT header, elements, fields), which
-  `dataset_to_xml_for_profile` dispatches to for an NC code. An unknown code is an error.
-- `CimDataset::field_forms` keeps what the decoded value loses of how a field was written:
-  an undeclared key's namespace (the DCAT header's `dcterms:`/`prov:` properties), its
-  `rdf:datatype`, the namespace a non-local reference was cut from. NC export needs it;
-  JSON does not carry it.
-  (`{mrid: {"_type", "id", "Class.attr": "value" | [...]}}`)
+- `convert.rs` — RDF/XML export (`dataset_to_xml`, `dataset_to_xml_for_profile`) and JSON
+  (`{mrid: {"_type", "id", "Class.attr": "value" | [...]}}`); `convert_nc.rs` — one NC
+  profile's export (DCAT header, elements, fields), which `dataset_to_xml_for_profile`
+  dispatches to for an NC code, and the NC and foreign part of `dataset_to_xml`, which
+  writes the whole dataset as read. An unknown profile code is an error.
+- An object of a class no table knows (reference data's SKOS/PROV/DCAT) goes to
+  `CimDataset::foreign`, keyed by its full IRI (`_:label` for an `rdf:nodeID`), with a
+  `base::foreign_class` whose `qualified` name is the class IRI. Apart from `entries`, so
+  validation, SPARQL and CIM lookups never see one; only the encoder and `foreign()` in
+  cimoxide-py do.
+- What the decoded value loses of how it was written is kept per dataset for the encoder:
+  `field_forms` by (class, key) — a field's namespace where not its declaration's (the DCAT
+  header's `dcterms:`/`prov:` properties), its `rdf:datatype`, the namespace a non-local
+  reference was cut from; `type_ns` — an element's namespace where not its class's;
+  `prefixes` — the documents' prefix bindings. JSON carries none of them.
 - `schema_source.rs` — generated vs. RDFS-loaded class tables
 
 Performance invariants:
@@ -135,10 +142,10 @@ vs `https://cim.ucaiug.io/ns#`). The decoder resolves `(namespace, local name)` 
 bare-name fallback.
 
 - NC `type_name`s and `by_type` keys carry an `nc:` prefix.
-- NC exports per profile only (`dataset_to_xml_for_profile`); `dataset_to_xml` writes
-  CGMES elements. Ids are written in the form read (`rdf:ID`, `rdf:about="#…"`,
-  `urn:uuid:`). `scripts/relicapgrid`'s export test compares each NC file and its export
-  as RDF graphs.
+- NC exports per profile (`dataset_to_xml_for_profile`) or as part of the whole dataset
+  (`dataset_to_xml`). Ids are written in the form read (`rdf:ID`, `rdf:about="#…"`,
+  `urn:uuid:`). `scripts/relicapgrid`'s export tests compare each file and its exports as
+  RDF graphs.
 - Import the two families into **separate** `CimSpecification`s (shared `or_insert`
   prefix map; both bind `cim` and `base` differently).
 

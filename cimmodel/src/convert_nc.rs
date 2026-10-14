@@ -26,8 +26,8 @@ use crate::CimDataset;
 use crate::base::{AttrDef, AttrKind, Element, FieldValue, Schema};
 use crate::registry::type_registry;
 
-/// Preferred prefixes, after the NC schema's own bindings. A namespace in
-/// neither gets `ns1`, `ns2`, …
+/// Preferred prefixes, after the documents' own ([`CimDataset::prefixes`])
+/// and the NC schema's. A namespace in none gets `ns1`, `ns2`, …
 const KNOWN_PREFIXES: &[(&str, &str)] = &[
     ("adms", "http://www.w3.org/ns/adms#"),
     ("cim17", "http://iec.ch/TC57/CIM100#"),
@@ -68,25 +68,35 @@ fn profile_name(uri: &str) -> Option<&str> {
 }
 
 /// Namespace IRI → prefix, allocated as the body uses them.
-#[derive(Default)]
-struct Prefixes {
-    bound: BTreeMap<&'static str, String>,
+pub(crate) struct Prefixes {
+    pub(crate) bound: BTreeMap<&'static str, String>,
     generated: usize,
+    /// (prefix, namespace) the dataset's documents used, sorted.
+    documents: Vec<(&'static str, &'static str)>,
 }
 
 impl Prefixes {
-    fn of(&mut self, ns: &'static str) -> String {
+    /// An allocator for `ds`, whose prefixes start as `bindings` (prefix,
+    /// namespace), the ones a document's root already declares.
+    pub(crate) fn seeded(ds: &CimDataset, bindings: &[(&'static str, &'static str)]) -> Self {
+        let mut documents: Vec<(&'static str, &'static str)> = ds.prefixes.iter().map(|(ns, p)| (*p, *ns)).collect();
+        documents.sort_unstable();
+        Self { bound: bindings.iter().map(|(p, ns)| (*ns, p.to_string())).collect(), generated: 0, documents }
+    }
+
+    pub(crate) fn of(&mut self, ns: &'static str) -> String {
         if let Some(p) = self.bound.get(ns) {
             return p.clone();
         }
         let taken = |p: &str, bound: &BTreeMap<&str, String>| bound.values().any(|b| b == p);
-        let preferred = schema()
-            .namespaces
+        let preferred = self
+            .documents
             .iter()
+            .chain(schema().namespaces)
             .chain(KNOWN_PREFIXES)
-            .find(|(_, n)| *n == ns)
+            .filter(|(_, n)| *n == ns)
             .map(|(p, _)| p.to_string())
-            .filter(|p| !taken(p, &self.bound));
+            .find(|p| !p.is_empty() && !taken(p, &self.bound));
         let prefix = preferred.unwrap_or_else(|| loop {
             self.generated += 1;
             let p = format!("ns{}", self.generated);
@@ -131,7 +141,7 @@ fn header_for<'a>(ds: &'a CimDataset, profile_uri: &str) -> Option<&'a Element> 
 pub fn dataset_to_xml_for_nc_profile(ds: &CimDataset, code: &str) -> Result<String, Box<dyn Error>> {
     let profile_uri = nc_profile_uri(code).ok_or_else(|| format!("unknown NC profile code {code:?}"))?;
     let reg = type_registry();
-    let mut prefixes = Prefixes::default();
+    let mut prefixes = Prefixes::seeded(ds, &[]);
     let mut body = String::new();
 
     let header = header_for(ds, profile_uri);
@@ -186,11 +196,30 @@ pub fn dataset_to_xml_for_nc_profile(ds: &CimDataset, code: &str) -> Result<Stri
     Ok(out)
 }
 
-/// The `rdf:ID` / `rdf:about` attribute for an element, in the form it was
-/// read.
+/// Write every NC object and every foreign object ([`CimDataset::foreign`])
+/// with all its fields, as read: what [`crate::convert::dataset_to_xml`] adds
+/// to the CGMES elements. Headers first, then by identifier.
+pub(crate) fn write_as_read(out: &mut String, prefixes: &mut Prefixes, ds: &CimDataset) -> Result<(), Box<dyn Error>> {
+    let mut nc: Vec<&Element> = ds.entries.values().filter(|e| e.type_name().starts_with("nc:")).collect();
+    nc.sort_by_key(|e| (!HEADERS.contains(&e.type_name()), e.mrid()));
+    for element in nc {
+        write_element(out, prefixes, ds, element, element.class().ns, |_| true)?;
+    }
+    let mut foreign: Vec<&Element> = ds.foreign.values().collect();
+    foreign.sort_by_key(|e| e.mrid());
+    for element in foreign {
+        write_element(out, prefixes, ds, element, element.class().ns, |_| true)?;
+    }
+    Ok(())
+}
+
+/// The `rdf:ID` / `rdf:about` / `rdf:nodeID` attribute for an element, in the
+/// form it was read.
 fn identity(element: &Element) -> String {
     let mrid = element.mrid();
-    if mrid.contains(':') {
+    if let Some(label) = mrid.strip_prefix("_:") {
+        format!("rdf:nodeID=\"{}\"", escape_attr(label))
+    } else if mrid.contains(':') {
         format!("rdf:about=\"{}\"", escape_attr(mrid))
     } else if element.defined() {
         format!("rdf:ID=\"{}\"", escape_attr(mrid))
@@ -199,10 +228,12 @@ fn identity(element: &Element) -> String {
     }
 }
 
-/// Write `element`, typed in namespace `class_ns`, with the fields `keep`
+/// Write `element`, typed in the namespace it was read in
+/// ([`CimDataset::type_ns`]) or else `class_ns`, with the fields `keep`
 /// selects, sorted by key; nothing if it selects none and the element has
-/// fields. A field's namespace is its declaration's, in the element's family
-/// or else NC's, else the one the document bound ([`CimDataset::field_forms`]).
+/// fields. A field's namespace is the one it was read in where that is not
+/// its declaration's ([`CimDataset::field_forms`]), else its declaration's, in
+/// the element's family or else NC's.
 fn write_element(
     out: &mut String,
     prefixes: &mut Prefixes,
@@ -217,13 +248,17 @@ fn write_element(
         return Ok(());
     }
     fields.sort_by_key(|(k, _)| **k);
-    let tag = format!("{}:{}", prefixes.of(class_ns), class.local);
+    let tag_ns = ds.type_ns.get(element.mrid()).copied().unwrap_or(class_ns);
+    let tag = format!("{}:{}", prefixes.of(tag_ns), class.local);
     write!(out, "  <{tag} {}>", identity(element))?;
     let reg = type_registry();
+    // A foreign object's fields are named only by the documents: a CIM
+    // attribute of the same bare name may live in another namespace.
+    let foreign = ds.foreign.get(element.mrid()).is_some_and(|f| std::ptr::eq(f, element));
     for (key, value) in fields {
-        let attr = reg.attr_of(class, key).or_else(|| reg.family_attr("nc", key));
-        let form = ds.field_forms.get(*key).copied().unwrap_or_default();
-        let ns = attr.map(|a| a.ns).or(form.ns).unwrap_or(class_ns);
+        let attr = if foreign { None } else { reg.attr_of(class, key).or_else(|| reg.family_attr("nc", key)) };
+        let form = ds.field_forms.get(&(class.qualified, *key)).copied().unwrap_or_default();
+        let ns = form.ns.or(attr.map(|a| a.ns)).unwrap_or(class_ns);
         let datatype = form.datatype.map(|d| format!(" rdf:datatype=\"{}\"", escape_attr(d))).unwrap_or_default();
         let name = format!("{}:{key}", prefixes.of(ns));
         let langs: Vec<&str> = element.langs(key).collect();
@@ -249,7 +284,12 @@ fn write_element(
             _ => &[],
         };
         for r in refs {
-            write!(out, "\n    <{name} rdf:resource=\"{}\"/>", escape_attr(&resource(attr, form.resource_ns.filter(|_| !ds.entries.contains_key(r)), r)))?;
+            if let Some(label) = r.strip_prefix("_:") {
+                write!(out, "\n    <{name} rdf:nodeID=\"{}\"/>", escape_attr(label))?;
+            } else {
+                let cut_from = form.resource_ns.filter(|_| !ds.entries.contains_key(r) && !ds.foreign.contains_key(r));
+                write!(out, "\n    <{name} rdf:resource=\"{}\"/>", escape_attr(&resource(attr, cut_from, r)))?;
+            }
         }
     }
     writeln!(out, "\n  </{tag}>")?;

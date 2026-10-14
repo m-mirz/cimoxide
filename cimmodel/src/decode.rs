@@ -17,14 +17,15 @@ pub fn is_cim(text: &str) -> bool {
     head.contains("http://iec.ch/TC57/") || head.contains("https://cim.ucaiug.io/ns#")
 }
 
-/// How a dataset's files wrote one field key ([`CimDataset::field_forms`]).
-/// Each part is the first the files showed; one key written two ways keeps
-/// the first.
+/// How a dataset's files wrote one field of one class
+/// ([`CimDataset::field_forms`]). Each part is the first the files showed;
+/// a field written two ways keeps the first.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FieldForm {
-    /// The key's namespace IRI, for a key the class tables do not declare
-    /// (`conformsTo` → `http://purl.org/dc/terms/`); a declared attribute's is
-    /// its [`AttrDef::ns`].
+    /// The field's namespace IRI where it is not the declared one: for a key
+    /// the class tables do not declare (`conformsTo` →
+    /// `http://purl.org/dc/terms/`), or a declared attribute written in
+    /// another namespace (an NC file's `IdentifiedObject.mRID` in CIM100).
     pub ns: Option<&'static str>,
     /// The `rdf:datatype` its literals carried (`dcat:temporalResolution` →
     /// `xsd:duration`).
@@ -48,10 +49,30 @@ pub struct CimDataset {
     pub entries: FastMap<String, Element>,
     /// Maps `type_name()` → list of MRIDs of that type. Populated on insert, maintained on merge.
     pub by_type: FastMap<String, Vec<String>>,
-    /// How the files wrote each field key, where the class tables cannot tell
-    /// and the decoded value no longer shows: what the encoder needs to write
-    /// the field back as it was read.
-    pub field_forms: FastMap<&'static str, FieldForm>,
+    /// How the files wrote each field, by the class of its object
+    /// (`type_name()`) and its key, where the class tables cannot tell and the
+    /// decoded value no longer shows: what the encoder needs to write the
+    /// field back as it was read. By class, because one document may use one
+    /// local name in two vocabularies (`dcterms:type` on a dataset,
+    /// `prov:type` on an activity).
+    pub field_forms: FastMap<(&'static str, &'static str), FieldForm>,
+    /// The namespace an object's element was written in, by mRID, where it is
+    /// not its class's: a class the decoder found by local name only
+    /// (`cim:BoundaryPoint` for CIM100-European's, an NC file's
+    /// `cim:PhaseTapChangerLinear` for CGMES's). First file wins.
+    pub type_ns: FastMap<String, &'static str>,
+    /// The prefix the files bound each namespace to (`qudt` →
+    /// `http://qudt.org/schema/qudt/`), for the encoder to reuse. First file
+    /// wins.
+    pub prefixes: FastMap<&'static str, &'static str>,
+    /// Objects of classes no class table knows — reference data's SKOS
+    /// concepts, PROV agents, DCAT catalogues — keyed by their identifier as
+    /// written: the full IRI of `rdf:about`, `_:` and the `rdf:nodeID` of a
+    /// blank node. Kept apart from `entries` so that validation, SPARQL and
+    /// every lookup of a CIM object see only CIM objects; the encoder writes
+    /// them back ([`crate::convert::dataset_to_xml`]). Their classes come from
+    /// [`crate::base::foreign_class`].
+    pub foreign: FastMap<String, Element>,
 }
 
 impl Default for CimDataset {
@@ -66,6 +87,9 @@ impl CimDataset {
             entries: FastMap::default(),
             by_type: FastMap::default(),
             field_forms: FastMap::default(),
+            type_ns: FastMap::default(),
+            prefixes: FastMap::default(),
+            foreign: FastMap::default(),
         }
     }
 
@@ -137,6 +161,20 @@ impl CimDataset {
     pub fn merge(&mut self, other: CimDataset) {
         for (key, form) in other.field_forms {
             self.field_forms.entry(key).or_default().fill_from(form);
+        }
+        for (mrid, ns) in other.type_ns {
+            self.type_ns.entry(mrid).or_insert(ns);
+        }
+        for (ns, prefix) in other.prefixes {
+            self.prefixes.entry(ns).or_insert(prefix);
+        }
+        for (id, incoming) in other.foreign {
+            match self.foreign.get_mut(&id) {
+                Some(existing) => existing.merge_from(&incoming),
+                None => {
+                    self.foreign.insert(id, incoming);
+                }
+            }
         }
         let reg = registry::type_registry();
         let mut moved: FastMap<&'static str, FastSet<String>> = FastMap::default();
@@ -280,27 +318,91 @@ impl Scope {
 
 }
 
-/// One pass over an element's attributes, yielding what the parser needs: the
-/// MRID, whether the element only describes the object (`rdf:about`, no
-/// `rdf:ID`) and whether it redeclares any namespace. Scanning twice
-/// costs more than the nested-`xmlns` case it would serve, because every element
-/// pays for it and almost none declare one.
-fn scan_attrs(e: &BytesStart) -> Result<(String, bool, bool), Box<dyn std::error::Error>> {
-    let mut mrid = String::new();
-    let mut described = false;
+/// What an object element's attributes say about it.
+struct Subject {
+    /// A CIM object's key: the text after the last `#` of `rdf:about` or
+    /// `rdf:ID`, an IRI without one whole; `_:` and the label of a blank node.
+    mrid: String,
+    /// A foreign object's key ([`CimDataset::foreign`]): `rdf:about` as
+    /// written (less a leading `#`), `rdf:ID`, or `_:` and the `rdf:nodeID`.
+    id: String,
+    /// The element only describes the object (`rdf:about`, no `rdf:ID`).
+    described: bool,
+    has_xmlns: bool,
+}
+
+/// One pass over an element's attributes, yielding what the parser needs.
+/// Scanning twice costs more than the nested-`xmlns` case it would serve,
+/// because every element pays for it and almost none declare one.
+fn scan_attrs(e: &BytesStart) -> Result<Subject, Box<dyn std::error::Error>> {
+    let mut subject = Subject { mrid: String::new(), id: String::new(), described: false, has_xmlns: false };
     let mut defined = false;
-    let mut has_xmlns = false;
     for attr in e.attributes().flatten() {
         let key = attr.key.as_ref();
         if key == b"rdf:about" || key == b"rdf:ID" {
-            mrid = strip_fragment(std::str::from_utf8(&attr.value)?);
-            described |= key == b"rdf:about";
+            let value = std::str::from_utf8(&attr.value)?;
+            subject.mrid = strip_fragment(value);
+            subject.id = value.strip_prefix('#').unwrap_or(value).to_string();
+            subject.described |= key == b"rdf:about";
             defined |= key == b"rdf:ID";
+        } else if key == b"rdf:nodeID" {
+            subject.mrid = format!("_:{}", std::str::from_utf8(&attr.value)?);
+            subject.id = subject.mrid.clone();
         } else if key.starts_with(b"xmlns") {
-            has_xmlns = true;
+            subject.has_xmlns = true;
         }
     }
-    Ok((mrid, described && !defined, has_xmlns))
+    subject.described &= !defined;
+    Ok(subject)
+}
+
+/// The object an element starts: of its class when a table knows it, else a
+/// foreign object (`true`) of a class named by the element; and the
+/// namespace the element was written in, when it is not the class's. `None`
+/// for an element with no identifier, which nothing can refer to.
+fn object(
+    scope: &Scope,
+    reg: &'static TypeRegistry,
+    e: &BytesStart,
+    subject: Subject,
+) -> Result<Option<(Element, bool, Option<&'static str>)>, Box<dyn std::error::Error>> {
+    if subject.id.is_empty() {
+        return Ok(None);
+    }
+    let name = e.name();
+    let (prefix, local) = split_qname(name.as_ref());
+    let ns = scope.ns(prefix);
+    let (mut element, foreign) = match resolve(scope, reg, name.as_ref())? {
+        Some(class) => (Element::new(class, subject.mrid), false),
+        None => (Element::new(crate::base::foreign_class(ns, std::str::from_utf8(local)?), subject.id), true),
+    };
+    if subject.described {
+        element.mark_described();
+    }
+    let written = (!ns.is_empty() && !same_ns(element.type_ns(), ns)).then_some(ns);
+    Ok(Some((element, foreign, written)))
+}
+
+/// Whether two namespace IRIs name the same vocabulary: a document may write
+/// one without its trailing `#`, which the decoder's tables accept.
+fn same_ns(a: &str, b: &str) -> bool {
+    a == b || a.strip_suffix('#') == Some(b) || b.strip_suffix('#') == Some(a)
+}
+
+/// Add a decoded object to the dataset, a foreign one apart.
+fn store(ds: &mut CimDataset, element: Element, foreign: bool, written: Option<&'static str>) {
+    if let Some(ns) = written
+        && !foreign
+        && !element.mrid().is_empty()
+    {
+        ds.type_ns.entry(element.mrid().to_string()).or_insert(ns);
+    }
+    if foreign {
+        ds.foreign.insert(element.mrid().to_string(), element);
+    } else if !element.mrid().is_empty() {
+        index(&mut ds.by_type, element.type_name(), element.mrid().to_string());
+        ds.entries.insert(element.mrid().to_string(), element);
+    }
 }
 
 /// Split a qualified name into its prefix and local part.
@@ -349,6 +451,10 @@ fn parse_rdf(
     // Resolved at the element's start tag, so an unregistered element never
     // accumulates fields.
     let mut current: Option<Element> = None;
+    // `current` is an object of a class no table knows ([`CimDataset::foreign`]).
+    let mut current_foreign = false;
+    // The namespace `current` was written in, when not its class's.
+    let mut current_ns: Option<&'static str> = None;
     // The attributes `current`'s class declares, which supply most field keys.
     let mut declared: Option<&'static FastMap<&'static str, &'static AttrDef>> = None;
     let mut pending_key: Option<&'static str> = None;
@@ -364,9 +470,10 @@ fn parse_rdf(
     // undeclared key's namespace, a datatype, the namespace a reference was
     // cut from.
     let field = |declared: Option<&'static FastMap<&'static str, &'static AttrDef>>,
+                 class: &'static str,
                  e: &BytesStart,
                  scope: &Scope,
-                 forms: &mut FastMap<&'static str, FieldForm>|
+                 forms: &mut FastMap<(&'static str, &'static str), FieldForm>|
      -> Result<(&'static str, FieldAttrs), Box<dyn std::error::Error>> {
         let name = e.name();
         let (prefix, local_bytes) = split_qname(name.as_ref());
@@ -375,10 +482,10 @@ fn parse_rdf(
         let key = attr.map_or_else(|| intern(local), |a| a.id);
         let attrs = field_attrs(e.attributes())?;
         let ns = scope.ns(prefix);
-        let undeclared_ns = (attr.is_none() && !ns.is_empty()).then_some(ns);
+        let undeclared_ns = (!ns.is_empty() && attr.is_none_or(|a| !same_ns(a.ns, ns))).then_some(ns);
         let resource_ns = attrs.resource_ns.filter(|_| attr.is_none_or(|a| a.kind != AttrKind::Enum));
         if undeclared_ns.is_some() || attrs.datatype.is_some() || resource_ns.is_some() {
-            forms.entry(key).or_default().fill_from(FieldForm {
+            forms.entry((class, key)).or_default().fill_from(FieldForm {
                 ns: undeclared_ns,
                 datatype: attrs.datatype,
                 resource_ns,
@@ -393,14 +500,21 @@ fn parse_rdf(
                 depth += 1;
 
                 match depth {
-                    1 => scope.absorb(e, reg),
+                    1 => {
+                        scope.absorb(e, reg);
+                        for (prefix, ns, _) in &scope.prefixes {
+                            if let Ok(prefix) = std::str::from_utf8(prefix) {
+                                ds.prefixes.entry(ns).or_insert_with(|| intern(prefix));
+                            }
+                        }
+                    }
                     2 => {
                         // Every CGMES and NC file declares its namespaces on the
                         // root, but a nested redeclaration is legal RDF/XML, so
                         // honour one when it appears. The End arm restores the
                         // outer scope.
-                        let (mrid, described, has_xmlns) = scan_attrs(e)?;
-                        if has_xmlns {
+                        let subject = scan_attrs(e)?;
+                        if subject.has_xmlns {
                             let mut inner = Scope {
                                 prefixes: scope.prefixes.clone(),
                                 default: scope.default,
@@ -410,18 +524,15 @@ fn parse_rdf(
                             nested = Some(std::mem::replace(&mut scope, inner));
                         }
 
-                        current = resolve(&scope, reg, e.name().as_ref())?.map(|class| {
-                            let mut element = Element::new(class, mrid);
-                            if described {
-                                element.mark_described();
-                            }
-                            element
-                        });
+                        (current, current_foreign, current_ns) = match object(&scope, reg, e, subject)? {
+                            Some((element, foreign, written)) => (Some(element), foreign, written),
+                            None => (None, false, None),
+                        };
                         declared = current.as_ref().and_then(|c| reg.declared(c.class()));
                     }
                     3 => {
                         if let Some(element) = current.as_mut() {
-                            let (key, attrs) = field(declared, e, &scope, &mut ds.field_forms)?;
+                            let (key, attrs) = field(declared, element.type_name(), e, &scope, &mut ds.field_forms)?;
                             if let Some(res) = attrs.resource {
                                 element.add_field(key, FieldValue::Resource(res));
                             } else if !attrs.nodes {
@@ -444,8 +555,8 @@ fn parse_rdf(
                         // It can carry its own xmlns; with no children there is
                         // nothing to restore afterwards, so resolve against a
                         // throwaway scope.
-                        let (mrid, described, has_xmlns) = scan_attrs(e)?;
-                        let local_scope = if has_xmlns {
+                        let subject = scan_attrs(e)?;
+                        let local_scope = if subject.has_xmlns {
                             let mut inner = Scope {
                                 prefixes: scope.prefixes.clone(),
                                 default: scope.default,
@@ -457,21 +568,15 @@ fn parse_rdf(
                             None
                         };
                         let active = local_scope.as_ref().unwrap_or(&scope);
-                        if !mrid.is_empty()
-                            && let Some(class) = resolve(active, reg, e.name().as_ref())? {
-                                index(&mut ds.by_type, class.qualified, mrid.clone());
-                                let mut element = Element::new(class, mrid.clone());
-                                if described {
-                                    element.mark_described();
-                                }
-                                ds.entries.insert(mrid, element);
-                            }
+                        if let Some((element, foreign, written)) = object(active, reg, e, subject)? {
+                            store(ds, element, foreign, written);
+                        }
                     }
                     2 => {
                         // Self-closing field element within the current type
                         // block: a reference, or else an empty literal.
                         if let Some(element) = current.as_mut() {
-                            let (key, attrs) = field(declared, e, &scope, &mut ds.field_forms)?;
+                            let (key, attrs) = field(declared, element.type_name(), e, &scope, &mut ds.field_forms)?;
                             if let Some(res) = attrs.resource {
                                 element.add_field(key, FieldValue::Resource(res));
                             } else if !attrs.nodes {
@@ -505,11 +610,9 @@ fn parse_rdf(
                 if depth == 2 {
                     pending_key = None;
                     pending_lang = None;
-                    if let Some(element) = current.take()
-                        && !element.mrid().is_empty() {
-                            index(&mut ds.by_type, element.type_name(), element.mrid().to_string());
-                            ds.entries.insert(element.mrid().to_string(), element);
-                        }
+                    if let Some(element) = current.take() {
+                        store(ds, element, current_foreign, current_ns.take());
+                    }
                     if let Some(outer) = nested.take() {
                         scope = outer;
                     }
@@ -573,6 +676,7 @@ fn field_attrs(attrs: quick_xml::events::attributes::Attributes<'_>) -> Result<F
                 }
                 out.resource = Some(kept);
             }
+            b"rdf:nodeID" => out.resource = Some(format!("_:{}", std::str::from_utf8(&attr.value)?)),
             b"xml:lang" => out.lang = Some(std::str::from_utf8(&attr.value)?.to_string()),
             b"rdf:datatype" => out.datatype = Some(intern(std::str::from_utf8(&attr.value)?)),
             b"rdf:parseType" => out.nodes = attr.value.as_ref() != b"Literal",

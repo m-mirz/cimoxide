@@ -101,6 +101,33 @@ pub fn intern(key: &str) -> &'static str {
     k
 }
 
+/// The class of an object no class table knows — a SKOS concept, a PROV
+/// agent, a DCAT catalogue — named by its namespace and local name. One leaked
+/// `ClassDef` per distinct class, kept for the process like [`intern`]'s keys.
+/// Its `qualified` name is the class IRI, which no family's `by_type` keys use.
+pub fn foreign_class(ns: &str, local: &str) -> &'static ClassDef {
+    use std::sync::{Mutex, OnceLock};
+    static CLASSES: OnceLock<Mutex<FastMap<String, &'static ClassDef>>> = OnceLock::new();
+    let iri = format!("{ns}{local}");
+    let mut classes = CLASSES.get_or_init(Default::default).lock().unwrap();
+    if let Some(c) = classes.get(&iri) {
+        return c;
+    }
+    let qualified: &'static str = Box::leak(iri.clone().into_boxed_str());
+    let class: &'static ClassDef = Box::leak(Box::new(ClassDef {
+        ns: intern(ns),
+        local: &qualified[ns.len()..],
+        qualified,
+        super_class: None,
+        concrete: true,
+        attrs: &[],
+        origins: &[],
+        comment: "",
+    }));
+    classes.insert(iri, class);
+    class
+}
+
 #[derive(Debug, Clone)]
 pub enum FieldValue {
     Text(String),
