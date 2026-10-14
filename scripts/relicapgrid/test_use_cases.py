@@ -590,7 +590,9 @@ KNOWN = {
         "are 'RA SubstationB_2N' and 'RA SubstationA_quarterbar1B', four different switches each.",
         None),
     "RA_UC4": (
-        "The docs set RemedialActionScheduleDependencyKind none; the dependency carries no kind.",
+        "The docs set RemedialActionScheduleDependencyKind none; the dependency carries no kind, as the "
+        "APL requires outside a RemedialActionScheduleGroup (rasc:...kind-applicability): the docs "
+        "contradict the APL, not the data (test_edits).",
         ["f7231aa5-d497-41f3-a5d5-9d4af74444f0: kind None, expected none"]),
     "RA_UC5": (
         "The two remedial actions are exclusive, but both proposed schedules are active at the same "

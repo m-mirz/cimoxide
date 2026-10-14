@@ -135,7 +135,7 @@ def cimoxide_triples(entries):
         subject = norm(mrid)
         triples[(subject, "Type", bare_type(fields["_type"]))] += 1
         for key, value in fields.items():
-            if key in ("_type", "id"):
+            if key in ("_type", "id", "_lang"):
                 continue
             for item in value if isinstance(value, list) else [value]:
                 triples[(subject, key, norm(item))] += 1
@@ -467,6 +467,14 @@ def repo_root(path):
         v.REPO_ROOT = previous
 
 
+def group_findings(path):
+    """(triplets, cimoxide) findings of the group that reports *path*, keyed (object, rule):
+    what mutated() compares against."""
+    grp = reporting_group(path)
+    return ({(f.object_id, f.rule) for f in reference_set(grp)},
+            {(f.object_id, f.rule) for f in cimoxide_set(grp)})
+
+
 def mutated(path, transform):
     """(triplets, cimoxide) findings that appear when *transform* rewrites the
     text of *path*: both tools run on the group that reports *path*, as
@@ -542,14 +550,17 @@ ANNEX_1 = [
     ("CD_UC1", "import, validate, export", ""),
     ("RD_UC1", "import, export", "SKOS/PROV/DCAT kept apart from CIM objects (foreign()), not validated; "
                "285 of 390 header URIs name reference data the files do not define"),
-    ("CO_UC1", "import, validate, export", "all 11 contingency -> equipment pairs resolve; edit not exercised"),
+    ("CO_UC1", "import, validate, edit, export", "all 11 contingency -> equipment pairs resolve; "
+               "an N-1 made N-2 exports and validates (test_edits)"),
     ("ER_UC1", "import, validate, export", ""),
-    ("RA_UC1..7", "import, validate, export", "RA_UC2/4/5/7 data differs from the docs; RA_UC4 edit not exercised"),
+    ("RA_UC1..7", "import, validate, edit, export", "RA_UC2/5/7 data differs from the docs; RA_UC4's "
+                  "refusal and counter-proposal built and validated (test_edits), its documented "
+                  "kind none contradicts the APL"),
     ("AS_UC1", "import, validate, export", ""),
     ("AE_UC1..6", "import, validate, export", ""),
     ("OR_UC1", "import, validate, export", ""),
-    ("SAR_UC1", "import, validate, export", "exports the supplied SAR less the mRIDs SAR does not allow; "
-                "cannot produce one (no contingency analysis)"),
+    ("SAR_UC1", "import, validate", "the report's export means producing a SAR, which needs contingency "
+                "analysis; cimoxide only re-exports the supplied one"),
 ]
 
 
