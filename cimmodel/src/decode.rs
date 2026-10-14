@@ -204,6 +204,41 @@ impl CimDataset {
         }
     }
 
+    /// An element of `class` from its JSON form ([`Element::from_json`]), with
+    /// the dataset as evidence for what JSON cannot say: whether a field's
+    /// string is a reference or text. Where this dataset holds the field on an
+    /// object of the same class, it is held the same way — a DCAT header's
+    /// undeclared `conformsTo` as a reference, `dcat:version`, which the NC
+    /// table declares an association, as the text the data writes. Otherwise
+    /// the class table decides, and an undeclared field is text.
+    pub fn element_from_json(&self, class: &'static ClassDef, value: &serde_json::Value) -> Result<Element, String> {
+        let reg = registry::type_registry();
+        let mut element = Element::from_json(class, reg, value)?;
+        let keys: Vec<&'static str> = element.fields().keys().copied().collect();
+        for key in keys {
+            if let Some(reference) = self.held_as_reference(class.qualified, key) {
+                element.retype(key, reference);
+            }
+        }
+        Ok(element)
+    }
+
+    /// How objects of class `type_name` hold field `key` in this dataset:
+    /// `Some(true)` as a reference, `Some(false)` as text, `None` if none
+    /// holds it. The first object found decides.
+    fn held_as_reference(&self, type_name: &str, key: &str) -> Option<bool> {
+        self.by_type
+            .get(type_name)
+            .into_iter()
+            .flatten()
+            .filter_map(|m| self.entries.get(m))
+            .find_map(|e| match e.get(key)? {
+                FieldValue::Resource(_) | FieldValue::ResourceList(_) => Some(true),
+                FieldValue::Text(_) | FieldValue::TextList(_) => Some(false),
+            })
+            .or_else(|| self.field_forms.get(&(type_name, key)).and_then(|f| f.resource_ns).map(|_| true))
+    }
+
     /// Insert or replace the element at `mrid`, keeping `by_type` consistent
     /// (including the case where `mrid` already exists under a different type).
     pub fn set(&mut self, mrid: String, element: Element) {

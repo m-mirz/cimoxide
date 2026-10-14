@@ -75,7 +75,10 @@ file-name order wins; `cimlsp` hover and `cimmcp describe_class` show it); both
   tracking stays per file. An object typed differently by different files keeps every type
   (`Element::types`); its class and `by_type` bucket are the most specific one.
 - `convert.rs` — RDF/XML export (`dataset_to_xml`, `dataset_to_xml_for_profile`) and JSON
-  (`{mrid: {"_type", "id", "Class.attr": "value" | [...]}}`); `convert_nc.rs` — one NC
+  (`{mrid: {"_type", "id", "Class.attr": "value" | [...], "_lang"?: {key: [tags]}}}`).
+  JSON cannot say whether a string is a reference; `CimDataset::element_from_json` (used by
+  cimoxide-py's `__setitem__`) holds a field as the dataset holds it on objects of the same
+  class, else as the class table declares it. `convert_nc.rs` — one NC
   profile's export (DCAT header, elements, fields), which `dataset_to_xml_for_profile`
   dispatches to for an NC code, and the NC and foreign part of `dataset_to_xml`, which
   writes the whole dataset as read. An unknown profile code is an error.

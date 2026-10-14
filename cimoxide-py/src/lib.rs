@@ -188,6 +188,10 @@ impl PyCimDataset {
     /// `value` must be a dict shaped like the ones returned by `__getitem__`: a
     /// `"_type"` key naming a known CIM class, plus attribute keys. Raises
     /// `ValueError` if `"_type"` is missing or not a recognized CIM type.
+    /// Whether a string is a reference or text follows how the dataset holds
+    /// that attribute on objects of the same class (a DCAT header's
+    /// `conformsTo` is a reference, its `dcat:version` text), else the class
+    /// table; an attribute neither knows is text.
     fn __setitem__(&self, py: Python<'_>, mrid: String, value: Py<PyAny>) -> PyResult<()> {
         let json_val: serde_json::Value =
             pythonize::depythonize(value.bind(py)).map_err(map_err)?;
@@ -200,8 +204,8 @@ impl PyCimDataset {
         let class = reg
             .by_type_name(&type_name)
             .ok_or_else(|| PyValueError::new_err(format!("unknown CIM type \"{type_name}\"")))?;
-        let element = Element::from_json(class, reg, &json_val).map_err(PyValueError::new_err)?;
         let mut guard = self.lock()?;
+        let element = guard.ds.element_from_json(class, &json_val).map_err(PyValueError::new_err)?;
         guard.ds.set(mrid, element);
         guard.invalidate();
         Ok(())
