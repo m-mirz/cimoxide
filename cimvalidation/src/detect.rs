@@ -22,10 +22,21 @@ fn collect_profiles_from_type(dataset: &CimDataset, type_name: &str, seen: &mut 
 }
 
 /// Inspects dataset model headers and returns a Config with profiles, solved, and not_solved populated.
+///
+/// A CGMES profile is declared by an `md:FullModel`/`md:DifferenceModel`'s
+/// `Model.profile`, or by a DCAT header's `dcterms:conformsTo` naming the same
+/// profile IRI — the header NC uses, which CGMES datasets may carry instead.
+/// A `conformsTo` naming a vocabulary (`http://iec.ch/TC57/CIM100#`) declares
+/// no profile.
 pub fn detect_config(dataset: &CimDataset) -> Config {
     let mut seen: std::collections::HashSet<&'static str> = std::collections::HashSet::new();
     collect_profiles_from_type(dataset, "FullModel", &mut seen);
     collect_profiles_from_type(dataset, "DifferenceModel", &mut seen);
+    for iri in conforms_to(dataset) {
+        if let Some(short) = uri_to_short_name(iri.trim()) {
+            seen.insert(short);
+        }
+    }
 
     let mut profiles: Vec<String> = seen.iter().map(|s| s.to_string()).collect();
     profiles.sort();
@@ -52,23 +63,28 @@ pub fn detect_config(dataset: &CimDataset) -> Config {
 /// the XML local name and the predicate is written `<dcterms:conformsTo>`.
 pub fn detect_nc_profiles(dataset: &CimDataset) -> Vec<String> {
     let mut seen: Vec<String> = Vec::new();
-    for type_name in ["nc:Dataset", "nc:DifferenceSet"] {
-        for mrid in dataset.by_type.get(type_name).into_iter().flatten() {
-            let Some(el) = dataset.entries.get(mrid) else { continue };
-            // Written as rdf:resource in practice, but a plain literal is
-            // legal too, so both are read.
-            let refs: Vec<&str> = el.get_refs("conformsTo").iter().map(String::as_str).collect();
-            let text = el.get_str("conformsTo").into_iter().collect::<Vec<_>>();
-            for iri in refs.into_iter().chain(text) {
-                if let Some(code) = nc_profile_code(iri)
-                    && !seen.iter().any(|s| s == code) {
-                        seen.push(code.to_string());
-                    }
+    for iri in conforms_to(dataset) {
+        if let Some(code) = nc_profile_code(iri)
+            && !seen.iter().any(|s| s == code) {
+                seen.push(code.to_string());
             }
-        }
     }
     seen.sort();
     seen
+}
+
+/// Every `dcterms:conformsTo` of the dataset's DCAT headers (`dcat:Dataset`,
+/// `dm:DifferenceSet`, which decode as `nc:` classes in either family).
+/// Written as `rdf:resource` in practice, but a plain literal is legal too, so
+/// both are read.
+fn conforms_to(dataset: &CimDataset) -> impl Iterator<Item = &str> {
+    ["nc:Dataset", "nc:DifferenceSet"]
+        .into_iter()
+        .flat_map(|t| dataset.by_type.get(t).into_iter().flatten())
+        .filter_map(|mrid| dataset.entries.get(mrid))
+        .flat_map(|el| {
+            el.get_refs("conformsTo").iter().map(String::as_str).chain(el.get_str("conformsTo"))
+        })
 }
 
 /// The short code for a profile IRI, if it names one.
