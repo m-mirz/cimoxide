@@ -164,12 +164,28 @@ def classify(diff):
     return {kind: triples for kind, triples in kinds.items() if triples}
 
 
+# Application profile name (the path segment of a header's conformsTo) → NC profile code.
+NC_PROFILE_CODES = {
+    "AssessedElement": "AE", "AvailabilitySchedule": "AS", "Contingency": "CO",
+    "DatasetMetadata": "DM", "EquipmentReliability": "ER", "GridDisturbance": "GD",
+    "ImpactAssessmentMatrix": "IAM", "MonitoringArea": "MA", "ObjectRegistry": "OR",
+    "PowerSchedule": "PS", "PowerSystemProject": "PSP", "RemedialAction": "RA",
+    "RemedialActionSchedule": "RAS", "SecurityAnalysisResult": "SAR",
+    "SteadyStateHypothesisSchedule": "SHS", "StateInstructionSchedule": "SIS",
+    "SensitivityMatrix": "SM", "SteadyStateInstruction": "SSI",
+}
+
+
 def nc_profile_code(fi):
-    """An NC file's profile code, from its header's dcat:keyword (AE, CO, RA, ...)."""
-    entries = cimoxide.CimDataset.decode_file(str(relicap_dir() / fi.path)).entries()
-    header = next(v for v in entries.values() if bare_type(v["_type"]) == "Dataset")
-    keyword = header.get("keyword", "")
-    return (keyword[0] if isinstance(keyword, list) else keyword) or "?"
+    """An NC file's profile code, from the application profile its header conforms
+    to (https://ap.cim4.eu/Contingency/2.3 → CO); None for a profile cimoxide lacks
+    (Provenance)."""
+    for uri in fi.profile_uris:
+        parts = uri.split("://", 1)[-1].split("/")
+        name = parts[1] if len(parts) > 1 else ""
+        if name in NC_PROFILE_CODES:
+            return NC_PROFILE_CODES[name]
+    return None
 
 
 def group_files(group):
@@ -512,20 +528,22 @@ def write_validation_report(out):
 # cimoxide's row in the report's Annex 1 format, from test_import, test_export,
 # test_validation and test_use_cases. "import" means the use case's files decode
 # and the use-case checks pass on what was decoded; "validate" that cimoxide
-# detects the profiles and its findings match triplets' up to TRIAGE.
+# detects the profiles and its findings match triplets' up to TRIAGE; "export" that
+# each file exported for its profile is the same RDF graph (test_export).
 ANNEX_1 = [
     ("PF_UC1", "import, validate, export", "no power flow; SV covers every energised TopologicalNode"),
     ("BDS_UC1", "import, validate*", "*boundary header declares no profile (EQ forced as in ReliCapGrid CI); "
                 "4 boundary points reached from one IGM"),
-    ("CD_UC1", "import, validate, export (Grid)", "NC common data not exported"),
+    ("CD_UC1", "import, validate, export", ""),
     ("RD_UC1", "-", "reference data is SKOS/PROV/DCAT, which cimoxide drops"),
-    ("CO_UC1", "import, validate", "all 11 contingency -> equipment pairs resolve; NC export missing"),
-    ("ER_UC1", "import, validate", "NC export missing"),
-    ("RA_UC1..7", "import, validate", "NC export missing; RA_UC2/4/5/7 data differs from the docs"),
-    ("AS_UC1", "import, validate", "NC export missing"),
-    ("AE_UC1..6", "import, validate", "NC export missing"),
-    ("OR_UC1", "import, validate", "NC export missing"),
-    ("SAR_UC1", "import, validate", "cannot produce a SAR (no contingency analysis)"),
+    ("CO_UC1", "import, validate, export", "all 11 contingency -> equipment pairs resolve; edit not exercised"),
+    ("ER_UC1", "import, validate, export", ""),
+    ("RA_UC1..7", "import, validate, export", "RA_UC2/4/5/7 data differs from the docs; RA_UC4 edit not exercised"),
+    ("AS_UC1", "import, validate, export", ""),
+    ("AE_UC1..6", "import, validate, export", ""),
+    ("OR_UC1", "import, validate, export", ""),
+    ("SAR_UC1", "import, validate, export", "exports the supplied SAR less the mRIDs SAR does not allow; "
+                "cannot produce one (no contingency analysis)"),
 ]
 
 
