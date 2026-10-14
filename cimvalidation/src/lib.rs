@@ -67,7 +67,17 @@ pub fn validate_nc_profile(
     profile: &str,
     cfg: &Config,
 ) -> Vec<Violation> {
-    let mut v = bag::validate_profile(dataset, profile, nc_shapes(), cfg);
+    validate_nc_profile_in(dataset, &[], profile, cfg)
+}
+
+/// [`validate_nc_profile`] on one file of a set, as [`validate_profile_local_in`].
+pub fn validate_nc_profile_in(
+    dataset: &cimmodel::CimDataset,
+    set: &[cimmodel::CimDataset],
+    profile: &str,
+    cfg: &Config,
+) -> Vec<Violation> {
+    let mut v = bag::validate_profile_in(dataset, set, profile, nc_shapes(), cfg);
     // Every NC profile's manifest imports the files these come from, and no
     // other code names one.
     if nc_profile_index().1.contains(&profile) {
@@ -127,6 +137,14 @@ fn cgmes_tagged(tag: &str) -> &'static [&'static shapes::ShapeDef] {
 
 fn run_cgmes(dataset: &cimmodel::CimDataset, active: &[&shapes::ShapeDef]) -> Vec<Violation> {
     bag::validate_shapes(dataset, bag::Source::Cgmes, active)
+}
+
+fn run_cgmes_in(
+    dataset: &cimmodel::CimDataset,
+    set: &[cimmodel::CimDataset],
+    active: &[&shapes::ShapeDef],
+) -> Vec<Violation> {
+    bag::validate_shapes_in(dataset, set, bag::Source::Cgmes, active)
 }
 
 // ── public two-phase API ───────────────────────────────────────────────────
@@ -192,6 +210,23 @@ fn cimschema_cross_profiles() -> &'static [&'static str] {
 /// and does not include `profile`, returns an empty vec — this filter applies to both the
 /// SHACL and SPARQL checks.
 pub fn validate_profile_local(dataset: &cimmodel::CimDataset, profile: &str, cfg: &Config) -> Vec<Violation> {
+    validate_profile_local_in(dataset, &[], profile, cfg)
+}
+
+/// [`validate_profile_local`] on `dataset`, one of the files `set` validated
+/// together, as [`validate_files`] runs it. The rules still see `dataset`
+/// alone, except that an NC class check (`sh:class`, `sh:in` on a type) finds
+/// the type of a referenced object in whichever file of `set` holds it: a
+/// schedule's unit, a remedial action's equipment. Without the set those
+/// checks are silent on every association that leaves the file. CGMES's
+/// per-profile value types are written for one file and stay so
+/// (`bag::any_type`).
+pub fn validate_profile_local_in(
+    dataset: &cimmodel::CimDataset,
+    set: &[cimmodel::CimDataset],
+    profile: &str,
+    cfg: &Config,
+) -> Vec<Violation> {
     if !cfg.profiles.is_empty() && !cfg.profiles.iter().any(|p| p == profile) {
         return Vec::new();
     }
@@ -200,10 +235,10 @@ pub fn validate_profile_local(dataset: &cimmodel::CimDataset, profile: &str, cfg
     // checked first: asking the NC index loads the NC table — 170 ms when it
     // comes from SHACL — for data that has no NC in it.
     if !cgmes_profile_index().1.contains(&profile) && nc_profile_index().1.contains(&profile) {
-        return validate_nc_profile(dataset, profile, cfg);
+        return validate_nc_profile_in(dataset, set, profile, cfg);
     }
 
-    let mut v = validate_profile_shacl(dataset, profile, cfg);
+    let mut v = run_cgmes_in(dataset, set, cgmes_tagged(profile));
     v.extend(sparql::validate_profile_local(dataset, profile, cfg));
     v
 }
@@ -271,8 +306,9 @@ pub fn validate_files(per_file: Vec<cimmodel::CimDataset>, cfg: &Config) -> Vec<
 /// An object several files write is reported against one of them, which
 /// `cimlsp` needs to put the finding there.
 pub fn validate_files_traced(per_file: Vec<cimmodel::CimDataset>, cfg: &Config) -> Vec<(Option<usize>, Violation)> {
+    let set = per_file.as_slice();
     let mut violations: Vec<(Option<usize>, Violation)> = std::thread::scope(|s| {
-        per_file
+        set
             .iter()
             .map(|ds| {
                 s.spawn(move || {
@@ -280,7 +316,7 @@ pub fn validate_files_traced(per_file: Vec<cimmodel::CimDataset>, cfg: &Config) 
                     let mut profiles = detect_config(ds).profiles;
                     profiles.extend(detect_nc_profiles(ds));
                     for profile in &profiles {
-                        v.extend(validate_profile_local(ds, profile, cfg));
+                        v.extend(validate_profile_local_in(ds, set, profile, cfg));
                     }
                     v
                 })

@@ -17,7 +17,11 @@ fn run(profile: &str, body: &str) -> Vec<Violation> {
     );
     let ds = cimmodel::CimDataset::decode_str(&xml).unwrap();
     let cfg = Config { profiles: vec![profile.into()], ..Default::default() };
-    cimvalidation::sparql::validate_profile_local(&ds, profile, &cfg)
+    // The profile's rules that read other profiles run on the merged dataset,
+    // which a one-file fixture is.
+    let mut v = cimvalidation::sparql::validate_profile_local(&ds, profile, &cfg);
+    v.extend(cimvalidation::sparql::across_groups(&cfg).into_iter().flat_map(|g| g(&ds)));
+    v
 }
 
 fn count(profile: &str, body: &str, rule: &str) -> usize {

@@ -108,6 +108,9 @@ audited against `application-profiles-library/validate/shacl-sparql/<rule>.rq`:
   `Fields::of`.
 - The Complex `*SolvedMAS`/`*NotSolvedMAS` rules (`sparql::mas_groups`) and the `!NS`
   table shapes run on the merged dataset, so dataset-wide counts span every file given.
+- A rule in one profile's file that reads another profile's attributes (check the
+  attribute's `origins`) runs on the merged dataset too, from `sparql::across_groups`:
+  per file it never fires (CsConverter ranges: SSH mode vs. EQ limits) or misfires.
 - `cimvalidation/tests/sparql_presence.rs` tests each rule with values present, absent and zero.
 
 ### `cimsparql`
@@ -163,6 +166,12 @@ Semantics to preserve:
 - `sh:in` values are keyed like a decoded `rdf:resource` (after the last `#`).
 - `sh:class` holds if any type of a merged element is an instance; `sh:in` on an `rdf:type`
   path (`RefClass`) tests every type.
+- In the per-file phase a class check reads the referenced object's types from the file;
+  if the file lacks it, NC shapes read them from the other files given (`validate_files`
+  passes the set), CGMES shapes stay silent. NCP's value types list every reachable class
+  (`cim16:`/`cim17:`/`cim:`/`nc:`); CGMES's per-profile ones list only their own profile's
+  classes (`sv:SvStatus.ConductingEquipment`: the two converters) and fail ~31k times on
+  the test configurations when read across files. The cross-profile files check CGMES types.
 - Paths are **not** verified against the class table (data may carry keys the table lacks).
 - Stepping a `Path::Chain` from an absent element makes the checks silent.
 - `sh:minCount` on `IdentifiedObject.mRID` skips a CGMES element no file defined (`rdf:ID`),

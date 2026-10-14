@@ -3,6 +3,13 @@ use cimmodel::CimDataset;
 use crate::Violation;
 use super::Fields;
 
+/// The rules of this profile's constraint files that read another profile's
+/// data, run on the merged dataset (`super::across_groups`).
+/// The two-winding values rule asks for SC's r0 and x0.
+pub fn validate_across(dataset: &CimDataset) -> Vec<Violation> {
+    check_power_transformer_two_winding_end_values(dataset)
+}
+
 pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
     let terms = Terminals::build(dataset);
     let mut v = Vec::new();
@@ -12,7 +19,6 @@ pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
     v.extend(check_power_transformer_end_number_unique(dataset));
     v.extend(check_power_transformer_end_terminal_consistency(dataset));
     v.extend(check_operational_limit_type_duration(dataset));
-    v.extend(check_power_transformer_two_winding_end_values(dataset));
     v.extend(check_phase_tap_changer_linear_x_min_consistency(dataset));
     v.extend(check_phase_tap_changer_non_linear_x_min_consistency(dataset));
     v.extend(check_power_transformer_end_rated_s_2winding(dataset));
