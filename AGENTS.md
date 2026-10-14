@@ -74,7 +74,13 @@ file-name order wins; `cimlsp` hover and `cimmcp describe_class` show it); both
   `decode_files`, `decode_str`. `merge`: a later scalar wins, reference lists join, duplicate
   tracking stays per file. An object typed differently by different files keeps every type
   (`Element::types`); its class and `by_type` bucket are the most specific one.
-- `convert.rs` — RDF/XML export (`dataset_to_xml`, `dataset_to_xml_for_profile`) and JSON
+- `convert.rs` — RDF/XML export (`dataset_to_xml`, `dataset_to_xml_for_profile`) and JSON;
+  `convert_nc.rs` — one NC profile's export (DCAT header, elements, fields), which
+  `dataset_to_xml_for_profile` dispatches to for an NC code. An unknown code is an error.
+- `CimDataset::field_forms` keeps what the decoded value loses of how a field was written:
+  an undeclared key's namespace (the DCAT header's `dcterms:`/`prov:` properties), its
+  `rdf:datatype`, the namespace a non-local reference was cut from. NC export needs it;
+  JSON does not carry it.
   (`{mrid: {"_type", "id", "Class.attr": "value" | [...]}}`)
 - `schema_source.rs` — generated vs. RDFS-loaded class tables
 
@@ -129,7 +135,10 @@ vs `https://cim.ucaiug.io/ns#`). The decoder resolves `(namespace, local name)` 
 bare-name fallback.
 
 - NC `type_name`s and `by_type` keys carry an `nc:` prefix.
-- NC supports decode and validation only; the encoder skips NC elements.
+- NC exports per profile only (`dataset_to_xml_for_profile`); `dataset_to_xml` writes
+  CGMES elements. Ids are written in the form read (`rdf:ID`, `rdf:about="#…"`,
+  `urn:uuid:`). `scripts/relicapgrid`'s export test compares each NC file and its export
+  as RDF graphs.
 - Import the two families into **separate** `CimSpecification`s (shared `or_insert`
   prefix map; both bind `cim` and `base` differently).
 

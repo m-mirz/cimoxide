@@ -203,11 +203,22 @@ pub fn dataset_to_xml(ds: &CimDataset) -> Result<String, Box<dyn Error>> {
     Ok(out)
 }
 
+/// Export the dataset's content for one profile, CGMES (`EQ`, `SSH`, …) or NC
+/// (`CO`, `AE`, … — [`crate::convert_nc`]), with that profile's header.
+///
+/// A code neither family defines is an error: an empty document would look
+/// like an export of nothing.
 pub fn dataset_to_xml_for_profile(
     ds: &CimDataset,
     profile_code: &str,
 ) -> Result<String, Box<dyn Error>> {
     let tables = tables();
+    if !tables.schema.profiles.iter().any(|(k, _)| *k == profile_code) {
+        if crate::convert_nc::nc_profile_uri(profile_code).is_some() {
+            return crate::convert_nc::dataset_to_xml_for_nc_profile(ds, profile_code);
+        }
+        return Err(format!("unknown profile code {profile_code:?}: neither a CGMES nor an NC profile").into());
+    }
     let type_map = &tables.type_origins;
     let attr_map = &tables.attr_origins;
 
@@ -389,7 +400,7 @@ fn write_synthesized_header(
 
 /// `urn:uuid:` + a v5 UUID (RFC 9562, SHA-1 name-based) of the profile code and the
 /// dataset's sorted mRIDs.
-fn header_urn(ds: &CimDataset, profile_code: &str) -> String {
+pub(crate) fn header_urn(ds: &CimDataset, profile_code: &str) -> String {
     use sha1::{Digest, Sha1};
     let mut mrids: Vec<&str> = ds.entries.keys().map(String::as_str).collect();
     mrids.sort_unstable();

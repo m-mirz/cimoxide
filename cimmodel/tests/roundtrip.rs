@@ -235,17 +235,10 @@ fn profile_sv_xml_parses_back() {
 }
 
 #[test]
-fn profile_unknown_yields_empty_rdf() {
+fn an_unknown_profile_is_an_error() {
     let ds = CimDataset::decode_file(test_xml_path()).expect("decode failed");
-    let json = serde_json::to_string(&dataset_to_json(&ds)).expect("serialize");
-    let ds2 = dataset_from_json(&json).expect("from_json");
-    let xml = dataset_to_xml_for_profile(&ds2, "UNKNOWN_PROFILE").expect("to_xml failed");
-
-    // No elements should appear for an unknown profile
-    assert!(
-        !xml.contains("<cim:"),
-        "unknown profile must yield empty RDF, got:\n{xml}"
-    );
+    let err = dataset_to_xml_for_profile(&ds, "UNKNOWN_PROFILE").expect_err("an unknown code must not export");
+    assert!(err.to_string().contains("UNKNOWN_PROFILE"), "{err}");
 }
 
 // ── FullModel header preservation ────────────────────────────────────────────

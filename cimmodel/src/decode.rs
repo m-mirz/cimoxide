@@ -3,7 +3,7 @@ use std::path::Path;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 
-use crate::base::{intern, AttrDef, ClassDef, Element, FastMap, FastSet, FieldValue, TypeRegistry};
+use crate::base::{intern, AttrDef, AttrKind, ClassDef, Element, FastMap, FastSet, FieldValue, TypeRegistry};
 use crate::registry;
 
 /// Whether `text` looks like CGMES or NC RDF/XML: it binds one of the two
@@ -17,10 +17,41 @@ pub fn is_cim(text: &str) -> bool {
     head.contains("http://iec.ch/TC57/") || head.contains("https://cim.ucaiug.io/ns#")
 }
 
+/// How a dataset's files wrote one field key ([`CimDataset::field_forms`]).
+/// Each part is the first the files showed; one key written two ways keeps
+/// the first.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FieldForm {
+    /// The key's namespace IRI, for a key the class tables do not declare
+    /// (`conformsTo` → `http://purl.org/dc/terms/`); a declared attribute's is
+    /// its [`AttrDef::ns`].
+    pub ns: Option<&'static str>,
+    /// The `rdf:datatype` its literals carried (`dcat:temporalResolution` →
+    /// `xsd:duration`).
+    pub datatype: Option<&'static str>,
+    /// The namespace its references were cut from, when not the document's
+    /// own (`#_x`) and not an enumeration's, whose namespace the class table
+    /// holds: a `PropertyReference` to `http://iec.ch/TC57/CIM100#Switch.open`
+    /// decodes as `Switch.open`.
+    pub resource_ns: Option<&'static str>,
+}
+
+impl FieldForm {
+    fn fill_from(&mut self, other: FieldForm) {
+        self.ns = self.ns.or(other.ns);
+        self.datatype = self.datatype.or(other.datatype);
+        self.resource_ns = self.resource_ns.or(other.resource_ns);
+    }
+}
+
 pub struct CimDataset {
     pub entries: FastMap<String, Element>,
     /// Maps `type_name()` → list of MRIDs of that type. Populated on insert, maintained on merge.
     pub by_type: FastMap<String, Vec<String>>,
+    /// How the files wrote each field key, where the class tables cannot tell
+    /// and the decoded value no longer shows: what the encoder needs to write
+    /// the field back as it was read.
+    pub field_forms: FastMap<&'static str, FieldForm>,
 }
 
 impl Default for CimDataset {
@@ -34,6 +65,7 @@ impl CimDataset {
         Self {
             entries: FastMap::default(),
             by_type: FastMap::default(),
+            field_forms: FastMap::default(),
         }
     }
 
@@ -103,6 +135,9 @@ impl CimDataset {
     /// and its class (and `by_type` bucket) is the most specific, whichever
     /// file came first. Of unrelated classes the first stays the class.
     pub fn merge(&mut self, other: CimDataset) {
+        for (key, form) in other.field_forms {
+            self.field_forms.entry(key).or_default().fill_from(form);
+        }
         let reg = registry::type_registry();
         let mut moved: FastMap<&'static str, FastSet<String>> = FastMap::default();
         for (mrid, incoming) in other.entries {
@@ -184,8 +219,10 @@ type Table = FastMap<&'static str, &'static ClassDef>;
 /// document binds a handful of them and then repeats them on every element.
 #[derive(Default)]
 struct Scope {
-    prefixes: Vec<(Vec<u8>, Option<&'static Table>)>,
+    /// Prefix → its namespace IRI (interned) and that namespace's table.
+    prefixes: Vec<(Vec<u8>, &'static str, Option<&'static Table>)>,
     default: Option<&'static Table>,
+    default_ns: &'static str,
 }
 
 impl Scope {
@@ -207,15 +244,16 @@ impl Scope {
                     reg.ns_table(&format!("{ns}#"))
                 }
             });
+            let ns = intern(ns);
             match rest.strip_prefix(b":".as_slice()) {
                 Some(prefix) => {
                     let prefix = prefix.to_vec();
-                    match self.prefixes.iter_mut().find(|(k, _)| *k == prefix) {
-                        Some(slot) => slot.1 = table,
-                        None => self.prefixes.push((prefix, table)),
+                    match self.prefixes.iter_mut().find(|(k, _, _)| *k == prefix) {
+                        Some(slot) => (slot.1, slot.2) = (ns, table),
+                        None => self.prefixes.push((prefix, ns, table)),
                     }
                 }
-                None if rest.is_empty() => self.default = table,
+                None if rest.is_empty() => (self.default, self.default_ns) = (table, ns),
                 None => {}
             }
         }
@@ -227,8 +265,16 @@ impl Scope {
             Some(p) => self
                 .prefixes
                 .iter()
-                .find(|(k, _)| k.as_slice() == p)
-                .and_then(|(_, t)| *t),
+                .find(|(k, _, _)| k.as_slice() == p)
+                .and_then(|(_, _, t)| *t),
+        }
+    }
+
+    /// The namespace IRI `prefix` is bound to, `""` if none.
+    fn ns(&self, prefix: Option<&[u8]>) -> &'static str {
+        match prefix {
+            None => self.default_ns,
+            Some(p) => self.prefixes.iter().find(|(k, _, _)| k.as_slice() == p).map_or("", |(_, ns, _)| ns),
         }
     }
 
@@ -312,10 +358,33 @@ fn parse_rdf(
     // untrimmed, and empty for `<cim:X></cim:X>` — since a comment or CDATA
     // section splits it into several events.
     let mut pending_text = String::new();
-    // A field key as stored: the class table's id when the class declares it,
-    // else the interned name.
-    let key_of = |declared: Option<&'static FastMap<&'static str, &'static AttrDef>>, local: &str| {
-        declared.and_then(|d| d.get(local)).map_or_else(|| intern(local), |a| a.id)
+    // A field element's key as stored — the class table's id when the class
+    // declares it, else the interned name — and its attributes. What the key
+    // and value lose of how it was written goes to `field_forms`: an
+    // undeclared key's namespace, a datatype, the namespace a reference was
+    // cut from.
+    let field = |declared: Option<&'static FastMap<&'static str, &'static AttrDef>>,
+                 e: &BytesStart,
+                 scope: &Scope,
+                 forms: &mut FastMap<&'static str, FieldForm>|
+     -> Result<(&'static str, FieldAttrs), Box<dyn std::error::Error>> {
+        let name = e.name();
+        let (prefix, local_bytes) = split_qname(name.as_ref());
+        let local = std::str::from_utf8(local_bytes)?;
+        let attr = declared.and_then(|d| d.get(local));
+        let key = attr.map_or_else(|| intern(local), |a| a.id);
+        let attrs = field_attrs(e.attributes())?;
+        let ns = scope.ns(prefix);
+        let undeclared_ns = (attr.is_none() && !ns.is_empty()).then_some(ns);
+        let resource_ns = attrs.resource_ns.filter(|_| attr.is_none_or(|a| a.kind != AttrKind::Enum));
+        if undeclared_ns.is_some() || attrs.datatype.is_some() || resource_ns.is_some() {
+            forms.entry(key).or_default().fill_from(FieldForm {
+                ns: undeclared_ns,
+                datatype: attrs.datatype,
+                resource_ns,
+            });
+        }
+        Ok((key, attrs))
     };
 
     loop {
@@ -335,6 +404,7 @@ fn parse_rdf(
                             let mut inner = Scope {
                                 prefixes: scope.prefixes.clone(),
                                 default: scope.default,
+                                default_ns: scope.default_ns,
                             };
                             inner.absorb(e, reg);
                             nested = Some(std::mem::replace(&mut scope, inner));
@@ -351,15 +421,12 @@ fn parse_rdf(
                     }
                     3 => {
                         if let Some(element) = current.as_mut() {
-                            let name = e.name();
-                            let (_, local_bytes) = split_qname(name.as_ref());
-                            let local = key_of(declared, std::str::from_utf8(local_bytes)?);
-                            let (res, lang, nodes) = field_attrs(e.attributes())?;
-                            if let Some(res) = res {
-                                element.add_field(local, FieldValue::Resource(res));
-                            } else if !nodes {
-                                pending_key = Some(local);
-                                pending_lang = lang;
+                            let (key, attrs) = field(declared, e, &scope, &mut ds.field_forms)?;
+                            if let Some(res) = attrs.resource {
+                                element.add_field(key, FieldValue::Resource(res));
+                            } else if !attrs.nodes {
+                                pending_key = Some(key);
+                                pending_lang = attrs.lang;
                                 pending_text.clear();
                             }
                         }
@@ -382,6 +449,7 @@ fn parse_rdf(
                             let mut inner = Scope {
                                 prefixes: scope.prefixes.clone(),
                                 default: scope.default,
+                                default_ns: scope.default_ns,
                             };
                             inner.absorb(e, reg);
                             Some(inner)
@@ -403,17 +471,13 @@ fn parse_rdf(
                         // Self-closing field element within the current type
                         // block: a reference, or else an empty literal.
                         if let Some(element) = current.as_mut() {
-                            let name = e.name();
-                            let (_, local_bytes) = split_qname(name.as_ref());
-                            let local = key_of(declared, std::str::from_utf8(local_bytes)?);
-                            match field_attrs(e.attributes())? {
-                                (Some(res), _, _) => element.add_field(local, FieldValue::Resource(res)),
-                                (None, _, true) => {}
-                                (None, lang, false) => {
-                                    element.add_field(local, FieldValue::Text(String::new()));
-                                    if let Some(lang) = lang {
-                                        element.add_lang(local, &lang);
-                                    }
+                            let (key, attrs) = field(declared, e, &scope, &mut ds.field_forms)?;
+                            if let Some(res) = attrs.resource {
+                                element.add_field(key, FieldValue::Resource(res));
+                            } else if !attrs.nodes {
+                                element.add_field(key, FieldValue::Text(String::new()));
+                                if let Some(lang) = attrs.lang {
+                                    element.add_lang(key, &lang);
                                 }
                             }
                         }
@@ -422,16 +486,12 @@ fn parse_rdf(
                 }
             }
 
-            Ok(Event::Text(ref e)) => {
-                if depth == 3 && pending_key.is_some() {
-                    pending_text.push_str(&e.unescape()?);
-                }
+            Ok(Event::Text(ref e)) if depth == 3 && pending_key.is_some() => {
+                pending_text.push_str(&e.unescape()?);
             }
 
-            Ok(Event::CData(ref e)) => {
-                if depth == 3 && pending_key.is_some() {
-                    pending_text.push_str(std::str::from_utf8(e)?);
-                }
+            Ok(Event::CData(ref e)) if depth == 3 && pending_key.is_some() => {
+                pending_text.push_str(std::str::from_utf8(e)?);
             }
 
             Ok(Event::End(_)) => {
@@ -471,30 +531,53 @@ fn parse_rdf(
 
 
 /// Strip the fragment from a URI, e.g. "http://example.com#foo" → "foo".
+///
+/// An IRI whose fragment is empty names a vocabulary, not an object
+/// (`dcterms:conformsTo rdf:resource="http://iec.ch/TC57/CIM100#"`), and is
+/// kept whole: stripped, it was the empty string, which no encoder can write
+/// back.
 fn strip_fragment(s: &str) -> String {
-    if let Some(i) = s.rfind('#') {
-        s[i + 1..].to_string()
-    } else {
-        s.trim_start_matches('#').to_string()
+    match s.rfind('#') {
+        Some(i) if i + 1 == s.len() && i > 0 => s.to_string(),
+        Some(i) => s[i + 1..].to_string(),
+        None => s.to_string(),
     }
 }
 
 
-/// A field element's `rdf:resource` (the text after its last `#`),
-/// `xml:lang`, and whether its `rdf:parseType` makes its content nodes rather
-/// than a literal (`Resource`, `Collection`, a difference model's
-/// `Statements`; not `Literal`), in one pass over its attributes.
-fn field_attrs(
-    attrs: quick_xml::events::attributes::Attributes<'_>,
-) -> Result<(Option<String>, Option<String>, bool), Box<dyn std::error::Error>> {
-    let (mut res, mut lang, mut nodes) = (None, None, false);
+/// What a field element's attributes say about its value.
+struct FieldAttrs {
+    /// `rdf:resource`, as [`strip_fragment`] keeps it.
+    resource: Option<String>,
+    /// The part of `rdf:resource` that was cut off, when the IRI has one
+    /// before its `#` (not a reference into the document itself).
+    resource_ns: Option<&'static str>,
+    lang: Option<String>,
+    datatype: Option<&'static str>,
+    /// Its `rdf:parseType` makes its content nodes rather than a literal
+    /// (`Resource`, `Collection`, a difference model's `Statements`; not
+    /// `Literal`).
+    nodes: bool,
+}
+
+/// A field element's attributes, in one pass.
+fn field_attrs(attrs: quick_xml::events::attributes::Attributes<'_>) -> Result<FieldAttrs, Box<dyn std::error::Error>> {
+    let mut out = FieldAttrs { resource: None, resource_ns: None, lang: None, datatype: None, nodes: false };
     for attr in attrs.flatten() {
         match attr.key.as_ref() {
-            b"rdf:resource" => res = Some(strip_fragment(std::str::from_utf8(&attr.value)?)),
-            b"xml:lang" => lang = Some(std::str::from_utf8(&attr.value)?.to_string()),
-            b"rdf:parseType" => nodes = attr.value.as_ref() != b"Literal",
+            b"rdf:resource" => {
+                let iri = std::str::from_utf8(&attr.value)?;
+                let kept = strip_fragment(iri);
+                if kept.len() < iri.len() && kept.len() + 1 < iri.len() {
+                    out.resource_ns = Some(intern(&iri[..iri.len() - kept.len()]));
+                }
+                out.resource = Some(kept);
+            }
+            b"xml:lang" => out.lang = Some(std::str::from_utf8(&attr.value)?.to_string()),
+            b"rdf:datatype" => out.datatype = Some(intern(std::str::from_utf8(&attr.value)?)),
+            b"rdf:parseType" => out.nodes = attr.value.as_ref() != b"Literal",
             _ => {}
         }
     }
-    Ok((res, lang, nodes))
+    Ok(out)
 }
