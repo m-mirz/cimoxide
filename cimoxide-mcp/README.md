@@ -18,7 +18,7 @@ when told to and never over a model set's own files:
 | `validate` | the ENTSO-E SHACL and SPARQL rules, as `cimcli validate` runs them |
 | `conflicts` | objects more than one file defines, and objects the files type with unrelated classes |
 | `sparql` | a SPARQL query over the merged CGMES data |
-| `export` | one profile (CGMES or NC) or the whole set as RDF/XML, as `to_xml_for_profile` / `to_xml` write it |
+| `export` | one profile (CGMES or NC) or the whole set as RDF/XML, as `to_xml_for_profile` / `to_xml` write it; or every decoded object as JSON |
 | `edit` | update, copy, create and delete objects, and write the result as `export` does |
 | `describe_class` | definitions of classes, attributes and enumerations from the ENTSO-E vocabulary |
 

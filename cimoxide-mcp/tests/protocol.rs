@@ -370,3 +370,56 @@ fn edits_and_writes_the_result() {
     assert!(err && text.contains("a file of the model set"), "{text}");
     std::fs::remove_dir_all(repo_root().join(&dir)).unwrap();
 }
+
+/// `format: "json"` writes every decoded object, CIM and foreign, as
+/// cimoxide-py's `entries()` and `foreign()` give them.
+#[test]
+fn dumps_every_object_as_json() {
+    let dir = format!("target/cimmcp-json-{}", std::process::id());
+    std::fs::create_dir_all(repo_root().join(&dir)).unwrap();
+    let file = format!("{dir}/rd.xml");
+    std::fs::write(
+        repo_root().join(&file),
+        r##"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:cim="http://iec.ch/TC57/CIM100#"
+         xmlns:skos="http://www.w3.org/2004/02/skos/core#" xmlns:prov="http://www.w3.org/ns/prov#">
+  <prov:Agent rdf:about="https://energy.referencedata.eu/test/party/TSO-Belgovia">
+    <skos:prefLabel xml:lang="en">TSO Belgovia</skos:prefLabel>
+    <prov:hadMember rdf:nodeID="A0"/>
+  </prov:Agent>
+  <prov:Collection rdf:nodeID="A0"><skos:notation>X</skos:notation></prov:Collection>
+  <cim:ACLineSegment rdf:ID="_line">
+    <cim:IdentifiedObject.name>L1</cim:IdentifiedObject.name>
+    <cim:Equipment.EquipmentContainer rdf:resource="#_vl"/>
+  </cim:ACLineSegment>
+</rdf:RDF>
+"##,
+    )
+    .unwrap();
+    let ds = cimmodel::CimDataset::decode_file(&repo_root().join(&file)).unwrap();
+    let mut s = Server::start();
+    let text = s.ok("export", json!({ "path": file, "format": "json" }));
+    let got: Value = serde_json::from_str(&text).unwrap();
+    let element = |el: &cimmodel::Element| {
+        let mut v = el.to_json_value();
+        v["_type"] = el.type_name().into();
+        v
+    };
+    let want: serde_json::Map<String, Value> =
+        ds.entries.iter().chain(&ds.foreign).map(|(id, el)| (id.clone(), element(el))).collect();
+    assert_eq!(got, Value::Object(want));
+    assert_eq!(got["_line"]["Equipment.EquipmentContainer"], "_vl");
+    assert_eq!(got["https://energy.referencedata.eu/test/party/TSO-Belgovia"]["_type"], "http://www.w3.org/ns/prov#Agent");
+    assert_eq!(got["https://energy.referencedata.eu/test/party/TSO-Belgovia"]["_lang"], json!({ "prefLabel": ["en"] }), "{text}");
+    assert!(got.as_object().unwrap().keys().any(|k| k.starts_with("_:")), "{text}");
+
+    // An edit can be written as JSON too.
+    let edited = s.ok("edit", json!({ "path": file, "format": "json", "changes": [{ "id": "_line", "fields": { "IdentifiedObject.name": "L2" } }] }));
+    let json_part: Value = serde_json::from_str(&edited[edited.find("\n\n{").unwrap() + 2..]).unwrap();
+    assert_eq!(json_part["_line"]["IdentifiedObject.name"], "L2");
+
+    let (both, err) = s.call("export", json!({ "path": file, "format": "json", "profile": "EQ" }));
+    assert!(err && both.contains("takes no `profile`"), "{both}");
+    let (bad, err) = s.call("export", json!({ "path": file, "format": "ttl" }));
+    assert!(err && bad.contains("`rdfxml` or `json`"), "{bad}");
+    std::fs::remove_dir_all(repo_root().join(&dir)).unwrap();
+}

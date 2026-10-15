@@ -19,12 +19,17 @@ use crate::session::{self, ModelSet, Options, Session};
 const PATH_DOC: &str = "Model set: a directory of CIM RDF/XML files (or one file), relative to the workspace. \
 Default: the workspace directory itself.";
 
+const FORMAT_DOC: &str = "`rdfxml` (default), or `json`: every decoded object, CIM and foreign (reference data's SKOS, PROV, DCAT), \
+as `{id: {\"_type\", \"id\", \"Class.attr\": value | [values], \"_lang\"?}}`, as cimoxide-py's `entries()` and `foreign()` give them. \
+JSON cannot tell a reference (the target's mRID) from text and takes no `profile`.";
+
 const FILES_DOC: &str = "Instead of `path`: the files that form one model set, relative to the workspace, when they \
 are not one directory (an IGM with its boundary and common data). A directory stands for its CIM files. Merged in the order given.";
 
 pub fn definitions() -> Value {
     let path = json!({ "type": "string", "description": PATH_DOC });
     let files = json!({ "type": "array", "items": { "type": "string" }, "description": FILES_DOC });
+    let format = json!({ "type": "string", "enum": ["rdfxml", "json"], "description": FORMAT_DOC });
     let limit = |default: u64| json!({ "type": "integer", "minimum": 1, "description": format!("Most rows to return (default {default}).") });
     let read_only = json!({ "readOnlyHint": true, "openWorldHint": false });
     json!([
@@ -123,12 +128,13 @@ Object IRIs come back as mRIDs. NC data is not in the graph.",
             "name": "export",
             "title": "Export a model set",
             "description": "Write a model set as RDF/XML: one profile's content with that profile's header (CGMES `EQ`, `SSH`, `TP`, `SV`, …; \
-NC `CO`, `AE`, `RA`, …), or with no `profile` the whole merged dataset as read (CGMES, NC and reference data). Writes `output`; \
-without it, returns the XML when it is short.",
+NC `CO`, `AE`, `RA`, …), or with no `profile` the whole merged dataset as read (CGMES, NC and reference data). \
+`format: \"json\"` writes every decoded object as JSON instead. Writes `output`; without it, returns the text when it is short.",
             "inputSchema": { "type": "object", "properties": {
                 "path": path,
                 "files": files,
                 "profile": { "type": "string", "description": "Profile code; omit for the whole dataset." },
+                "format": format,
                 "output": { "type": "string", "description": "File to write, relative to the workspace and inside it. Not in the model set's own directory, or it joins the set." },
                 "overwrite": { "type": "boolean", "description": "Replace `output` if it exists (default false)." },
             } },
@@ -153,6 +159,7 @@ of a file, write it outside the set's directories and list it in `validate`'s `f
                 }, "required": ["id"] } },
                 "keep": { "type": "string", "enum": ["all", "changed"], "description": "Write every object (default) or only those changed." },
                 "profile": { "type": "string", "description": "Profile code to write; omit for the whole dataset." },
+                "format": format,
                 "output": { "type": "string", "description": "File to write, relative to the workspace and inside it." },
                 "overwrite": { "type": "boolean", "description": "Replace `output` if it exists (default false)." },
             }, "required": ["changes"] },
@@ -652,11 +659,13 @@ const EXPORT_INLINE: usize = 100_000;
 
 fn export(session: &mut Session, args: &Value) -> Result<String, String> {
     let profile = str_arg(args, "profile");
+    let json = json_arg(args, profile)?;
     let output = output_arg(session, args)?;
     let set = model_set(session, args)?;
-    let xml = encode(&set.dataset, profile)?;
+    let xml = encode(&set.dataset, profile, json)?;
     let what = match profile {
         Some(code) => format!("profile {code} of {}", set.name),
+        None if json => format!("all of {} as JSON", set.name),
         None => format!("all of {}", set.name),
     };
     let joins = joins_set(set, output.as_deref())?;
@@ -673,6 +682,7 @@ fn edit(session: &mut Session, args: &Value) -> Result<String, String> {
         Some(other) => return Err(format!("`keep` is `all` or `changed`, not `{other}`")),
     };
     let profile = str_arg(args, "profile");
+    let json_out = json_arg(args, profile)?;
     let output = output_arg(session, args)?;
     let set = model_set(session, args)?;
     // The set's own dataset stays as read; the edit works on a copy.
@@ -773,9 +783,10 @@ fn edit(session: &mut Session, args: &Value) -> Result<String, String> {
         report.push(format!("kept the {} changed object(s), left out the other {}", changed.len(), rest.len()));
     }
 
-    let xml = encode(&ds, profile)?;
+    let xml = encode(&ds, profile, json_out)?;
     let what = match profile {
         Some(code) => format!("profile {code} of {name}, edited"),
+        None if json_out => format!("all of {name}, edited, as JSON"),
         None => format!("all of {name}, edited"),
     };
     let delivered = deliver(session, &xml, output, joins, &what)?;
@@ -808,7 +819,25 @@ fn output_arg(session: &Session, args: &Value) -> Result<Option<PathBuf>, String
     Ok(Some(out))
 }
 
-fn encode(ds: &CimDataset, profile: Option<&str>) -> Result<String, String> {
+/// Whether `format` asks for JSON; JSON has no profiles.
+fn json_arg(args: &Value, profile: Option<&str>) -> Result<bool, String> {
+    match str_arg(args, "format") {
+        None | Some("rdfxml") => Ok(false),
+        Some("json") if profile.is_some() => Err("`format: \"json\"` writes the whole dataset and takes no `profile`".into()),
+        Some("json") => Ok(true),
+        Some(other) => Err(format!("`format` is `rdfxml` or `json`, not `{other}`")),
+    }
+}
+
+/// The dataset as RDF/XML (one profile, or all of it) or as JSON: every CIM
+/// and foreign object, in the form cimoxide-py's `entries()` and `foreign()`
+/// give.
+fn encode(ds: &CimDataset, profile: Option<&str>, json: bool) -> Result<String, String> {
+    if json {
+        let all: serde_json::Map<String, Value> =
+            ds.entries.iter().chain(&ds.foreign).map(|(id, el)| (id.clone(), element_json(el))).collect();
+        return serde_json::to_string_pretty(&all).map_err(|e| e.to_string());
+    }
     match profile {
         Some(code) => cimmodel::convert::dataset_to_xml_for_profile(ds, code),
         None => cimmodel::convert::dataset_to_xml(ds),
@@ -831,7 +860,7 @@ fn deliver(session: &Session, xml: &str, output: Option<PathBuf>, joins: bool, w
     let Some(out) = output else {
         let n = xml.chars().count();
         if n > EXPORT_INLINE {
-            return Err(format!("{what} is {n} characters as RDF/XML; give `output` to write it to a file"));
+            return Err(format!("{what} is {n} characters; give `output` to write it to a file"));
         }
         return Ok(xml.to_string());
     };
