@@ -5,7 +5,7 @@
 //! The transport is newline-delimited JSON-RPC 2.0 on stdin/stdout; the
 //! server answers `initialize`, `ping`, `tools/list` and `tools/call` and
 //! ignores notifications. Requests are handled one at a time, in order. The
-//! tools ([`tools`]) read; `export` alone writes a file, inside the workspace.
+//! tools ([`tools`]) read; `export` and `edit` write a file, inside the workspace.
 //!
 //! `cimmcp [--dir <path>]`: `--dir` (else `CIMOXIDE_MODEL_DIR`, else the
 //! working directory) is where relative `path` arguments resolve and what a
@@ -41,8 +41,10 @@ then `summary`.
   `describe_class` says what a class may carry.
 - `conflicts` lists objects more than one file defines and objects typed with unrelated classes; \
   `get_object` names the files that define or describe an object.
-- `export` writes one profile (`EQ`, `SSH`, …, NC `CO`, …) or the whole set as RDF/XML; the only \
-  tool that writes a file.";
+- `export` writes one profile (`EQ`, `SSH`, …, NC `CO`, …) or the whole set as RDF/XML; `edit` \
+  changes objects and writes the result the same way. They are the only tools that write a file, \
+  and never a model set's own. To validate an edit in place of a file, list the result in \
+  `validate`'s `files` instead of that file.";
 
 fn main() {
     let mut dir: Option<PathBuf> = None;

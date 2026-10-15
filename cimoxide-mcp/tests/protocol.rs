@@ -81,7 +81,7 @@ fn lists_tools_and_rejects_unknown_ones() {
     let mut s = Server::start();
     let list = s.request("tools/list", json!({}));
     let names: Vec<&str> = list["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["list_model_sets", "summary", "find_objects", "get_object", "validate", "conflicts", "sparql", "export", "describe_class"]);
+    assert_eq!(names, ["list_model_sets", "summary", "find_objects", "get_object", "validate", "conflicts", "sparql", "export", "edit", "describe_class"]);
     let reply = s.request("tools/call", json!({ "name": "nope", "arguments": {} }));
     assert_eq!(reply["error"]["code"], -32602);
     let reply = s.request("no/such/method", json!({}));
@@ -291,4 +291,82 @@ fn reports_defining_files_and_conflicts() {
     std::fs::remove_dir_all(repo_root().join(&dir)).unwrap();
     assert!(found.contains("1 object(s) defined by more than one file:\n  Substation _x \"S\" — a.xml, b.xml\n"), "{found}");
     assert!(found.contains("1 object(s) typed with unrelated classes:\n  _y — ACLineSegment in a.xml; Breaker in b.xml\n"), "{found}");
+}
+
+/// An edit updates, copies, creates and deletes objects in order and writes
+/// the result; the rest stays as read, and the set's files are never written.
+#[test]
+fn edits_and_writes_the_result() {
+    const BASE: &str = "CGMES-Test-Configurations/v3.0/MicroGrid/MicroGid-BaseCase";
+    let be = format!("{BASE}/MicroGrid-BE-MAS");
+    let mut files: Vec<PathBuf> = std::fs::read_dir(repo_root().join(&be)).unwrap().flatten().map(|e| e.path()).collect();
+    files.sort();
+    let paths: Vec<&Path> = files.iter().map(PathBuf::as_path).collect();
+    let before = cimmodel::CimDataset::decode_files_parallel(&paths).unwrap();
+    let eq_file = files.iter().find(|f| f.to_string_lossy().contains("_EQ_")).unwrap();
+    let eq = cimmodel::CimDataset::decode_file(eq_file).unwrap();
+    let g1 = "_3a3b27be-b18b-4385-b557-6735d733baf0";
+    let gone = eq.by_type["Substation"].iter().min().unwrap().clone();
+
+    let dir = format!("target/cimmcp-edit-{}", std::process::id());
+    let out = format!("{dir}/EQ.xml");
+    let mut s = Server::start();
+    let report = s.ok(
+        "edit",
+        json!({ "path": be, "profile": "EQ", "output": out, "changes": [
+            { "id": g1.trim_start_matches('_'), "fields": { "IdentifiedObject.name": "BE-G1 renamed", "IdentifiedObject.description": null } },
+            { "id": "_g1-copy", "from": g1, "fields": { "IdentifiedObject.name": "BE-G1 copy" } },
+            { "id": "_new-region", "type": "GeographicalRegion", "fields": { "IdentifiedObject.name": "New" } },
+            { "id": gone, "delete": true },
+        ] }),
+    );
+    assert!(report.contains(&format!("updated {g1} (SynchronousMachine): IdentifiedObject.description, IdentifiedObject.name")), "{report}");
+    assert!(report.contains(&format!("copied {g1} to _g1-copy (SynchronousMachine): IdentifiedObject.name; IdentifiedObject.mRID follows the new id")), "{report}");
+    assert!(report.contains("created _new-region (GeographicalRegion): IdentifiedObject.name"), "{report}");
+    assert!(report.contains(&format!("deleted {gone}")), "{report}");
+    assert!(report.contains(&format!("Wrote {out} ")), "{report}");
+
+    let after = cimmodel::CimDataset::decode_file(&repo_root().join(&out)).unwrap();
+    let json = |ds: &cimmodel::CimDataset, id: &str| ds.entries[id].to_json_value();
+    let renamed = json(&after, g1);
+    assert_eq!(renamed["IdentifiedObject.name"], "BE-G1 renamed");
+    assert!(renamed.get("IdentifiedObject.description").is_none());
+    let copy = json(&after, "_g1-copy");
+    assert_eq!(after.entries["_g1-copy"].type_name(), "SynchronousMachine");
+    assert_eq!(copy["IdentifiedObject.mRID"], "g1-copy");
+    assert_eq!(copy["RotatingMachine.GeneratingUnit"], renamed["RotatingMachine.GeneratingUnit"]);
+    assert_eq!(after.entries["_new-region"].type_name(), "GeographicalRegion");
+    assert!(!after.entries.contains_key(&gone));
+    // Everything else is the EQ file as read.
+    let unchanged = cimmodel::CimDataset::decode_str(&cimmodel::convert::dataset_to_xml_for_profile(&before, "EQ").unwrap()).unwrap();
+    for (id, el) in &unchanged.entries {
+        if ![g1, gone.as_str()].contains(&id.as_str()) {
+            assert_eq!(json(&after, id), el.to_json_value(), "{id}");
+        }
+    }
+    assert_eq!(after.entries.len(), unchanged.entries.len() + 1);
+
+    // Only what changed, as a dataset of its own.
+    let only = s.ok("edit", json!({ "path": be, "profile": "EQ", "keep": "changed", "changes": [
+        { "id": "_new-region", "type": "GeographicalRegion", "fields": { "IdentifiedObject.name": "New" } },
+    ] }));
+    assert!(only.contains("kept the 1 changed object(s)"), "{only}");
+    let xml = &only[only.find("<?xml").unwrap()..];
+    let alone = cimmodel::CimDataset::decode_str(xml).unwrap();
+    assert_eq!(alone.entries.keys().filter(|k| !alone.entries[*k].type_name().contains("FullModel")).count(), 1, "{xml}");
+
+    for (change, error) in [
+        (json!({ "id": g1, "from": g1 }), "a copy needs a new `id`"),
+        (json!({ "id": "_nothing", "fields": { "IdentifiedObject.name": "x" } }), "give `type` to create it"),
+        (json!({ "id": "_nothing", "type": "Generatr" }), "unknown class `Generatr`"),
+        (json!({ "id": "_nothing", "delete": true }), "no object `_nothing` to delete"),
+        (json!({ "id": g1, "fields": { "IdentifiedObject.name": 3 } }), "a string, an array of strings or null"),
+    ] {
+        let (text, err) = s.call("edit", json!({ "path": be, "profile": "EQ", "output": format!("{dir}/x.xml"), "changes": [change] }));
+        assert!(err && text.starts_with("change 1: ") && text.contains(error), "{text}");
+    }
+    let own = eq_file.strip_prefix(repo_root()).unwrap().to_string_lossy().into_owned();
+    let (text, err) = s.call("edit", json!({ "path": be, "output": own, "overwrite": true, "changes": [{ "id": g1 }] }));
+    assert!(err && text.contains("a file of the model set"), "{text}");
+    std::fs::remove_dir_all(repo_root().join(&dir)).unwrap();
 }
