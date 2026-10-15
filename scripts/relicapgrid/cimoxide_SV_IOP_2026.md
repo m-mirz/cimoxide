@@ -27,7 +27,7 @@ Four kinds of check run on every file or file group, independent of the use case
 |---|---|---|---|
 | Import | `CimDataset.decode_file` on each file; every decoded object, value and reference (`entries()` and `foreign()`) | triplets' triples of the same file | `test_import.py` |
 | Validation | `cimoxide.validate_files(files, common=True, quality=True)` on the groups ReliCapGrid's CI forms | triplets' SHACL run on the same groups | `test_validation.py` |
-| Export, per profile | `to_xml_for_profile(code)` on each CGMES and NC file, for the profile it declares | the source file: NC as an RDF graph, CGMES as cimoxide decodes it | `test_export.py` |
+| Export, per profile | `to_xml_for_profile(code)` on each CGMES and NC file, for the profile it declares | the source file, as an RDF graph | `test_export.py` |
 | Export, whole | `to_xml()` on each file, CGMES, NC and reference data alike | the source file, as an RDF graph | `test_export.py` |
 
 The groups, and the policies for building them, come from ReliCapGrid's own
@@ -46,7 +46,7 @@ description are listed per use case.
 |---|---|---|
 | Import | 135 files | identical to triplets, value for value |
 | Validation | 19 groups | 1,151 findings both tools report; every disagreement explained (see [Validation](#validation-compared-with-triplets)) |
-| Export per profile, CGMES | 47 files | the same objects and values back, as cimoxide decodes them (an SSH object typed with a class SSH does not have is written as `cim:Equipment`, as the ENTSO-E test configurations write it) |
+| Export per profile, CGMES | 47 files | the same RDF graph, except that an SSH object typed with a class SSH does not have is written as `cim:Equipment`, as the ENTSO-E test configurations write it (5 objects in 4 files) |
 | Export per profile, NC | 72 files | the same RDF graph, less two `IdentifiedObject.mRID` the SAR profile does not allow; `Svedala_FAP_PV.xml` (Provenance 1.0) is refused, cimoxide has no Provenance profile |
 | Export whole | 127 files | the same RDF graph, every file |
 | Use cases | 36 checks | all pass; data and description problems listed below |
