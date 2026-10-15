@@ -1,10 +1,11 @@
 //! The tools: their definitions as `tools/list` returns them, and what each
-//! does. Every tool reads; none writes a file. Output is plain text sized for
-//! a model's context — long lists stop at a `limit` and say how many more
-//! there are.
+//! does. Every tool reads; `export` alone writes, a file inside the workspace
+//! the caller names, never over an existing one unless told to. Output is
+//! plain text sized for a model's context — long lists stop at a `limit` and
+//! say how many more there are.
 
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use cimmodel::base::{AttrKind, ClassDef};
 use cimmodel::registry::type_registry;
@@ -105,6 +106,21 @@ Object IRIs come back as mRIDs. NC data is not in the graph.",
             "annotations": read_only,
         },
         {
+            "name": "export",
+            "title": "Export a model set",
+            "description": "Write a model set as RDF/XML: one profile's content with that profile's header (CGMES `EQ`, `SSH`, `TP`, `SV`, …; \
+NC `CO`, `AE`, `RA`, …), or with no `profile` the whole merged dataset as read (CGMES, NC and reference data). Writes `output`; \
+without it, returns the XML when it is short.",
+            "inputSchema": { "type": "object", "properties": {
+                "path": path,
+                "files": files,
+                "profile": { "type": "string", "description": "Profile code; omit for the whole dataset." },
+                "output": { "type": "string", "description": "File to write, relative to the workspace and inside it. Not in the model set's own directory, or it joins the set." },
+                "overwrite": { "type": "boolean", "description": "Replace `output` if it exists (default false)." },
+            } },
+            "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false },
+        },
+        {
             "name": "describe_class",
             "title": "Describe a CIM class",
             "description": "What the CGMES/NC schema says about a class: its definition from the ENTSO-E vocabulary, superclasses, subclasses, profiles \
@@ -129,6 +145,7 @@ pub fn call(session: &mut Session, name: &str, args: &Value) -> Option<Result<St
         "get_object" => get_object(session, args),
         "validate" => validate(session, args),
         "sparql" => sparql(session, args),
+        "export" => export(session, args),
         "describe_class" => describe_class(args),
         _ => return None,
     })
@@ -529,6 +546,64 @@ fn validate(session: &mut Session, args: &Value) -> Result<String, String> {
     }
     more(&mut out, limit.min(found.len()), found.len(), "; filter by `rule`, `class` or `object`, or raise `limit`");
     Ok(out)
+}
+
+/// Most characters `export` returns in place of writing a file.
+const EXPORT_INLINE: usize = 100_000;
+
+fn export(session: &mut Session, args: &Value) -> Result<String, String> {
+    let profile = str_arg(args, "profile");
+    let output = match str_arg(args, "output") {
+        Some(o) => Some(output_path(&session.base, o)?),
+        None => None,
+    };
+    let overwrite = bool_arg(args, "overwrite");
+    if let Some(out) = &output
+        && out.exists()
+        && !overwrite
+    {
+        return Err(format!("{} exists; set `overwrite` to replace it", session.relative(out)));
+    }
+    let set = model_set(session, args)?;
+    let xml = match profile {
+        Some(code) => cimmodel::convert::dataset_to_xml_for_profile(&set.dataset, code),
+        None => cimmodel::convert::dataset_to_xml(&set.dataset),
+    }
+    .map_err(|e| e.to_string())?;
+    let what = match profile {
+        Some(code) => format!("profile {code} of {}", set.name),
+        None => format!("all of {}", set.name),
+    };
+    let joins = output.as_ref().is_some_and(|out| set.files.iter().any(|f| f.parent() == out.parent()));
+    let Some(out) = output else {
+        let n = xml.chars().count();
+        if n > EXPORT_INLINE {
+            return Err(format!("the export of {what} is {n} characters; give `output` to write it to a file"));
+        }
+        return Ok(xml);
+    };
+    if let Some(dir) = out.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
+    }
+    std::fs::write(&out, &xml).map_err(|e| format!("writing {}: {e}", out.display()))?;
+    let mut msg = format!("Wrote {} ({} bytes): {what}.", session.relative(&out), xml.len());
+    if joins {
+        msg.push_str(" Its directory holds the model set's files, so the set now includes it.");
+    }
+    Ok(msg)
+}
+
+/// `output` against the workspace, which it may not leave.
+fn output_path(base: &Path, output: &str) -> Result<PathBuf, String> {
+    let p = Path::new(output);
+    if p.components().any(|c| c == Component::ParentDir) {
+        return Err("`output` may not contain `..`".into());
+    }
+    let full = if p.is_absolute() { p.to_path_buf() } else { base.join(p) };
+    if !full.starts_with(base) || full == base {
+        return Err(format!("`output` must be a file inside the workspace {}", base.display()));
+    }
+    Ok(full)
 }
 
 fn sparql(session: &mut Session, args: &Value) -> Result<String, String> {

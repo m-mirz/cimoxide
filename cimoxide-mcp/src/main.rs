@@ -5,7 +5,7 @@
 //! The transport is newline-delimited JSON-RPC 2.0 on stdin/stdout; the
 //! server answers `initialize`, `ping`, `tools/list` and `tools/call` and
 //! ignores notifications. Requests are handled one at a time, in order. The
-//! tools ([`tools`]) are read-only.
+//! tools ([`tools`]) read; `export` alone writes a file, inside the workspace.
 //!
 //! `cimmcp [--dir <path>]`: `--dir` (else `CIMOXIDE_MODEL_DIR`, else the
 //! working directory) is where relative `path` arguments resolve and what a
@@ -38,7 +38,9 @@ then `summary`.
   references the target mRID, enumerations the value after `#`.
 - NC class names carry an `nc:` prefix (`nc:PowerSchedule`).
 - Prefer `find_objects` and `get_object`; use `sparql` for joins and aggregates. \
-  `describe_class` says what a class may carry.";
+  `describe_class` says what a class may carry.
+- `export` writes one profile (`EQ`, `SSH`, …, NC `CO`, …) or the whole set as RDF/XML; the only \
+  tool that writes a file.";
 
 fn main() {
     let mut dir: Option<PathBuf> = None;
