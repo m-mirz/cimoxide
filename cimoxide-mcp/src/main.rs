@@ -42,7 +42,8 @@ then `summary`.
 - `conflicts` lists objects more than one file defines and objects typed with unrelated classes; \
   `get_object` names the files that define or describe an object.
 - `export` writes one profile (`EQ`, `SSH`, …, NC `CO`, …) or the whole set as RDF/XML; `edit` \
-  changes objects and writes the result the same way. They are the only tools that write a file, \
+  changes objects and writes the result the same way; `format: \"json\"` dumps every decoded \
+  object. They are the only tools that write a file, \
   and never a model set's own. To validate an edit in place of a file, list the result in \
   `validate`'s `files` instead of that file.";
 

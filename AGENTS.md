@@ -248,7 +248,8 @@ restarts the server on any `cimoxide.*` change.
 async runtime, no MCP SDK). Tools in `src/tools.rs`, output plain text with a `limit`; all read
 but `export` and `edit`, which write `to_xml_for_profile`/`to_xml` output to a file inside the
 workspace (never over one unless `overwrite`, never over a model set's own file), or return it
-when short. `edit` applies its changes to a fresh decode of the set, in JSON element form through
+when short; `format: "json"` writes instead every object of `entries` and `foreign`, as
+cimoxide-py gives them. `edit` applies its changes to a fresh decode of the set, in JSON element form through
 `CimDataset::element_from_json` as cimoxide-py's `__setitem__` does; edits never live in the session. `src/session.rs` caches each model set (a directory's CIM files, as for `cimlsp`, or the
 files and directories a tool's `files` lists) until a file's mtime changes; the SPARQL store, the
 files that wrote each object (`rdf:ID` or `rdf:about`, for `get_object` and `conflicts`) and each
