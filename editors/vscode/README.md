@@ -16,6 +16,11 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
 - **Outline** — every object in the document, labelled by `IdentifiedObject.name`.
 - **Completion** — after `<`: the attributes of the enclosing object's class (inherited ones
   included), or the classes of the document's namespace between objects.
+- **Grid view** — *cimoxide: Show grid* (or the button in the editor title) draws the model
+  set as substations, boundary points and the lines between them. A ring marks each one with
+  findings, in the colour of the worst and as wide as their number; select one for its voltage
+  levels, equipment and findings, double-click to open where it is written. The view follows
+  each revalidation.
 
 - **Chat** — an MCP server, `cimmcp`, offered to chat (Copilot agent mode): ask about the
   model sets of the workspace. Its tools list the model sets, summarise one (headers, object
