@@ -238,9 +238,16 @@ was found in (`validate_files_traced`). Each diagnostic's `data` carries `object
 and `property`; its `code` is the `rule_id`. Diagnostics must stay equal to
 `cimcli validate --format json` as sets of `(object_id, rule_id, property)` per directory.
 
+`cimoxide/grid` (`src/grid.rs`) answers the set's grid at substation level as last validated:
+substations, and boundary points no substation holds, as nodes; equipment whose terminals reach
+two of them as edges; each finding counted on its object's node or edge (`elsewhere` if none).
+It is built from the set's datasets before validation consumes them.
+
 The extension (`editors/vscode/`, TypeScript, `vscode-languageclient`) passes settings as
 initialization options and schema directories as `CIMOXIDE_*` environment variables, and
-restarts the server on any `cimoxide.*` change.
+restarts the server on any `cimoxide.*` change. *Show grid* draws `cimoxide/grid` in a webview
+(`src/gridView.ts`; the page is `src/webview/grid.ts`, Cytoscape.js bundled by esbuild into
+`dist/grid.js`, as webviews load nothing from the network).
 
 ### `cimoxide-mcp`
 

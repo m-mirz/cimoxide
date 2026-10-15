@@ -5,6 +5,8 @@
 //!   open and save, and while typing if `onType` is set.
 //! - Hover, go to definition, references, document outline and completion
 //!   from the class tables ([`features`]).
+//! - `cimoxide/grid`: the model set's grid at substation level, for the
+//!   extension's grid view ([`grid`]).
 //!
 //! Initialization options (the VS Code extension sends its settings):
 //! `{ "common": bool, "quality": bool, "silence": [rule ids], "onType": bool }`.
@@ -12,6 +14,7 @@
 //! `CIMOXIDE_SHACL_DIR` in the server's environment, as for `cimcli`.
 
 mod features;
+mod grid;
 mod index;
 mod validate;
 
@@ -41,6 +44,10 @@ use index::{Index, LineIndex};
 use validate::{ModelSet, Options};
 
 const REVALIDATE: &str = "cimoxide.revalidate";
+
+/// `cimoxide/grid` `{ "uri" }`: the grid of the document's model set as last
+/// validated ([`grid::Grid::json`]), or `null` before its first validation.
+const GRID: &str = "cimoxide/grid";
 
 /// How long a burst of triggers is gathered before a set is validated.
 const DEBOUNCE: Duration = Duration::from_millis(300);
@@ -227,6 +234,21 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
                 revalidate(state, jobs, &p.arguments);
             }
             Ok(serde_json::Value::Null)
+        }
+        GRID => {
+            #[derive(serde::Deserialize)]
+            struct Params {
+                uri: Url,
+            }
+            let p: Params = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return error(id, ErrorCode::InvalidParams, e.to_string()),
+            };
+            let set = p.uri.to_file_path().ok().and_then(|f| {
+                let st = state.lock().unwrap();
+                f.parent().and_then(|d| st.sets.get(d)).cloned()
+            });
+            Ok(set.map_or(serde_json::Value::Null, |s| s.grid.json(&s)))
         }
         _ => return error(id, ErrorCode::MethodNotFound, format!("unhandled method {}", req.method)),
     };

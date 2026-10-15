@@ -39,11 +39,26 @@
         "category": "cimoxide"
       },
       {
+        "command": "cimoxide.showGrid",
+        "title": "Show grid",
+        "category": "cimoxide",
+        "icon": "$(type-hierarchy)"
+      },
+      {
         "command": "cimoxide.restartServer",
         "title": "Restart language server",
         "category": "cimoxide"
       }
     ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "cimoxide.showGrid",
+          "when": "resourceLangId == xml",
+          "group": "navigation"
+        }
+      ]
+    },
     "mcpServerDefinitionProviders": [
       {
         "id": "cimoxide",
@@ -116,12 +131,13 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run build -- --minify && node -e \"require('fs').copyFileSync('../../LICENSE', 'LICENSE')\"",
-    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18",
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18 && esbuild src/webview/grid.ts --bundle --outfile=dist/grid.js --format=iife --platform=browser --target=es2020",
     "watch": "npm run build -- --sourcemap --watch",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p src/webview",
     "package": "vsce package"
   },
   "dependencies": {
+    "cytoscape": "3.33.1",
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
