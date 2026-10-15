@@ -81,7 +81,7 @@ fn lists_tools_and_rejects_unknown_ones() {
     let mut s = Server::start();
     let list = s.request("tools/list", json!({}));
     let names: Vec<&str> = list["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["list_model_sets", "summary", "find_objects", "get_object", "validate", "sparql", "describe_class"]);
+    assert_eq!(names, ["list_model_sets", "summary", "find_objects", "get_object", "validate", "sparql", "export", "describe_class"]);
     let reply = s.request("tools/call", json!({ "name": "nope", "arguments": {} }));
     assert_eq!(reply["error"]["code"], -32602);
     let reply = s.request("no/such/method", json!({}));
@@ -216,4 +216,44 @@ fn takes_a_model_set_as_a_file_list() {
     assert!(err && missing.contains("does not exist"), "{missing}");
     let (not_cim, err) = s.call("summary", json!({ "files": [be, "Cargo.toml"] }));
     assert!(err && not_cim.contains("is not a CGMES or NC RDF/XML file"), "{not_cim}");
+}
+
+/// An export is what `cimmodel::convert` writes for the same files: returned
+/// when short, else written, inside the workspace and over a file only when
+/// told to.
+#[test]
+fn exports_as_cimmodel_does() {
+    const BASE: &str = "CGMES-Test-Configurations/v3.0/MicroGrid/MicroGid-BaseCase";
+    let be = format!("{BASE}/MicroGrid-BE-MAS");
+    let boundary = format!("{BASE}/MicroGrid-BD-MAS/20171002T0930Z_ENTSO-E_EQ_BD_2.xml");
+    let mut files: Vec<PathBuf> = std::fs::read_dir(repo_root().join(&be)).unwrap().flatten().map(|e| e.path()).collect();
+    files.sort();
+    let paths: Vec<&Path> = files.iter().map(PathBuf::as_path).collect();
+    let ssh = cimmodel::convert::dataset_to_xml_for_profile(&cimmodel::CimDataset::decode_files_parallel(&paths).unwrap(), "SSH").unwrap();
+    files.push(repo_root().join(&boundary));
+    let paths: Vec<&Path> = files.iter().map(PathBuf::as_path).collect();
+    let whole = cimmodel::convert::dataset_to_xml(&cimmodel::CimDataset::decode_files_parallel(&paths).unwrap()).unwrap();
+
+    let mut s = Server::start();
+    assert_eq!(s.ok("export", json!({ "path": be, "profile": "SSH" })), ssh);
+    let (long, err) = s.call("export", json!({ "path": be }));
+    assert!(err && long.contains("give `output`"), "{long}");
+
+    let dir = format!("target/cimmcp-export-{}", std::process::id());
+    let out = format!("{dir}/all.xml");
+    let set = json!([be, boundary]);
+    let wrote = s.ok("export", json!({ "files": set, "output": out }));
+    assert!(wrote.starts_with(&format!("Wrote {out} ")), "{wrote}");
+    assert_eq!(std::fs::read_to_string(repo_root().join(&out)).unwrap(), whole);
+    let (exists, err) = s.call("export", json!({ "files": set, "output": out }));
+    assert!(err && exists.contains("set `overwrite`"), "{exists}");
+    s.ok("export", json!({ "files": set, "output": out, "overwrite": true }));
+    std::fs::remove_dir_all(repo_root().join(&dir)).unwrap();
+
+    let (unknown, err) = s.call("export", json!({ "path": be, "profile": "XX" }));
+    assert!(err && unknown.contains("unknown profile code"), "{unknown}");
+    for outside in ["../outside.xml", "/tmp/outside.xml"] {
+        let (refused, err) = s.call("export", json!({ "path": be, "output": outside }));
+        assert!(err && refused.contains("output"), "{refused}");
+    }
 }

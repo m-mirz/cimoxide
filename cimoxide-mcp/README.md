@@ -6,7 +6,8 @@
 a model: which generators a model has and their set points, why an object fails
 validation, what a CIM class or attribute means.
 
-Its tools are read-only:
+Its tools read; `export` alone writes a file, inside the workspace and over an existing one
+only when told to:
 
 | Tool | |
 |---|---|
@@ -16,6 +17,7 @@ Its tools are read-only:
 | `get_object` | one object's fields, references resolved, and what references it |
 | `validate` | the ENTSO-E SHACL and SPARQL rules, as `cimcli validate` runs them |
 | `sparql` | a SPARQL query over the merged CGMES data |
+| `export` | one profile (CGMES or NC) or the whole set as RDF/XML, as `to_xml_for_profile` / `to_xml` write it |
 | `describe_class` | definitions of classes, attributes and enumerations from the ENTSO-E vocabulary |
 
 A model set is every CIM XML file in one directory (`path`), or the files and directories
