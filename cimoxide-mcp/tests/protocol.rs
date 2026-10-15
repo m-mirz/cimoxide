@@ -81,7 +81,7 @@ fn lists_tools_and_rejects_unknown_ones() {
     let mut s = Server::start();
     let list = s.request("tools/list", json!({}));
     let names: Vec<&str> = list["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["list_model_sets", "summary", "find_objects", "get_object", "validate", "sparql", "export", "describe_class"]);
+    assert_eq!(names, ["list_model_sets", "summary", "find_objects", "get_object", "validate", "conflicts", "sparql", "export", "describe_class"]);
     let reply = s.request("tools/call", json!({ "name": "nope", "arguments": {} }));
     assert_eq!(reply["error"]["code"], -32602);
     let reply = s.request("no/such/method", json!({}));
@@ -256,4 +256,39 @@ fn exports_as_cimmodel_does() {
         let (refused, err) = s.call("export", json!({ "path": be, "output": outside }));
         assert!(err && refused.contains("output"), "{refused}");
     }
+}
+
+/// Which files define (`rdf:ID`) or describe (`rdf:about`) an object, and the
+/// objects files define again or type with unrelated classes.
+#[test]
+fn reports_defining_files_and_conflicts() {
+    let mut s = Server::start();
+    let g1 = s.ok("get_object", json!({ "path": MICROGRID, "mrid": "3a3b27be-b18b-4385-b557-6735d733baf0" }));
+    assert!(g1.contains("20210325T1530Z_1D_BE_EQ_001.xml — defines (rdf:ID) as SynchronousMachine"), "{g1}");
+    assert!(g1.contains("20210325T1530Z_1D_BE_SSH_001.xml — describes (rdf:about) as SynchronousMachine"), "{g1}");
+    let clean = s.ok("conflicts", json!({ "path": MICROGRID }));
+    assert!(clean.starts_with("No conflicts across 12 file(s)"), "{clean}");
+
+    // `_x` defined by both files; `_y` a line in one, a breaker in the other.
+    let dir = format!("target/cimmcp-conflicts-{}", std::process::id());
+    std::fs::create_dir_all(repo_root().join(&dir)).unwrap();
+    let doc = |body: &str| {
+        format!(
+            "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\" xmlns:cim=\"http://iec.ch/TC57/CIM100#\">\n{body}\n</rdf:RDF>\n"
+        )
+    };
+    std::fs::write(
+        repo_root().join(&dir).join("a.xml"),
+        doc("<cim:Substation rdf:ID=\"_x\"><cim:IdentifiedObject.name>S</cim:IdentifiedObject.name></cim:Substation>\n<cim:ACLineSegment rdf:ID=\"_y\"/>"),
+    )
+    .unwrap();
+    std::fs::write(
+        repo_root().join(&dir).join("b.xml"),
+        doc("<cim:Substation rdf:ID=\"_x\"/>\n<cim:Breaker rdf:about=\"#_y\"/>"),
+    )
+    .unwrap();
+    let found = s.ok("conflicts", json!({ "path": dir }));
+    std::fs::remove_dir_all(repo_root().join(&dir)).unwrap();
+    assert!(found.contains("1 object(s) defined by more than one file:\n  Substation _x \"S\" — a.xml, b.xml\n"), "{found}");
+    assert!(found.contains("1 object(s) typed with unrelated classes:\n  _y — ACLineSegment in a.xml; Breaker in b.xml\n"), "{found}");
 }
