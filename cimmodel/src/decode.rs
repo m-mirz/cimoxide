@@ -6,15 +6,20 @@ use quick_xml::Reader;
 use crate::base::{intern, AttrDef, AttrKind, ClassDef, Element, FastMap, FastSet, FieldValue, TypeRegistry};
 use crate::registry;
 
-/// Whether `text` looks like CGMES or NC RDF/XML: it binds one of the two
-/// CIM namespaces near the top.
+/// Whether `text` looks like CGMES or NC RDF/XML: near the top it names one
+/// of the two CIM namespaces, an NC profile (`https://ap.cim4.eu/`, which a
+/// header's `dcterms:conformsTo` names: an NC dataset may be its DCAT header
+/// alone) or ENTSO-E reference data (`https://energy.referencedata.eu/`,
+/// SKOS/DCAT with no CIM namespace).
 pub fn is_cim(text: &str) -> bool {
     let mut end = text.len().min(8192);
     while !text.is_char_boundary(end) {
         end -= 1;
     }
     let head = &text[..end];
-    head.contains("http://iec.ch/TC57/") || head.contains("https://cim.ucaiug.io/ns#")
+    ["http://iec.ch/TC57/", "https://cim.ucaiug.io/ns#", "https://ap.cim4.eu/", "https://energy.referencedata.eu/"]
+        .iter()
+        .any(|marker| head.contains(marker))
 }
 
 /// How a dataset's files wrote one field of one class

@@ -133,9 +133,8 @@ impl Session {
             let mut files: Vec<PathBuf> = Vec::new();
             for source in &sources {
                 let found = if source.is_file() {
-                    // Named, so not held to `is_cim`: an NC file may be its DCAT header alone.
-                    if !head(source, 8192).is_some_and(|h| h.contains("http://www.w3.org/1999/02/22-rdf-syntax-ns#")) {
-                        return Err(format!("{} is not an RDF/XML file", self.relative(source)));
+                    if !head(source, 8192).is_some_and(|h| cimmodel::decode::is_cim(&h)) {
+                        return Err(format!("{} is not a CGMES or NC RDF/XML file", self.relative(source)));
                     }
                     vec![source.clone()]
                 } else if source.is_dir() {
