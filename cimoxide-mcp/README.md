@@ -6,8 +6,8 @@
 a model: which generators a model has and their set points, why an object fails
 validation, what a CIM class or attribute means.
 
-Its tools read; `export` alone writes a file, inside the workspace and over an existing one
-only when told to:
+Its tools read; `export` and `edit` write a file, inside the workspace, over an existing one only
+when told to and never over a model set's own files:
 
 | Tool | |
 |---|---|
@@ -19,6 +19,7 @@ only when told to:
 | `conflicts` | objects more than one file defines, and objects the files type with unrelated classes |
 | `sparql` | a SPARQL query over the merged CGMES data |
 | `export` | one profile (CGMES or NC) or the whole set as RDF/XML, as `to_xml_for_profile` / `to_xml` write it |
+| `edit` | update, copy, create and delete objects, and write the result as `export` does |
 | `describe_class` | definitions of classes, attributes and enumerations from the ENTSO-E vocabulary |
 
 A model set is every CIM XML file in one directory (`path`), or the files and directories
