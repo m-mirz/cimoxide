@@ -215,5 +215,5 @@ fn takes_a_model_set_as_a_file_list() {
     let (missing, err) = s.call("summary", json!({ "files": [be, "nowhere.xml"] }));
     assert!(err && missing.contains("does not exist"), "{missing}");
     let (not_cim, err) = s.call("summary", json!({ "files": [be, "Cargo.toml"] }));
-    assert!(err && not_cim.contains("is not an RDF/XML file"), "{not_cim}");
+    assert!(err && not_cim.contains("is not a CGMES or NC RDF/XML file"), "{not_cim}");
 }
