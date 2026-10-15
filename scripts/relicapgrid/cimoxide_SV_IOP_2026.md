@@ -9,7 +9,7 @@ each result can be reproduced.
 
 | | |
 |---|---|
-| cimoxide | 0.5.1, commit `c426108` (branch `relicapgrid`), Python bindings `cimoxide-py` |
+| cimoxide | 0.5.1, commit `c426108` (branch `relicapgrid`), Python bindings `cimoxide-py`; MCP server `cimmcp` at `e18f628` |
 | Dataset | [entsoe/relicapgrid](https://github.com/entsoe/relicapgrid) `cgmes-3.0_ncp-2.5_tc-2.0` @ `f09bb34` (2026-09-11) |
 | Profiles | ENTSO-E application-profiles-library @ `d8b2d21` (CGMES 3.0, NCP 2.5), cimoxide's submodule |
 | Reference tool | [triplets](https://pypi.org/project/triplets/) 0.2.0, as ReliCapGrid's CI uses it |
@@ -19,7 +19,9 @@ each result can be reproduced.
 cimoxide is a library, a CLI (`cimcli`), a language server and an MCP server; it has no user
 interface to click through and no power-flow solver. It was tested through its Python bindings by a
 harness ([README](README.md)) that runs every step the report asks for and checks the result, so
-that each Annex 1 entry below is the outcome of an automated test rather than an inspection.
+that each Annex 1 entry below is the outcome of an automated test rather than an inspection. Every
+step was repeated through the MCP server, the way a chat client drives it, with the same results
+([Through the MCP server](#through-the-mcp-server)).
 
 Four kinds of check run on every file or file group, independent of the use cases:
 
@@ -51,6 +53,7 @@ description are listed per use case.
 | Export whole | 127 files | the same RDF graph, every file |
 | Use cases | 36 checks | all pass; data and description problems listed below |
 | Edits | CO_UC1, RA_UC4 | replayed, exported and validated (`test_edits.py`) |
+| Through `cimmcp` | 421 checks | every step's result equal to the Python bindings' (`test_mcp.py`) |
 
 ---
 
@@ -486,6 +489,29 @@ Copies of ReliCapGrid files broken one way each, run through both tools (`test_m
 | inverter minGamma below 17 (EQ limit, SSH mode) | CsConverter.minGamma-valueRangeTypical | CsConverter.minGamma-valueRangeTypical |
 | topology action on a line (target in EQ) | TopologyAction.Switch-valueType | TopologyAction.Switch-valueType |
 
+## Through the MCP server
+
+`cimmcp` serves cimoxide to chat clients (VS Code, Claude Code, Claude Desktop, …) over the Model
+Context Protocol. `test_mcp.py` starts it and calls its tools over stdio as a client does, for each
+step above, and compares the result with what the Python bindings give for the same files. Equal
+results mean every check the other tests make on the bindings holds through `cimmcp` too.
+
+| Step | `cimmcp` tool | Equal to | Checks |
+|---|---|---|---|
+| Import | `export` with `format: "json"`: every decoded object, CIM and foreign | `entries()` and `foreign()` | 135 files |
+| Validation | `validate` with `files` (the group, which spans directories), `common`, `quality` | `validate_files`, finding by finding (severity, rule, message, class, object, property) | 19 groups |
+| Export, per profile | `export` with `profile` | `to_xml_for_profile`, byte for byte | 119 files |
+| Export, whole | `export` | `to_xml`, byte for byte | 127 files |
+| Common data defined again, type conflicts | `conflicts` with `files` | `defined_mrids()` per file, `type_conflicts()` | 19 groups |
+| CO_UC1 update | `edit`: rename the contingency, copy its equipment for the second tie-line; `profile: "CO"` | `test_edits.co_update`'s export, byte for byte | 1 |
+| RA_UC4 counter-proposal | `edit`: create the response and dependency, copy the schedule, event schedules, time points and header; `keep: "changed"`, `profile: "RAS"` | `test_edits.counter_proposal`'s export, byte for byte | 1 |
+
+An edit is validated in place of ReliCapGrid's file by listing its output in `validate`'s `files`
+instead of that file. `edit` copies an object's own identifier written as text
+(`IdentifiedObject.mRID`, a DCAT header's `identifier`) to the copy's new id, which the Python
+replay sets by hand. `get_object` names the files that define (`rdf:ID`) or describe (`rdf:about`)
+an object, so a defined-again object can be traced to its files from a chat.
+
 ## Implemented improvements
 
 Changes made to cimoxide while testing with ReliCapGrid:
@@ -503,6 +529,15 @@ Changes made to cimoxide while testing with ReliCapGrid:
   are kept (`foreign()`); `to_xml()` writes the whole dataset as read.
 - **Editing.** Objects set from Python keep whether a value is a reference and its language tags,
   following how the dataset holds the field.
+- **CIM files without a CIM namespace.** An NC dataset that is its DCAT header alone (Jotunheim's
+  `2D_IAM_*`) and reference data in SKOS/DCAT only are recognised as CIM files, by the NC profile
+  (`https://ap.cim4.eu/`) or ENTSO-E reference data (`https://energy.referencedata.eu/`) they name;
+  the language server and `cimmcp` skipped them in a directory.
+- **MCP server.** `cimmcp` takes a model set as a list of files and directories (a group spanning an
+  IGM, the boundary and the common data), exports (`export`), edits (`edit`), dumps every decoded
+  object as JSON, and reports the files defining each object and the type conflicts after a merge
+  (`get_object`, `conflicts`). Only `export` and `edit` write, a file inside the workspace and never
+  a model set's own.
 
 ## Annex 1: Test Use Cases Results
 
