@@ -1,6 +1,6 @@
 # cimoxide on the 2026 SV-IOP test cases
 
-What cimoxide does for each test case of the [2026 SV-IOP report](SV_IOP_Report_2026.md)
+What cimoxide does for each test case of the [2026 SV-IOP report](https://www.entsoe.eu/Documents/CIM_documents/Market%20CIM/SV_IOP_Report_2026.pdf)
 (Network Code Profiles 2.5, ReliCapGrid), and with what result. The section numbers follow the
 report's. Every statement here is backed by a test in this directory; the test names are given so
 each result can be reproduced.
