@@ -12,13 +12,17 @@ use cimmodel::{CimDataset, Element, FieldValue};
 use cimsparql::{QueryResults, Term};
 use serde_json::{Value, json};
 
-use crate::session::{self, Options, Session};
+use crate::session::{self, ModelSet, Options, Session};
 
 const PATH_DOC: &str = "Model set: a directory of CIM RDF/XML files (or one file), relative to the workspace. \
 Default: the workspace directory itself.";
 
+const FILES_DOC: &str = "Instead of `path`: the files that form one model set, relative to the workspace, when they \
+are not one directory (an IGM with its boundary and common data). A directory stands for its CIM files. Merged in the order given.";
+
 pub fn definitions() -> Value {
     let path = json!({ "type": "string", "description": PATH_DOC });
+    let files = json!({ "type": "array", "items": { "type": "string" }, "description": FILES_DOC });
     let limit = |default: u64| json!({ "type": "integer", "minimum": 1, "description": format!("Most rows to return (default {default}).") });
     let read_only = json!({ "readOnlyHint": true, "openWorldHint": false });
     json!([
@@ -36,7 +40,7 @@ pub fn definitions() -> Value {
             "name": "summary",
             "title": "Summarise a model set",
             "description": "A model set's files, model headers (profiles, scenario time, dependencies) and object counts by class.",
-            "inputSchema": { "type": "object", "properties": { "path": path } },
+            "inputSchema": { "type": "object", "properties": { "path": path, "files": files } },
             "annotations": read_only,
         },
         {
@@ -46,6 +50,7 @@ pub fn definitions() -> Value {
 by name/mRID text, and by an attribute's value. Returns mRID, class and name of each match.",
             "inputSchema": { "type": "object", "properties": {
                 "path": path,
+                "files": files,
                 "class": { "type": "string", "description": "Class name, e.g. `ACLineSegment`, `Breaker`, `nc:PowerSchedule`." },
                 "text": { "type": "string", "description": "Case-insensitive substring of the name, description or mRID." },
                 "attribute": { "type": "string", "description": "Field to filter on: `Switch.open`, or just `open`." },
@@ -60,6 +65,7 @@ by name/mRID text, and by an attribute's value. Returns mRID, class and name of 
             "description": "One object by mRID: its class, every field as written (references resolved to class and name) and the objects that reference it.",
             "inputSchema": { "type": "object", "properties": {
                 "path": path,
+                "files": files,
                 "mrid": { "type": "string", "description": "The object's mRID (with or without leading `_` or `#`)." },
                 "limit": limit(100),
             }, "required": ["mrid"] },
@@ -72,6 +78,7 @@ by name/mRID text, and by an attribute's value. Returns mRID, class and name of 
 Returns counts by severity and rule, and the findings (filterable). Results are cached until a file changes.",
             "inputSchema": { "type": "object", "properties": {
                 "path": path,
+                "files": files,
                 "common": { "type": "boolean", "description": "Also run the common cross-profile checks (default false)." },
                 "quality": { "type": "boolean", "description": "Also run the modelling-quality checks (default false)." },
                 "silence": { "type": "array", "items": { "type": "string" }, "description": "Rule ids not to report." },
@@ -91,6 +98,7 @@ the other CGMES namespaces are pre-bound. Classes are `cim:ACLineSegment`, prope
 Object IRIs come back as mRIDs. NC data is not in the graph.",
             "inputSchema": { "type": "object", "properties": {
                 "path": path,
+                "files": files,
                 "query": { "type": "string", "description": "The query (SELECT, ASK, CONSTRUCT or DESCRIBE)." },
                 "limit": limit(100),
             }, "required": ["query"] },
@@ -149,6 +157,11 @@ fn list_arg(args: &Value, key: &str) -> Vec<String> {
 }
 
 // --- Shared helpers ---------------------------------------------------------
+
+/// The model set `path` or `files` names.
+fn model_set<'s>(session: &'s mut Session, args: &Value) -> Result<&'s mut ModelSet, String> {
+    session.model_set(str_arg(args, "path"), &list_arg(args, "files"))
+}
 
 fn name_of(el: &Element) -> Option<&str> {
     el.get_str("IdentifiedObject.name").filter(|n| !n.is_empty())
@@ -286,12 +299,10 @@ fn list_model_sets(session: &mut Session, args: &Value) -> Result<String, String
 }
 
 fn summary(session: &mut Session, args: &Value) -> Result<String, String> {
-    let base = session.base.clone();
-    let set = session.model_set(str_arg(args, "path"))?;
+    let set = model_set(session, args)?;
     let ds = &set.dataset;
     let mut out = String::new();
-    let shown = set.root.strip_prefix(&base).map_or(set.root.display().to_string(), |p| p.display().to_string());
-    let _ = writeln!(out, "Model set {} — {} file(s), {} objects", if shown.is_empty() { "." } else { &shown }, set.files.len(), ds.entries.len());
+    let _ = writeln!(out, "Model set {} — {} file(s), {} objects", set.name, set.files.len(), ds.entries.len());
     for file in &set.files {
         let _ = writeln!(out, "  {}", file_line(&set.display(file), file));
     }
@@ -337,7 +348,7 @@ fn find_objects(session: &mut Session, args: &Value) -> Result<String, String> {
             return Err(format!("unknown class `{c}`{}", suggest(c)));
         }
     }
-    let set = session.model_set(str_arg(args, "path"))?;
+    let set = model_set(session, args)?;
     let ds = &set.dataset;
 
     let mut hits: Vec<(&Element, Option<String>)> = ds
@@ -381,7 +392,7 @@ fn find_objects(session: &mut Session, args: &Value) -> Result<String, String> {
 fn get_object(session: &mut Session, args: &Value) -> Result<String, String> {
     let mrid = str_arg(args, "mrid").ok_or("`mrid` is required")?;
     let limit = usize_arg(args, "limit", 100);
-    let set = session.model_set(str_arg(args, "path"))?;
+    let set = model_set(session, args)?;
     let ds = &set.dataset;
     let el = lookup(ds, mrid).ok_or_else(|| format!("no object `{mrid}` in this model set; find_objects searches by name"))?;
     let reg = type_registry();
@@ -456,7 +467,7 @@ fn validate(session: &mut Session, args: &Value) -> Result<String, String> {
     let severity = str_arg(args, "severity").map(|s| format!("sh:{}", s.trim_start_matches("sh:")));
     let limit = usize_arg(args, "limit", 50);
 
-    let set = session.model_set(str_arg(args, "path"))?;
+    let set = model_set(session, args)?;
     // An object filter matches however the mRID is written.
     let object = match object {
         Some(o) => Some(lookup(&set.dataset, o).map_or(o.to_string(), |e| e.mrid().to_string())),
@@ -523,7 +534,7 @@ fn validate(session: &mut Session, args: &Value) -> Result<String, String> {
 fn sparql(session: &mut Session, args: &Value) -> Result<String, String> {
     let query = str_arg(args, "query").ok_or("`query` is required")?;
     let limit = usize_arg(args, "limit", 100);
-    let set = session.model_set(str_arg(args, "path"))?;
+    let set = model_set(session, args)?;
     let results = set.store()?.query(query).map_err(|e| format!("query failed: {e}"))?;
     let ds = &set.dataset;
     let prefixes = cimsparql::prefixes();

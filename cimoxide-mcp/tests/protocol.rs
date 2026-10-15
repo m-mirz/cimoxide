@@ -173,3 +173,47 @@ fn validates_as_cimcli_does() {
     let one = s.ok("validate", json!({ "path": MICROGRID, "common": true, "quality": true, "rule": "Substation-count" }));
     assert!(one.starts_with(&format!("1 finding(s) of {} matching the filters", expected.len())), "{one}");
 }
+
+/// A model set listed as files and directories that lie apart (BE's
+/// directory and the boundary's) is decoded and validated as those files
+/// together, as `cimcli validate` takes them.
+#[test]
+fn takes_a_model_set_as_a_file_list() {
+    const BASE: &str = "CGMES-Test-Configurations/v3.0/MicroGrid/MicroGid-BaseCase";
+    let be = format!("{BASE}/MicroGrid-BE-MAS");
+    let boundary = format!("{BASE}/MicroGrid-BD-MAS/20171002T0930Z_ENTSO-E_EQ_BD_2.xml");
+    let mut files: Vec<PathBuf> = std::fs::read_dir(repo_root().join(&be)).unwrap().flatten().map(|e| e.path()).collect();
+    files.sort();
+    files.push(repo_root().join(&boundary));
+    let paths: Vec<&Path> = files.iter().map(PathBuf::as_path).collect();
+    let per_file = cimmodel::CimDataset::decode_files_parallel_separate(&paths).unwrap();
+    let cfg = cimvalidation::combined_config(&per_file, None, None, true, true, Vec::new());
+    let expected = cimvalidation::validate_files(per_file, &cfg);
+    assert!(!expected.is_empty());
+
+    let mut s = Server::start();
+    let set = json!([be, boundary]);
+    let summary = s.ok("summary", json!({ "files": set }));
+    assert!(summary.starts_with(&format!("Model set {be} + {boundary} — 8 file(s)")), "{summary}");
+    assert!(summary.contains("MicroGrid-BD-MAS/20171002T0930Z_ENTSO-E_EQ_BD_2.xml [EQBD]"), "{summary}");
+
+    // A BE line ends at a boundary node, which only the boundary file defines.
+    let node = s.ok("find_objects", json!({ "files": set, "class": "ConnectivityNode", "text": "Border" }));
+    assert!(!node.starts_with("No matching"), "{node}");
+    let alone = s.ok("find_objects", json!({ "path": be, "class": "ConnectivityNode", "text": "Border" }));
+    assert!(alone.starts_with("No matching"), "{alone}");
+
+    let text = s.ok("validate", json!({ "files": set, "common": true, "quality": true, "limit": 1000 }));
+    assert!(text.starts_with(&format!("{} finding(s)", expected.len())), "{text}");
+    for v in &expected {
+        let line = format!("[{}] {} — {} — {} {}", v.severity, v.rule_id, v.message, v.class, v.object_id);
+        assert!(text.contains(&line), "missing {line}\n{text}");
+    }
+
+    let (both, err) = s.call("summary", json!({ "path": be, "files": set }));
+    assert!(err && both.contains("not both"), "{both}");
+    let (missing, err) = s.call("summary", json!({ "files": [be, "nowhere.xml"] }));
+    assert!(err && missing.contains("does not exist"), "{missing}");
+    let (not_cim, err) = s.call("summary", json!({ "files": [be, "Cargo.toml"] }));
+    assert!(err && not_cim.contains("is not an RDF/XML file"), "{not_cim}");
+}

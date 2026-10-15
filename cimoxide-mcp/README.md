@@ -18,7 +18,9 @@ Its tools are read-only:
 | `sparql` | a SPARQL query over the merged CGMES data |
 | `describe_class` | definitions of classes, attributes and enumerations from the ENTSO-E vocabulary |
 
-A model set is every CIM XML file in one directory. `--dir <path>` (else
+A model set is every CIM XML file in one directory (`path`), or the files and directories
+listed in `files`, for a model whose files lie apart (an IGM with its boundary and common
+data). `--dir <path>` (else
 `CIMOXIDE_MODEL_DIR`, else the working directory) is where relative paths resolve.
 
 ## Install
