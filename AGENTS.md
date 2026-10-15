@@ -246,8 +246,8 @@ restarts the server on any `cimoxide.*` change.
 
 `cimmcp`: MCP over stdio as newline-delimited JSON-RPC, hand-written in `src/main.rs` (no
 async runtime, no MCP SDK). Tools in `src/tools.rs`, all read-only, output plain text with a
-`limit`. `src/session.rs` caches each model set (a directory's CIM files, as for `cimlsp`)
-until a file's mtime changes; the SPARQL store and each validation configuration's findings
+`limit`. `src/session.rs` caches each model set (a directory's CIM files, as for `cimlsp`, or the
+files and directories a tool's `files` lists) until a file's mtime changes; the SPARQL store and each validation configuration's findings
 are built on first use. `validate` reports what `cimcli validate` does
 (`tests/protocol.rs` compares them). `cimmodel::decode::is_cim` decides which files belong,
 shared with `cimlsp`. The extension registers it through

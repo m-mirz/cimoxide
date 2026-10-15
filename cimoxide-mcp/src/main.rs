@@ -28,7 +28,9 @@ const PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 const INSTRUCTIONS: &str = "\
 Tools over ENTSO-E CGMES and Network Code (NC) RDF/XML. A model set is every CIM XML file in \
 one directory (EQ, SSH, SV, TP, … of one model); `path` names that directory, relative to the \
-workspace. Start with `list_model_sets` when you do not know where the data is, then `summary`.
+workspace. When a model's files lie apart (an IGM, its boundary and common data), `files` lists them \
+(files or directories) instead. Start with `list_model_sets` when you do not know where the data is, \
+then `summary`.
 - An object is identified by its mRID: the text after `#` in `rdf:ID`/`rdf:about`/`rdf:resource`, \
   often with a leading `_`.
 - Fields are keyed `Class.attr` by the class that declares the attribute \
