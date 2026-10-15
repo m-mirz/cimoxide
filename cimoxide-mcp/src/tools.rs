@@ -63,7 +63,8 @@ by name/mRID text, and by an attribute's value. Returns mRID, class and name of 
         {
             "name": "get_object",
             "title": "Get an object",
-            "description": "One object by mRID: its class, every field as written (references resolved to class and name) and the objects that reference it.",
+            "description": "One object by mRID: its class, the files that write it (defining it with `rdf:ID` or describing it with `rdf:about`), \
+every field as written (references resolved to class and name) and the objects that reference it.",
             "inputSchema": { "type": "object", "properties": {
                 "path": path,
                 "files": files,
@@ -87,6 +88,18 @@ Returns counts by severity and rule, and the findings (filterable). Results are 
                 "object": { "type": "string", "description": "Only findings about this mRID." },
                 "class": { "type": "string", "description": "Only findings about objects of this class." },
                 "severity": { "type": "string", "enum": ["Violation", "Warning", "Info"], "description": "Only this severity." },
+                "limit": limit(50),
+            } },
+            "annotations": read_only,
+        },
+        {
+            "name": "conflicts",
+            "title": "Merge conflicts",
+            "description": "Where a model set's files disagree: objects more than one file defines (`rdf:ID`; common or boundary data \
+defined again by a model), and objects the files type with unrelated classes. `get_object` shows which files wrote one object.",
+            "inputSchema": { "type": "object", "properties": {
+                "path": path,
+                "files": files,
                 "limit": limit(50),
             } },
             "annotations": read_only,
@@ -144,6 +157,7 @@ pub fn call(session: &mut Session, name: &str, args: &Value) -> Option<Result<St
         "find_objects" => find_objects(session, args),
         "get_object" => get_object(session, args),
         "validate" => validate(session, args),
+        "conflicts" => conflicts(session, args),
         "sparql" => sparql(session, args),
         "export" => export(session, args),
         "describe_class" => describe_class(args),
@@ -410,7 +424,8 @@ fn get_object(session: &mut Session, args: &Value) -> Result<String, String> {
     let mrid = str_arg(args, "mrid").ok_or("`mrid` is required")?;
     let limit = usize_arg(args, "limit", 100);
     let set = model_set(session, args)?;
-    let ds = &set.dataset;
+    let names: Vec<String> = set.files.iter().map(|f| set.display(f)).collect();
+    let (ds, origins) = set.origins()?;
     let el = lookup(ds, mrid).ok_or_else(|| format!("no object `{mrid}` in this model set; find_objects searches by name"))?;
     let reg = type_registry();
 
@@ -422,6 +437,13 @@ fn get_object(session: &mut Session, args: &Value) -> Result<String, String> {
     let others: Vec<&str> = el.types().skip(1).map(|c| c.qualified).collect();
     if !others.is_empty() {
         let _ = writeln!(out, "also typed: {}", others.join(", "));
+    }
+    if let Some(written) = origins.get(el.mrid()) {
+        let _ = writeln!(out, "\nFiles:");
+        for o in written {
+            let how = if o.defined { "defines (rdf:ID)" } else { "describes (rdf:about)" };
+            let _ = writeln!(out, "  {} — {how} as {}", names[o.file], o.class);
+        }
     }
 
     let _ = writeln!(out, "\nFields:");
@@ -473,6 +495,57 @@ fn get_object(session: &mut Session, args: &Value) -> Result<String, String> {
         }
         more(&mut out, limit.min(incoming.len()), incoming.len(), "; raise `limit`");
     }
+    Ok(out)
+}
+
+fn conflicts(session: &mut Session, args: &Value) -> Result<String, String> {
+    let limit = usize_arg(args, "limit", 50);
+    let set = model_set(session, args)?;
+    let names: Vec<String> = set.files.iter().map(|f| set.display(f)).collect();
+    let (ds, origins) = set.origins()?;
+
+    let mut twice: Vec<(&Element, Vec<&str>)> = origins
+        .iter()
+        .filter_map(|(mrid, written)| {
+            let by: Vec<&str> = written.iter().filter(|o| o.defined).map(|o| names[o.file].as_str()).collect();
+            (by.len() > 1).then(|| ds.entries.get(mrid).map(|el| (el, by))).flatten()
+        })
+        .collect();
+    twice.sort_by(|a, b| (a.0.type_name(), a.0.mrid()).cmp(&(b.0.type_name(), b.0.mrid())));
+    let typed = ds.type_conflicts();
+
+    if twice.is_empty() && typed.is_empty() {
+        return Ok(format!(
+            "No conflicts across {} file(s): no object is defined by more than one file, none is typed with unrelated classes.",
+            names.len()
+        ));
+    }
+    let mut out = String::new();
+    if !twice.is_empty() {
+        let _ = writeln!(out, "{} object(s) defined by more than one file:", twice.len());
+        for (el, by) in twice.iter().take(limit) {
+            let _ = writeln!(out, "  {} — {}", label(el), by.join(", "));
+        }
+        more(&mut out, limit.min(twice.len()), twice.len(), "; raise `limit`");
+    }
+    if !typed.is_empty() {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        let _ = writeln!(out, "{} object(s) typed with unrelated classes:", typed.len());
+    }
+    for (mrid, _) in typed.iter().take(limit) {
+        let mut by_class: Vec<(&str, Vec<&str>)> = Vec::new();
+        for o in origins.get(*mrid).into_iter().flatten() {
+            match by_class.iter_mut().find(|(c, _)| *c == o.class) {
+                Some((_, files)) => files.push(&names[o.file]),
+                None => by_class.push((o.class, vec![&names[o.file]])),
+            }
+        }
+        let shown: Vec<String> = by_class.iter().map(|(c, files)| format!("{c} in {}", files.join(", "))).collect();
+        let _ = writeln!(out, "  {mrid} — {}", shown.join("; "));
+    }
+    more(&mut out, limit.min(typed.len()), typed.len(), "; raise `limit`");
     Ok(out)
 }
 

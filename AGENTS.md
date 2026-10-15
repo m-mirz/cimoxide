@@ -248,8 +248,9 @@ restarts the server on any `cimoxide.*` change.
 async runtime, no MCP SDK). Tools in `src/tools.rs`, output plain text with a `limit`; all read
 but `export`, which writes `to_xml_for_profile`/`to_xml` output to a file inside the workspace
 (never over one unless `overwrite`), or returns it when short. `src/session.rs` caches each model set (a directory's CIM files, as for `cimlsp`, or the
-files and directories a tool's `files` lists) until a file's mtime changes; the SPARQL store and each validation configuration's findings
-are built on first use. `validate` reports what `cimcli validate` does
+files and directories a tool's `files` lists) until a file's mtime changes; the SPARQL store, the
+files that wrote each object (`rdf:ID` or `rdf:about`, for `get_object` and `conflicts`) and each
+validation configuration's findings are built on first use. `validate` reports what `cimcli validate` does
 (`tests/protocol.rs` compares them). `cimmodel::decode::is_cim` decides which files belong,
 shared with `cimlsp`. The extension registers it through
 `lm.registerMcpServerDefinitionProvider` with `--dir <first workspace folder>` (VS Code

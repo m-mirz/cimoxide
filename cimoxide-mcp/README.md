@@ -14,8 +14,9 @@ only when told to:
 | `list_model_sets` | directories holding CIM files, with each file's profiles |
 | `summary` | a model set's files, model headers and object counts by class |
 | `find_objects` | search by class (abstract classes included), name/mRID text and attribute value |
-| `get_object` | one object's fields, references resolved, and what references it |
+| `get_object` | one object's fields, references resolved, what references it, and the files that define or describe it |
 | `validate` | the ENTSO-E SHACL and SPARQL rules, as `cimcli validate` runs them |
+| `conflicts` | objects more than one file defines, and objects the files type with unrelated classes |
 | `sparql` | a SPARQL query over the merged CGMES data |
 | `export` | one profile (CGMES or NC) or the whole set as RDF/XML, as `to_xml_for_profile` / `to_xml` write it |
 | `describe_class` | definitions of classes, attributes and enumerations from the ENTSO-E vocabulary |

@@ -3,8 +3,8 @@
 //! A model set is every CIM RDF/XML file in one directory — the unit
 //! `cimlsp` validates — or a single file, or files and directories listed
 //! together (an IGM with its boundary and common data, which live apart).
-//! The merged dataset, the SPARQL store and the findings of each validation
-//! configuration are built on first use.
+//! The merged dataset, the SPARQL store, which file wrote each object and the
+//! findings of each validation configuration are built on first use.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -23,6 +23,17 @@ pub struct Options {
     pub silence: Vec<String>,
 }
 
+/// How one file wrote an object.
+#[derive(Debug, Clone, Copy)]
+pub struct Origin {
+    /// Index into [`ModelSet::files`].
+    pub file: usize,
+    /// `rdf:ID` (defined) rather than `rdf:about` (described).
+    pub defined: bool,
+    /// The class that file typed it with (its most specific, if several).
+    pub class: &'static str,
+}
+
 pub struct ModelSet {
     /// The set's directory, its one file, or the directory its files share.
     pub root: PathBuf,
@@ -32,6 +43,8 @@ pub struct ModelSet {
     stamps: Vec<Option<SystemTime>>,
     pub dataset: CimDataset,
     store: Option<CimStore>,
+    /// Each object's mRID → the files that wrote it, in file order.
+    origins: Option<HashMap<String, Vec<Origin>>>,
     findings: Vec<(Options, Vec<Violation>)>,
 }
 
@@ -42,6 +55,23 @@ impl ModelSet {
             self.store = Some(CimStore::from_dataset(&self.dataset).map_err(|e| format!("building the RDF graph: {e}"))?);
         }
         Ok(self.store.as_ref().expect("built above"))
+    }
+
+    /// The files that wrote each object, computed on first use from each file
+    /// decoded on its own, and the merged dataset.
+    pub fn origins(&mut self) -> Result<(&CimDataset, &HashMap<String, Vec<Origin>>), String> {
+        if self.origins.is_none() {
+            let paths: Vec<&Path> = self.files.iter().map(PathBuf::as_path).collect();
+            let per_file = CimDataset::decode_files_parallel_separate(&paths).map_err(|e| e.to_string())?;
+            let mut origins: HashMap<String, Vec<Origin>> = HashMap::new();
+            for (file, ds) in per_file.into_iter().enumerate() {
+                for (mrid, el) in ds.entries {
+                    origins.entry(mrid).or_default().push(Origin { file, defined: el.defined(), class: el.type_name() });
+                }
+            }
+            self.origins = Some(origins);
+        }
+        Ok((&self.dataset, self.origins.as_ref().expect("built above")))
     }
 
     /// The findings of `cimcli validate` with `opts`, computed on first use,
@@ -159,7 +189,7 @@ impl Session {
         if !fresh {
             let paths: Vec<&Path> = files.iter().map(PathBuf::as_path).collect();
             let dataset = CimDataset::decode_files_parallel(&paths).map_err(|e| format!("decoding {name}: {e}"))?;
-            let set = ModelSet { root, name, files, stamps, dataset, store: None, findings: Vec::new() };
+            let set = ModelSet { root, name, files, stamps, dataset, store: None, origins: None, findings: Vec::new() };
             self.sets.insert(key.clone(), set);
         }
         Ok(self.sets.get_mut(&key).expect("inserted above"))

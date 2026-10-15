@@ -39,6 +39,8 @@ then `summary`.
 - NC class names carry an `nc:` prefix (`nc:PowerSchedule`).
 - Prefer `find_objects` and `get_object`; use `sparql` for joins and aggregates. \
   `describe_class` says what a class may carry.
+- `conflicts` lists objects more than one file defines and objects typed with unrelated classes; \
+  `get_object` names the files that define or describe an object.
 - `export` writes one profile (`EQ`, `SSH`, …, NC `CO`, …) or the whole set as RDF/XML; the only \
   tool that writes a file.";
 
