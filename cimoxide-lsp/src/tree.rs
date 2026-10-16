@@ -353,6 +353,12 @@ impl Tree {
             .collect()
     }
 
+    /// Object `id`'s label and class.
+    pub fn describe(&self, id: &str) -> Option<(&str, &'static str)> {
+        let &o = self.by_id.get(id)?;
+        Some((self.label_of(o), self.objects[o as usize].class))
+    }
+
     /// What object `id` holds directly.
     pub fn children(&self, id: &str) -> Vec<&str> {
         let Some(n) = self.by_id.get(id).and_then(|&o| self.objects[o as usize].contained) else { return Vec::new() };

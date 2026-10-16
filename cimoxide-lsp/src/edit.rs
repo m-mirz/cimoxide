@@ -535,6 +535,68 @@ fn insertion(file: &File, tree: &crate::tree::Tree, parent: &str, lines: &[Strin
     Ok(((TextEdit::new(Range::new(at, at), format!("{lead}{body}")), indent.encode_utf16().count() as u32), first))
 }
 
+/// A fix for a reference to nothing (`rdf:resource="#"`) or to an object the
+/// set lacks: name one of the likeliest objects instead.
+pub struct ReferenceFix {
+    pub key: String,
+    pub url: Url,
+    pub edit: TextEdit,
+    pub title: String,
+    /// It names nothing; else something the set does not have.
+    pub empty: bool,
+}
+
+/// The fixes for object `id`'s references to nothing or to objects the set
+/// lacks, in every file that writes it, or only the field at `at`: each the
+/// five likeliest objects ([`candidates`]). An enumeration value is not a
+/// reference to an object, so it has none.
+pub fn reference_fixes(files: &[File], tree: &crate::tree::Tree, id: &str, at: Option<(&Url, Position)>) -> Vec<ReferenceFix> {
+    let sites: Vec<(&File, &crate::index::Field, &str, Range)> = files
+        .iter()
+        .filter(|f| at.is_none_or(|(u, _)| f.url == u))
+        .flat_map(|f| f.index.elements.iter().filter(|e| e.mrid == id).map(move |e| (f, e)))
+        .flat_map(|(f, e)| e.fields.iter().map(move |x| (f, x)))
+        .filter(|(_, x)| at.is_none_or(|(_, pos)| contains(x.full, pos)))
+        .filter_map(|(f, x)| x.resource.as_ref().map(|(t, r)| (f, x, t.as_str(), *r)))
+        .collect();
+    if sites.is_empty() {
+        return Vec::new();
+    }
+    let known: HashSet<&str> = files.iter().flat_map(|f| f.index.elements.iter().map(|e| e.mrid.as_str())).collect();
+    let indexes: Vec<&Index> = files.iter().map(|f| f.index).collect();
+    let mut out = Vec::new();
+    for (file, field, target, value) in sites {
+        if !target.is_empty() && known.contains(target) {
+            continue;
+        }
+        for c in candidates(&indexes, tree, id, field.key(), 5) {
+            let place = if c.place.is_empty() { String::new() } else { format!(" in {}", c.place) };
+            out.push(ReferenceFix {
+                key: field.key().to_string(),
+                url: file.url.clone(),
+                edit: TextEdit::new(value, c.reference()),
+                title: format!("Set {} to {} {}{place}", field.key(), c.class, c.label),
+                empty: target.is_empty(),
+            });
+        }
+    }
+    out
+}
+
+/// The objects that refer to object `id`, and by which field, as the files
+/// write them: (referrer, field), each once.
+pub fn referrers<'a>(files: &[File<'a>], id: &str) -> Vec<(&'a str, &'a str)> {
+    let mut out: Vec<(&str, &str)> = files
+        .iter()
+        .flat_map(|f| f.index.elements.iter())
+        .flat_map(|e| e.fields.iter().filter(|x| x.resource.as_ref().is_some_and(|(t, _)| t == id)).map(move |x| (e.mrid.as_str(), x.key())))
+        .filter(|(r, _)| !r.is_empty() && *r != id)
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
 /// How an object is named in a title: its class and name, else mRID.
 pub fn describe(files: &[File], id: &str) -> String {
     let el = files.iter().flat_map(|f| &f.index.elements).filter(|e| e.mrid == id).max_by_key(|e| e.id_kind == Some(IdKind::Id));
@@ -644,6 +706,14 @@ mod tests {
         // Written already, or not the class's.
         assert!(added("_b1", "Switch.open").is_none());
         assert!(added("_b1", "ACLineSegment.r").is_none());
+    }
+
+    #[test]
+    fn lists_what_refers_to_an_object() {
+        with_files(|files| {
+            assert_eq!(referrers(files, "_b1"), [("_t1", "Terminal.ConductingEquipment")]);
+            assert!(referrers(files, "_t1").is_empty());
+        });
     }
 
     #[test]

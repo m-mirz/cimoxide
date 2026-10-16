@@ -22,28 +22,32 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
   missing (an IGM without its boundary set) is listed by its mRID. Each node shows the number of
   findings below it, in the colour of the worst; the filter button keeps only those with findings.
   The search button finds any object of the set by name or mRID as you type, not only what the
-  tree has loaded, and reveals it. Click to open where an object is written; *Show in grid* selects it in the grid view, inside its
-  substation where it has one. *Reveal in CIM Model* (editor context menu) selects the object at the
+  tree has loaded, and reveals it. Click to open where an object is written; *Show in grid* selects
+  it in the grid view, inside its substation where it has one; *Referenced by…* lists what refers to
+  it. The view is where the model is edited — *Fix…*, *Rename mRID…*, *Delete*, *Add…* — in files
+  of any size. *Reveal in CIM Model* (editor context menu) selects the object at the
   cursor; `cimoxide.model.followCursor` does so as the cursor moves.
-- **Rename and delete** — *Rename Symbol* (F2) on an `rdf:ID`, `rdf:about` or `rdf:resource`
-  renames the mRID in every file of the model set: definitions, descriptions, references and an
-  `IdentifiedObject.mRID` that writes it. *Refactor…* on an object (or the *CIM Model* view's
-  context menu) deletes it from every file with the references to it, or with everything it holds
+- **Rename and delete** — *Rename Symbol* (F2) on an `rdf:ID`, `rdf:about` or `rdf:resource`, or
+  *Rename mRID…* in the *CIM Model* view, renames the mRID in every file of the model set:
+  definitions, descriptions, references and an `IdentifiedObject.mRID` that writes it. *Delete* in
+  the view removes an object from every file with the references to it, or with everything it holds
   (a voltage level's bays, equipment, terminals, …); the edit opens in the refactoring preview
-  first. Both change the files as written and nothing else, and are undone like any edit.
-- **Add an object** — *Add…* on an object in the *CIM Model* view, or under *Refactor…* on its
-  element: pick a class among those it can hold (equipment, bays and connectivity nodes in a voltage
+  first. Both change the files as written and nothing else, and are undone like any edit; the files
+  they change open for review.
+- **Add an object** — *Add…* on an object in the *CIM Model* view: pick a class among those it can hold (equipment, bays and connectivity nodes in a voltage
   level; terminals, ends, limit sets on equipment, …) and a name. The object is written with a new
   UUID, its mRID, name and container, in the file whose profile carries it, after what the
   container already holds, with an empty element for its SSH part; its name is selected. What else
   it needs shows as findings, which the quick fixes below complete.
-- **Quick fixes** — on a finding that a field is missing (*Quick Fix…*, Ctrl+.): add it, to the
+- **Quick fixes** — on a finding that a field is missing (*Quick Fix…*, Ctrl+., or *Fix…* in the
+  *CIM Model* view): add it, to the
   file whose profile carries it (an SSH attribute to the SSH file, wherever the finding shows), with
   a value to type over, which is selected: `false`, `0`, an enumeration's first value or the object's
   own mRID. A missing reference is offered with the five likeliest objects to name (*Add
   Terminal.ConnectivityNode: ConnectivityNode BUS_1 in PP_Brussels › 110.0*), or empty with the
-  objects listed to choose from; so is a reference to nothing (`rdf:resource="#"`). With several
-  missing on one object, one fix adds them all.
+  objects listed to choose from; a reference to nothing (`rdf:resource="#"`), which no finding
+  reports, or to an object the set lacks, is offered the same. With several missing on one object,
+  one fix adds them all.
 - **Completion** in an `rdf:resource` value: the objects of the set the reference can name, the
   likeliest first (linked to the object through its other references, then nearest in its
   containers), or an enumeration's values.

@@ -131,6 +131,12 @@
         "title": "Find in model set",
         "category": "cimoxide",
         "icon": "$(search)"
+      },
+      {
+        "command": "cimoxide.model.referrers",
+        "title": "Referenced by…",
+        "category": "cimoxide",
+        "icon": "$(references)"
       }
     ],
     "views": {
@@ -181,8 +187,13 @@
       "view/item/context": [
         {
           "command": "cimoxide.model.fix",
-          "when": "view == cimoxide.model && viewItem =~ /\\bfindings\\b/",
+          "when": "view == cimoxide.model && viewItem =~ /^object\\b/",
           "group": "edit@0"
+        },
+        {
+          "command": "cimoxide.model.referrers",
+          "when": "view == cimoxide.model && viewItem =~ /^object\\b/",
+          "group": "navigation@3"
         },
         {
           "command": "cimoxide.model.add",
@@ -272,6 +283,10 @@
         },
         {
           "command": "cimoxide.model.fix",
+          "when": "false"
+        },
+        {
+          "command": "cimoxide.model.referrers",
           "when": "false"
         }
       ],
