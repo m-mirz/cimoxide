@@ -238,6 +238,13 @@ was found in (`validate_files_traced`). Each diagnostic's `data` carries `object
 and `property`; its `code` is the `rule_id`. Diagnostics must stay equal to
 `cimcli validate --format json` as sets of `(object_id, rule_id, property)` per directory.
 
+Rename (an mRID) and the delete code actions (`codeAction/resolve` computes the edit;
+`cimoxide/delete` for the tree view) are text edits over the set's files as they are now: an open
+buffer, else the file on disk with the set's index of it (`src/edit.rs`). An mRID is the end of
+the value written, so only that suffix is replaced; a deletion takes whole lines and is annotated
+`needsConfirmation`, so the client previews it. Deleting with dependents takes the object's
+subtree in the tree's containment (`Tree::descendants`).
+
 `cimoxide/grid` (`src/grid.rs`) answers the set's grid at substation level as last validated:
 substations, and boundary points no substation holds, as nodes; equipment whose terminals reach
 two of them as edges; each finding counted on its object's node or edge (`elsewhere` if none).

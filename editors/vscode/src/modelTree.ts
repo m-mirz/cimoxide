@@ -30,6 +30,7 @@ import { Reveal, revealInGrid } from "./gridView";
 
 const TREE_REQUEST = "cimoxide/tree";
 const PATH_REQUEST = "cimoxide/treePath";
+const DELETE_REQUEST = "cimoxide/delete";
 const VIEW = "cimoxide.model";
 /** The scheme of the tree items' `resourceUri`, which carries their findings to the badge. */
 const SCHEME = "cimoxide-tree";
@@ -229,6 +230,7 @@ class ModelTree implements TreeDataProvider<Entry> {
     const context: string[] = [e.kind];
     if (e.grid) context.push("grid");
     if (e.grid?.inside) context.push("inside");
+    if (e.kind === "object" && e.children) context.push("holds");
     item.contextValue = context.join(" ");
     return item;
   }
@@ -283,6 +285,24 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
     await view.reveal(at, { select: true, focus, expand: false });
   };
   let cursor: NodeJS.Timeout | undefined;
+  // Deleting goes through the refactoring preview: the server marks its edit as needing confirmation.
+  const remove = async (e: Entry | undefined, dependents: boolean): Promise<void> => {
+    const c = client();
+    if (!c || !tree.uri || !e?.id) return;
+    const found = await c.sendRequest<{ edit: unknown } | null>(DELETE_REQUEST, { uri: tree.uri.toString(), id: e.id, dependents });
+    if (!found) return;
+    const edit = await c.protocol2CodeConverter.asWorkspaceEdit(found.edit as never);
+    if (edit) await workspace.applyEdit(edit, { isRefactoring: true });
+  };
+  // Renaming is the editor's: put the cursor on the object's start tag and ask for it.
+  const rename = async (e: Entry | undefined): Promise<void> => {
+    if (!e?.location) return;
+    const { uri, range } = e.location;
+    const doc = await workspace.openTextDocument(Uri.parse(uri));
+    const at = new Position(range.start.line, range.start.character + 1);
+    await window.showTextDocument(doc, { viewColumn: ViewColumn.One, selection: new Range(at, at) });
+    await commands.executeCommand("editor.action.rename");
+  };
   const reveal = async (e: Entry | undefined, inside: boolean): Promise<void> => {
     const c = client();
     if (!c || !tree.uri || !e?.grid) return;
@@ -301,6 +321,9 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
       cursor = setTimeout(() => revealCursor(false), 300);
     }),
     commands.registerCommand("cimoxide.model.reveal", () => revealCursor(true)),
+    commands.registerCommand("cimoxide.model.delete", (e?: Entry) => remove(e, false)),
+    commands.registerCommand("cimoxide.model.deleteAll", (e?: Entry) => remove(e, true)),
+    commands.registerCommand("cimoxide.model.rename", (e?: Entry) => rename(e)),
     window.registerFileDecorationProvider({ provideFileDecoration: decoration }),
     window.onDidChangeActiveTextEditor((ed) => follow(ed?.document.uri, ed?.document.languageId)),
     // Findings change with every validation, and the set is there after the first.

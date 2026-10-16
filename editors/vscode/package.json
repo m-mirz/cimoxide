@@ -88,6 +88,21 @@
         "command": "cimoxide.model.reveal",
         "title": "Reveal in CIM Model",
         "category": "cimoxide"
+      },
+      {
+        "command": "cimoxide.model.rename",
+        "title": "Rename mRID…",
+        "category": "cimoxide"
+      },
+      {
+        "command": "cimoxide.model.delete",
+        "title": "Delete",
+        "category": "cimoxide"
+      },
+      {
+        "command": "cimoxide.model.deleteAll",
+        "title": "Delete with what it holds",
+        "category": "cimoxide"
       }
     ],
     "views": {
@@ -150,6 +165,21 @@
           "command": "cimoxide.model.showInside",
           "when": "view == cimoxide.model && viewItem =~ /\\binside\\b/",
           "group": "navigation@2"
+        },
+        {
+          "command": "cimoxide.model.rename",
+          "when": "view == cimoxide.model && viewItem =~ /^object\\b/",
+          "group": "edit@1"
+        },
+        {
+          "command": "cimoxide.model.delete",
+          "when": "view == cimoxide.model && viewItem =~ /^object\\b/",
+          "group": "edit@2"
+        },
+        {
+          "command": "cimoxide.model.deleteAll",
+          "when": "view == cimoxide.model && viewItem =~ /\\bholds\\b/",
+          "group": "edit@3"
         }
       ],
       "commandPalette": [
@@ -171,6 +201,18 @@
         },
         {
           "command": "cimoxide.model.open",
+          "when": "false"
+        },
+        {
+          "command": "cimoxide.model.rename",
+          "when": "false"
+        },
+        {
+          "command": "cimoxide.model.delete",
+          "when": "false"
+        },
+        {
+          "command": "cimoxide.model.deleteAll",
           "when": "false"
         }
       ],

@@ -5,6 +5,8 @@
 //!   open and save, and while typing if `onType` is set.
 //! - Hover, go to definition, references, document outline and completion
 //!   from the class tables ([`features`]).
+//! - Rename of an mRID, and code actions deleting an object (with what it
+//!   holds), across the files of its model set ([`edit`]).
 //! - `cimoxide/grid`: the model set's grid at substation level, for the
 //!   extension's grid view ([`grid`]); `cimoxide/substation`: what one of its
 //!   substations holds, for the view's drill-down; `cimoxide/tree`: its
@@ -16,6 +18,7 @@
 //! RDFS and SHACL directories come from `CIMOXIDE_RDFS_DIR` /
 //! `CIMOXIDE_SHACL_DIR` in the server's environment, as for `cimcli`.
 
+mod edit;
 mod features;
 mod grid;
 mod index;
@@ -34,11 +37,13 @@ use lsp_types::notification::{
     Notification as _, PublishDiagnostics,
 };
 use lsp_types::request::{
-    Completion, DocumentSymbolRequest, ExecuteCommand, GotoDefinition, HoverRequest, References, Request as _,
+    CodeActionRequest, CodeActionResolveRequest, Completion, DocumentSymbolRequest, ExecuteCommand, GotoDefinition,
+    HoverRequest, PrepareRenameRequest, References, Rename, Request as _,
 };
 use lsp_types::{
-    CompletionOptions, DocumentSymbolResponse, ExecuteCommandOptions, GotoDefinitionResponse, HoverProviderCapability,
-    LogMessageParams, MessageType, OneOf, PublishDiagnosticsParams, SaveOptions, ServerCapabilities,
+    CodeAction, CodeActionKind, CodeActionOptions, CodeActionOrCommand, CodeActionProviderCapability, CompletionOptions,
+    DocumentSymbolResponse, ExecuteCommandOptions, GotoDefinitionResponse, HoverProviderCapability, LogMessageParams,
+    MessageType, OneOf, PrepareRenameResponse, PublishDiagnosticsParams, RenameOptions, SaveOptions, ServerCapabilities,
     TextDocumentContentChangeEvent, TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
     TextDocumentSyncSaveOptions, Url,
 };
@@ -69,6 +74,11 @@ const TREE: &str = "cimoxide/tree";
 /// before the set's first validation.
 const TREE_PATH: &str = "cimoxide/treePath";
 
+/// `cimoxide/delete` `{ "uri", "id", "dependents"? }`: the edit deleting
+/// object `id` of the document's model set, and with `dependents` what it
+/// holds ([`edit::delete`]): `{ "edit", "label", "objects", "references" }`.
+const DELETE: &str = "cimoxide/delete";
+
 /// How long a burst of triggers is gathered before a set is validated.
 const DEBOUNCE: Duration = Duration::from_millis(300);
 
@@ -80,10 +90,13 @@ struct InitOptions {
     on_type: bool,
 }
 
+/// A document's line index and index, built on first use.
+type Built = Arc<OnceLock<(LineIndex, Index)>>;
+
 /// An open document. Its index is built on first use after each change.
 struct Doc {
     text: Arc<str>,
-    built: Arc<OnceLock<(LineIndex, Index)>>,
+    built: Built,
 }
 
 impl Doc {
@@ -126,6 +139,12 @@ fn capabilities() -> ServerCapabilities {
         definition_provider: Some(OneOf::Left(true)),
         references_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
+        rename_provider: Some(OneOf::Right(RenameOptions { prepare_provider: Some(true), work_done_progress_options: Default::default() })),
+        code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
+            code_action_kinds: Some(vec![CodeActionKind::REFACTOR]),
+            resolve_provider: Some(true),
+            ..Default::default()
+        })),
         completion_provider: Some(CompletionOptions { trigger_characters: Some(vec!["<".into()]), ..Default::default() }),
         execute_command_provider: Some(ExecuteCommandOptions { commands: vec![REVALIDATE.into()], ..Default::default() }),
         ..Default::default()
@@ -245,6 +264,81 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
         Completion::METHOD => with_params::<lsp_types::CompletionParams, _>(req, state, |p| {
             (p.text_document_position.text_document.uri, p.text_document_position.position)
         }, |v, pos| serde_json::to_value(features::completion(v, pos))),
+        PrepareRenameRequest::METHOD => {
+            let p: lsp_types::TextDocumentPositionParams = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return error(id, ErrorCode::InvalidParams, e.to_string()),
+            };
+            match with_set_files(state, &p.text_document.uri, |_, files| edit::prepare_rename(files, &p.text_document.uri, p.position)).flatten() {
+                Some((range, placeholder)) => serde_json::to_value(PrepareRenameResponse::RangeWithPlaceholder { range, placeholder }),
+                None => return error(id, ErrorCode::RequestFailed, "not an mRID: rename an `rdf:ID`, `rdf:about` or `rdf:resource`".into()),
+            }
+        }
+        Rename::METHOD => {
+            let p: lsp_types::RenameParams = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return error(id, ErrorCode::InvalidParams, e.to_string()),
+            };
+            let (uri, pos) = (&p.text_document_position.text_document.uri, p.text_document_position.position);
+            let renamed = with_set_files(state, uri, |_, files| {
+                let (_, old) = edit::prepare_rename(files, uri, pos).ok_or("not an mRID")?;
+                edit::rename(files, &old, &p.new_name)
+            });
+            match renamed {
+                Some(Ok(edit)) => serde_json::to_value(edit),
+                Some(Err(e)) => return error(id, ErrorCode::RequestFailed, e),
+                None => return error(id, ErrorCode::RequestFailed, "the model set has not been validated yet".into()),
+            }
+        }
+        CodeActionRequest::METHOD => {
+            let p: lsp_types::CodeActionParams = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return error(id, ErrorCode::InvalidParams, e.to_string()),
+            };
+            let uri = p.text_document.uri;
+            let actions = with_set_files(state, &uri, |set, files| {
+                let Some(el) = files.iter().find(|f| f.url == &uri).and_then(|f| f.index.element_at(p.range.start)) else { return Vec::new() };
+                if el.mrid.is_empty() {
+                    return Vec::new();
+                }
+                let what = edit::describe(files, &el.mrid);
+                let held = set.tree.descendants(&el.mrid).len();
+                let action = |title: String, dependents: bool| {
+                    CodeActionOrCommand::CodeAction(CodeAction {
+                        title,
+                        kind: Some(CodeActionKind::REFACTOR),
+                        data: Some(serde_json::json!({ "uri": uri, "id": el.mrid, "dependents": dependents })),
+                        ..Default::default()
+                    })
+                };
+                let mut out = vec![action(format!("Delete {what}"), false)];
+                if held > 0 {
+                    out.push(action(format!("Delete {what} and the {held} objects it holds"), true));
+                }
+                out
+            });
+            serde_json::to_value(actions.unwrap_or_default())
+        }
+        CodeActionResolveRequest::METHOD => {
+            let mut action: CodeAction = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return error(id, ErrorCode::InvalidParams, e.to_string()),
+            };
+            let Some(p) = action.data.clone().and_then(|d| serde_json::from_value::<DeleteParams>(d).ok()) else {
+                return error(id, ErrorCode::InvalidParams, "not a cimoxide action".into());
+            };
+            action.edit = deletion(state, &p).map(|(d, _)| d.edit);
+            serde_json::to_value(action)
+        }
+        DELETE => {
+            let p: DeleteParams = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return error(id, ErrorCode::InvalidParams, e.to_string()),
+            };
+            Ok(deletion(state, &p).map_or(serde_json::Value::Null, |(d, label)| {
+                serde_json::json!({ "edit": d.edit, "label": label, "objects": d.objects, "references": d.references })
+            }))
+        }
         ExecuteCommand::METHOD => {
             let p: lsp_types::ExecuteCommandParams = match serde_json::from_value(req.params) {
                 Ok(p) => p,
@@ -380,6 +474,76 @@ where
     }
     let (lines, index) = built.get_or_init(|| (LineIndex::new(&text), Index::build(&text)));
     f(&View { url: &url, text: &text, lines, index, set: set.as_deref() }, pos)
+}
+
+#[derive(serde::Deserialize)]
+struct DeleteParams {
+    uri: Url,
+    id: String,
+    #[serde(default)]
+    dependents: bool,
+}
+
+/// The deletion `p` asks for, and its label.
+fn deletion(state: &Shared, p: &DeleteParams) -> Option<(edit::Deletion, String)> {
+    with_set_files(state, &p.uri, |set, files| {
+        let mut ids: HashSet<&str> = HashSet::from([p.id.as_str()]);
+        if p.dependents {
+            ids.extend(set.tree.descendants(&p.id));
+        }
+        let what = edit::describe(files, &p.id);
+        let label = if p.dependents { format!("Delete {what} and what it holds") } else { format!("Delete {what}") };
+        (edit::delete(files, &ids, &label), label)
+    })
+}
+
+/// Run `f` over the files of `url`'s model set as they are now: an open
+/// document's buffer, else the file on disk with the set's index of it.
+/// `None` before the set's first validation.
+fn with_set_files<R>(state: &Shared, url: &Url, f: impl FnOnce(&ModelSet, &[edit::File]) -> R) -> Option<R> {
+    enum Source {
+        Open(Built),
+        Disk(LineIndex),
+    }
+    let dir = url.to_file_path().ok()?.parent()?.to_path_buf();
+    let (set, held) = {
+        let st = state.lock().unwrap();
+        let set = st.sets.get(&dir)?.clone();
+        let held: Vec<(Arc<str>, Option<Built>)> = set
+            .files
+            .iter()
+            .map(|file| match st.docs.get(&file.url) {
+                Some(doc) => (doc.text.clone(), Some(doc.built.clone())),
+                None => (Arc::from(std::fs::read_to_string(&file.path).unwrap_or_default()), None),
+            })
+            .collect();
+        (set, held)
+    };
+    let sources: Vec<(Arc<str>, Source)> = held
+        .into_iter()
+        .map(|(text, built)| {
+            let source = match built {
+                Some(b) => Source::Open(b),
+                None => Source::Disk(LineIndex::new(&text)),
+            };
+            (text, source)
+        })
+        .collect();
+    let files: Vec<edit::File> = sources
+        .iter()
+        .zip(&set.files)
+        .map(|((text, source), file)| {
+            let (lines, index) = match source {
+                Source::Open(b) => {
+                    let (l, i) = b.get_or_init(|| (LineIndex::new(text), Index::build(text)));
+                    (l, i)
+                }
+                Source::Disk(l) => (l, &file.index),
+            };
+            edit::File { url: &file.url, text, lines, index }
+        })
+        .collect();
+    Some(f(&set, &files))
 }
 
 /// Validate model sets as they are asked for. Requests arriving within

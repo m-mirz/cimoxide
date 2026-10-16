@@ -314,6 +314,21 @@ impl Tree {
         }
     }
 
+    /// What object `id` holds, at any depth: its subtree in the containment.
+    pub fn descendants(&self, id: &str) -> Vec<&str> {
+        let Some(root) = self.by_id.get(id).and_then(|&o| self.objects[o as usize].contained) else { return Vec::new() };
+        let mut out = Vec::new();
+        let mut stack = self.nodes[root as usize].children.clone();
+        while let Some(n) = stack.pop() {
+            let node = &self.nodes[n as usize];
+            if let What::Object { object, .. } = node.what {
+                out.push(self.objects[object as usize].id.as_str());
+            }
+            stack.extend(&node.children);
+        }
+        out
+    }
+
     /// The labels of the containers of object `id`, outermost first; the
     /// regions left out below a substation or line.
     pub fn containers(&self, id: &str) -> Vec<&str> {
