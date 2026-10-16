@@ -263,7 +263,10 @@ substations, and boundary points no substation holds, as nodes; equipment whose 
 two of them as edges; each finding counted on its object's node or edge (`elsewhere` if none).
 It is built from the set's datasets before validation consumes them. Each DL diagram and each GL
 coordinate system is a layout: a node is at the mean of the points of the objects it holds (else of
-its lines' ends), an edge follows its line's points. `cimoxide/substation` answers what one
+its lines' ends), an edge follows its line's points. The automatic layout is computed here too (`src/layout.rs`:
+Fruchterman–Reingold with repulsion only between nodes in neighbouring grid cells, linear per
+iteration, deterministic), as Cytoscape's `cose` is quadratic and hangs on RealGrid; inside a
+substation the view still runs `cose`, which boxes the voltage levels. `cimoxide/substation` answers what one
 substation holds, built with the grid: its equipment and the connectivity (else topological) nodes
 their terminals end at, by voltage level, a terminal as a link; equipment reaching other nodes as
 an item with its far ends; switch states and `inService`. A finding counted on the substation's node

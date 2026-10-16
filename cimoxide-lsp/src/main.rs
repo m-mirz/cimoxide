@@ -22,6 +22,7 @@ mod edit;
 mod features;
 mod grid;
 mod index;
+mod layout;
 mod tree;
 mod validate;
 
