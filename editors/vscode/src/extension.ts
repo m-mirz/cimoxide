@@ -127,9 +127,10 @@ function registerMcp(context: ExtensionContext): void {
   );
 }
 
-/** What `activate` returns: the model tree, for the extension's tests (test/suite.ts). */
+/** What `activate` returns, for the extension's tests (test/suite.ts): the model tree, and the server's requests. */
 export interface Api {
   modelTree: ModelTree;
+  request<R>(method: string, params: unknown): Promise<R>;
 }
 
 export async function activate(context: ExtensionContext): Promise<Api> {
@@ -164,7 +165,13 @@ export async function activate(context: ExtensionContext): Promise<Api> {
     }),
   );
   await start(context);
-  return { modelTree };
+  return {
+    modelTree,
+    request: <R>(method: string, params: unknown) => {
+      if (!client) throw new Error("no language server");
+      return client.sendRequest<R>(method, params);
+    },
+  };
 }
 
 export function deactivate(): Promise<void> {

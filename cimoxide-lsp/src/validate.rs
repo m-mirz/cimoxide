@@ -44,6 +44,8 @@ pub struct ModelSet {
     pub grid: crate::grid::Grid,
     /// The set's objects by container, area and class, with their findings.
     pub tree: crate::tree::Tree,
+    /// Each object's findings: (property, rule, message), for the tree's fixes.
+    pub findings: HashMap<String, Vec<(String, String, String)>>,
 }
 
 impl ModelSet {
@@ -151,6 +153,11 @@ pub fn validate(files: &[(PathBuf, Arc<str>)], opts: &Options) -> (ModelSet, Vec
         let violations: Vec<_> = violations.into_iter().map(|(d, v)| (d.map(|d| origin[d]), v)).collect();
         set.grid.add_findings(&violations);
         set.tree.add_findings(&violations);
+        for (_, v) in &violations {
+            if !v.object_id.is_empty() {
+                set.findings.entry(v.object_id.clone()).or_default().push((v.property.clone(), v.rule_id.clone(), v.message.clone()));
+            }
+        }
         place(&set, &violations, &mut out);
     }
     (set, out)

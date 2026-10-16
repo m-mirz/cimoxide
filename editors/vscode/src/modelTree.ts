@@ -3,6 +3,7 @@
 // server's `cimoxide/tree`, a level at a time; each with the findings of what
 // it holds, as a badge in the colour of the worst.
 
+import * as fs from "fs";
 import * as path from "path";
 import {
   commands,
@@ -33,6 +34,10 @@ const PATH_REQUEST = "cimoxide/treePath";
 const DELETE_REQUEST = "cimoxide/delete";
 const ADDABLE_REQUEST = "cimoxide/addable";
 const ADD_REQUEST = "cimoxide/add";
+const FIXES_REQUEST = "cimoxide/fixes";
+const RENAME_REQUEST = "cimoxide/rename";
+/** What VS Code hands an extension at most of a file. */
+const SYNC_LIMIT = 50 * 1024 * 1024;
 const VIEW = "cimoxide.model";
 /** The scheme of the tree items' `resourceUri`, which carries their findings to the badge. */
 const SCHEME = "cimoxide-tree";
@@ -228,6 +233,7 @@ export class ModelTree implements TreeDataProvider<Entry> {
     if (e.grid) context.push("grid");
     if (e.grid?.inside) context.push("inside");
     if (e.kind === "object" && e.children) context.push("holds");
+    if (e.kind === "object" && total(e.findings)) context.push("findings");
     item.contextValue = context.join(" ");
     return item;
   }
@@ -262,6 +268,28 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
     commands.executeCommand("setContext", "cimoxide.model.active", true);
     tree.refresh();
   };
+  // A file VS Code keeps from extensions: say so once, and where its model is.
+  const noticed = new Set<string>();
+  const notice = (uri: Uri | undefined): void => {
+    if (!uri || noticed.has(uri.toString())) return;
+    let size = 0;
+    try {
+      size = fs.statSync(uri.fsPath).size;
+    } catch {
+      return;
+    }
+    if (size <= SYNC_LIMIT) return;
+    noticed.add(uri.toString());
+    const name = path.basename(uri.fsPath);
+    window
+      .showInformationMessage(
+        `cimoxide: ${name} is over 50 MB, so VS Code does not pass it to extensions: no hover, completion, ` +
+          "quick fixes or rename in its editor. Its model set is validated, and can be browsed, fixed and edited " +
+          "from the CIM Model view.",
+        "Show CIM Model",
+      )
+      .then((choice) => choice && commands.executeCommand(`${VIEW}.focus`));
+  };
   const filter = (on: boolean): void => {
     tree.onlyFindings = on;
     commands.executeCommand("setContext", "cimoxide.model.onlyFindings", on);
@@ -290,11 +318,8 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
     if (!c || !tree.uri || !e?.id) return;
     const found = await c.sendRequest<{ edit: unknown } | null>(DELETE_REQUEST, { uri: tree.uri.toString(), id: e.id, dependents });
     if (!found) return;
-    const edit = await c.protocol2CodeConverter.asWorkspaceEdit(found.edit as LspWorkspaceEdit);
     // Applied once confirmed in the preview; then what it changed, for review.
-    if (edit && (await workspace.applyEdit(edit, { isRefactoring: true }))) {
-      await openEdited(edit.entries().map(([u]) => u));
-    }
+    await openEdited(await apply(found.edit as LspWorkspaceEdit, true));
   };
   // Adding asks for the class, from those the containment puts in the
   // object, then for a name; the server writes the object, and validation
@@ -331,12 +356,41 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
     await openAt(added.uri, added.select);
   };
   // Renaming is the editor's: put the cursor on the object's start tag and ask for it.
+  // The tree's edits are the server's, from the files as they are: so they
+  // work where the editor's do not, in a file over 50 MB.
+  const apply = async (edit: LspWorkspaceEdit, refactoring = false): Promise<Uri[]> => {
+    const c = client();
+    const converted = c && (await c.protocol2CodeConverter.asWorkspaceEdit(edit));
+    if (!converted || !(await workspace.applyEdit(converted, { isRefactoring: refactoring }))) return [];
+    return converted.entries().map(([u]) => u);
+  };
   const rename = async (e: Entry | undefined): Promise<void> => {
-    if (!e?.location) return;
-    const { uri, range } = e.location;
-    const at = { line: range.start.line, character: range.start.character + 1 };
-    await openAt(uri, { start: at, end: at });
-    await commands.executeCommand("editor.action.rename");
+    const c = client();
+    if (!c || !tree.uri || !e?.id) return;
+    const newName = await window.showInputBox({ prompt: `New mRID of ${e.class} ${e.label}`, value: e.id, valueSelection: [0, e.id.length] });
+    if (!newName || newName === e.id) return;
+    try {
+      const edit = await c.sendRequest<LspWorkspaceEdit>(RENAME_REQUEST, { uri: tree.uri.toString(), id: e.id, newName });
+      await openEdited(await apply(edit, true));
+    } catch (err) {
+      window.showErrorMessage(`cimoxide: ${err instanceof Error ? err.message : err}`);
+    }
+  };
+  // The quick fixes of an object's findings, as the editor offers them.
+  const fix = async (e: Entry | undefined): Promise<void> => {
+    const c = client();
+    if (!c || !tree.uri || !e?.id) return;
+    const found = await c.sendRequest<{ title: string; detail: string; edit: LspWorkspaceEdit; uri: string; select: Location["range"] | null }[]>(
+      FIXES_REQUEST, { uri: tree.uri.toString(), id: e.id });
+    if (!found.length) {
+      window.showInformationMessage(`cimoxide: no fix for the findings of ${e.class} ${e.label}: only a missing field is added.`);
+      return;
+    }
+    const pick = await window.showQuickPick(found.map((f) => ({ label: f.title, detail: f.detail, f })), { placeHolder: `Fix ${e.class} ${e.label}` });
+    if (!pick) return;
+    const changed = await apply(pick.f.edit);
+    if (pick.f.select) await openAt(pick.f.uri, pick.f.select);
+    else await openEdited(changed);
   };
   const reveal = async (e: Entry | undefined, inside: boolean): Promise<void> => {
     const c = client();
@@ -345,7 +399,10 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
   };
 
   follow(window.activeTextEditor?.document.uri, window.activeTextEditor?.document.languageId);
-  if (!window.activeTextEditor) follow(activeFile(), undefined);
+  if (!window.activeTextEditor) {
+    follow(activeFile(), undefined);
+    notice(activeFile());
+  }
   context.subscriptions.push(
     view,
     { dispose: () => (clearTimeout(refresh), clearTimeout(cursor)) } as Disposable,
@@ -360,11 +417,15 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
     commands.registerCommand("cimoxide.model.delete", (e?: Entry) => remove(e, false)),
     commands.registerCommand("cimoxide.model.deleteAll", (e?: Entry) => remove(e, true)),
     commands.registerCommand("cimoxide.model.rename", (e?: Entry) => rename(e)),
+    commands.registerCommand("cimoxide.model.fix", (e?: Entry) => fix(e)),
     commands.registerCommand("cimoxide.model.add", (e?: Entry | { id: string; uri: string; label: string }) => addIn(e)),
     window.registerFileDecorationProvider({ provideFileDecoration: decoration }),
     window.onDidChangeActiveTextEditor((ed) => follow(ed?.document.uri, ed?.document.languageId)),
     window.tabGroups.onDidChangeTabs(() => {
-      if (!window.activeTextEditor) follow(activeFile(), undefined);
+      if (!window.activeTextEditor) {
+        follow(activeFile(), undefined);
+        notice(activeFile());
+      }
     }),
     // Findings change with every validation, and the set is there after the first.
     languages.onDidChangeDiagnostics((e) => {

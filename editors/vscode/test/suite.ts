@@ -133,6 +133,20 @@ test("a quick fix adds a missing field and selects its value", async () => {
   assert.strictEqual(editor && editor.document.getText(editor.selection), "0");
 });
 
+test("the tree's fixes and rename come from the server, for files of any size", async () => {
+  // A line of the NL file, changed on disk earlier, lacks its r: its fixes.
+  const nl = file("_NL_EQ_");
+  const code = (d: Diagnostic) => (typeof d.code === "object" ? d.code.value : d.code);
+  const finding = languages.getDiagnostics(nl).find((d) => code(d) === "eq:ACLineSegment.r-cardinality");
+  // The object, as the message names it: VS Code keeps a diagnostic's data from extensions.
+  const id = (finding?.message.match(/\(ACLineSegment (\S+)\)/) ?? [])[1];
+  assert.ok(id, "no finding on the NL file's line");
+  const fixes = await api.request<{ title: string }[]>("cimoxide/fixes", { uri: nl.toString(), id });
+  assert.ok(fixes.some((f) => f.title === "Add ACLineSegment.r"), fixes.map((f) => f.title).join(" | "));
+  const renamed = await api.request<{ changes: Record<string, unknown[]> }>("cimoxide/rename", { uri: nl.toString(), id, newName: "_renamed" });
+  assert.ok(Object.keys(renamed.changes).length >= 2, Object.keys(renamed.changes).join(", "));
+});
+
 test("rename changes an mRID in every file that names it", async () => {
   const doc = await workspace.openTextDocument(eq);
   const at = idBefore(doc, "<cim:IdentifiedObject.name>BE-Line_1<");
