@@ -246,7 +246,12 @@ the value written, so only that suffix is replaced; a deletion takes whole lines
 subtree in the tree's containment (`Tree::descendants`). A finding whose `property` the object
 writes in no file gets a quick fix adding it (`edit::add_missing`): to the file writing the object
 whose header profile is among the attribute's `origins`, after its last field, in its line ending;
-the action's command `cimoxide.select` (registered by the extension) selects the value.
+the action's command `cimoxide.select` (registered by the extension) selects the value. For a
+reference, `edit::candidates` ranks the objects of the range class: linked to the object first
+(naming what it names with its other fields, or named by it), then by containers shared with the
+object (where the candidate is, or the objects naming it with the same field), then use; the same
+ranking feeds the `rdf:resource` completion (`candidates_rank_what_the_data_names` pins the
+MicroGrid hit rates).
 
 `cimoxide/grid` (`src/grid.rs`) answers the set's grid at substation level as last validated:
 substations, and boundary points no substation holds, as nodes; equipment whose terminals reach

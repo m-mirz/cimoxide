@@ -1,5 +1,6 @@
 //! Edits across a model set, as text edits for the client to apply: renaming
-//! an mRID, deleting objects and adding a field a finding says is missing. They change the files as written, keeping
+//! an mRID, deleting objects and adding a field a finding says is missing;
+//! and the objects a reference can name, the likeliest first. They change the files as written, keeping
 //! everything else of them, and reach every file of the set: an object's
 //! EQ, SSH and SV elements and every reference to it.
 //!
@@ -166,6 +167,15 @@ pub struct Addition {
     pub edit: TextEdit,
     /// The inserted value (or where it goes), to select after the edit.
     pub value: Range,
+    /// A reference, inserted empty: `rdf:resource="#"`.
+    pub reference: bool,
+}
+
+impl Addition {
+    /// The edit with the reference to `c` filled in.
+    pub fn naming(&self, c: &Candidate) -> TextEdit {
+        TextEdit::new(self.edit.range, self.edit.new_text.replacen("rdf:resource=\"#\"", &format!("rdf:resource=\"{}\"", c.reference()), 1))
+    }
 }
 
 /// The profile codes `file`'s header declares (`md:Model.profile`,
@@ -253,7 +263,101 @@ pub fn add_missing(files: &[File], prefer: &Url, id: &str, key: &str) -> Option<
     let utf16 = |s: &str| s.encode_utf16().count() as u32;
     let start = if el.fields.is_empty() { Position::new(at.line, at.character + 2 + utf16(&open)) } else { Position::new(at.line + 1, utf16(&indent) + utf16(&open)) };
     let value_range = Range::new(start, Position::new(start.line, start.character + utf16(&value)));
-    Some(Addition { url: file.url.clone(), edit: TextEdit::new(Range::new(at, at), new_text), value: value_range })
+    let reference = attr.kind == AttrKind::Association;
+    Some(Addition { url: file.url.clone(), edit: TextEdit::new(Range::new(at, at), new_text), value: value_range, reference })
+}
+
+/// An object a reference can name.
+pub struct Candidate {
+    pub id: String,
+    pub label: String,
+    pub class: &'static str,
+    /// Its containers' labels, as the outline shows them.
+    pub place: String,
+}
+
+impl Candidate {
+    /// The reference to it as written: `#_id`, or an IRI as it is.
+    pub fn reference(&self) -> String {
+        if self.id.contains(':') { self.id.clone() } else { format!("#{}", self.id) }
+    }
+}
+
+/// The objects field `key` of object `id` can name — of the class it ranges
+/// over, or below — at most `limit`, the likeliest first: those linked to
+/// the object, naming what it names with its other fields or named by it
+/// (a terminal's connectivity node, of its topological node; equipment's
+/// base voltage, its voltage level's); then those that share the most
+/// containers with it, by where they are or by where the objects are that
+/// name them with the same field (a line's base voltage is the one the
+/// equipment of its voltage level names); then the most named.
+/// Empty if `key` is not a reference of the object's class.
+pub fn candidates(indexes: &[&Index], tree: &crate::tree::Tree, id: &str, key: &str, limit: usize) -> Vec<Candidate> {
+    let reg = type_registry();
+    let class = indexes
+        .iter()
+        .flat_map(|ix| ix.elements.iter().filter(|e| e.mrid == id).map(move |e| (ix, e)))
+        .max_by_key(|(_, e)| e.id_kind == Some(IdKind::Id))
+        .and_then(|(ix, e)| class_of(ix, &e.qname));
+    let Some(attr) = class.and_then(|c| reg.attr(c, key)).filter(|a| a.kind == AttrKind::Association) else { return Vec::new() };
+    // What the object names with its other fields.
+    let own: HashSet<&str> = indexes
+        .iter()
+        .flat_map(|ix| ix.elements.iter().filter(|e| e.mrid == id))
+        .flat_map(|e| e.fields.iter().filter(|f| f.key() != key).filter_map(|f| f.resource.as_ref().map(|(t, _)| t.as_str())))
+        .filter(|t| !t.is_empty())
+        .collect();
+    let mut linked: HashSet<&str> = HashSet::new();
+    let mut found: HashMap<&str, (Option<&str>, &'static str)> = HashMap::new();
+    let mut named: HashMap<&str, Vec<&str>> = HashMap::new();
+    for ix in indexes {
+        for el in &ix.elements {
+            let targets = || el.fields.iter().filter_map(|f| f.resource.as_ref().map(|(t, _)| t.as_str()));
+            if own.contains(el.mrid.as_str()) {
+                linked.extend(targets());
+            } else if targets().any(|t| own.contains(t)) {
+                linked.insert(el.mrid.as_str());
+            }
+            for f in el.fields.iter().filter(|f| f.key() == key && el.mrid != id) {
+                if let Some((target, _)) = &f.resource {
+                    named.entry(target.as_str()).or_default().push(el.mrid.as_str());
+                }
+            }
+            if el.mrid.is_empty() || el.mrid == id {
+                continue;
+            }
+            let Some(c) = class_of(ix, &el.qname).filter(|c| reg.chain(c).iter().any(|a| a.local == attr.range)) else { continue };
+            let entry = found.entry(el.mrid.as_str()).or_insert((None, c.local));
+            if entry.0.is_none() {
+                entry.0 = el.name.as_deref().filter(|n| !n.is_empty());
+            }
+        }
+    }
+    let here = {
+        let mut chain = tree.chain(id);
+        chain.pop();
+        chain
+    };
+    let shared = |chain: &[u32]| here.iter().zip(chain).take_while(|(a, b)| a == b).count();
+    let mut ranked: Vec<(bool, usize, usize, String, &str, &'static str)> = found
+        .into_iter()
+        .map(|(c, (name, class))| {
+            let by = named.get(c).map_or(&[][..], Vec::as_slice);
+            let near = by.iter().map(|r| {
+                let mut chain = tree.chain(r);
+                chain.pop();
+                shared(&chain)
+            });
+            let score = near.chain(std::iter::once(shared(&tree.chain(c)))).max().unwrap_or(0);
+            (linked.contains(c), score, by.len(), name.unwrap_or(c).to_string(), c, class)
+        })
+        .collect();
+    ranked.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)).then(b.2.cmp(&a.2)).then_with(|| a.3.to_lowercase().cmp(&b.3.to_lowercase())));
+    ranked
+        .into_iter()
+        .take(limit)
+        .map(|(_, _, _, label, c, class)| Candidate { id: c.to_string(), label, class, place: tree.containers(c).join(" › ") })
+        .collect()
 }
 
 /// How an object is named in a title: its class and name, else mRID.
@@ -379,5 +483,45 @@ mod tests {
             assert!(!eq.contains("Breaker") && !eq.contains("ConductingEquipment") && eq.contains("<cim:Terminal rdf:ID=\"_t1\">\n    <cim:IdentifiedObject.name>T1"), "{eq}");
             assert!(!apply(SSH, plain(1)).contains("Breaker"));
         });
+    }
+
+    /// On MicroGrid, the object each reference names is among the
+    /// candidates offered for it, mostly first.
+    #[test]
+    fn candidates_rank_what_the_data_names() {
+        use std::path::Path;
+        use crate::validate::{Options, collect, validate};
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../CGMES-Test-Configurations/v3.0/MicroGrid/MicroGid-BaseCase/MicroGrid-BaseCase-Merged");
+        let files = collect(&dir, &Default::default());
+        let (set, _) = validate(&files, &Options::default());
+        let indexes: Vec<&Index> = set.files.iter().map(|f| &f.index).collect();
+        let mut stats: HashMap<&str, (usize, usize, usize)> = HashMap::new();
+        for ix in &indexes {
+            for el in &ix.elements {
+                for f in &el.fields {
+                    let key = f.key();
+                    let Some((target, _)) = &f.resource else { continue };
+                    // Not the containment's own fields: the object is where they put it.
+                    if !["ConductingEquipment.BaseVoltage", "Terminal.ConnectivityNode", "Terminal.TopologicalNode", "RegulatingControl.Terminal"].contains(&key) {
+                        continue;
+                    }
+                    let c = candidates(&indexes, &set.tree, &el.mrid, key, 5);
+                    let s = stats.entry(key).or_default();
+                    s.0 += 1;
+                    if c.first().is_some_and(|c| c.id == *target) { s.1 += 1 }
+                    if c.iter().any(|c| c.id == *target) { s.2 += 1 }
+                }
+            }
+        }
+        for (key, (n, first, top5)) in &stats {
+            eprintln!("{key}: {n} references, first {first}, top 5 {top5}");
+        }
+        // Linked through the topological node: always first. A base voltage:
+        // a line's, among its sub-region's, not always.
+        assert_eq!(stats["Terminal.ConnectivityNode"], (73, 73, 73));
+        assert_eq!(stats["Terminal.TopologicalNode"], (73, 73, 73));
+        assert_eq!(stats["RegulatingControl.Terminal"], (7, 7, 7));
+        assert_eq!(stats["ConductingEquipment.BaseVoltage"], (23, 20, 23));
     }
 }

@@ -124,14 +124,16 @@ export async function activate(context: ExtensionContext): Promise<void> {
   registerModelTree(context, () => client);
   context.subscriptions.push(
     commands.registerCommand("cimoxide.showGrid", () => showGrid(context, client)),
-    // After a quick fix adds a field: select its value, to type over.
-    commands.registerCommand("cimoxide.select", async (uri: string, range: { start: Position; end: Position }) => {
+    // After a quick fix adds a field: select its value, to type over; for a
+    // reference, list what it can name.
+    commands.registerCommand("cimoxide.select", async (uri: string, range: { start: Position; end: Position }, suggest?: boolean) => {
       const doc = await workspace.openTextDocument(Uri.parse(uri));
       const editor = await window.showTextDocument(doc);
       const start = new Position(range.start.line, range.start.character);
       const end = new Position(range.end.line, range.end.character);
       editor.selection = new Selection(start, end);
       editor.revealRange(new Range(start, end));
+      if (suggest) await commands.executeCommand("editor.action.triggerSuggest");
     }),
     commands.registerCommand("cimoxide.restartServer", async () => {
       await stop();

@@ -141,11 +141,11 @@ fn capabilities() -> ServerCapabilities {
         document_symbol_provider: Some(OneOf::Left(true)),
         rename_provider: Some(OneOf::Right(RenameOptions { prepare_provider: Some(true), work_done_progress_options: Default::default() })),
         code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
-            code_action_kinds: Some(vec![CodeActionKind::QUICKFIX, CodeActionKind::REFACTOR]),
+            code_action_kinds: Some(vec![CodeActionKind::QUICKFIX, CodeActionKind::REFACTOR, CodeActionKind::REFACTOR_REWRITE]),
             resolve_provider: Some(true),
             ..Default::default()
         })),
-        completion_provider: Some(CompletionOptions { trigger_characters: Some(vec!["<".into()]), ..Default::default() }),
+        completion_provider: Some(CompletionOptions { trigger_characters: Some(vec!["<".into(), "#".into()]), ..Default::default() }),
         execute_command_provider: Some(ExecuteCommandOptions { commands: vec![REVALIDATE.into()], ..Default::default() }),
         ..Default::default()
     }
@@ -297,10 +297,29 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
             };
             let uri = p.text_document.uri;
             let actions = with_set_files(state, &uri, |set, files| {
-                let mut out = quick_fixes(files, &uri, &p.context.diagnostics);
+                let mut out = quick_fixes(set, files, &uri, &p.context.diagnostics);
                 let Some(el) = files.iter().find(|f| f.url == &uri).and_then(|f| f.index.element_at(p.range.start)) else { return out };
                 if el.mrid.is_empty() {
                     return out;
+                }
+                // A reference to nothing, or to no object of the set: what it could name.
+                let field = el.fields.iter().find(|f| index::contains(f.full, p.range.start));
+                if let Some((f, (target, value))) = field.and_then(|f| f.resource.as_ref().map(|r| (f, r)))
+                    && (target.is_empty() || !files.iter().any(|x| x.index.elements.iter().any(|e| e.mrid == *target)))
+                {
+                    let indexes: Vec<&Index> = files.iter().map(|f| f.index).collect();
+                    for c in edit::candidates(&indexes, &set.tree, &el.mrid, f.key(), 5) {
+                        let place = if c.place.is_empty() { String::new() } else { format!(" in {}", c.place) };
+                        out.push(CodeActionOrCommand::CodeAction(CodeAction {
+                            title: format!("Set {} to {} {}{place}", f.key(), c.class, c.label),
+                            kind: Some(if target.is_empty() { CodeActionKind::QUICKFIX } else { CodeActionKind::REFACTOR_REWRITE }),
+                            edit: Some(lsp_types::WorkspaceEdit {
+                                changes: Some(HashMap::from([(uri.clone(), vec![lsp_types::TextEdit::new(*value, c.reference())])])),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }));
+                    }
                 }
                 let what = edit::describe(files, &el.mrid);
                 let held = set.tree.descendants(&el.mrid).len();
@@ -480,8 +499,10 @@ where
 /// For each finding of `diagnostics` that a field is missing, the action
 /// adding it ([`edit::add_missing`]), which selects the value it writes;
 /// with several for one object, also one adding them all.
-fn quick_fixes(files: &[edit::File], uri: &Url, diagnostics: &[lsp_types::Diagnostic]) -> Vec<CodeActionOrCommand> {
+fn quick_fixes(set: &ModelSet, files: &[edit::File], uri: &Url, diagnostics: &[lsp_types::Diagnostic]) -> Vec<CodeActionOrCommand> {
     let mut out = Vec::new();
+    let indexes: Vec<&Index> = files.iter().map(|f| f.index).collect();
+    let change = |url: &Url, e: lsp_types::TextEdit| lsp_types::WorkspaceEdit { changes: Some(HashMap::from([(url.clone(), vec![e])])), ..Default::default() };
     // The fixes of each object, by the file they add to.
     type Fixes = Vec<(lsp_types::Diagnostic, edit::Addition)>;
     let mut by_object: Vec<(String, Url, Fixes)> = Vec::new();
@@ -498,20 +519,34 @@ fn quick_fixes(files: &[edit::File], uri: &Url, diagnostics: &[lsp_types::Diagno
             None => by_object.push((object.to_string(), add.url.clone(), vec![(d.clone(), add)])),
         }
     }
-    for (_, url, adds) in by_object {
+    for (object, url, adds) in by_object {
         for (d, add) in &adds {
             let property = d.data.as_ref().and_then(|x| x["property"].as_str()).unwrap_or_default();
+            // A reference: the likeliest objects to name, then one to choose later.
+            let named = if add.reference { edit::candidates(&indexes, &set.tree, &object, property, 5) } else { Vec::new() };
+            for (i, c) in named.iter().enumerate() {
+                let place = if c.place.is_empty() { String::new() } else { format!(" in {}", c.place) };
+                out.push(CodeActionOrCommand::CodeAction(CodeAction {
+                    title: format!("Add {property}: {} {}{place}", c.class, c.label),
+                    kind: Some(CodeActionKind::QUICKFIX),
+                    diagnostics: Some(vec![d.clone()]),
+                    edit: Some(change(&url, add.naming(c))),
+                    is_preferred: Some(i == 0 && adds.len() == 1),
+                    ..Default::default()
+                }));
+            }
             out.push(CodeActionOrCommand::CodeAction(CodeAction {
-                title: format!("Add {property}"),
+                title: if add.reference { format!("Add {property}, choosing the object…") } else { format!("Add {property}") },
                 kind: Some(CodeActionKind::QUICKFIX),
                 diagnostics: Some(vec![d.clone()]),
-                edit: Some(lsp_types::WorkspaceEdit { changes: Some(HashMap::from([(url.clone(), vec![add.edit.clone()])])), ..Default::default() }),
+                edit: Some(change(&url, add.edit.clone())),
                 command: Some(lsp_types::Command {
                     title: "Select the value".into(),
                     command: "cimoxide.select".into(),
-                    arguments: Some(vec![serde_json::json!(url), serde_json::json!(add.value)]),
+                    // For a reference, also list the objects it can name (completion).
+                    arguments: Some(vec![serde_json::json!(url), serde_json::json!(add.value), serde_json::json!(add.reference)]),
                 }),
-                is_preferred: Some(adds.len() == 1),
+                is_preferred: Some(adds.len() == 1 && named.is_empty()),
                 ..Default::default()
             }));
         }
@@ -523,7 +558,7 @@ fn quick_fixes(files: &[edit::File], uri: &Url, diagnostics: &[lsp_types::Diagno
                 title: format!("Add the {} missing fields", adds.len()),
                 kind: Some(CodeActionKind::QUICKFIX),
                 diagnostics: Some(adds.iter().map(|(d, _)| d.clone()).collect()),
-                edit: Some(lsp_types::WorkspaceEdit { changes: Some(HashMap::from([(url.clone(), vec![lsp_types::TextEdit::new(at, text)])])), ..Default::default() }),
+                edit: Some(change(&url, lsp_types::TextEdit::new(at, text))),
                 is_preferred: Some(true),
                 ..Default::default()
             }));
