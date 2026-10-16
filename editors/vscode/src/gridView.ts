@@ -31,6 +31,17 @@ interface Grid {
   edges: unknown[];
 }
 
+/**
+ * Where the grid shows an object, as the server says: `select`, the node,
+ * edge (`e:<id>`) or item to select; `enter`, the substation it is inside;
+ * `inside`, a substation's own id.
+ */
+export interface Reveal {
+  select?: string | null;
+  enter?: string;
+  inside?: string | null;
+}
+
 const GRID_REQUEST = "cimoxide/grid";
 const SUBSTATION_REQUEST = "cimoxide/substation";
 
@@ -43,12 +54,21 @@ export async function showGrid(context: ExtensionContext, client: LanguageClient
     window.showInformationMessage("cimoxide: open a CGMES or NC file to show its model set's grid.");
     return;
   }
-  const uri = editor.document.uri;
+  await openGrid(context, client, editor.document.uri);
+}
+
+/** Show the grid of `uri`'s model set with an object selected, or inside its substation. */
+export async function revealInGrid(context: ExtensionContext, client: LanguageClient, uri: Uri, at: Reveal): Promise<void> {
+  (await openGrid(context, client, uri))?.reveal(at);
+}
+
+/** The grid panel of `uri`'s model set, opened if need be. */
+async function openGrid(context: ExtensionContext, client: LanguageClient, uri: Uri): Promise<GridPanel | undefined> {
   const dir = path.dirname(uri.fsPath);
   const open = panels.get(dir);
   if (open) {
-    open.panel.reveal();
-    return;
+    open.panel.reveal(undefined, true);
+    return open;
   }
   // A set is validated shortly after one of its files opens.
   let grid: Grid | null = null;
@@ -60,9 +80,11 @@ export async function showGrid(context: ExtensionContext, client: LanguageClient
   }
   if (!grid) {
     window.showInformationMessage("cimoxide: this file's model set has not been validated; is it a CGMES or NC file?");
-    return;
+    return undefined;
   }
-  panels.set(dir, new GridPanel(context, client, uri, dir, grid));
+  const panel = new GridPanel(context, client, uri, dir, grid);
+  panels.set(dir, panel);
+  return panel;
 }
 
 class GridPanel {
@@ -71,6 +93,9 @@ class GridPanel {
   /** The substation shown inside, if any. */
   private inside: string | undefined;
   private refresh: NodeJS.Timeout | undefined;
+  /** Whether the page has drawn the grid, and what to show once it has. */
+  private ready = false;
+  private pending: Reveal | undefined;
   private readonly disposables: Disposable[] = [];
 
   constructor(
@@ -81,7 +106,7 @@ class GridPanel {
     grid: Grid,
   ) {
     const dist = Uri.joinPath(context.extensionUri, "dist");
-    this.panel = window.createWebviewPanel("cimoxide.grid", `Grid: ${path.basename(dir)}`, ViewColumn.Beside, {
+    this.panel = window.createWebviewPanel("cimoxide.grid", `Grid: ${path.basename(dir)}`, { viewColumn: ViewColumn.Beside, preserveFocus: true }, {
       enableScripts: true,
       retainContextWhenHidden: true,
       localResourceRoots: [dist],
@@ -142,9 +167,34 @@ class GridPanel {
     this.panel.webview.postMessage({ type: "inside", inside });
   }
 
+  /** Select an object, entering its substation first, or leaving the one shown. */
+  async reveal(at: Reveal): Promise<void> {
+    if (!this.ready) {
+      this.pending = at;
+      return;
+    }
+    if (at.enter) {
+      if (this.inside !== at.enter) {
+        this.inside = at.enter;
+        await this.updateInside();
+      }
+    } else if (this.inside) {
+      this.inside = undefined;
+      this.panel.webview.postMessage({ type: "leave" });
+    }
+    if (at.select) {
+      this.panel.webview.postMessage({ type: "select", id: at.select });
+    }
+  }
+
   private async receive(msg: { type: string; location?: Location; id?: string }): Promise<void> {
     if (msg.type === "ready") {
       await this.update();
+      this.ready = true;
+      if (this.pending) {
+        await this.reveal(this.pending);
+        this.pending = undefined;
+      }
     } else if (msg.type === "enter" && msg.id) {
       this.inside = msg.id;
       await this.updateInside();

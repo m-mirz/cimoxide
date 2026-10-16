@@ -48,6 +48,56 @@
         "command": "cimoxide.restartServer",
         "title": "Restart language server",
         "category": "cimoxide"
+      },
+      {
+        "command": "cimoxide.model.refresh",
+        "title": "Refresh",
+        "category": "cimoxide",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "cimoxide.model.onlyFindings",
+        "title": "Show only objects with findings",
+        "category": "cimoxide",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "cimoxide.model.allObjects",
+        "title": "Show all objects",
+        "category": "cimoxide",
+        "icon": "$(filter-filled)"
+      },
+      {
+        "command": "cimoxide.model.showInGrid",
+        "title": "Show in grid",
+        "category": "cimoxide",
+        "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "cimoxide.model.showInside",
+        "title": "Show inside",
+        "category": "cimoxide",
+        "icon": "$(zoom-in)"
+      },
+      {
+        "command": "cimoxide.model.open",
+        "title": "Open definition",
+        "category": "cimoxide"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "cimoxide.model",
+          "name": "CIM Model",
+          "when": "cimoxide.model.active"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "cimoxide.model",
+        "contents": "No model set yet: open a CGMES or NC file. Its model set (every CIM file in its directory) is listed here once validated: by region, substation and voltage level, by area and by class, each object with its findings."
       }
     ],
     "menus": {
@@ -56,6 +106,67 @@
           "command": "cimoxide.showGrid",
           "when": "resourceLangId == xml",
           "group": "navigation"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "cimoxide.model.onlyFindings",
+          "when": "view == cimoxide.model && !cimoxide.model.onlyFindings",
+          "group": "navigation"
+        },
+        {
+          "command": "cimoxide.model.allObjects",
+          "when": "view == cimoxide.model && cimoxide.model.onlyFindings",
+          "group": "navigation"
+        },
+        {
+          "command": "cimoxide.model.refresh",
+          "when": "view == cimoxide.model",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "cimoxide.model.showInGrid",
+          "when": "view == cimoxide.model && viewItem =~ /\\bgrid\\b/",
+          "group": "inline"
+        },
+        {
+          "command": "cimoxide.model.showInside",
+          "when": "view == cimoxide.model && viewItem =~ /\\binside\\b/",
+          "group": "inline"
+        },
+        {
+          "command": "cimoxide.model.showInGrid",
+          "when": "view == cimoxide.model && viewItem =~ /\\bgrid\\b/",
+          "group": "navigation@1"
+        },
+        {
+          "command": "cimoxide.model.showInside",
+          "when": "view == cimoxide.model && viewItem =~ /\\binside\\b/",
+          "group": "navigation@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "cimoxide.model.onlyFindings",
+          "when": "false"
+        },
+        {
+          "command": "cimoxide.model.allObjects",
+          "when": "false"
+        },
+        {
+          "command": "cimoxide.model.showInGrid",
+          "when": "false"
+        },
+        {
+          "command": "cimoxide.model.showInside",
+          "when": "false"
+        },
+        {
+          "command": "cimoxide.model.open",
+          "when": "false"
         }
       ]
     },

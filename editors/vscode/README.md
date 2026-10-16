@@ -14,6 +14,14 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
 - **Go to definition / find references** — follow `rdf:resource="#_…"` across the files
   of the model set.
 - **Outline** — every object in the document, labelled by `IdentifiedObject.name`.
+- **CIM Model** (in the Explorer) — the active document's model set as a tree: *Geographical*,
+  regions down through substations, voltage levels, bays and equipment to terminals, limits and
+  state variables; *Operational*, control and load areas; *Not contained*, what no container
+  holds (base voltages, curves, …), by class; *By class*, every object. A region whose file is
+  missing (an IGM without its boundary set) is listed by its mRID. Each node shows the number of
+  findings below it, in the colour of the worst; the filter button keeps only those with findings.
+  Click to open where an object is written; *Show in grid* selects it in the grid view, inside its
+  substation where it has one.
 - **Completion** — after `<`: the attributes of the enclosing object's class (inherited ones
   included), or the classes of the document's namespace between objects.
 - **Grid view** — *cimoxide: Show grid* (or the button in the editor title) draws the model

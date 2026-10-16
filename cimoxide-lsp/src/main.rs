@@ -7,7 +7,8 @@
 //!   from the class tables ([`features`]).
 //! - `cimoxide/grid`: the model set's grid at substation level, for the
 //!   extension's grid view ([`grid`]); `cimoxide/substation`: what one of its
-//!   substations holds, for the view's drill-down.
+//!   substations holds, for the view's drill-down; `cimoxide/tree`: its
+//!   objects by container, area and class ([`tree`]), a level at a time.
 //!
 //! Initialization options (the VS Code extension sends its settings):
 //! `{ "common": bool, "quality": bool, "silence": [rule ids], "onType": bool }`.
@@ -17,6 +18,7 @@
 mod features;
 mod grid;
 mod index;
+mod tree;
 mod validate;
 
 use std::collections::{HashMap, HashSet};
@@ -53,6 +55,12 @@ const GRID: &str = "cimoxide/grid";
 /// `cimoxide/substation` `{ "uri", "id" }`: what substation `id` of the
 /// document's model set holds ([`grid::Grid::inside_json`]), or `null`.
 const SUBSTATION: &str = "cimoxide/substation";
+
+/// `cimoxide/tree` `{ "uri", "key"?, "onlyFindings"? }`: the children of
+/// node `key` of the document's model set's tree, else its sections
+/// ([`tree::Tree::children_json`]); `null` before its first validation or
+/// for a key it no longer has.
+const TREE: &str = "cimoxide/tree";
 
 /// How long a burst of triggers is gathered before a set is validated.
 const DEBOUNCE: Duration = Duration::from_millis(300);
@@ -270,6 +278,25 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
                 f.parent().and_then(|d| st.sets.get(d)).cloned()
             });
             Ok(set.and_then(|s| s.grid.inside_json(&s, &p.id)).unwrap_or(serde_json::Value::Null))
+        }
+        TREE => {
+            #[derive(serde::Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Params {
+                uri: Url,
+                key: Option<String>,
+                #[serde(default)]
+                only_findings: bool,
+            }
+            let p: Params = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return error(id, ErrorCode::InvalidParams, e.to_string()),
+            };
+            let set = p.uri.to_file_path().ok().and_then(|f| {
+                let st = state.lock().unwrap();
+                f.parent().and_then(|d| st.sets.get(d)).cloned()
+            });
+            Ok(set.and_then(|s| s.tree.children_json(&s, &s.grid, p.key.as_deref(), p.only_findings)).unwrap_or(serde_json::Value::Null))
         }
         _ => return error(id, ErrorCode::MethodNotFound, format!("unhandled method {}", req.method)),
     };

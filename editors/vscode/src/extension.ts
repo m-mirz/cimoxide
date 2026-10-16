@@ -2,7 +2,8 @@
 // documents are CGMES / NC (by namespace) and ignores the rest.
 //
 // Also offers `cimmcp` to chat as an MCP server, reading the model sets of
-// the first workspace folder, and draws a model set's grid ([`gridView`]).
+// the first workspace folder, draws a model set's grid ([`gridView`]) and
+// lists its objects in a tree ([`modelTree`]).
 
 import * as fs from "fs";
 import * as path from "path";
@@ -17,6 +18,7 @@ import {
 } from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions } from "vscode-languageclient/node";
 import { showGrid } from "./gridView";
+import { registerModelTree } from "./modelTree";
 
 let client: LanguageClient | undefined;
 
@@ -115,6 +117,7 @@ function registerMcp(context: ExtensionContext): void {
 
 export async function activate(context: ExtensionContext): Promise<void> {
   registerMcp(context);
+  registerModelTree(context, () => client);
   context.subscriptions.push(
     commands.registerCommand("cimoxide.showGrid", () => showGrid(context, client)),
     commands.registerCommand("cimoxide.restartServer", async () => {

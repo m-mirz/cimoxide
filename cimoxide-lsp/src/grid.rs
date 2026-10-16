@@ -60,7 +60,7 @@ pub struct Counts {
 }
 
 impl Counts {
-    fn add(&mut self, severity: &str) {
+    pub(crate) fn add(&mut self, severity: &str) {
         match severity {
             "sh:Violation" => self.violation += 1,
             "sh:Warning" => self.warning += 1,
@@ -68,7 +68,17 @@ impl Counts {
         }
     }
 
-    fn json(&self) -> Value {
+    pub(crate) fn merge(&mut self, other: Counts) {
+        self.violation += other.violation;
+        self.warning += other.warning;
+        self.info += other.info;
+    }
+
+    pub(crate) fn total(&self) -> usize {
+        self.violation + self.warning + self.info
+    }
+
+    pub(crate) fn json(&self) -> Value {
         json!({ "violation": self.violation, "warning": self.warning, "info": self.info })
     }
 }
@@ -324,14 +334,14 @@ fn layouts(m: &Model, grid: &Grid) -> (Vec<Layout>, Vec<(usize, Layout)>) {
 
 /// The set's files read as one model: each object's elements, the defining
 /// one first.
-struct Model<'a> {
-    objects: FastMap<&'a str, Vec<&'a Element>>,
+pub(crate) struct Model<'a> {
+    pub(crate) objects: FastMap<&'a str, Vec<&'a Element>>,
     /// ConductingEquipment → its terminals, by sequence number.
     terminals: FastMap<&'a str, Vec<&'a str>>,
 }
 
 impl<'a> Model<'a> {
-    fn new(datasets: &'a [CimDataset]) -> Self {
+    pub(crate) fn new(datasets: &'a [CimDataset]) -> Self {
         let mut objects: FastMap<&str, Vec<&Element>> = FastMap::default();
         for ds in datasets {
             for (mrid, el) in &ds.entries {
@@ -360,11 +370,11 @@ impl<'a> Model<'a> {
         model
     }
 
-    fn class(&self, mrid: &str) -> Option<&'static str> {
+    pub(crate) fn class(&self, mrid: &str) -> Option<&'static str> {
         self.objects.get(mrid).map(|els| els[0].type_name())
     }
 
-    fn text(&self, mrid: &str, key: &str) -> Option<&'a str> {
+    pub(crate) fn text(&self, mrid: &str, key: &str) -> Option<&'a str> {
         self.objects.get(mrid)?.iter().find_map(|el| el.get_str(key))
     }
 
@@ -390,8 +400,13 @@ impl<'a> Model<'a> {
         self.reference(terminal, "Terminal.ConnectivityNode").or_else(|| self.reference(terminal, "Terminal.TopologicalNode"))
     }
 
+    /// The mRID a field refers to, whether or not the set has that object.
+    pub(crate) fn target(&self, mrid: &str, key: &str) -> Option<&'a str> {
+        self.objects.get(mrid)?.iter().find_map(|el| el.get_ref(key)).map(mrid_of)
+    }
+
     /// The object a field refers to, if it is in the set.
-    fn reference(&self, mrid: &str, key: &str) -> Option<&'a str> {
+    pub(crate) fn reference(&self, mrid: &str, key: &str) -> Option<&'a str> {
         let target = self.objects.get(mrid)?.iter().find_map(|el| el.get_ref(key))?;
         self.objects.get_key_value(mrid_of(target)).map(|(k, _)| *k)
     }
@@ -431,8 +446,7 @@ impl<'a> Model<'a> {
 }
 
 /// The grid of a model set's files.
-pub fn build(datasets: &[CimDataset]) -> Grid {
-    let m = Model::new(datasets);
+pub fn build(m: &Model<'_>) -> Grid {
     let mut grid = Grid::default();
     let mut node_of: FastMap<&str, usize> = FastMap::default();
 
@@ -460,9 +474,9 @@ pub fn build(datasets: &[CimDataset]) -> Grid {
             }
         }
         if distinct.len() >= 2 {
-            let source = node_for(&m, &mut grid, &mut node_of, distinct[0]);
+            let source = node_for(m, &mut grid, &mut node_of, distinct[0]);
             for &end in &distinct[1..] {
-                let target = node_for(&m, &mut grid, &mut node_of, end);
+                let target = node_for(m, &mut grid, &mut node_of, end);
                 let kv = m.reference(ce, "ConductingEquipment.BaseVoltage").and_then(|b| m.number(b, "BaseVoltage.nominalVoltage"));
                 let id = if distinct.len() == 2 { ce.to_string() } else { format!("{ce}#{}", grid.edges.len()) };
                 grid.placed.insert(ce.to_string(), Place::Edge(grid.edges.len()));
@@ -476,8 +490,8 @@ pub fn build(datasets: &[CimDataset]) -> Grid {
                 continue;
             }
             let far: Vec<usize> = reached.iter().copied().filter(|&r| r != n).collect();
-            let item = item_for(&m, &mut grid, &mut items, &mut groups, n, ce, false, far);
-            let junction = item_for(&m, &mut grid, &mut items, &mut groups, n, node, true, vec![]);
+            let item = item_for(m, &mut grid, &mut items, &mut groups, n, ce, false, far);
+            let junction = item_for(m, &mut grid, &mut items, &mut groups, n, node, true, vec![]);
             grid.inside.entry(n).or_default().links.push(Link { id: t.to_string(), item, junction, connected: m.flag(t, "ACDCTerminal.connected") });
         }
     }
@@ -487,7 +501,7 @@ pub fn build(datasets: &[CimDataset]) -> Grid {
     ids.sort();
     let mut within = FastMap::default();
     for id in ids {
-        if let Some(Place::Node(n)) = place(&m, &node_of, &items, &mut grid.placed, &mut within, id, 0)
+        if let Some(Place::Node(n)) = place(m, &node_of, &items, &mut grid.placed, &mut within, id, 0)
             && let Some(container) = m.reference(id, "Equipment.EquipmentContainer")
             && m.substation(container).is_some()
         {
@@ -510,7 +524,7 @@ pub fn build(datasets: &[CimDataset]) -> Grid {
         node.kv.dedup();
     }
 
-    let (layouts, inside) = layouts(&m, &grid);
+    let (layouts, inside) = layouts(m, &grid);
     grid.layouts = layouts;
     for (n, l) in inside {
         grid.inside.get_mut(&n).unwrap().layouts.push(l);
@@ -645,6 +659,24 @@ impl Grid {
                 }
                 Some(Place::Edge(e)) => self.edges[*e].findings.add(&v.severity),
                 None => self.elsewhere.add(&v.severity),
+            }
+        }
+    }
+
+    /// Where the view shows object `id`: `select`, the node or edge it is
+    /// on, else the item it stands for inside `enter`, its substation; and
+    /// `inside`, a substation's own id. `None` if it is on neither.
+    pub fn reveal(&self, id: &str) -> Option<Value> {
+        match *self.placed.get(id)? {
+            Place::Edge(e) => Some(json!({ "select": format!("e:{}", self.edges[e].id) })),
+            Place::Node(n) => {
+                let node = &self.nodes[n];
+                if node.kind != "Substation" || node.id == id {
+                    let inside = (node.kind == "Substation").then_some(&node.id);
+                    return Some(json!({ "select": node.id, "inside": inside }));
+                }
+                let item = self.within.get(id).map(|&(_, i)| &self.inside[&n].items[i].id);
+                Some(json!({ "enter": node.id, "select": item }))
             }
         }
     }

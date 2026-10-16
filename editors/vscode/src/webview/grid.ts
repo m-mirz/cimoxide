@@ -661,6 +661,21 @@ window.addEventListener("message", (e) => {
     // `null`: the substation is gone from the set.
     inside = (e.data.inside as Inside | null) ?? undefined;
     if (inside || grid) draw(previous);
+  } else if (e.data?.type === "leave" && inside) {
+    inside = undefined;
+    if (grid) draw();
+  } else if (e.data?.type === "select") {
+    select(String(e.data.id));
   }
 });
+
+/** Select `id` and bring it into view with what it joins. */
+function select(id: string): void {
+  const el = cy?.getElementById(id);
+  if (!cy || !el || el.empty()) return;
+  cy.$(":selected").unselect();
+  el.select();
+  const near = el.isEdge() ? el.union(el.connectedNodes()) : (el as NodeSingular).closedNeighborhood();
+  cy.animate({ fit: { eles: near, padding: 80 } }, { duration: 200 });
+}
 vscode.postMessage({ type: "ready" });
