@@ -93,6 +93,10 @@ pub struct Grid {
     pub elsewhere: Counts,
     /// Positions from the DL diagrams and GL coordinate systems.
     pub layouts: Vec<Layout>,
+    /// Positions laid out here ([`crate::layout::force`]), for the view's
+    /// automatic layout: the view's own is quadratic, and this one is the
+    /// same each time.
+    pub auto: Option<Layout>,
     /// What each substation holds, by node index.
     pub inside: FastMap<usize, Inside>,
     /// Each object on a substation's node that one of its items stands for:
@@ -526,6 +530,14 @@ pub fn build(m: &Model<'_>) -> Grid {
 
     let (layouts, inside) = layouts(m, &grid);
     grid.layouts = layouts;
+    if !grid.nodes.is_empty() {
+        let edges: Vec<(usize, usize)> = grid.edges.iter().map(|e| (e.source, e.target)).collect();
+        let pos = crate::layout::force(grid.nodes.len(), &edges);
+        grid.auto = Some(Layout {
+            id: "auto".into(), name: "Automatic".into(), kind: "diagram",
+            nodes: pos.into_iter().enumerate().collect(), ..Default::default()
+        });
+    }
     for (n, l) in inside {
         grid.inside.get_mut(&n).unwrap().layouts.push(l);
     }
@@ -710,10 +722,7 @@ impl Grid {
                 })
             })
             .collect();
-        let layouts: Vec<Value> = self
-            .layouts
-            .iter()
-            .map(|l| {
+        let layout = |l: &Layout| {
                 let nodes: serde_json::Map<String, Value> = l.nodes.iter().map(|(&n, &(x, y))| (self.nodes[n].id.clone(), json!([x, y]))).collect();
                 let edges: serde_json::Map<String, Value> = l
                     .edges
@@ -721,11 +730,11 @@ impl Grid {
                     .map(|(&e, ps)| (self.edges[e].id.clone(), json!(ps.iter().map(|&(x, y)| [x, y]).collect::<Vec<_>>())))
                     .collect();
                 json!({ "id": l.id, "name": l.name, "kind": l.kind, "flipY": l.flip_y, "nodes": nodes, "edges": edges })
-            })
-            .collect();
+        };
         json!({
             "files": set.files.iter().map(|f| &f.url).collect::<Vec<_>>(),
-            "nodes": nodes, "edges": edges, "elsewhere": self.elsewhere.json(), "layouts": layouts,
+            "nodes": nodes, "edges": edges, "elsewhere": self.elsewhere.json(),
+            "layouts": self.layouts.iter().map(layout).collect::<Vec<_>>(), "auto": self.auto.as_ref().map(layout),
         })
     }
 

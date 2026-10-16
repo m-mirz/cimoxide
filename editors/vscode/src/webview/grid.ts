@@ -57,6 +57,8 @@ interface Grid {
   edges: GridEdge[];
   elsewhere: Findings;
   layouts: Layout[];
+  /** The automatic layout, computed by the server. */
+  auto: Layout | null;
 }
 
 /** Equipment, or a connectivity node (`junction`), inside a substation. */
@@ -486,7 +488,7 @@ function leave(): void {
 }
 
 /** The scene drawn: its layouts, its nodes' ids, the pairs of nodes its edges join, and its routed edges. */
-function scene(): { layouts: Layout[]; ids: string[]; pairs: [string, string][]; routed: { id: string; key: string }[] } {
+function scene(): { layouts: Layout[]; auto?: Layout; ids: string[]; pairs: [string, string][]; routed: { id: string; key: string }[] } {
   if (inside) {
     return {
       layouts: inside.layouts,
@@ -498,6 +500,7 @@ function scene(): { layouts: Layout[]; ids: string[]; pairs: [string, string][];
   const g = grid as Grid;
   return {
     layouts: g.layouts,
+    auto: g.auto ?? undefined,
     ids: g.nodes.map((n) => n.id),
     pairs: g.edges.map((e): [string, string] => [e.source, e.target]),
     routed: g.edges.map((e) => ({ id: `e:${e.id}`, key: e.id })),
@@ -587,11 +590,14 @@ function route(edge: EdgeSingular, points: Point[]): void {
 
 function arrange(): void {
   if (!cy) return;
-  const { layouts, ids, pairs, routed } = scene();
-  const layout = layouts.find((l) => l.id === choice(layouts));
+  const { layouts, auto, ids, pairs, routed } = scene();
+  const picked = choice(layouts);
+  // Automatic: the server's layout for the grid; Cytoscape's inside a substation (it boxes the voltage levels).
+  const layout = layouts.find((l) => l.id === picked) ?? (picked === "auto" ? auto : undefined);
   cy.edges().removeStyle();
   if (!layout) {
-    cy.layout({
+    // `cose` is quadratic per iteration: past a few hundred nodes, a plain grid rather than a hang.
+    cy.layout(ids.length > 1000 ? { name: "grid", animate: false } : {
       name: "cose", animate: false, nodeRepulsion: () => 8000, idealEdgeLength: () => (inside ? 30 : 60),
       numIter: ids.length > 500 ? 400 : 1000,
     }).run();
@@ -652,6 +658,9 @@ function draw(previous?: Shown): void {
     style: stylesheet(),
     layout: { name: "preset" },
     wheelSensitivity: 0.3,
+    // Large grids: draw a snapshot while panning and zooming.
+    textureOnViewport: els.length > 3000,
+    hideEdgesOnViewport: els.length > 3000,
     minZoom: 0.05,
     maxZoom: 4,
   });
