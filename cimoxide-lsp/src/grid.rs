@@ -1,7 +1,9 @@
 //! A model set's grid at substation level, for the extension's grid view:
 //! substations (and boundary points no substation holds) as nodes, the
 //! equipment joining two of them (lines, mostly) as edges, and each
-//! object's findings counted on the node or edge it belongs to.
+//! object's findings counted on the node or edge it belongs to. Where the
+//! set has a Diagram Layout or Geographical Location profile, each diagram
+//! and coordinate system is a [`Layout`]: node positions and line routes.
 //!
 //! Built from the set's files before validation consumes them; the files are
 //! read as one model (a field from whichever file writes it), without
@@ -77,6 +79,130 @@ pub struct Grid {
     placed: HashMap<String, Place>,
     /// Findings on objects with no node or edge (headers, regions, …).
     pub elsewhere: Counts,
+    /// Positions from the DL diagrams and GL coordinate systems.
+    pub layouts: Vec<Layout>,
+}
+
+/// Positions of nodes and routes of edges, in one diagram (DL) or one
+/// coordinate system (GL), as the data writes them.
+#[derive(Debug, Default)]
+pub struct Layout {
+    pub id: String,
+    pub name: String,
+    /// `diagram` (x right, y as `flip_y` says) or `geographic` (x longitude,
+    /// y latitude, in degrees).
+    pub kind: &'static str,
+    /// A diagram whose y grows upwards (`OrientationKind.positive`).
+    pub flip_y: bool,
+    /// Node index → position.
+    pub nodes: BTreeMap<usize, (f64, f64)>,
+    /// Edge index → its route, from its source's end to its target's.
+    pub edges: BTreeMap<usize, Vec<(f64, f64)>>,
+}
+
+/// Points gathered for a layout: a node's own, and those it takes from the
+/// ends of its lines when it has none of its own.
+#[derive(Default)]
+struct Gather {
+    own: HashMap<usize, Vec<(f64, f64)>>,
+    ends: HashMap<usize, Vec<(f64, f64)>>,
+    routes: BTreeMap<usize, Vec<(f64, f64)>>,
+}
+
+impl Gather {
+    /// The points of one located object: an edge's route (whose ends also
+    /// locate its nodes), else points on the node it is in.
+    fn add(&mut self, grid: &Grid, object: &str, points: Vec<(f64, f64)>) {
+        if points.is_empty() {
+            return;
+        }
+        match grid.placed.get(object) {
+            Some(&Place::Edge(e)) if grid.edges[e].id == object => {
+                let edge = &grid.edges[e];
+                self.ends.entry(edge.source).or_default().push(points[0]);
+                self.ends.entry(edge.target).or_default().push(points[points.len() - 1]);
+                self.routes.insert(e, points);
+            }
+            Some(&Place::Node(n)) => self.own.entry(n).or_default().extend(points),
+            _ => {}
+        }
+    }
+
+    fn layout(self, id: String, name: String, kind: &'static str, flip_y: bool) -> Option<Layout> {
+        let mean = |ps: &[(f64, f64)]| {
+            let n = ps.len() as f64;
+            (ps.iter().map(|p| p.0).sum::<f64>() / n, ps.iter().map(|p| p.1).sum::<f64>() / n)
+        };
+        let mut nodes: BTreeMap<usize, (f64, f64)> = self.ends.iter().map(|(&n, ps)| (n, mean(ps))).collect();
+        nodes.extend(self.own.iter().map(|(&n, ps)| (n, mean(ps))));
+        (!nodes.is_empty()).then_some(Layout { id, name, kind, flip_y, nodes, edges: self.routes })
+    }
+}
+
+/// Each object's points by class, `(owner, sequence, x, y)`, sorted, and the
+/// owner of each point list: a DiagramObject's or a Location's.
+fn points<'a>(m: &Model<'a>, class: &str, owner_key: &str, x_key: &str, y_key: &str, seq_key: &str) -> HashMap<&'a str, Vec<(f64, f64)>> {
+    let mut by_owner: HashMap<&str, Vec<(i64, &str, f64, f64)>> = HashMap::new();
+    for (&id, els) in &m.objects {
+        if els[0].type_name() != class {
+            continue;
+        }
+        if let (Some(owner), Some(x), Some(y)) = (m.reference(id, owner_key), m.number(id, x_key), m.number(id, y_key)) {
+            let seq = m.number(id, seq_key).map_or(i64::MAX, |n| n as i64);
+            by_owner.entry(owner).or_default().push((seq, id, x, y));
+        }
+    }
+    by_owner
+        .into_iter()
+        .map(|(owner, mut ps)| {
+            ps.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+            (owner, ps.into_iter().map(|(_, _, x, y)| (x, y)).collect())
+        })
+        .collect()
+}
+
+/// One layout per DL diagram and per GL coordinate system.
+fn layouts(m: &Model, grid: &Grid) -> Vec<Layout> {
+    let mut out = Vec::new();
+
+    // DL: each DiagramObject's points, on the object it shows.
+    let diagram_points = points(m, "DiagramObjectPoint", "DiagramObjectPoint.DiagramObject",
+        "DiagramObjectPoint.xPosition", "DiagramObjectPoint.yPosition", "DiagramObjectPoint.sequenceNumber");
+    let mut diagrams: BTreeMap<&str, Gather> = BTreeMap::new();
+    let mut objects: Vec<&&str> = diagram_points.keys().collect();
+    objects.sort();
+    for &object in objects {
+        let (Some(diagram), Some(shown)) = (m.reference(object, "DiagramObject.Diagram"), m.reference(object, "DiagramObject.IdentifiedObject")) else { continue };
+        diagrams.entry(diagram).or_default().add(grid, shown, diagram_points[object].clone());
+    }
+    for (diagram, gather) in diagrams {
+        let flip_y = m.objects.get(diagram).and_then(|els| els.iter().find_map(|el| el.get_ref("Diagram.orientation"))).is_some_and(|o| o.ends_with("positive"));
+        out.extend(gather.layout(format!("dl:{diagram}"), format!("Diagram: {}", m.name(diagram)), "diagram", flip_y));
+    }
+
+    // GL: each Location's points, on the resources it locates, by coordinate system.
+    let location_points = points(m, "PositionPoint", "PositionPoint.Location",
+        "PositionPoint.xPosition", "PositionPoint.yPosition", "PositionPoint.sequenceNumber");
+    let mut systems: BTreeMap<String, Gather> = BTreeMap::new();
+    let mut locations: Vec<&&str> = location_points.keys().collect();
+    locations.sort();
+    for &location in locations {
+        let crs = m
+            .reference(location, "Location.CoordinateSystem")
+            .and_then(|c| m.text(c, "CoordinateSystem.crsUrn"))
+            .unwrap_or("urn:ogc:def:crs:EPSG::4326")
+            .to_string();
+        let gather = systems.entry(crs).or_default();
+        let located = m.objects.get(location).map(|els| els.iter().flat_map(|el| el.get_refs("Location.PowerSystemResources")).cloned().collect::<Vec<_>>()).unwrap_or_default();
+        for psr in located {
+            gather.add(grid, mrid_of(&psr), location_points[location].clone());
+        }
+    }
+    for (crs, gather) in systems {
+        let short = crs.rsplit(':').next().unwrap_or(&crs).to_string();
+        out.extend(gather.layout(format!("gl:{crs}"), format!("Geographic (EPSG:{short})"), "geographic", false));
+    }
+    out
 }
 
 /// The set's files read as one model: each object's elements, the defining
@@ -233,6 +359,7 @@ pub fn build(datasets: &[CimDataset]) -> Grid {
         node.kv.sort_by(|a, b| b.total_cmp(a));
         node.kv.dedup();
     }
+    grid.layouts = layouts(&m, &grid);
     grid
 }
 
@@ -330,9 +457,22 @@ impl Grid {
                 })
             })
             .collect();
+        let layouts: Vec<Value> = self
+            .layouts
+            .iter()
+            .map(|l| {
+                let nodes: serde_json::Map<String, Value> = l.nodes.iter().map(|(&n, &(x, y))| (self.nodes[n].id.clone(), json!([x, y]))).collect();
+                let edges: serde_json::Map<String, Value> = l
+                    .edges
+                    .iter()
+                    .map(|(&e, ps)| (self.edges[e].id.clone(), json!(ps.iter().map(|&(x, y)| [x, y]).collect::<Vec<_>>())))
+                    .collect();
+                json!({ "id": l.id, "name": l.name, "kind": l.kind, "flipY": l.flip_y, "nodes": nodes, "edges": edges })
+            })
+            .collect();
         json!({
             "files": set.files.iter().map(|f| &f.url).collect::<Vec<_>>(),
-            "nodes": nodes, "edges": edges, "elsewhere": self.elsewhere.json(),
+            "nodes": nodes, "edges": edges, "elsewhere": self.elsewhere.json(), "layouts": layouts,
         })
     }
 }
@@ -388,5 +528,29 @@ mod tests {
         assert_eq!(total as usize, cimvalidation::validate_files(datasets, &cfg).len());
         let anvers = json["nodes"].as_array().unwrap().iter().find(|n| n["label"] == "Anvers").unwrap();
         assert!(anvers["location"]["uri"].as_str().unwrap().ends_with("_BE_EQ_001.xml"), "{anvers}");
+
+        // The assembled DL diagram and the GL locations place every node and route every line.
+        let names: Vec<&str> = g.layouts.iter().map(|l| l.name.as_str()).collect();
+        assert_eq!(names, ["Diagram: Assembled", "Geographic (EPSG:4326)"]);
+        for l in &g.layouts {
+            assert_eq!((l.nodes.len(), l.edges.len()), (8, 12), "{}", l.name);
+        }
+        let index = |label: &str| g.nodes.iter().position(|n| n.label == label).unwrap();
+        let (diagram, map) = (&g.layouts[0], &g.layouts[1]);
+        assert!(!diagram.flip_y);
+        // Brussels and Anvers left of the border points, Amsterdam right of them.
+        let x = |label: &str| diagram.nodes[&index(label)].0;
+        assert!(x("PP_Brussels") < x("Anvers") && x("Anvers") < x("Border_AL11") && x("Border_AL11") < x("PP_Amsterdam"));
+        // Brussels in Brussels, from the ends of its lines; Amsterdam north of it.
+        let (lon, lat) = map.nodes[&index("PP_Brussels")];
+        assert!((lon - 4.30).abs() < 0.01 && (lat - 50.80).abs() < 0.01, "{lon} {lat}");
+        assert!(map.nodes[&index("PP_Amsterdam")].1 > 52.3);
+        // A route runs from its source's end, through the line's points.
+        let line = g.edges.iter().position(|e| e.label == "BE-Line_2").unwrap();
+        assert_eq!(map.edges[&line].len(), 5);
+        let (start, source) = (map.edges[&line][0], map.nodes[&g.edges[line].source]);
+        assert!((start.0 - source.0).abs() < 0.01 && (start.1 - source.1).abs() < 0.01, "{start:?} {source:?}");
+        assert_eq!(json["layouts"][1]["nodes"].as_object().unwrap().len(), 8);
     }
 }
+

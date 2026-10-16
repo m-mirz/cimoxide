@@ -95,7 +95,7 @@ class GridPanel {
 <title>Grid</title>
 </head>
 <body>
-<div id="bar"><input id="search" type="search" placeholder="Find a substation"><span id="summary"></span></div>
+<div id="bar"><select id="layout" title="Layout"></select><input id="search" type="search" placeholder="Find a substation"><span id="summary"></span></div>
 <div id="main"><div id="graph"></div><div id="info"></div></div>
 <script nonce="${nonce}" src="${script}"></script>
 </body>
