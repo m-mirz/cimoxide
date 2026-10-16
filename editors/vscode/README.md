@@ -66,8 +66,9 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
   resolved, validate, run SPARQL and describe a CIM class. They only read. Turn it off with
   `cimoxide.mcp.enabled`.
 
-Validation runs when a document is opened and saved; turn on
-`cimoxide.validation.onType` to also run it while typing.
+Validation runs when a document is opened and saved, and when a file of a model set changes on
+disk (another tool, a checkout, a file over 50 MB, which VS Code does not hand to extensions);
+turn on `cimoxide.validation.onType` to also run it while typing.
 
 ## Settings
 

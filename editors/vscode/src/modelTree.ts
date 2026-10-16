@@ -23,9 +23,9 @@ import {
   window,
   workspace,
 } from "vscode";
-import { LanguageClient } from "vscode-languageclient/node";
+import { LanguageClient, WorkspaceEdit as LspWorkspaceEdit } from "vscode-languageclient/node";
 import { Reveal, revealInGrid } from "./gridView";
-import { activeFile, openAt, validateSet } from "./open";
+import { activeFile, openAt, openEdited, validateSet } from "./open";
 import { symbolOf } from "./symbols";
 
 const TREE_REQUEST = "cimoxide/tree";
@@ -290,8 +290,11 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
     if (!c || !tree.uri || !e?.id) return;
     const found = await c.sendRequest<{ edit: unknown } | null>(DELETE_REQUEST, { uri: tree.uri.toString(), id: e.id, dependents });
     if (!found) return;
-    const edit = await c.protocol2CodeConverter.asWorkspaceEdit(found.edit as never);
-    if (edit) await workspace.applyEdit(edit, { isRefactoring: true });
+    const edit = await c.protocol2CodeConverter.asWorkspaceEdit(found.edit as LspWorkspaceEdit);
+    // Applied once confirmed in the preview; then what it changed, for review.
+    if (edit && (await workspace.applyEdit(edit, { isRefactoring: true }))) {
+      await openEdited(edit.entries().map(([u]) => u));
+    }
   };
   // Adding asks for the class, from those the containment puts in the
   // object, then for a name; the server writes the object, and validation
@@ -323,7 +326,7 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
       window.showErrorMessage(`cimoxide: ${e instanceof Error ? e.message : e}`);
       return;
     }
-    const edit = await c.protocol2CodeConverter.asWorkspaceEdit(added.edit as never);
+    const edit = await c.protocol2CodeConverter.asWorkspaceEdit(added.edit as LspWorkspaceEdit);
     if (!edit || !(await workspace.applyEdit(edit))) return;
     await openAt(added.uri, added.select);
   };

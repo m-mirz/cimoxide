@@ -114,6 +114,11 @@
         "title": "Add…",
         "category": "cimoxide",
         "icon": "$(add)"
+      },
+      {
+        "command": "cimoxide.openEdited",
+        "title": "Open edited files",
+        "category": "cimoxide"
       }
     ],
     "views": {
@@ -237,6 +242,10 @@
         },
         {
           "command": "cimoxide.model.add",
+          "when": "false"
+        },
+        {
+          "command": "cimoxide.openEdited",
           "when": "false"
         }
       ],

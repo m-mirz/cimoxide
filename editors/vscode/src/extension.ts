@@ -11,6 +11,7 @@ import {
   commands,
   EventEmitter,
   ExtensionContext,
+  FileSystemWatcher,
   lm,
   McpStdioServerDefinition,
   Position,
@@ -21,7 +22,7 @@ import {
 import { LanguageClient, LanguageClientOptions, ServerOptions } from "vscode-languageclient/node";
 import { showGrid } from "./gridView";
 import { ModelTree, registerModelTree } from "./modelTree";
-import { openAt } from "./open";
+import { openAt, openEdited } from "./open";
 
 let client: LanguageClient | undefined;
 
@@ -62,13 +63,19 @@ function schemaEnv(): Record<string, string> {
   return env;
 }
 
+let watcher: FileSystemWatcher | undefined;
+
 async function start(context: ExtensionContext): Promise<void> {
+  watcher = workspace.createFileSystemWatcher("**/*.xml");
   const cfg = workspace.getConfiguration("cimoxide");
   const env: NodeJS.ProcessEnv = { ...process.env, ...schemaEnv() };
   const command = serverCommand(context, "cimlsp", "server.path");
   const serverOptions: ServerOptions = { command, options: { env } };
   const clientOptions: LanguageClientOptions = {
     documentSelector: [{ scheme: "file", language: "xml" }],
+    // Changes on disk, which the server revalidates on: also of files VS Code
+    // never hands it (over 50 MB) and of files an edit changed unopened.
+    synchronize: { fileEvents: watcher },
     initializationOptions: {
       common: cfg.get<boolean>("validation.common"),
       quality: cfg.get<boolean>("validation.quality"),
@@ -89,6 +96,8 @@ async function stop(): Promise<void> {
   const c = client;
   client = undefined;
   await c?.stop();
+  watcher?.dispose();
+  watcher = undefined;
 }
 
 /** Offers `cimmcp` to chat; VS Code starts it when a chat first uses it. */
@@ -128,6 +137,8 @@ export async function activate(context: ExtensionContext): Promise<Api> {
   const modelTree = registerModelTree(context, () => client);
   context.subscriptions.push(
     commands.registerCommand("cimoxide.showGrid", (uri?: Uri) => showGrid(context, client, uri)),
+    // After a deletion: the files it changed, open for review.
+    commands.registerCommand("cimoxide.openEdited", (uris: string[]) => openEdited(uris.map((u) => Uri.parse(u)))),
     // After a quick fix adds a field: select its value, to type over; for a
     // reference, list what it can name.
     commands.registerCommand("cimoxide.select", async (uri: string, range: { start: Position; end: Position }, suggest?: boolean) => {
