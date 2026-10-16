@@ -24,6 +24,12 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
   Click to open where an object is written; *Show in grid* selects it in the grid view, inside its
   substation where it has one. *Reveal in CIM Model* (editor context menu) selects the object at the
   cursor; `cimoxide.model.followCursor` does so as the cursor moves.
+- **Rename and delete** — *Rename Symbol* (F2) on an `rdf:ID`, `rdf:about` or `rdf:resource`
+  renames the mRID in every file of the model set: definitions, descriptions, references and an
+  `IdentifiedObject.mRID` that writes it. *Refactor…* on an object (or the *CIM Model* view's
+  context menu) deletes it from every file with the references to it, or with everything it holds
+  (a voltage level's bays, equipment, terminals, …); the edit opens in the refactoring preview
+  first. Both change the files as written and nothing else, and are undone like any edit.
 - **Completion** — after `<`: the attributes of the enclosing object's class (inherited ones
   included), or the classes of the document's namespace between objects.
 - **Grid view** — *cimoxide: Show grid* (or the button in the editor title) draws the model
