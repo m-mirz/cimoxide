@@ -32,8 +32,14 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
   first. Both change the files as written and nothing else, and are undone like any edit.
 - **Quick fixes** — on a finding that a field is missing (*Quick Fix…*, Ctrl+.): add it, to the
   file whose profile carries it (an SSH attribute to the SSH file, wherever the finding shows), with
-  a value to type over, which is selected: `false`, `0`, an enumeration's first value, the object's
-  own mRID, or nothing yet for a reference. With several missing on one object, one fix adds them all.
+  a value to type over, which is selected: `false`, `0`, an enumeration's first value or the object's
+  own mRID. A missing reference is offered with the five likeliest objects to name (*Add
+  Terminal.ConnectivityNode: ConnectivityNode BUS_1 in PP_Brussels › 110.0*), or empty with the
+  objects listed to choose from; so is a reference to nothing (`rdf:resource="#"`). With several
+  missing on one object, one fix adds them all.
+- **Completion** in an `rdf:resource` value: the objects of the set the reference can name, the
+  likeliest first (linked to the object through its other references, then nearest in its
+  containers), or an enumeration's values.
 - **Completion** — after `<`: the attributes of the enclosing object's class (inherited ones
   included), or the classes of the document's namespace between objects.
 - **Grid view** — *cimoxide: Show grid* (or the button in the editor title) draws the model

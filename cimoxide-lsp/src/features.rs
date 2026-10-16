@@ -11,7 +11,7 @@ use lsp_types::{
     InsertTextFormat, Location, MarkupContent, MarkupKind, Position, Range, SymbolKind, TextEdit, Url,
 };
 
-use crate::index::{contains, local, prefix, Element, IdKind, Index, LineIndex};
+use crate::index::{contains, local, prefix, Element, Field, IdKind, Index, LineIndex};
 use crate::validate::ModelSet;
 
 /// An open document, indexed.
@@ -264,9 +264,15 @@ pub fn symbols(view: &View) -> Vec<DocumentSymbol> {
 }
 
 /// Inside an object: the fields its class declares (inherited ones
-/// included, association ends no profile exchanges left out). Between
-/// objects: the concrete classes of the document's family.
+/// included, association ends no profile exchanges left out); in an
+/// `rdf:resource` value, what it can name ([`resource_completion`]).
+/// Between objects: the concrete classes of the document's family.
 pub fn completion(view: &View, pos: Position) -> Vec<CompletionItem> {
+    if let Some(el) = view.index.element_at(pos)
+        && let Some(f) = el.fields.iter().find(|f| f.resource.as_ref().is_some_and(|(_, r)| contains(*r, pos)))
+    {
+        return resource_completion(view, el, f);
+    }
     let offset = view.lines.offset(view.text, pos);
     let line_start = view.text[..offset].rfind('\n').map_or(0, |i| i + 1);
     let typed = &view.text[line_start..offset];
@@ -308,6 +314,53 @@ pub fn completion(view: &View, pos: Position) -> Vec<CompletionItem> {
             item(tag, c.origins.join(", "), c.comment, CompletionItemKind::CLASS, snippet, replace)
         })
         .collect()
+}
+
+/// The values an `rdf:resource` can take, replacing the whole value: for a
+/// reference, the objects of the set it can name, the likeliest first
+/// ([`crate::edit::candidates`]); for an enumeration, its values.
+fn resource_completion(view: &View, el: &Element, f: &Field) -> Vec<CompletionItem> {
+    let reg = type_registry();
+    let Some((_, range)) = &f.resource else { return Vec::new() };
+    let Some(class) = class_of(view.index, &el.qname) else { return Vec::new() };
+    let Some(attr) = reg.attr(class, f.key()) else { return Vec::new() };
+    let entry = |label: String, detail: String, doc: &str, kind, insert: String, filter: String, rank: usize| CompletionItem {
+        label,
+        detail: Some(detail),
+        documentation: (!doc.is_empty()).then(|| Documentation::String(doc.to_string())),
+        kind: Some(kind),
+        filter_text: Some(filter),
+        sort_text: Some(format!("{rank:05}")),
+        text_edit: Some(CompletionTextEdit::Edit(TextEdit::new(*range, insert))),
+        ..Default::default()
+    };
+    match attr.kind {
+        AttrKind::Association => {
+            let Some(set) = view.set else { return Vec::new() };
+            let indexes: Vec<&Index> = set.files.iter().map(|x| if x.url == *view.url { view.index } else { &x.index }).collect();
+            crate::edit::candidates(&indexes, &set.tree, &el.mrid, f.key(), 200)
+                .into_iter()
+                .enumerate()
+                .map(|(i, c)| {
+                    let detail = if c.place.is_empty() { c.class.to_string() } else { format!("{} · {}", c.class, c.place) };
+                    let filter = format!("#{} {}", c.label, c.id);
+                    entry(c.label.clone(), detail, "", CompletionItemKind::REFERENCE, c.reference(), filter, i)
+                })
+                .collect()
+        }
+        AttrKind::Enum => {
+            let values = reg.family_of(class.qualified).and_then(|fam| reg.schema(fam)).and_then(|s| s.enumeration(attr.range));
+            values.map_or(&[][..], |e| e.values)
+                .iter()
+                .enumerate()
+                .map(|(i, v)| {
+                    let iri = format!("{}{}", attr.value_ns, v.id);
+                    entry(v.id.to_string(), attr.range.to_string(), v.comment, CompletionItemKind::ENUM_MEMBER, iri.clone(), iri, i)
+                })
+                .collect()
+        }
+        AttrKind::Literal => Vec::new(),
+    }
 }
 
 fn item(

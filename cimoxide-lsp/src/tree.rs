@@ -329,19 +329,24 @@ impl Tree {
         out
     }
 
+    /// Object `id`'s node in the containment and its containers' before it,
+    /// outermost first, as node numbers; empty if it is not in the tree.
+    pub fn chain(&self, id: &str) -> Vec<u32> {
+        let Some(mut n) = self.by_id.get(id).and_then(|&o| self.objects[o as usize].contained) else { return Vec::new() };
+        let mut out = vec![n];
+        while let Some(What::Object { .. }) = self.nodes.get(self.nodes[n as usize].parent as usize).map(|p| &p.what) {
+            n = self.nodes[n as usize].parent;
+            out.push(n);
+        }
+        out.reverse();
+        out
+    }
+
     /// The labels of the containers of object `id`, outermost first; the
     /// regions left out below a substation or line.
     pub fn containers(&self, id: &str) -> Vec<&str> {
-        let Some(mut n) = self.by_id.get(id).and_then(|&o| self.objects[o as usize].contained) else { return Vec::new() };
-        let mut out = Vec::new();
-        while let Some(&Node { parent, .. }) = self.nodes.get(n as usize) {
-            match self.nodes.get(parent as usize).map(|p| &p.what) {
-                Some(What::Object { .. }) => out.push(parent),
-                _ => break,
-            }
-            n = parent;
-        }
-        out.reverse();
+        let mut out = self.chain(id);
+        out.pop();
         let region = |&n: &u32| matches!(self.class_of(n), "GeographicalRegion" | "SubGeographicalRegion");
         if out.iter().any(|n| !region(n)) {
             out.retain(|n| !region(n));
