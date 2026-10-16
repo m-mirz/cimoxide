@@ -119,6 +119,12 @@
         "command": "cimoxide.openEdited",
         "title": "Open edited files",
         "category": "cimoxide"
+      },
+      {
+        "command": "cimoxide.model.fix",
+        "title": "Fix…",
+        "category": "cimoxide",
+        "icon": "$(lightbulb)"
       }
     ],
     "views": {
@@ -162,6 +168,11 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "cimoxide.model.fix",
+          "when": "view == cimoxide.model && viewItem =~ /\\bfindings\\b/",
+          "group": "edit@0"
+        },
         {
           "command": "cimoxide.model.add",
           "when": "view == cimoxide.model && viewItem =~ /^object\\b/",
@@ -246,6 +257,10 @@
         },
         {
           "command": "cimoxide.openEdited",
+          "when": "false"
+        },
+        {
+          "command": "cimoxide.model.fix",
           "when": "false"
         }
       ],

@@ -89,6 +89,16 @@ const ADDABLE: &str = "cimoxide/addable";
 /// "id" }`.
 const ADD: &str = "cimoxide/add";
 
+/// `cimoxide/fixes` `{ "uri", "id" }`: the fixes for object `id`'s findings
+/// that a field is missing, as quick fixes offer them, from the files as they
+/// are (open or not): `[{ "title", "detail", "edit", "uri", "select"? }]`.
+const FIXES: &str = "cimoxide/fixes";
+
+/// `cimoxide/rename` `{ "uri", "id", "newName" }`: the edit renaming mRID `id`
+/// in the document's model set ([`edit::rename`]), from the files as they are,
+/// so also where VS Code hands the server no document (over 50 MB).
+const RENAME: &str = "cimoxide/rename";
+
 /// How long a burst of triggers is gathered before a set is validated.
 const DEBOUNCE: Duration = Duration::from_millis(300);
 
@@ -436,6 +446,52 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
                 None => return error(id, ErrorCode::RequestFailed, "the model set has not been validated yet".into()),
             }
         }
+        FIXES => {
+            #[derive(serde::Deserialize)]
+            struct Params {
+                uri: Url,
+                id: String,
+            }
+            let p: Params = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return error(id, ErrorCode::InvalidParams, e.to_string()),
+            };
+            let found = with_set_files(state, &p.uri, |set, files| {
+                let findings = set.findings.get(&p.id).cloned().unwrap_or_default();
+                let missing = findings.into_iter().map(|(property, rule, message)| (p.id.clone(), property, (rule, message))).collect();
+                // Add where the object is defined, as it is written there.
+                let home = set.definition(&p.id).map(|(f, _)| f.url.clone()).unwrap_or_else(|| p.uri.clone());
+                fixes(set, files, &home, missing)
+                    .into_iter()
+                    .map(|f| {
+                        let detail: Vec<&str> = f.fixes.iter().map(|(_, m)| m.as_str()).collect();
+                        serde_json::json!({
+                            "title": f.title, "detail": detail.join("; "), "edit": change(&f.url, f.edit),
+                            "uri": f.url, "select": f.select.map(|(r, _)| r),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            });
+            Ok(serde_json::json!(found.unwrap_or_default()))
+        }
+        RENAME => {
+            #[derive(serde::Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Params {
+                uri: Url,
+                id: String,
+                new_name: String,
+            }
+            let p: Params = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return error(id, ErrorCode::InvalidParams, e.to_string()),
+            };
+            match with_set_files(state, &p.uri, |_, files| edit::rename(files, &p.id, &p.new_name)) {
+                Some(Ok(edit)) => serde_json::to_value(edit),
+                Some(Err(e)) => return error(id, ErrorCode::RequestFailed, e),
+                None => return error(id, ErrorCode::RequestFailed, "the model set has not been validated yet".into()),
+            }
+        }
         DELETE => {
             let p: DeleteParams = match serde_json::from_value(req.params) {
                 Ok(p) => p,
@@ -590,75 +646,118 @@ where
     f(&View { url: &url, text: &text, lines, index, set: set.as_deref() }, pos)
 }
 
-/// For each finding of `diagnostics` that a field is missing, the action
-/// adding it ([`edit::add_missing`]), which selects the value it writes;
-/// with several for one object, also one adding them all.
-fn quick_fixes(set: &ModelSet, files: &[edit::File], uri: &Url, diagnostics: &[lsp_types::Diagnostic]) -> Vec<CodeActionOrCommand> {
-    let mut out = Vec::new();
+/// A fix for findings that a field is missing ([`edit::add_missing`]): its
+/// title, the edit, the value to select after it (and whether to list what a
+/// reference can name), and the findings it fixes.
+struct Fix<D> {
+    title: String,
+    url: Url,
+    edit: lsp_types::TextEdit,
+    select: Option<(lsp_types::Range, bool)>,
+    preferred: bool,
+    fixes: Vec<D>,
+}
+
+/// The fixes for `missing` — (object, property, finding) — preferring to add
+/// in `prefer`: each field alone, a reference with the five likeliest objects
+/// to name and one to choose later; several on one object, also all at once.
+fn fixes<D: Clone>(set: &ModelSet, files: &[edit::File], prefer: &Url, missing: Vec<(String, String, D)>) -> Vec<Fix<D>> {
     let indexes: Vec<&Index> = files.iter().map(|f| f.index).collect();
-    let change = |url: &Url, e: lsp_types::TextEdit| lsp_types::WorkspaceEdit { changes: Some(HashMap::from([(url.clone(), vec![e])])), ..Default::default() };
-    // The fixes of each object, by the file they add to.
-    type Fixes = Vec<(lsp_types::Diagnostic, edit::Addition)>;
-    let mut by_object: Vec<(String, Url, Fixes)> = Vec::new();
-    for d in diagnostics.iter().filter(|d| d.source.as_deref() == Some("cimoxide")) {
-        let Some(data) = &d.data else { continue };
-        let (Some(object), Some(property)) = (data["object_id"].as_str(), data["property"].as_str()) else { continue };
+    // The additions to each object, by the file they add to.
+    type Adds<D> = Vec<(String, D, edit::Addition)>;
+    let mut by_object: Vec<(String, Url, Adds<D>)> = Vec::new();
+    for (object, property, finding) in missing {
         if object.is_empty() || property.starts_with('^') {
             continue;
         }
-        let Some(add) = edit::add_missing(files, uri, object, property) else { continue };
-        let at = by_object.iter().position(|(o, u, adds)| o == object && *u == add.url && !adds.iter().any(|(_, a)| a.edit == add.edit));
+        let Some(add) = edit::add_missing(files, prefer, &object, &property) else { continue };
+        let at = by_object.iter().position(|(o, u, adds)| *o == object && *u == add.url && !adds.iter().any(|(_, _, a)| a.edit == add.edit));
         match at {
-            Some(i) => by_object[i].2.push((d.clone(), add)),
-            None => by_object.push((object.to_string(), add.url.clone(), vec![(d.clone(), add)])),
+            Some(i) => by_object[i].2.push((property, finding, add)),
+            None => by_object.push((object, add.url.clone(), vec![(property, finding, add)])),
         }
     }
+    let mut out = Vec::new();
     for (object, url, adds) in by_object {
-        for (d, add) in &adds {
-            let property = d.data.as_ref().and_then(|x| x["property"].as_str()).unwrap_or_default();
-            // A reference: the likeliest objects to name, then one to choose later.
+        for (property, finding, add) in &adds {
             let named = if add.reference { edit::candidates(&indexes, &set.tree, &object, property, 5) } else { Vec::new() };
             for (i, c) in named.iter().enumerate() {
                 let place = if c.place.is_empty() { String::new() } else { format!(" in {}", c.place) };
-                out.push(CodeActionOrCommand::CodeAction(CodeAction {
+                out.push(Fix {
                     title: format!("Add {property}: {} {}{place}", c.class, c.label),
-                    kind: Some(CodeActionKind::QUICKFIX),
-                    diagnostics: Some(vec![d.clone()]),
-                    edit: Some(change(&url, add.naming(c))),
-                    is_preferred: Some(i == 0 && adds.len() == 1),
-                    ..Default::default()
-                }));
+                    url: url.clone(),
+                    edit: add.naming(c),
+                    select: None,
+                    preferred: i == 0 && adds.len() == 1,
+                    fixes: vec![finding.clone()],
+                });
             }
-            out.push(CodeActionOrCommand::CodeAction(CodeAction {
+            out.push(Fix {
                 title: if add.reference { format!("Add {property}, choosing the object…") } else { format!("Add {property}") },
-                kind: Some(CodeActionKind::QUICKFIX),
-                diagnostics: Some(vec![d.clone()]),
-                edit: Some(change(&url, add.edit.clone())),
-                command: Some(lsp_types::Command {
-                    title: "Select the value".into(),
-                    command: "cimoxide.select".into(),
-                    // For a reference, also list the objects it can name (completion).
-                    arguments: Some(vec![serde_json::json!(url), serde_json::json!(add.value), serde_json::json!(add.reference)]),
-                }),
-                is_preferred: Some(adds.len() == 1 && named.is_empty()),
-                ..Default::default()
-            }));
+                url: url.clone(),
+                edit: add.edit.clone(),
+                select: Some((add.value, add.reference)),
+                preferred: adds.len() == 1 && named.is_empty(),
+                fixes: vec![finding.clone()],
+            });
         }
         if adds.len() > 1 {
             // One insertion, the fields in the order of the findings.
-            let at = adds[0].1.edit.range;
-            let text: String = adds.iter().map(|(_, a)| a.edit.new_text.as_str()).collect();
-            out.push(CodeActionOrCommand::CodeAction(CodeAction {
+            let at = adds[0].2.edit.range;
+            let text: String = adds.iter().map(|(_, _, a)| a.edit.new_text.as_str()).collect();
+            out.push(Fix {
                 title: format!("Add the {} missing fields", adds.len()),
-                kind: Some(CodeActionKind::QUICKFIX),
-                diagnostics: Some(adds.iter().map(|(d, _)| d.clone()).collect()),
-                edit: Some(change(&url, lsp_types::TextEdit::new(at, text))),
-                is_preferred: Some(true),
-                ..Default::default()
-            }));
+                url: url.clone(),
+                edit: lsp_types::TextEdit::new(at, text),
+                select: None,
+                preferred: true,
+                fixes: adds.iter().map(|(_, f, _)| f.clone()).collect(),
+            });
         }
     }
     out
+}
+
+/// A field-sized edit to one file.
+fn change(url: &Url, e: lsp_types::TextEdit) -> lsp_types::WorkspaceEdit {
+    lsp_types::WorkspaceEdit { changes: Some(HashMap::from([(url.clone(), vec![e])])), ..Default::default() }
+}
+
+/// The command a fix runs after its edit: select the value it wrote.
+fn select_command(url: &Url, (range, suggest): (lsp_types::Range, bool)) -> lsp_types::Command {
+    lsp_types::Command {
+        title: "Select the value".into(),
+        command: "cimoxide.select".into(),
+        // For a reference, also list the objects it can name (completion).
+        arguments: Some(vec![serde_json::json!(url), serde_json::json!(range), serde_json::json!(suggest)]),
+    }
+}
+
+/// For each finding of `diagnostics` that a field is missing, the actions
+/// adding it ([`fixes`]).
+fn quick_fixes(set: &ModelSet, files: &[edit::File], uri: &Url, diagnostics: &[lsp_types::Diagnostic]) -> Vec<CodeActionOrCommand> {
+    let missing = diagnostics
+        .iter()
+        .filter(|d| d.source.as_deref() == Some("cimoxide"))
+        .filter_map(|d| {
+            let data = d.data.as_ref()?;
+            Some((data["object_id"].as_str()?.to_string(), data["property"].as_str()?.to_string(), d.clone()))
+        })
+        .collect();
+    fixes(set, files, uri, missing)
+        .into_iter()
+        .map(|f| {
+            CodeActionOrCommand::CodeAction(CodeAction {
+                title: f.title,
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(f.fixes),
+                edit: Some(change(&f.url, f.edit)),
+                command: f.select.map(|s| select_command(&f.url, s)),
+                is_preferred: Some(f.preferred),
+                ..Default::default()
+            })
+        })
+        .collect()
 }
 
 #[derive(serde::Deserialize)]

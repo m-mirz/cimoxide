@@ -246,7 +246,10 @@ Rename (an mRID) and the delete code actions (`codeAction/resolve` computes the 
 `cimoxide/delete` for the tree view) are text edits over the set's files as they are now: an open
 buffer, else the file on disk with the set's index of it (`src/edit.rs`). An mRID is the end of
 the value written, so only that suffix is replaced; a deletion takes whole lines and is annotated
-`needsConfirmation`, so the client previews it. Deleting with dependents takes the object's
+`needsConfirmation`, so the client previews it. The tree's *Fix…* and *Rename mRID…* go through
+`cimoxide/fixes` (the quick fixes' core, `fixes` in `main.rs`, for an object's findings, kept per
+object in `ModelSet::findings`) and `cimoxide/rename`, from the files on disk, so they work where
+the editor's do not: in a file over 50 MB, which VS Code hands no extension. Deleting with dependents takes the object's
 subtree in the tree's containment (`Tree::descendants`). A finding whose `property` the object
 writes in no file gets a quick fix adding it (`edit::add_missing`): to the file writing the object
 whose header profile is among the attribute's `origins`, after its last field, in its line ending;

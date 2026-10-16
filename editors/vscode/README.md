@@ -66,6 +66,11 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
   resolved, validate, run SPARQL and describe a CIM class. They only read. Turn it off with
   `cimoxide.mcp.enabled`.
 
+**Files over 50 MB** (a large EQ file): VS Code does not pass them to extensions, so their editor
+has no hover, completion, quick fixes or rename; a notice says so when one opens. Their model set is
+still validated, and the *CIM Model* view browses, fixes (*Fix…*), renames, deletes and adds in
+them as in any other: its edits are computed from the files on disk, and open for review.
+
 Validation runs when a document is opened and saved, and when a file of a model set changes on
 disk (another tool, a checkout, a file over 50 MB, which VS Code does not hand to extensions);
 turn on `cimoxide.validation.onType` to also run it while typing.
