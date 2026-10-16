@@ -243,7 +243,10 @@ Rename (an mRID) and the delete code actions (`codeAction/resolve` computes the 
 buffer, else the file on disk with the set's index of it (`src/edit.rs`). An mRID is the end of
 the value written, so only that suffix is replaced; a deletion takes whole lines and is annotated
 `needsConfirmation`, so the client previews it. Deleting with dependents takes the object's
-subtree in the tree's containment (`Tree::descendants`).
+subtree in the tree's containment (`Tree::descendants`). A finding whose `property` the object
+writes in no file gets a quick fix adding it (`edit::add_missing`): to the file writing the object
+whose header profile is among the attribute's `origins`, after its last field, in its line ending;
+the action's command `cimoxide.select` (registered by the extension) selects the value.
 
 `cimoxide/grid` (`src/grid.rs`) answers the set's grid at substation level as last validated:
 substations, and boundary points no substation holds, as nodes; equipment whose terminals reach

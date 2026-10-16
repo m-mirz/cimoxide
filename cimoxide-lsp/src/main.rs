@@ -141,7 +141,7 @@ fn capabilities() -> ServerCapabilities {
         document_symbol_provider: Some(OneOf::Left(true)),
         rename_provider: Some(OneOf::Right(RenameOptions { prepare_provider: Some(true), work_done_progress_options: Default::default() })),
         code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
-            code_action_kinds: Some(vec![CodeActionKind::REFACTOR]),
+            code_action_kinds: Some(vec![CodeActionKind::QUICKFIX, CodeActionKind::REFACTOR]),
             resolve_provider: Some(true),
             ..Default::default()
         })),
@@ -297,9 +297,10 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
             };
             let uri = p.text_document.uri;
             let actions = with_set_files(state, &uri, |set, files| {
-                let Some(el) = files.iter().find(|f| f.url == &uri).and_then(|f| f.index.element_at(p.range.start)) else { return Vec::new() };
+                let mut out = quick_fixes(files, &uri, &p.context.diagnostics);
+                let Some(el) = files.iter().find(|f| f.url == &uri).and_then(|f| f.index.element_at(p.range.start)) else { return out };
                 if el.mrid.is_empty() {
-                    return Vec::new();
+                    return out;
                 }
                 let what = edit::describe(files, &el.mrid);
                 let held = set.tree.descendants(&el.mrid).len();
@@ -311,7 +312,7 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
                         ..Default::default()
                     })
                 };
-                let mut out = vec![action(format!("Delete {what}"), false)];
+                out.push(action(format!("Delete {what}"), false));
                 if held > 0 {
                     out.push(action(format!("Delete {what} and the {held} objects it holds"), true));
                 }
@@ -474,6 +475,61 @@ where
     }
     let (lines, index) = built.get_or_init(|| (LineIndex::new(&text), Index::build(&text)));
     f(&View { url: &url, text: &text, lines, index, set: set.as_deref() }, pos)
+}
+
+/// For each finding of `diagnostics` that a field is missing, the action
+/// adding it ([`edit::add_missing`]), which selects the value it writes;
+/// with several for one object, also one adding them all.
+fn quick_fixes(files: &[edit::File], uri: &Url, diagnostics: &[lsp_types::Diagnostic]) -> Vec<CodeActionOrCommand> {
+    let mut out = Vec::new();
+    // The fixes of each object, by the file they add to.
+    type Fixes = Vec<(lsp_types::Diagnostic, edit::Addition)>;
+    let mut by_object: Vec<(String, Url, Fixes)> = Vec::new();
+    for d in diagnostics.iter().filter(|d| d.source.as_deref() == Some("cimoxide")) {
+        let Some(data) = &d.data else { continue };
+        let (Some(object), Some(property)) = (data["object_id"].as_str(), data["property"].as_str()) else { continue };
+        if object.is_empty() || property.starts_with('^') {
+            continue;
+        }
+        let Some(add) = edit::add_missing(files, uri, object, property) else { continue };
+        let at = by_object.iter().position(|(o, u, adds)| o == object && *u == add.url && !adds.iter().any(|(_, a)| a.edit == add.edit));
+        match at {
+            Some(i) => by_object[i].2.push((d.clone(), add)),
+            None => by_object.push((object.to_string(), add.url.clone(), vec![(d.clone(), add)])),
+        }
+    }
+    for (_, url, adds) in by_object {
+        for (d, add) in &adds {
+            let property = d.data.as_ref().and_then(|x| x["property"].as_str()).unwrap_or_default();
+            out.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: format!("Add {property}"),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(vec![d.clone()]),
+                edit: Some(lsp_types::WorkspaceEdit { changes: Some(HashMap::from([(url.clone(), vec![add.edit.clone()])])), ..Default::default() }),
+                command: Some(lsp_types::Command {
+                    title: "Select the value".into(),
+                    command: "cimoxide.select".into(),
+                    arguments: Some(vec![serde_json::json!(url), serde_json::json!(add.value)]),
+                }),
+                is_preferred: Some(adds.len() == 1),
+                ..Default::default()
+            }));
+        }
+        if adds.len() > 1 {
+            // One insertion, the fields in the order of the findings.
+            let at = adds[0].1.edit.range;
+            let text: String = adds.iter().map(|(_, a)| a.edit.new_text.as_str()).collect();
+            out.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: format!("Add the {} missing fields", adds.len()),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(adds.iter().map(|(d, _)| d.clone()).collect()),
+                edit: Some(lsp_types::WorkspaceEdit { changes: Some(HashMap::from([(url.clone(), vec![lsp_types::TextEdit::new(at, text)])])), ..Default::default() }),
+                is_preferred: Some(true),
+                ..Default::default()
+            }));
+        }
+    }
+    out
 }
 
 #[derive(serde::Deserialize)]
