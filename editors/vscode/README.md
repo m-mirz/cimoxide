@@ -50,7 +50,8 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
   included), or the classes of the document's namespace between objects.
 - **Grid view** — *cimoxide: Show grid* (or the button in the editor title) draws the model
   set as substations, boundary points and the lines between them: as the set's Diagram Layout
-  draws them, on its Geographical Locations, or laid out automatically. A ring marks each one with
+  draws them, on its Geographical Locations, or laid out automatically. Lines, substations and voltage
+  levels are coloured by voltage (legend in the side panel); a ring and halo mark each one with
   findings, in the colour of the worst and as wide as their number; select one for its voltage
   levels, equipment and findings, double-click a line to open where it is written. Double-click
   a substation to see inside it: its equipment and connectivity nodes by voltage level, its
