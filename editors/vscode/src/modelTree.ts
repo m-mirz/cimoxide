@@ -13,7 +13,6 @@ import {
   languages,
   MarkdownString,
   Position,
-  Range,
   ThemeColor,
   ThemeIcon,
   TreeDataProvider,
@@ -21,12 +20,12 @@ import {
   TreeItemCollapsibleState,
   TreeView,
   Uri,
-  ViewColumn,
   window,
   workspace,
 } from "vscode";
 import { LanguageClient } from "vscode-languageclient/node";
 import { Reveal, revealInGrid } from "./gridView";
+import { openAt } from "./open";
 
 const TREE_REQUEST = "cimoxide/tree";
 const PATH_REQUEST = "cimoxide/treePath";
@@ -328,20 +327,14 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
     }
     const edit = await c.protocol2CodeConverter.asWorkspaceEdit(added.edit as never);
     if (!edit || !(await workspace.applyEdit(edit))) return;
-    const doc = await workspace.openTextDocument(Uri.parse(added.uri));
-    const { start, end } = added.select;
-    await window.showTextDocument(doc, {
-      viewColumn: ViewColumn.One,
-      selection: new Range(start.line, start.character, end.line, end.character),
-    });
+    await openAt(added.uri, added.select);
   };
   // Renaming is the editor's: put the cursor on the object's start tag and ask for it.
   const rename = async (e: Entry | undefined): Promise<void> => {
     if (!e?.location) return;
     const { uri, range } = e.location;
-    const doc = await workspace.openTextDocument(Uri.parse(uri));
-    const at = new Position(range.start.line, range.start.character + 1);
-    await window.showTextDocument(doc, { viewColumn: ViewColumn.One, selection: new Range(at, at) });
+    const at = { line: range.start.line, character: range.start.character + 1 };
+    await openAt(uri, { start: at, end: at });
     await commands.executeCommand("editor.action.rename");
   };
   const reveal = async (e: Entry | undefined, inside: boolean): Promise<void> => {
@@ -382,13 +375,7 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
     commands.registerCommand("cimoxide.model.showInGrid", (e?: Entry) => reveal(e, false)),
     commands.registerCommand("cimoxide.model.showInside", (e?: Entry) => reveal(e, true)),
     commands.registerCommand("cimoxide.model.open", async (location: Location) => {
-      const doc = await workspace.openTextDocument(Uri.parse(location.uri));
-      const { start, end } = location.range;
-      await window.showTextDocument(doc, {
-        viewColumn: ViewColumn.One,
-        selection: new Range(start.line, start.character, end.line, end.character),
-        preserveFocus: true,
-      });
+      await openAt(location.uri, location.range, true);
     }),
   );
 }

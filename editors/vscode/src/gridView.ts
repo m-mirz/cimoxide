@@ -9,14 +9,13 @@ import {
   Disposable,
   ExtensionContext,
   languages,
-  Range,
   Uri,
   ViewColumn,
   WebviewPanel,
   window,
-  workspace,
 } from "vscode";
 import { LanguageClient } from "vscode-languageclient/node";
+import { openAt } from "./open";
 
 /** A place in a file, as the server sends it. */
 interface Location {
@@ -201,10 +200,7 @@ class GridPanel {
     } else if (msg.type === "leave") {
       this.inside = undefined;
     } else if (msg.type === "open" && msg.location) {
-      const { uri, range } = msg.location;
-      const doc = await workspace.openTextDocument(Uri.parse(uri));
-      const selection = new Range(range.start.line, range.start.character, range.end.line, range.end.character);
-      await window.showTextDocument(doc, { viewColumn: ViewColumn.One, selection });
+      await openAt(msg.location.uri, msg.location.range);
     }
   }
 
