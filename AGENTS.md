@@ -250,11 +250,21 @@ an item with its far ends; switch states and `inService`. A finding counted on t
 goes to the item its object stands for (the reference `place` followed), else to the substation
 itself, so the two add up to the node's count (`micro_grid_inside` checks this).
 
+`cimoxide/tree` (`src/tree.rs`) answers the set's objects as a tree, a level at a time by key, built
+with the grid from the same model: Geographical, each object under the target of the first
+`CONTAINED` field it writes, from the regions and containers no container holds; Operational, the
+areas; Not contained, the rest of that forest by class, so Geographical and Not contained hold each
+object once; By class, every object. A parent the set lacks is an object of its own. Each node
+counts its subtree's findings; a level of more than `PAGE` children is split by class, then in
+pages. Each object carries `Grid::reveal`, where the grid view shows it (`micro_grid_tree`).
+
 The extension (`editors/vscode/`, TypeScript, `vscode-languageclient`) passes settings as
 initialization options and schema directories as `CIMOXIDE_*` environment variables, and
 restarts the server on any `cimoxide.*` change. *Show grid* draws `cimoxide/grid` in a webview
 (`src/gridView.ts`; the page is `src/webview/grid.ts`, Cytoscape.js bundled by esbuild into
-`dist/grid.js`, as webviews load nothing from the network).
+`dist/grid.js`, as webviews load nothing from the network). The *CIM Model* Explorer view
+(`src/modelTree.ts`) draws `cimoxide/tree` for the active editor's set; its findings badges are
+a `FileDecorationProvider` on the items' `cimoxide-tree:` resource URIs, which carry the counts.
 
 ### `cimoxide-mcp`
 

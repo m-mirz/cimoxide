@@ -42,6 +42,8 @@ pub struct ModelSet {
     pub defs: HashMap<String, (usize, usize)>,
     /// The grid at substation level, with each object's findings counted.
     pub grid: crate::grid::Grid,
+    /// The set's objects by container, area and class, with their findings.
+    pub tree: crate::tree::Tree,
 }
 
 impl ModelSet {
@@ -140,10 +142,15 @@ pub fn validate(files: &[(PathBuf, Arc<str>)], opts: &Options) -> (ModelSet, Vec
 
     if !datasets.is_empty() {
         let cfg = cimvalidation::combined_config(&datasets, None, None, opts.common, opts.quality, opts.silence.clone());
-        set.grid = crate::grid::build(&datasets);
+        {
+            let model = crate::grid::Model::new(&datasets);
+            set.grid = crate::grid::build(&model);
+            set.tree = crate::tree::build(&model);
+        }
         let violations = cimvalidation::validate_files_traced(datasets, &cfg);
         let violations: Vec<_> = violations.into_iter().map(|(d, v)| (d.map(|d| origin[d]), v)).collect();
         set.grid.add_findings(&violations);
+        set.tree.add_findings(&violations);
         place(&set, &violations, &mut out);
     }
     (set, out)
