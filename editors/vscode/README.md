@@ -54,8 +54,9 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
   levels are coloured by voltage (legend in the side panel); a ring and halo mark each one with
   findings, in the colour of the worst and as wide as their number; select one for its voltage
   levels, equipment and findings, double-click a line to open where it is written. Double-click
-  a substation to see inside it: its equipment and connectivity nodes by voltage level, its
-  switches open (hollow) or closed, out-of-service equipment faded, each with its findings, on
+  a substation to see inside it: its equipment, drawn with single-line symbols (after IEC 60617,
+  as the CIM Model view's icons are), and connectivity nodes by voltage level, its switches drawn
+  open or closed, out-of-service equipment faded, each with its findings, on
   the Diagram Layout or laid out automatically; double-click a line there to go to its other end,
   Escape to go back. The view follows each revalidation.
 

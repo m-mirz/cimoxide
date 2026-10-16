@@ -26,6 +26,7 @@ import {
 import { LanguageClient } from "vscode-languageclient/node";
 import { Reveal, revealInGrid } from "./gridView";
 import { activeFile, openAt, validateSet } from "./open";
+import { symbolOf } from "./symbols";
 
 const TREE_REQUEST = "cimoxide/tree";
 const PATH_REQUEST = "cimoxide/treePath";
@@ -75,24 +76,10 @@ const CLASS_ICONS: Record<string, string> = {
   VoltageLevel: "layers",
   Bay: "symbol-array",
   Line: "dash",
-  ACLineSegment: "dash",
   DCLine: "dash",
-  DCLineSegment: "dash",
   Terminal: "plug",
   DCTerminal: "plug",
   ACDCConverterDCTerminal: "plug",
-  ConnectivityNode: "circle-small-filled",
-  TopologicalNode: "circle-filled",
-  DCNode: "circle-small-filled",
-  BusbarSection: "remove",
-  Breaker: "debug-disconnect",
-  Disconnector: "debug-disconnect",
-  LoadBreakSwitch: "debug-disconnect",
-  Switch: "debug-disconnect",
-  Fuse: "debug-disconnect",
-  GroundDisconnector: "debug-disconnect",
-  Jumper: "debug-disconnect",
-  PowerTransformer: "arrow-swap",
   PowerTransformerEnd: "debug-stackframe-dot",
   RatioTapChanger: "settings",
   PhaseTapChanger: "settings",
@@ -100,23 +87,12 @@ const CLASS_ICONS: Record<string, string> = {
   PhaseTapChangerLinear: "settings",
   PhaseTapChangerSymmetrical: "settings",
   PhaseTapChangerAsymmetrical: "settings",
-  SynchronousMachine: "zap",
-  AsynchronousMachine: "zap",
   GeneratingUnit: "flame",
   ThermalGeneratingUnit: "flame",
   HydroGeneratingUnit: "flame",
   WindGeneratingUnit: "flame",
   SolarGeneratingUnit: "flame",
   NuclearGeneratingUnit: "flame",
-  EnergyConsumer: "arrow-down",
-  ConformLoad: "arrow-down",
-  NonConformLoad: "arrow-down",
-  EnergySource: "arrow-up",
-  ExternalNetworkInjection: "arrow-up",
-  EquivalentInjection: "arrow-up",
-  LinearShuntCompensator: "symbol-constant",
-  NonlinearShuntCompensator: "symbol-constant",
-  StaticVarCompensator: "symbol-constant",
   OperationalLimitSet: "dashboard",
   CurrentLimit: "dashboard",
   VoltageLimit: "dashboard",
@@ -146,12 +122,24 @@ function counts(f: Findings): string {
   return parts.join(", ");
 }
 
-function icon(e: Entry): ThemeIcon {
+/**
+ * Where the equipment symbols are as icon files, light and dark: written at
+ * build time (build-symbols.js) into the extension, as VS Code loads a tree
+ * icon only from where it trusts.
+ */
+let symbolDir: Uri | undefined;
+
+/** Equipment by its symbol (as the grid view draws it), else a codicon. */
+function icon(e: Entry): ThemeIcon | { light: Uri; dark: Uri } {
   if (e.kind === "section") return new ThemeIcon(SECTION_ICONS[e.key] ?? "folder");
   if (e.kind === "range") return new ThemeIcon("list-flat");
-  if (e.kind === "group") return new ThemeIcon("symbol-class");
   if (e.kind === "missing") return new ThemeIcon("question");
   const cls = e.class ?? "";
+  const symbol = symbolOf(cls);
+  if (symbol && symbolDir) {
+    return { light: Uri.joinPath(symbolDir, `${symbol}-light.svg`), dark: Uri.joinPath(symbolDir, `${symbol}-dark.svg`) };
+  }
+  if (e.kind === "group") return new ThemeIcon("symbol-class");
   return new ThemeIcon(CLASS_ICONS[cls] ?? (cls.startsWith("Sv") ? "graph" : cls.endsWith("Limit") ? "dashboard" : "symbol-object"));
 }
 
@@ -260,6 +248,7 @@ function isCim(uri: Uri, languageId: string): boolean {
 }
 
 export function registerModelTree(context: ExtensionContext, client: () => LanguageClient | undefined): void {
+  symbolDir = Uri.joinPath(context.extensionUri, "dist", "symbols");
   const tree = new ModelTree(client);
   const view: TreeView<Entry> = window.createTreeView(VIEW, { treeDataProvider: tree, showCollapseAll: true });
   let refresh: NodeJS.Timeout | undefined;

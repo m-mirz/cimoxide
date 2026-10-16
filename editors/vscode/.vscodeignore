@@ -1,6 +1,7 @@
 **
 !dist/extension.js
 !dist/grid.js
+!dist/symbols/**
 !server/**
 !README.md
 !LICENSE

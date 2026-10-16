@@ -325,7 +325,7 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run build -- --minify && node -e \"require('fs').copyFileSync('../../LICENSE', 'LICENSE')\"",
-    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18 && esbuild src/webview/grid.ts --bundle --outfile=dist/grid.js --format=iife --platform=browser --target=es2020",
+    "build": "esbuild src/symbols.ts --bundle --outfile=dist/symbols.cjs --format=cjs --platform=node && node build-symbols.js && esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18 && esbuild src/webview/grid.ts --bundle --outfile=dist/grid.js --format=iife --platform=browser --target=es2020",
     "watch": "npm run build -- --sourcemap --watch",
     "typecheck": "tsc --noEmit && tsc --noEmit -p src/webview",
     "package": "vsce package"

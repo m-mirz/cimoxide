@@ -121,7 +121,7 @@ class GridPanel {
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${csp} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${csp} 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src data:;">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Grid</title>
 </head>

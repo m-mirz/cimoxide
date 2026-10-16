@@ -290,7 +290,11 @@ The extension (`editors/vscode/`, TypeScript, `vscode-languageclient`) passes se
 initialization options and schema directories as `CIMOXIDE_*` environment variables, and
 restarts the server on any `cimoxide.*` change. *Show grid* draws `cimoxide/grid` in a webview
 (`src/gridView.ts`; the page is `src/webview/grid.ts`, Cytoscape.js bundled by esbuild into
-`dist/grid.js`, as webviews load nothing from the network). The *CIM Model* Explorer view
+`dist/grid.js`, as webviews load nothing from the network). Equipment symbols (after IEC 60617,
+drawn on a 16-px grid) are in `src/symbols.ts`, shared by the page (an SVG data URI per item, in
+its voltage's colour) and the tree (icon files `build-symbols.js` writes into `dist/symbols/` at build
+time, light and dark: VS Code loads tree icons only from trusted folders such as the extension's,
+not its storage). The *CIM Model* Explorer view
 (`src/modelTree.ts`) draws `cimoxide/tree` for the active editor's set; its findings badges are
 a `FileDecorationProvider` on the items' `cimoxide-tree:` resource URIs, which carry the counts.
 
