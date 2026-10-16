@@ -3,6 +3,7 @@
 // double-clicking a substation, what it holds (`cimoxide/substation`).
 
 import cytoscape, { Core, ElementDefinition, NodeSingular, EdgeSingular } from "cytoscape";
+import { Symbol, symbolOf, symbolSvg } from "../symbols";
 
 declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
 const vscode = acquireVsCodeApi();
@@ -193,25 +194,28 @@ function gridElements(g: Grid): ElementDefinition[] {
   return [...nodes, ...edges];
 }
 
-/** How an item is drawn. */
+/** How an item is drawn: a connectivity node as a dot, a busbar as a bar, the rest as a symbol. */
 function kindOf(it: Item): string {
-  const c = it.class;
   if (it.junction) return "junction";
+  if (!it.far.length && it.class === "BusbarSection") return "busbar";
+  return "symbol";
+}
+
+/** An item's symbol: by its class, and a switch by its state; equipment reaching another node, a line. */
+function symbolFor(it: Item, terminals: number): Symbol {
   if (it.far.length) return "line";
-  if (it.open !== null) return "switch";
-  if (c === "BusbarSection") return "busbar";
-  if (/Transformer/.test(c)) return "transformer";
-  if (/Machine|Generat/.test(c)) return "machine";
-  if (/Load|Consumer/.test(c)) return "load";
-  if (/Compensator/.test(c)) return "shunt";
-  if (/Injection/.test(c)) return "injection";
-  if (/Converter/.test(c)) return "converter";
-  return "other";
+  const s = symbolOf(it.class) ?? (it.open !== null ? "breaker" : "other");
+  if (s === "breaker") return it.open ? "breakerOpen" : "breaker";
+  if (s === "disconnector") return it.open ? "disconnectorOpen" : "disconnector";
+  if (s === "transformer" && terminals >= 3) return "transformer3";
+  return s;
 }
 
 function insideElements(s: Inside): ElementDefinition[] {
   const kV = new Map(s.groups.map((g) => [g.id, g.kV]));
   const bandOf = new Map(s.items.map((it) => [it.id, it.group ? band(kV.get(it.group)) : "none"]));
+  const terminals = new Map<string, number>();
+  for (const l of s.links) terminals.set(l.source, (terminals.get(l.source) ?? 0) + 1);
   // Equipment in no voltage level (a line, in its Line): the level of the node it ends at.
   for (const l of s.links) {
     if (bandOf.get(l.source) === "none" && bandOf.get(l.target) !== "none") bandOf.set(l.source, bandOf.get(l.target) as string);
@@ -227,11 +231,11 @@ function insideElements(s: Inside): ElementDefinition[] {
   const items = s.items.map((it) => ({
     group: "nodes" as const,
     data: {
-      id: it.id, label: it.label, kind: kindOf(it), sev: worst(it.findings), parent: it.group ? `g:${it.group}` : undefined,
+      id: it.id, label: it.label, kind: kindOf(it), symbol: symbolFor(it, terminals.get(it.id) ?? 0),
+      sev: worst(it.findings), parent: it.group ? `g:${it.group}` : undefined,
       // A transformer joins levels: no one level's colour.
-      band: kindOf(it) === "transformer" ? "none" : bandOf.get(it.id),
-      // An open switch is drawn hollow, so it needs an outline.
-      ring: it.open ? Math.max(2, ring(it.findings)) : ring(it.findings),
+      band: /^transformer/.test(symbolFor(it, terminals.get(it.id) ?? 0)) ? "none" : bandOf.get(it.id),
+      ring: ring(it.findings),
     },
     classes: [it.open ? "open" : "", it.inService === false ? "out" : ""].join(" ").trim(),
   }));
@@ -288,24 +292,31 @@ function stylesheet(): cytoscape.StylesheetJson {
     ...byBand('node[kind = "group"]', "border-color", "background-color", "color"),
     shape("junction", "ellipse", 4),
     shape("busbar", "rectangle", 36, 4),
-    shape("switch", "rectangle", 8),
-    shape("transformer", "diamond", 14),
-    shape("machine", "ellipse", 12),
-    shape("load", "vee", 11),
-    shape("shunt", "barrel", 9),
-    shape("injection", "pentagon", 11),
-    shape("converter", "octagon", 12),
-    shape("line", "hexagon", 11),
-    shape("other", "round-rectangle", 9),
     { selector: 'node[kind = "junction"]', style: { "font-size": 6, "text-opacity": 0.7 } },
-    ...byBand('node[kind != "group"][kind != "substation"][kind != "boundary"]', "background-color"),
+    ...byBand('node[kind = "junction"]', "background-color"),
+    ...byBand('node[kind = "busbar"]', "background-color"),
+    // Equipment: its symbol, in its voltage's colour, on a transparent disc
+    // (which carries the findings' ring, and the selection).
+    {
+      selector: 'node[kind = "symbol"]',
+      style: {
+        shape: "ellipse", width: 16, height: 16, "font-size": 7, "background-opacity": 0, "background-fit": "contain",
+        "background-clip": "none",
+        "background-image": (ele: cytoscape.NodeSingular) => {
+          const b = BANDS.find(([name]) => name === ele.data("band"));
+          const c = b ? colour(b[2], b[3]) : fill;
+          return `data:image/svg+xml;utf8,${encodeURIComponent(symbolSvg(ele.data("symbol") as Symbol, c, 32))}`;
+        },
+      },
+    },
+    { selector: 'node[symbol ^= "transformer"]', style: { width: 18, height: 18 } },
     ...bySeverity("border-color").map((s) => ({ ...s, selector: `node[kind != "group"]${s.selector}` })),
     // And a halo, which reads apart from a voltage colour of the same hue.
     ...bySeverity("underlay-color").filter((s) => !s.selector.includes('"none"')).map((s) => ({
       ...s, selector: `node[kind != "group"]${s.selector}`,
       style: { ...s.style, "underlay-opacity": 0.35, "underlay-padding": 4, "underlay-shape": "ellipse" },
     })),
-    { selector: "node.open", style: { "background-opacity": 0, "border-color": fill } },
+
     { selector: "node.out", style: { opacity: 0.45, "border-style": "dashed" } },
     {
       selector: "edge",
@@ -318,6 +329,7 @@ function stylesheet(): cytoscape.StylesheetJson {
     { selector: "edge.disconnected", style: { "line-style": "dashed" } },
     { selector: "node:selected", style: { "background-color": focus, "background-opacity": 1 } },
     { selector: 'node[kind = "group"]:selected', style: { "background-opacity": 0.15 } },
+    { selector: 'node[kind = "symbol"]:selected', style: { "background-opacity": 0.3 } },
     { selector: "edge:selected", style: { "line-color": focus, opacity: 1 } },
     { selector: ".dim", style: { opacity: 0.15 } },
   ] as cytoscape.StylesheetJson;
@@ -425,7 +437,7 @@ function showInside(s: Inside, target: NodeSingular | EdgeSingular | undefined):
       `<h3>${escape(s.label)}</h3><div class="sub">Substation${s.region ? ` · ${escape(s.region)}` : ""}${kv}</div>` +
         `<div class="sub">On the substation, its voltage levels and bays:</div>` + findingsHtml(s.findings) +
         `<div class="sub" style="margin-top:8px">Select equipment or a node; double-click to open where it is written, ` +
-        `a line to go to its other end. Hollow: an open switch; faded: out of service; dashed: a disconnected terminal.</div>` + legend(),
+        `a line to go to its other end. An open switch is drawn open (a hollow breaker, a raised blade); faded: out of service; dashed: a disconnected terminal.</div>` + legend(),
       s.location,
       [["Back to the grid", leave]],
     );
