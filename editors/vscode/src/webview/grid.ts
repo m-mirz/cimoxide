@@ -148,7 +148,26 @@ function total(f: Findings): number {
 
 /** The ring grows with the findings: one and forty must not look alike. */
 function ring(f: Findings): number {
-  return total(f) ? Math.min(8, 1.5 + 1.5 * Math.log2(total(f))) : 0;
+  return total(f) ? Math.min(6, 1.5 + Math.log2(total(f))) : 0;
+}
+
+/** Voltage bands, coloured as grid maps colour them (in the theme's chart colours). */
+const BANDS: [string, number, string, string][] = [
+  ["v300", 300, "--vscode-charts-red", "#e5534b"],
+  ["v200", 200, "--vscode-charts-green", "#57ab5a"],
+  ["v100", 100, "--vscode-charts-blue", "#539bf5"],
+  ["v30", 30, "--vscode-charts-purple", "#b083f0"],
+];
+
+function band(kV: number | null | undefined): string {
+  return kV == null ? "none" : BANDS.find(([, min]) => kV >= min)?.[0] ?? "none";
+}
+
+/** The legend of the bands, for the side panel. */
+function legend(): string {
+  const swatch = (c: string) => `<span style="display:inline-block;width:14px;height:3px;margin:0 6px 3px 0;background:${c}"></span>`;
+  const rows = BANDS.map(([, min, v, fb], i) => `<div>${swatch(colour(v, fb))}${i ? `${min}–${BANDS[i - 1][1]}` : `≥ ${min}`} kV</div>`);
+  return `<div class="sub" style="margin-top:12px">${rows.join("")}<div>${swatch(colour("--vscode-descriptionForeground", "#888"))}lower, or unknown</div></div>`;
 }
 
 function gridElements(g: Grid): ElementDefinition[] {
@@ -158,15 +177,15 @@ function gridElements(g: Grid): ElementDefinition[] {
       group: "nodes" as const,
       data: {
         id: n.id, label: n.label, kind: n.kind === "Substation" ? "substation" : "boundary", sev: worst(n.findings),
-        size: Math.min(48, 16 + 4 * Math.sqrt(size)), ring: ring(n.findings),
+        size: Math.min(26, 10 + 2 * Math.sqrt(size)), ring: ring(n.findings), band: band(n.kV[0]),
       },
     };
   });
   const edges = g.edges.map((e) => ({
     group: "edges" as const,
     data: {
-      id: `e:${e.id}`, source: e.source, target: e.target, label: e.label, sev: worst(e.findings),
-      width: e.kV === null ? 1.5 : e.kV >= 300 ? 3.5 : e.kV >= 200 ? 2.5 : 1.5,
+      id: `e:${e.id}`, source: e.source, target: e.target, label: e.label, sev: worst(e.findings), band: band(e.kV),
+      width: e.kV === null ? 1.2 : e.kV >= 300 ? 2.4 : e.kV >= 200 ? 1.8 : 1.2,
     },
   }));
   return [...nodes, ...edges];
@@ -189,10 +208,16 @@ function kindOf(it: Item): string {
 }
 
 function insideElements(s: Inside): ElementDefinition[] {
+  const kV = new Map(s.groups.map((g) => [g.id, g.kV]));
+  const bandOf = new Map(s.items.map((it) => [it.id, it.group ? band(kV.get(it.group)) : "none"]));
+  // Equipment in no voltage level (a line, in its Line): the level of the node it ends at.
+  for (const l of s.links) {
+    if (bandOf.get(l.source) === "none" && bandOf.get(l.target) !== "none") bandOf.set(l.source, bandOf.get(l.target) as string);
+  }
   const groups = s.groups.map((g) => ({
     group: "nodes" as const,
     data: {
-      id: `g:${g.id}`, kind: "group", sev: "none", ring: 0,
+      id: `g:${g.id}`, kind: "group", sev: "none", ring: 0, band: band(g.kV),
       // A level is often named by its voltage: "400.0".
       label: g.kV === null ? g.label : Number(g.label) === g.kV ? `${g.kV} kV` : `${g.label} · ${g.kV} kV`,
     },
@@ -201,6 +226,8 @@ function insideElements(s: Inside): ElementDefinition[] {
     group: "nodes" as const,
     data: {
       id: it.id, label: it.label, kind: kindOf(it), sev: worst(it.findings), parent: it.group ? `g:${it.group}` : undefined,
+      // A transformer joins levels: no one level's colour.
+      band: kindOf(it) === "transformer" ? "none" : bandOf.get(it.id),
       // An open switch is drawn hollow, so it needs an outline.
       ring: it.open ? Math.max(2, ring(it.findings)) : ring(it.findings),
     },
@@ -208,7 +235,7 @@ function insideElements(s: Inside): ElementDefinition[] {
   }));
   const links = s.links.map((l) => ({
     group: "edges" as const,
-    data: { id: `t:${l.id}`, source: l.source, target: l.target, sev: "none", width: 1.2 },
+    data: { id: `t:${l.id}`, source: l.source, target: l.target, sev: "none", width: 1, band: bandOf.get(l.target) },
     classes: l.connected === false ? "disconnected" : "",
   }));
   return [...groups, ...items, ...links];
@@ -222,50 +249,70 @@ function stylesheet(): cytoscape.StylesheetJson {
     none: colour("--vscode-descriptionForeground", "#888888"),
   };
   const fg = colour("--vscode-foreground", "#cccccc");
-  const fill = colour("--vscode-editorLineNumber-foreground", "#6e7681");
+  const bg = colour("--vscode-editor-background", "#1e1e1e");
+  const fill = colour("--vscode-descriptionForeground", "#8b8b8b");
   const focus = colour("--vscode-focusBorder", "#007fd4");
   const bySeverity = (prop: string) =>
     Object.entries(sev).map(([k, c]) => ({ selector: `[sev = "${k}"]`, style: { [prop]: c } }));
+  // Each voltage band's colour, on what `prop` paints of `selector`.
+  const byBand = (selector: string, ...props: string[]) =>
+    BANDS.map(([b, , v, fb]) => ({
+      selector: `${selector}[band = "${b}"]`,
+      style: Object.fromEntries(props.map((p) => [p, colour(v, fb)])),
+    }));
   const shape = (kind: string, shape: string, width: number, height = width) =>
-    ({ selector: `node[kind = "${kind}"]`, style: { shape, width, height, "font-size": 8 } });
+    ({ selector: `node[kind = "${kind}"]`, style: { shape, width, height, "font-size": 7 } });
   return [
     {
       selector: "node",
       style: {
-        label: "data(label)", color: fg, "font-size": 10, "text-valign": "bottom", "text-margin-y": 3,
+        label: "data(label)", color: fg, "font-size": 9, "text-valign": "bottom", "text-margin-y": 2,
+        // Legible over the lines it sits on.
+        "text-outline-color": bg, "text-outline-width": 2, "text-outline-opacity": 0.85,
         width: "data(size)", height: "data(size)", "background-color": fill, "border-width": "data(ring)",
-        "min-zoomed-font-size": 6,
+        "min-zoomed-font-size": 7,
       },
     },
-    { selector: 'node[kind = "boundary"]', style: { shape: "diamond", width: 12, height: 12, "font-size": 8 } },
+    ...byBand('node[kind = "substation"]', "background-color"),
+    { selector: 'node[kind = "boundary"]', style: { shape: "diamond", width: 8, height: 8, "font-size": 7 } },
     // Inside a substation: voltage levels as boxes, and a shape for each kind of equipment.
     {
       selector: 'node[kind = "group"]',
       style: {
-        shape: "round-rectangle", "background-opacity": 0.06, "border-width": 1, "border-color": fill, "text-valign": "top",
-        "text-margin-y": -4, "font-size": 11, padding: "14px",
+        shape: "round-rectangle", "background-color": fill, "background-opacity": 0.05, "border-width": 1, "border-color": fill,
+        "border-opacity": 0.6, "text-valign": "top", "text-margin-y": -3, "font-size": 10, padding: "12px",
       },
     },
-    shape("junction", "ellipse", 7),
-    shape("busbar", "rectangle", 46, 7),
-    shape("switch", "rectangle", 12),
-    shape("transformer", "diamond", 22),
-    shape("machine", "ellipse", 18),
-    shape("load", "vee", 16),
-    shape("shunt", "barrel", 14),
-    shape("injection", "pentagon", 16),
-    shape("converter", "octagon", 18),
-    shape("line", "hexagon", 16),
-    shape("other", "round-rectangle", 14),
-    { selector: 'node[kind = "junction"]', style: { "font-size": 7, "text-opacity": 0.75 } },
+    ...byBand('node[kind = "group"]', "border-color", "background-color", "color"),
+    shape("junction", "ellipse", 4),
+    shape("busbar", "rectangle", 36, 4),
+    shape("switch", "rectangle", 8),
+    shape("transformer", "diamond", 14),
+    shape("machine", "ellipse", 12),
+    shape("load", "vee", 11),
+    shape("shunt", "barrel", 9),
+    shape("injection", "pentagon", 11),
+    shape("converter", "octagon", 12),
+    shape("line", "hexagon", 11),
+    shape("other", "round-rectangle", 9),
+    { selector: 'node[kind = "junction"]', style: { "font-size": 6, "text-opacity": 0.7 } },
+    ...byBand('node[kind != "group"][kind != "substation"][kind != "boundary"]', "background-color"),
     ...bySeverity("border-color").map((s) => ({ ...s, selector: `node[kind != "group"]${s.selector}` })),
-    { selector: "node.open", style: { "background-opacity": 0 } },
+    // And a halo, which reads apart from a voltage colour of the same hue.
+    ...bySeverity("underlay-color").filter((s) => !s.selector.includes('"none"')).map((s) => ({
+      ...s, selector: `node[kind != "group"]${s.selector}`,
+      style: { ...s.style, "underlay-opacity": 0.35, "underlay-padding": 4, "underlay-shape": "ellipse" },
+    })),
+    { selector: "node.open", style: { "background-opacity": 0, "border-color": fill } },
     { selector: "node.out", style: { opacity: 0.45, "border-style": "dashed" } },
     {
       selector: "edge",
-      style: { width: "data(width)", "curve-style": "bezier", opacity: 0.85 },
+      style: { width: "data(width)", "curve-style": "bezier", "line-color": fill, opacity: 0.9 },
     },
-    ...bySeverity("line-color").map((s) => ({ ...s, selector: `edge${s.selector}` })),
+    ...byBand("edge", "line-color"),
+    // Findings on a line: a halo in the worst one's colour, apart from its voltage colour.
+    ...bySeverity("underlay-color").filter((s) => !s.selector.includes('"none"'))
+      .map((s) => ({ ...s, selector: `edge${s.selector}`, style: { ...s.style, "underlay-opacity": 0.4, "underlay-padding": 5 } })),
     { selector: "edge.disconnected", style: { "line-style": "dashed" } },
     { selector: "node:selected", style: { "background-color": focus, "background-opacity": 1 } },
     { selector: 'node[kind = "group"]:selected', style: { "background-opacity": 0.15 } },
@@ -327,7 +374,7 @@ function panel(html: string, location: Location | null | undefined, buttons: [st
 
 function showGrid(g: Grid, target: NodeSingular | EdgeSingular | undefined): void {
   if (!target) {
-    panel(`<div class="sub">Select a substation or a line. Double-click a substation to see inside it, a line to open where it is written.</div>`, null);
+    panel(`<div class="sub">Select a substation or a line. Double-click a substation to see inside it, a line to open where it is written.</div>` + legend(), null);
     return;
   }
   if (target.isNode()) {
@@ -376,7 +423,7 @@ function showInside(s: Inside, target: NodeSingular | EdgeSingular | undefined):
       `<h3>${escape(s.label)}</h3><div class="sub">Substation${s.region ? ` · ${escape(s.region)}` : ""}${kv}</div>` +
         `<div class="sub">On the substation, its voltage levels and bays:</div>` + findingsHtml(s.findings) +
         `<div class="sub" style="margin-top:8px">Select equipment or a node; double-click to open where it is written, ` +
-        `a line to go to its other end. Hollow: an open switch; faded: out of service; dashed: a disconnected terminal.</div>`,
+        `a line to go to its other end. Hollow: an open switch; faded: out of service; dashed: a disconnected terminal.</div>` + legend(),
       s.location,
       [["Back to the grid", leave]],
     );
