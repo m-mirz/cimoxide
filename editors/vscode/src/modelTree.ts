@@ -49,7 +49,7 @@ interface Location {
 }
 
 /** A node as the server sends it. */
-interface Entry {
+export interface Entry {
   key: string;
   kind: "section" | "group" | "range" | "object" | "missing";
   label: string;
@@ -143,7 +143,7 @@ function icon(e: Entry): ThemeIcon | { light: Uri; dark: Uri } {
   return new ThemeIcon(CLASS_ICONS[cls] ?? (cls.startsWith("Sv") ? "graph" : cls.endsWith("Limit") ? "dashboard" : "symbol-object"));
 }
 
-class ModelTree implements TreeDataProvider<Entry> {
+export class ModelTree implements TreeDataProvider<Entry> {
   private readonly changed = new EventEmitter<Entry | undefined>();
   readonly onDidChangeTreeData = this.changed.event;
   /** A document of the model set shown. */
@@ -247,7 +247,7 @@ function isCim(uri: Uri, languageId: string): boolean {
   return uri.scheme === "file" && languageId === "xml";
 }
 
-export function registerModelTree(context: ExtensionContext, client: () => LanguageClient | undefined): void {
+export function registerModelTree(context: ExtensionContext, client: () => LanguageClient | undefined): ModelTree {
   symbolDir = Uri.joinPath(context.extensionUri, "dist", "symbols");
   const tree = new ModelTree(client);
   const view: TreeView<Entry> = window.createTreeView(VIEW, { treeDataProvider: tree, showCollapseAll: true });
@@ -380,4 +380,5 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
       await openAt(location.uri, location.range, true);
     }),
   );
+  return tree;
 }

@@ -20,7 +20,7 @@ import {
 } from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions } from "vscode-languageclient/node";
 import { showGrid } from "./gridView";
-import { registerModelTree } from "./modelTree";
+import { ModelTree, registerModelTree } from "./modelTree";
 import { openAt } from "./open";
 
 let client: LanguageClient | undefined;
@@ -118,9 +118,14 @@ function registerMcp(context: ExtensionContext): void {
   );
 }
 
-export async function activate(context: ExtensionContext): Promise<void> {
+/** What `activate` returns: the model tree, for the extension's tests (test/suite.ts). */
+export interface Api {
+  modelTree: ModelTree;
+}
+
+export async function activate(context: ExtensionContext): Promise<Api> {
   registerMcp(context);
-  registerModelTree(context, () => client);
+  const modelTree = registerModelTree(context, () => client);
   context.subscriptions.push(
     commands.registerCommand("cimoxide.showGrid", (uri?: Uri) => showGrid(context, client, uri)),
     // After a quick fix adds a field: select its value, to type over; for a
@@ -148,6 +153,7 @@ export async function activate(context: ExtensionContext): Promise<void> {
     }),
   );
   await start(context);
+  return { modelTree };
 }
 
 export function deactivate(): Promise<void> {

@@ -92,6 +92,13 @@ jobs:
           npm ci
           npx vsce package --target ${{ matrix.vsce_target }}
 
+      # The extension in a running VS Code, on MicroGrid (test/suite.ts): a failure
+      # here fails the job, so nothing is published.
+      - name: Smoke test
+        if: runner.os == 'Linux'
+        working-directory: editors/vscode
+        run: xvfb-run -a npm test
+
       - uses: actions/upload-artifact@v4
         with:
           name: vsix-${{ matrix.vsce_target }}
