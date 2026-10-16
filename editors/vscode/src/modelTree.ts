@@ -33,6 +33,7 @@ const TREE_REQUEST = "cimoxide/tree";
 const PATH_REQUEST = "cimoxide/treePath";
 const PATH_OF_REQUEST = "cimoxide/treePathOf";
 const SEARCH_REQUEST = "cimoxide/search";
+const REFERRERS_REQUEST = "cimoxide/referrers";
 const DELETE_REQUEST = "cimoxide/delete";
 const ADDABLE_REQUEST = "cimoxide/addable";
 const ADD_REQUEST = "cimoxide/add";
@@ -252,7 +253,6 @@ export class ModelTree implements TreeDataProvider<Entry> {
     if (e.grid) context.push("grid");
     if (e.grid?.inside) context.push("inside");
     if (e.kind === "object" && e.children) context.push("holds");
-    if (e.kind === "object" && total(e.findings)) context.push("findings");
     item.contextValue = context.join(" ");
     return item;
   }
@@ -331,6 +331,29 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
     await view.reveal(at, { select: true, focus, expand: false });
   };
   let cursor: NodeJS.Timeout | undefined;
+  // An object found: where it is written, and its node in the tree.
+  const revealHit = async (hit: { id: string; label: string; location: Location | null }): Promise<void> => {
+    if (hit.location) await openAt(hit.location.uri, hit.location.range, true);
+    const at = await tree.locateId(hit.id);
+    if (at) await view.reveal(at, { select: true, focus: true, expand: true });
+    else window.showInformationMessage(`cimoxide: ${hit.label} is hidden by the filter on findings.`);
+  };
+  // What refers to an object (the tree's Find references): pick one to go to it.
+  const referrers = async (e: Entry | undefined): Promise<void> => {
+    const c = client();
+    if (!c || !tree.uri || !e?.id) return;
+    type Referrer = { id: string; label: string; class: string; key: string; place: string; location: Location | null };
+    const found = await c.sendRequest<Referrer[]>(REFERRERS_REQUEST, { uri: tree.uri.toString(), id: e.id });
+    if (!found.length) {
+      window.showInformationMessage(`cimoxide: nothing in the model set refers to ${e.class} ${e.label}.`);
+      return;
+    }
+    const pick = await window.showQuickPick(
+      found.map((r) => ({ label: r.label, description: `${r.class} · ${r.key}`, detail: r.place || undefined, r })),
+      { placeHolder: `${found.length} object(s) refer to ${e.class} ${e.label}`, matchOnDescription: true },
+    );
+    if (pick) await revealHit(pick.r);
+  };
   // Search the whole set, not only what the tree has loaded: the server
   // matches names and mRIDs as one types.
   const search = (): void => {
@@ -359,11 +382,7 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
     pick.onDidAccept(async () => {
       const hit = pick.selectedItems[0]?.hit;
       pick.hide();
-      if (!hit) return;
-      if (hit.location) await openAt(hit.location.uri, hit.location.range, true);
-      const at = await tree.locateId(hit.id);
-      if (at) await view.reveal(at, { select: true, focus: true, expand: true });
-      else window.showInformationMessage(`cimoxide: ${hit.label} is hidden by the filter on findings.`);
+      if (hit) await revealHit(hit);
     });
     pick.onDidHide(() => {
       clearTimeout(typing);
@@ -442,7 +461,8 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
     const found = await c.sendRequest<{ title: string; detail: string; edit: LspWorkspaceEdit; uri: string; select: Location["range"] | null }[]>(
       FIXES_REQUEST, { uri: tree.uri.toString(), id: e.id });
     if (!found.length) {
-      window.showInformationMessage(`cimoxide: no fix for the findings of ${e.class} ${e.label}: only a missing field is added.`);
+      window.showInformationMessage(
+        `cimoxide: nothing to fix on ${e.class} ${e.label}: fixes add a missing field, or name an object where a reference names none.`);
       return;
     }
     const pick = await window.showQuickPick(found.map((f) => ({ label: f.title, detail: f.detail, f })), { placeHolder: `Fix ${e.class} ${e.label}` });
@@ -478,6 +498,7 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
     commands.registerCommand("cimoxide.model.rename", (e?: Entry) => rename(e)),
     commands.registerCommand("cimoxide.model.fix", (e?: Entry) => fix(e)),
     commands.registerCommand("cimoxide.model.search", search),
+    commands.registerCommand("cimoxide.model.referrers", (e?: Entry) => referrers(e)),
     commands.registerCommand("cimoxide.model.add", (e?: Entry | { id: string; uri: string; label: string }) => addIn(e)),
     window.registerFileDecorationProvider({ provideFileDecoration: decoration }),
     window.onDidChangeActiveTextEditor((ed) => follow(ed?.document.uri, ed?.document.languageId)),

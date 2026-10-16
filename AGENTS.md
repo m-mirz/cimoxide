@@ -234,21 +234,25 @@ validated with `validate_files` + `combined_config`, as `cimcli validate` does, 
 thread with a 300 ms debounce, on open and save, and on `workspace/didChangeWatchedFiles` (the
 extension watches `**/*.xml`) for a set validated or open: VS Code hands no file over 50 MB to an
 extension, so the server sees neither its opening nor its saving, nor that of a file an edit
-changed unopened. A deletion's resolved code action (and the tree's *Delete*) then opens the files
-it changed (`cimoxide.openEdited`), as an edit leaves an unopened file unsaved and unseen. The decoder keeps no positions, so `src/index.rs` makes its
+changed unopened. The tree's edits then open the files they changed (`openEdited`), as an edit
+leaves an unopened file unsaved and unseen. The decoder keeps no positions, so `src/index.rs` makes its
 own quick-xml pass per document (ranges of elements, fields, `rdf:resource` values; mRID =
 text after the last `#`, as in `decode.rs`). A per-file finding is placed only in the file it
 was found in (`validate_files_traced`). Each diagnostic's `data` carries `object_id`
 and `property`; its `code` is the `rule_id`. Diagnostics must stay equal to
 `cimcli validate --format json` as sets of `(object_id, rule_id, property)` per directory.
 
-Rename (an mRID) and the delete code actions (`codeAction/resolve` computes the edit;
-`cimoxide/delete` for the tree view) are text edits over the set's files as they are now: an open
+The editor helps with the text (hover, completion, definition, references, outline, quick fixes,
+rename); the model tree is where the model is edited, in files of any size: deleting and adding are
+the tree's alone (`cimoxide/delete`, `cimoxide/add`), *Fix…*, *Rename mRID…* and *Referenced by…*
+(`cimoxide/referrers`, `edit::referrers`) its versions of the editor's. Rename (an mRID) and
+deleting are text edits over the set's files as they are now: an open
 buffer, else the file on disk with the set's index of it (`src/edit.rs`). An mRID is the end of
 the value written, so only that suffix is replaced; a deletion takes whole lines and is annotated
 `needsConfirmation`, so the client previews it. The tree's *Fix…* and *Rename mRID…* go through
 `cimoxide/fixes` (the quick fixes' core, `fixes` in `main.rs`, for an object's findings, kept per
-object in `ModelSet::findings`) and `cimoxide/rename`, from the files on disk, so they work where
+object in `ModelSet::findings`, and `edit::reference_fixes` for references to nothing or to what the
+set lacks, which no finding reports) and `cimoxide/rename`, from the files on disk, so they work where
 the editor's do not: in a file over 50 MB, which VS Code hands no extension. Deleting with dependents takes the object's
 subtree in the tree's containment (`Tree::descendants`). A finding whose `property` the object
 writes in no file gets a quick fix adding it (`edit::add_missing`): to the file writing the object
@@ -298,8 +302,8 @@ reveal the object at the cursor), and `Tree::containers` the outline's container
 `npm test` in `editors/vscode/` runs `test/suite.ts` in a downloaded VS Code with the extension on a
 copy of MicroGrid (needs `server/cimlsp`; `xvfb-run` without a display; `vscode.yml` runs it on
 Linux before anything is published): activation and the tree through the client, the tree's icon
-files, code actions with resolve, a quick fix, rename, the grid panel. `activate` returns the
-model tree for it.
+files, the tree's delete, fixes, rename, search and *Referenced by*, a quick fix, rename, the grid
+panel. `activate` returns the model tree and the server's requests for it.
 
 The extension (`editors/vscode/`, TypeScript, `vscode-languageclient`) passes settings as
 initialization options and schema directories as `CIMOXIDE_*` environment variables, and

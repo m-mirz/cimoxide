@@ -5,8 +5,9 @@
 //!   open and save, and while typing if `onType` is set.
 //! - Hover, go to definition, references, document outline and completion
 //!   from the class tables ([`features`]).
-//! - Rename of an mRID, and code actions deleting an object (with what it
-//!   holds), across the files of its model set ([`edit`]).
+//! - Rename of an mRID across the files of its model set, quick fixes for
+//!   missing fields and references to nothing ([`edit`]); deleting and adding
+//!   objects is the model tree's (`cimoxide/delete`, `cimoxide/add`).
 //! - `cimoxide/grid`: the model set's grid at substation level, for the
 //!   extension's grid view ([`grid`]); `cimoxide/substation`: what one of its
 //!   substations holds, for the view's drill-down; `cimoxide/tree`: its
@@ -38,7 +39,7 @@ use lsp_types::notification::{
     Notification as _, PublishDiagnostics,
 };
 use lsp_types::request::{
-    CodeActionRequest, CodeActionResolveRequest, Completion, DocumentSymbolRequest, ExecuteCommand, GotoDefinition,
+    CodeActionRequest, Completion, DocumentSymbolRequest, ExecuteCommand, GotoDefinition,
     HoverRequest, PrepareRenameRequest, References, Rename, Request as _,
 };
 use lsp_types::{
@@ -109,6 +110,11 @@ const SEARCH: &str = "cimoxide/search";
 /// need not be open.
 const TREE_PATH_OF: &str = "cimoxide/treePathOf";
 
+/// `cimoxide/referrers` `{ "uri", "id" }`: the objects of the document's
+/// model set that refer to object `id`, and by which field
+/// ([`edit::referrers`]): `[{ "id", "label", "class", "key", "place", "location" }]`.
+const REFERRERS: &str = "cimoxide/referrers";
+
 /// How long a burst of triggers is gathered before a set is validated.
 const DEBOUNCE: Duration = Duration::from_millis(300);
 
@@ -171,8 +177,7 @@ fn capabilities() -> ServerCapabilities {
         document_symbol_provider: Some(OneOf::Left(true)),
         rename_provider: Some(OneOf::Right(RenameOptions { prepare_provider: Some(true), work_done_progress_options: Default::default() })),
         code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
-            code_action_kinds: Some(vec![CodeActionKind::QUICKFIX, CodeActionKind::REFACTOR, CodeActionKind::REFACTOR_REWRITE]),
-            resolve_provider: Some(true),
+            code_action_kinds: Some(vec![CodeActionKind::QUICKFIX, CodeActionKind::REFACTOR_REWRITE]),
             ..Default::default()
         })),
         completion_provider: Some(CompletionOptions { trigger_characters: Some(vec!["<".into(), "#".into()]), ..Default::default() }),
@@ -348,77 +353,17 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
                     return out;
                 }
                 // A reference to nothing, or to no object of the set: what it could name.
-                let field = el.fields.iter().find(|f| index::contains(f.full, p.range.start));
-                if let Some((f, (target, value))) = field.and_then(|f| f.resource.as_ref().map(|r| (f, r)))
-                    && (target.is_empty() || !files.iter().any(|x| x.index.elements.iter().any(|e| e.mrid == *target)))
-                {
-                    let indexes: Vec<&Index> = files.iter().map(|f| f.index).collect();
-                    for c in edit::candidates(&indexes, &set.tree, &el.mrid, f.key(), 5) {
-                        let place = if c.place.is_empty() { String::new() } else { format!(" in {}", c.place) };
-                        out.push(CodeActionOrCommand::CodeAction(CodeAction {
-                            title: format!("Set {} to {} {}{place}", f.key(), c.class, c.label),
-                            kind: Some(if target.is_empty() { CodeActionKind::QUICKFIX } else { CodeActionKind::REFACTOR_REWRITE }),
-                            edit: Some(lsp_types::WorkspaceEdit {
-                                changes: Some(HashMap::from([(uri.clone(), vec![lsp_types::TextEdit::new(*value, c.reference())])])),
-                                ..Default::default()
-                            }),
-                            ..Default::default()
-                        }));
-                    }
-                }
-                let what = edit::describe(files, &el.mrid);
-                let held = set.tree.descendants(&el.mrid).len();
-                let action = |title: String, dependents: bool| {
-                    CodeActionOrCommand::CodeAction(CodeAction {
-                        title,
-                        kind: Some(CodeActionKind::REFACTOR),
-                        data: Some(serde_json::json!({ "uri": uri, "id": el.mrid, "dependents": dependents })),
-                        ..Default::default()
-                    })
-                };
-                // Adding in it is the extension's dialogue: class, then name.
-                if !edit::addable(files, &el.mrid).is_empty() {
+                for f in edit::reference_fixes(files, &set.tree, &el.mrid, Some((&uri, p.range.start))) {
                     out.push(CodeActionOrCommand::CodeAction(CodeAction {
-                        title: format!("Add… in {what}"),
-                        kind: Some(CodeActionKind::REFACTOR),
-                        command: Some(lsp_types::Command {
-                            title: "Add".into(),
-                            command: "cimoxide.model.add".into(),
-                            arguments: Some(vec![serde_json::json!({ "uri": uri, "id": el.mrid, "label": what })]),
-                        }),
+                        title: f.title,
+                        kind: Some(if f.empty { CodeActionKind::QUICKFIX } else { CodeActionKind::REFACTOR_REWRITE }),
+                        edit: Some(change(&f.url, f.edit)),
                         ..Default::default()
                     }));
-                }
-                out.push(action(format!("Delete {what}"), false));
-                if held > 0 {
-                    out.push(action(format!("Delete {what} and the {held} objects it holds"), true));
                 }
                 out
             });
             serde_json::to_value(actions.unwrap_or_default())
-        }
-        CodeActionResolveRequest::METHOD => {
-            let mut action: CodeAction = match serde_json::from_value(req.params) {
-                Ok(p) => p,
-                Err(e) => return error(id, ErrorCode::InvalidParams, e.to_string()),
-            };
-            // VS Code resolves every action without an edit: one that runs a
-            // command (Add…) or has its edit already needs nothing more.
-            let Some(p) = action.data.clone().and_then(|d| serde_json::from_value::<DeleteParams>(d).ok()) else {
-                return Response::new_ok(id, action);
-            };
-            action.edit = deletion(state, &p).map(|(d, _)| d.edit);
-            // Then open what it changed, for review: a file it changed unopened
-            // would otherwise stay unsaved, unseen.
-            if let Some(lsp_types::DocumentChanges::Edits(edits)) = action.edit.as_ref().and_then(|e| e.document_changes.as_ref()) {
-                let files: Vec<&Url> = edits.iter().map(|e| &e.text_document.uri).collect();
-                action.command = Some(lsp_types::Command {
-                    title: "Open the files it changes".into(),
-                    command: "cimoxide.openEdited".into(),
-                    arguments: Some(vec![serde_json::json!(files)]),
-                });
-            }
-            serde_json::to_value(action)
         }
         ADDABLE => {
             #[derive(serde::Deserialize)]
@@ -456,6 +401,31 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
                 None => return error(id, ErrorCode::RequestFailed, "the model set has not been validated yet".into()),
             }
         }
+        REFERRERS => {
+            #[derive(serde::Deserialize)]
+            struct Params {
+                uri: Url,
+                id: String,
+            }
+            let p: Params = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return error(id, ErrorCode::InvalidParams, e.to_string()),
+            };
+            let found = with_set_files(state, &p.uri, |set, files| {
+                edit::referrers(files, &p.id)
+                    .into_iter()
+                    .map(|(r, key)| {
+                        let (label, class) = set.tree.describe(r).unwrap_or((r, ""));
+                        let location = set.definition(r).map(|(file, el)| serde_json::json!({ "uri": file.url, "range": el.head }));
+                        serde_json::json!({
+                            "id": r, "label": label, "class": class, "key": key,
+                            "place": set.tree.containers(r).join(" › "), "location": location,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            });
+            Ok(serde_json::json!(found.unwrap_or_default()))
+        }
         FIXES => {
             #[derive(serde::Deserialize)]
             struct Params {
@@ -471,7 +441,7 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
                 let missing = findings.into_iter().map(|(property, rule, message)| (p.id.clone(), property, (rule, message))).collect();
                 // Add where the object is defined, as it is written there.
                 let home = set.definition(&p.id).map(|(f, _)| f.url.clone()).unwrap_or_else(|| p.uri.clone());
-                fixes(set, files, &home, missing)
+                let mut out: Vec<serde_json::Value> = fixes(set, files, &home, missing)
                     .into_iter()
                     .map(|f| {
                         let detail: Vec<&str> = f.fixes.iter().map(|(_, m)| m.as_str()).collect();
@@ -480,7 +450,13 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
                             "uri": f.url, "select": f.select.map(|(r, _)| r),
                         })
                     })
-                    .collect::<Vec<_>>()
+                    .collect();
+                // References to nothing, or to what the set lacks, which no finding may report.
+                out.extend(edit::reference_fixes(files, &set.tree, &p.id, None).into_iter().map(|f| {
+                    let detail = if f.empty { format!("{} names nothing", f.key) } else { format!("{} names an object the set does not have", f.key) };
+                    serde_json::json!({ "title": f.title, "detail": detail, "edit": change(&f.url, f.edit), "uri": f.url, "select": null })
+                }));
+                out
             });
             Ok(serde_json::json!(found.unwrap_or_default()))
         }

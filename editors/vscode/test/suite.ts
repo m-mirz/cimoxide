@@ -86,18 +86,49 @@ test("the tree's equipment icons are files in the extension", async () => {
   }
 });
 
-test("an object's code actions: add in it, delete it (resolved: every file)", async () => {
+type Hit = { id: string; label: string; class: string; place: string };
+
+test("deleting is the tree's: it reaches every file; the editor offers none", async () => {
   const doc = await workspace.openTextDocument(eq);
   const at = idBefore(doc, "<cim:IdentifiedObject.name>110.0<");
-  const actions = await commands.executeCommand<CodeAction[]>("vscode.executeCodeActionProvider", eq, new Range(at, at), undefined, 10);
-  const titles = actions.map((a) => a.title);
-  assert.ok(titles.includes("Add… in VoltageLevel 110.0"), titles.join(" | "));
-  const del = actions.find((a) => a.title.startsWith("Delete VoltageLevel 110.0 and"));
-  assert.ok(del?.edit, titles.join(" | "));
-  assert.ok(del.edit.entries().length >= 3, `the deletion reaches ${del.edit.entries().length} file(s)`);
-  // And then opens what it changed, for review.
-  assert.strictEqual(del.command?.command, "cimoxide.openEdited");
-  assert.strictEqual((del.command.arguments?.[0] as string[]).length, del.edit.entries().length);
+  const actions = await commands.executeCommand<CodeAction[]>("vscode.executeCodeActionProvider", eq, new Range(at, at));
+  assert.ok(!actions.some((a) => /^(Delete|Add…)/.test(a.title)), actions.map((a) => a.title).join(" | "));
+  const vl = (await api.request<Hit[]>("cimoxide/search", { uri: eq.toString(), query: "110.0" }))
+    .find((h) => h.class === "VoltageLevel" && h.place === "PP_Brussels");
+  assert.ok(vl, "no 110 kV level in PP_Brussels");
+  const del = await api.request<{ edit: { documentChanges: unknown[] } }>("cimoxide/delete", { uri: eq.toString(), id: vl.id, dependents: true });
+  assert.ok(del.edit.documentChanges.length >= 3, `the deletion reaches ${del.edit.documentChanges.length} file(s)`);
+});
+
+test("Referenced by lists what refers to an object", async () => {
+  const tr = (await api.request<Hit[]>("cimoxide/search", { uri: eq.toString(), query: "BE-TR2_1" })).find((h) => h.class === "PowerTransformer");
+  assert.ok(tr);
+  const refs = await api.request<(Hit & { key: string })[]>("cimoxide/referrers", { uri: eq.toString(), id: tr.id });
+  const classes = new Set(refs.map((r) => r.class));
+  assert.ok(classes.has("Terminal") && classes.has("PowerTransformerEnd"), refs.map((r) => `${r.class} ${r.key}`).join(", "));
+});
+
+test("a reference to nothing gets the likeliest objects to name, from the tree and in the editor", async () => {
+  const doc = await workspace.openTextDocument(eq);
+  const text = doc.getText();
+  const field = '<cim:Terminal.ConnectivityNode rdf:resource="#';
+  const start = text.indexOf(field) + field.length;
+  const end = text.indexOf('"', start);
+  const at = doc.positionAt(start);
+  const terminal = idBefore(doc, text.slice(text.indexOf(field), text.indexOf(field) + 10));
+  const id = doc.lineAt(terminal.line).text.match(/rdf:ID="([^"]+)"/)?.[1];
+  assert.ok(id);
+  const blank = new WorkspaceEdit();
+  blank.delete(eq, new Range(at, doc.positionAt(end)));
+  assert.ok(await workspace.applyEdit(blank));
+  await doc.save();
+  const fixes = await until("the tree's fixes for the emptied reference", async () => {
+    const f = await api.request<{ title: string }[]>("cimoxide/fixes", { uri: eq.toString(), id });
+    return f.some((x) => x.title.startsWith("Set Terminal.ConnectivityNode to ConnectivityNode")) ? f : undefined;
+  });
+  assert.ok(fixes.length >= 1);
+  const actions = await commands.executeCommand<CodeAction[]>("vscode.executeCodeActionProvider", eq, new Range(at, at));
+  assert.ok(actions.some((a) => a.title.startsWith("Set Terminal.ConnectivityNode to ConnectivityNode")), actions.map((a) => a.title).join(" | "));
 });
 
 test("a file changed on disk, unopened, is revalidated", async () => {
