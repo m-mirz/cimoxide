@@ -367,8 +367,10 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
                 Ok(p) => p,
                 Err(e) => return error(id, ErrorCode::InvalidParams, e.to_string()),
             };
+            // VS Code resolves every action without an edit: one that runs a
+            // command (Add…) or has its edit already needs nothing more.
             let Some(p) = action.data.clone().and_then(|d| serde_json::from_value::<DeleteParams>(d).ok()) else {
-                return error(id, ErrorCode::InvalidParams, "not a cimoxide action".into());
+                return Response::new_ok(id, action);
             };
             action.edit = deletion(state, &p).map(|(d, _)| d.edit);
             serde_json::to_value(action)
