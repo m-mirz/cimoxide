@@ -669,7 +669,6 @@ function draw(previous?: Shown): void {
     elements: els,
     style: stylesheet(),
     layout: { name: "preset" },
-    wheelSensitivity: 0.3,
     // Large grids: draw a snapshot while panning and zooming.
     textureOnViewport: els.length > 3000,
     hideEdgesOnViewport: els.length > 3000,
