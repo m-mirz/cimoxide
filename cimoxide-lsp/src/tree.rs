@@ -23,7 +23,7 @@ use crate::grid::{Counts, Grid, Model};
 use crate::validate::ModelSet;
 
 /// The fields that name an object's container, the first written winning.
-const CONTAINED: &[&str] = &[
+pub const CONTAINED: &[&str] = &[
     "SubGeographicalRegion.Region",
     "Substation.Region",
     "Line.Region",
@@ -312,6 +312,19 @@ impl Tree {
             What::Group { section, class } => format!("{section}/{class}"),
             What::Object { object, forest } => format!("{forest}/{}", self.objects[object as usize].id),
         }
+    }
+
+    /// What object `id` holds directly.
+    pub fn children(&self, id: &str) -> Vec<&str> {
+        let Some(n) = self.by_id.get(id).and_then(|&o| self.objects[o as usize].contained) else { return Vec::new() };
+        self.nodes[n as usize]
+            .children
+            .iter()
+            .filter_map(|&c| match self.nodes[c as usize].what {
+                What::Object { object, .. } => Some(self.objects[object as usize].id.as_str()),
+                _ => None,
+            })
+            .collect()
     }
 
     /// What object `id` holds, at any depth: its subtree in the containment.

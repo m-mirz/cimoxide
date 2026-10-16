@@ -31,6 +31,8 @@ import { Reveal, revealInGrid } from "./gridView";
 const TREE_REQUEST = "cimoxide/tree";
 const PATH_REQUEST = "cimoxide/treePath";
 const DELETE_REQUEST = "cimoxide/delete";
+const ADDABLE_REQUEST = "cimoxide/addable";
+const ADD_REQUEST = "cimoxide/add";
 const VIEW = "cimoxide.model";
 /** The scheme of the tree items' `resourceUri`, which carries their findings to the badge. */
 const SCHEME = "cimoxide-tree";
@@ -294,6 +296,45 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
     const edit = await c.protocol2CodeConverter.asWorkspaceEdit(found.edit as never);
     if (edit) await workspace.applyEdit(edit, { isRefactoring: true });
   };
+  // Adding asks for the class, from those the containment puts in the
+  // object, then for a name; the server writes the object, and validation
+  // asks for what else it needs, which the quick fixes add.
+  const addIn = async (arg?: { id?: string; uri?: string; label?: string; class?: string }): Promise<void> => {
+    const c = client();
+    const uri = arg?.uri ?? tree.uri?.toString();
+    if (!c || !uri || !arg?.id) return;
+    const where = arg.class ? `${arg.class} ${arg.label}` : (arg.label ?? arg.id);
+    const classes = await c.sendRequest<{ class: string; key: string; comment: string }[]>(ADDABLE_REQUEST, { uri, id: arg.id });
+    if (!classes.length) {
+      window.showInformationMessage(`cimoxide: nothing is held in ${where}.`);
+      return;
+    }
+    const pick = await window.showQuickPick(
+      classes.map((x) => ({ label: x.class, description: x.key, detail: x.comment || undefined })),
+      { placeHolder: `Add in ${where}`, matchOnDescription: true },
+    );
+    if (!pick) return;
+    const name = await window.showInputBox({
+      prompt: `IdentifiedObject.name of the new ${pick.label}`,
+      placeHolder: "Empty: name it later",
+    });
+    if (name === undefined) return;
+    let added: { edit: unknown; uri: string; select: Location["range"] };
+    try {
+      added = await c.sendRequest(ADD_REQUEST, { uri, parent: arg.id, class: pick.label, name });
+    } catch (e) {
+      window.showErrorMessage(`cimoxide: ${e instanceof Error ? e.message : e}`);
+      return;
+    }
+    const edit = await c.protocol2CodeConverter.asWorkspaceEdit(added.edit as never);
+    if (!edit || !(await workspace.applyEdit(edit))) return;
+    const doc = await workspace.openTextDocument(Uri.parse(added.uri));
+    const { start, end } = added.select;
+    await window.showTextDocument(doc, {
+      viewColumn: ViewColumn.One,
+      selection: new Range(start.line, start.character, end.line, end.character),
+    });
+  };
   // Renaming is the editor's: put the cursor on the object's start tag and ask for it.
   const rename = async (e: Entry | undefined): Promise<void> => {
     if (!e?.location) return;
@@ -324,6 +365,7 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
     commands.registerCommand("cimoxide.model.delete", (e?: Entry) => remove(e, false)),
     commands.registerCommand("cimoxide.model.deleteAll", (e?: Entry) => remove(e, true)),
     commands.registerCommand("cimoxide.model.rename", (e?: Entry) => rename(e)),
+    commands.registerCommand("cimoxide.model.add", (e?: Entry | { id: string; uri: string; label: string }) => addIn(e)),
     window.registerFileDecorationProvider({ provideFileDecoration: decoration }),
     window.onDidChangeActiveTextEditor((ed) => follow(ed?.document.uri, ed?.document.languageId)),
     // Findings change with every validation, and the set is there after the first.

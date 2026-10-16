@@ -30,6 +30,12 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
   context menu) deletes it from every file with the references to it, or with everything it holds
   (a voltage level's bays, equipment, terminals, …); the edit opens in the refactoring preview
   first. Both change the files as written and nothing else, and are undone like any edit.
+- **Add an object** — *Add…* on an object in the *CIM Model* view, or under *Refactor…* on its
+  element: pick a class among those it can hold (equipment, bays and connectivity nodes in a voltage
+  level; terminals, ends, limit sets on equipment, …) and a name. The object is written with a new
+  UUID, its mRID, name and container, in the file whose profile carries it, after what the
+  container already holds, with an empty element for its SSH part; its name is selected. What else
+  it needs shows as findings, which the quick fixes below complete.
 - **Quick fixes** — on a finding that a field is missing (*Quick Fix…*, Ctrl+.): add it, to the
   file whose profile carries it (an SSH attribute to the SSH file, wherever the finding shows), with
   a value to type over, which is selected: `false`, `0`, an enumeration's first value or the object's

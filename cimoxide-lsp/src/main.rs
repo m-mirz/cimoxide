@@ -79,6 +79,15 @@ const TREE_PATH: &str = "cimoxide/treePath";
 /// holds ([`edit::delete`]): `{ "edit", "label", "objects", "references" }`.
 const DELETE: &str = "cimoxide/delete";
 
+/// `cimoxide/addable` `{ "uri", "id" }`: the classes whose objects can be
+/// added in object `id` ([`edit::addable`]): `[{ "class", "key", "comment" }]`.
+const ADDABLE: &str = "cimoxide/addable";
+
+/// `cimoxide/add` `{ "uri", "parent", "class", "name"? }`: the edit adding an
+/// object of `class` in `parent` ([`edit::add`]): `{ "edit", "uri", "select",
+/// "id" }`.
+const ADD: &str = "cimoxide/add";
+
 /// How long a burst of triggers is gathered before a set is validated.
 const DEBOUNCE: Duration = Duration::from_millis(300);
 
@@ -331,6 +340,19 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
                         ..Default::default()
                     })
                 };
+                // Adding in it is the extension's dialogue: class, then name.
+                if !edit::addable(files, &el.mrid).is_empty() {
+                    out.push(CodeActionOrCommand::CodeAction(CodeAction {
+                        title: format!("Add… in {what}"),
+                        kind: Some(CodeActionKind::REFACTOR),
+                        command: Some(lsp_types::Command {
+                            title: "Add".into(),
+                            command: "cimoxide.model.add".into(),
+                            arguments: Some(vec![serde_json::json!({ "uri": uri, "id": el.mrid, "label": what })]),
+                        }),
+                        ..Default::default()
+                    }));
+                }
                 out.push(action(format!("Delete {what}"), false));
                 if held > 0 {
                     out.push(action(format!("Delete {what} and the {held} objects it holds"), true));
@@ -349,6 +371,42 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
             };
             action.edit = deletion(state, &p).map(|(d, _)| d.edit);
             serde_json::to_value(action)
+        }
+        ADDABLE => {
+            #[derive(serde::Deserialize)]
+            struct Params {
+                uri: Url,
+                id: String,
+            }
+            let p: Params = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return error(id, ErrorCode::InvalidParams, e.to_string()),
+            };
+            let classes = with_set_files(state, &p.uri, |_, files| {
+                edit::addable(files, &p.id)
+                    .into_iter()
+                    .map(|a| serde_json::json!({ "class": a.class.local, "key": a.key, "comment": a.class.comment }))
+                    .collect::<Vec<_>>()
+            });
+            Ok(serde_json::json!(classes.unwrap_or_default()))
+        }
+        ADD => {
+            #[derive(serde::Deserialize)]
+            struct Params {
+                uri: Url,
+                parent: String,
+                class: String,
+                name: Option<String>,
+            }
+            let p: Params = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return error(id, ErrorCode::InvalidParams, e.to_string()),
+            };
+            match with_set_files(state, &p.uri, |set, files| edit::add(files, &set.tree, &p.parent, &p.class, p.name.as_deref())) {
+                Some(Ok(a)) => Ok(serde_json::json!({ "edit": a.edit, "uri": a.url, "select": a.select, "id": a.id })),
+                Some(Err(e)) => return error(id, ErrorCode::RequestFailed, e),
+                None => return error(id, ErrorCode::RequestFailed, "the model set has not been validated yet".into()),
+            }
         }
         DELETE => {
             let p: DeleteParams = match serde_json::from_value(req.params) {
