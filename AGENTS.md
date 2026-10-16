@@ -288,7 +288,9 @@ with the grid from the same model: Geographical, each object under the target of
 areas; Not contained, the rest of that forest by class, so Geographical and Not contained hold each
 object once; By class, every object. A parent the set lacks is an object of its own. Each node
 counts its subtree's findings; a level of more than `PAGE` children is split by class, then in
-pages. Each object carries `Grid::reveal`, where the grid view shows it. `Tree::path` gives the keys
+pages. Each object carries `Grid::reveal`, where the grid view shows it. `Tree::search` matches names and mRIDs
+over every object (`cimoxide/search`, the tree's search; `cimoxide/treePathOf` reveals a hit by id,
+for files no editor has). `Tree::path` gives the keys
 down to an object, those class groups and pages included (`cimoxide/treePath`, for the view to
 reveal the object at the cursor), and `Tree::containers` the outline's container labels
 (`micro_grid_tree`).
