@@ -1,5 +1,5 @@
 //! Edits across a model set, as text edits for the client to apply: renaming
-//! an mRID and deleting objects. They change the files as written, keeping
+//! an mRID, deleting objects and adding a field a finding says is missing. They change the files as written, keeping
 //! everything else of them, and reach every file of the set: an object's
 //! EQ, SSH and SV elements and every reference to it.
 //!
@@ -13,6 +13,10 @@ use lsp_types::{
     TextDocumentEdit, TextEdit, Url, WorkspaceEdit,
 };
 
+use cimmodel::base::AttrKind;
+use cimmodel::registry::type_registry;
+
+use crate::features::class_of;
 use crate::index::{IdKind, Index, LineIndex, contains, local};
 
 /// One file of the set, as it is now.
@@ -156,6 +160,102 @@ pub fn delete(files: &[File], ids: &HashSet<&str>, label: &str) -> Deletion {
     }
 }
 
+/// A field to add: where, and where its value is once added.
+pub struct Addition {
+    pub url: Url,
+    pub edit: TextEdit,
+    /// The inserted value (or where it goes), to select after the edit.
+    pub value: Range,
+}
+
+/// The profile codes `file`'s header declares (`md:Model.profile`,
+/// `dcterms:conformsTo`), by the schemas' profile tables.
+fn profiles(file: &File) -> Vec<&'static str> {
+    let reg = type_registry();
+    let tables: Vec<&[(&str, &str)]> = ["cgmes", "nc"].iter().filter_map(|f| reg.schema(f)).map(|s| s.profiles).collect();
+    let Some(header) = file.index.elements.iter().find(|e| matches!(local(&e.qname), "FullModel" | "Dataset" | "DifferenceModel")) else { return Vec::new() };
+    header
+        .fields
+        .iter()
+        .filter(|f| matches!(f.key(), "Model.profile" | "conformsTo"))
+        .filter_map(|f| match &f.resource {
+            Some((uri, _)) => Some(uri.as_str()),
+            None => file.field_text(f.head, f.full, &f.qname).map(|(t, _)| t.trim()),
+        })
+        .filter_map(|uri| tables.iter().flat_map(|t| t.iter()).find(|(_, u)| *u == uri).map(|(code, _)| *code))
+        .collect()
+}
+
+/// Add field `key` to object `id`, which writes it nowhere: in the file
+/// (`prefer` first) whose profile carries it and that writes the object,
+/// after its last field, with a value to type over — the object's mRID for
+/// `IdentifiedObject.mRID`, `false`, `0`, an enumeration's first value, or
+/// none. `None` if a file writes it already, its class does not declare
+/// it, or no file fits.
+pub fn add_missing(files: &[File], prefer: &Url, id: &str, key: &str) -> Option<Addition> {
+    let reg = type_registry();
+    let sites: Vec<(&File, &crate::index::Element)> =
+        files.iter().flat_map(|f| f.index.elements.iter().filter(|e| e.mrid == id).map(move |e| (f, e))).collect();
+    if sites.iter().any(|(_, e)| e.fields.iter().any(|f| f.key() == key)) {
+        return None;
+    }
+    let (def_file, def) = sites.iter().max_by_key(|(_, e)| e.id_kind == Some(IdKind::Id))?;
+    let class = class_of(def_file.index, &def.qname)?;
+    let attr = reg.attr(class, key).filter(|a| a.used)?;
+    let fits = |f: &File| {
+        let declared = profiles(f);
+        declared.is_empty() || attr.origins.is_empty() || declared.iter().any(|p| attr.origins.contains(p))
+    };
+    let (file, el) = sites
+        .iter()
+        .filter(|(f, _)| fits(f))
+        .min_by_key(|(f, e)| (f.url != prefer, e.id_kind != Some(IdKind::Id)))?;
+    let tag = format!("{}:{}", file.index.prefix_of(attr.ns)?, attr.id);
+    let (open, value, close) = match attr.kind {
+        AttrKind::Literal => {
+            let value = match (attr.id, attr.xsd) {
+                ("IdentifiedObject.mRID", _) => id.strip_prefix('_').unwrap_or(id).to_string(),
+                (_, "boolean") => "false".into(),
+                (_, "double" | "float" | "decimal" | "integer" | "int" | "long" | "short") => "0".into(),
+                _ => String::new(),
+            };
+            (format!("<{tag}>"), value, format!("</{tag}>"))
+        }
+        AttrKind::Association => (format!("<{tag} rdf:resource=\"#"), String::new(), "\" />".into()),
+        AttrKind::Enum => {
+            let first = reg.family_of(class.qualified).and_then(|f| reg.schema(f)).and_then(|s| s.enumeration(attr.range)).and_then(|e| e.values.first());
+            (format!("<{tag} rdf:resource=\"{}", attr.value_ns), first.map_or(String::new(), |v| v.id.to_string()), "\" />".into())
+        }
+    };
+    // On a line of its own after the last field, indented as it is; else
+    // inside the element, a step in from it.
+    let (text, lines) = (file.text, file.lines);
+    let indent_of = |r: Range| {
+        let start = lines.offset(text, Position::new(r.start.line, 0));
+        let at = lines.offset(text, r.start);
+        text[start..at].chars().take_while(|c| c.is_whitespace()).collect::<String>()
+    };
+    let (at, indent) = match el.fields.last() {
+        Some(f) => (f.full.end, indent_of(f.head)),
+        None => {
+            let end = lines.offset(text, el.full.end);
+            let closing = end.checked_sub(el.qname.len() + 3).filter(|&c| text.get(c..end) == Some(&format!("</{}>", el.qname)))?;
+            (lines.position(text, closing), format!("{}  ", indent_of(el.head)))
+        }
+    };
+    // Lines end as the file's do.
+    let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let new_text = if el.fields.is_empty() {
+        format!("  {open}{value}{close}{eol}{}", indent_of(el.head))
+    } else {
+        format!("{eol}{indent}{open}{value}{close}")
+    };
+    let utf16 = |s: &str| s.encode_utf16().count() as u32;
+    let start = if el.fields.is_empty() { Position::new(at.line, at.character + 2 + utf16(&open)) } else { Position::new(at.line + 1, utf16(&indent) + utf16(&open)) };
+    let value_range = Range::new(start, Position::new(start.line, start.character + utf16(&value)));
+    Some(Addition { url: file.url.clone(), edit: TextEdit::new(Range::new(at, at), new_text), value: value_range })
+}
+
 /// How an object is named in a title: its class and name, else mRID.
 pub fn describe(files: &[File], id: &str) -> String {
     let el = files.iter().flat_map(|f| &f.index.elements).filter(|e| e.mrid == id).max_by_key(|e| e.id_kind == Some(IdKind::Id));
@@ -226,6 +326,45 @@ mod tests {
             assert!(rename(files, "_b1", "a b").is_err());
             assert!(rename(files, "_b1", "1b").is_err());
         });
+    }
+
+    #[test]
+    fn adds_a_missing_field_where_its_profile_is() {
+        let header = |p: &str| format!(r#"  <md:FullModel rdf:about="urn:uuid:{p}">
+    <md:Model.profile>http://iec.ch/TC57/ns/CIM/{p}/3.0</md:Model.profile>
+  </md:FullModel>
+"#);
+        let with_header = |text: &str, p: &str| {
+            text.replacen(r#"xmlns:rdf"#, r#"xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#" xmlns:rdf"#, 1)
+                .replacen(">\n", &format!(">\n{}", header(p)), 1)
+        };
+        let texts = [with_header(EQ, "CoreEquipment-EU"), with_header(SSH, "SteadyStateHypothesis-EU")];
+        let urls = [Url::parse("file:///m/EQ.xml").unwrap(), Url::parse("file:///m/SSH.xml").unwrap()];
+        let lines: Vec<LineIndex> = texts.iter().map(|t| LineIndex::new(t)).collect();
+        let indexes: Vec<Index> = texts.iter().map(|t| Index::build(t)).collect();
+        let files: Vec<File> = (0..2).map(|i| File { url: &urls[i], text: &texts[i], lines: &lines[i], index: &indexes[i] }).collect();
+        let added = |id: &str, key: &str| {
+            let a = add_missing(&files, &urls[0], id, key)?;
+            let i = urls.iter().position(|u| *u == a.url).unwrap();
+            let out = apply(&texts[i], vec![a.edit.clone()]);
+            let selected = apply(&out, vec![TextEdit::new(a.value, "|".into())]);
+            Some((i, out, selected))
+        };
+
+        // An SSH attribute goes to the SSH file, though asked from the EQ one.
+        let (i, out, selected) = added("_b1", "Equipment.inService").unwrap();
+        assert_eq!(i, 1);
+        assert!(out.contains("<cim:Switch.open>false</cim:Switch.open>\n    <cim:Equipment.inService>false</cim:Equipment.inService>\n  </cim:Breaker>"), "{out}");
+        assert!(selected.contains("<cim:Equipment.inService>|</cim:Equipment.inService>"), "{selected}");
+        // An EQ one to the EQ file; a reference left to fill in, an enumeration its first value.
+        let (i, _, selected) = added("_t1", "Terminal.ConnectivityNode").unwrap();
+        assert_eq!(i, 0);
+        assert!(selected.contains(r##"<cim:Terminal.ConnectivityNode rdf:resource="#|" />"##), "{selected}");
+        let (_, out, _) = added("_t1", "Terminal.phases").unwrap();
+        assert!(out.contains(r#"<cim:Terminal.phases rdf:resource="http://iec.ch/TC57/CIM100#PhaseCode."#), "{out}");
+        // Written already, or not the class's.
+        assert!(added("_b1", "Switch.open").is_none());
+        assert!(added("_b1", "ACLineSegment.r").is_none());
     }
 
     #[test]

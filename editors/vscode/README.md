@@ -30,6 +30,10 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
   context menu) deletes it from every file with the references to it, or with everything it holds
   (a voltage level's bays, equipment, terminals, …); the edit opens in the refactoring preview
   first. Both change the files as written and nothing else, and are undone like any edit.
+- **Quick fixes** — on a finding that a field is missing (*Quick Fix…*, Ctrl+.): add it, to the
+  file whose profile carries it (an SSH attribute to the SSH file, wherever the finding shows), with
+  a value to type over, which is selected: `false`, `0`, an enumeration's first value, the object's
+  own mRID, or nothing yet for a reference. With several missing on one object, one fix adds them all.
 - **Completion** — after `<`: the attributes of the enclosing object's class (inherited ones
   included), or the classes of the document's namespace between objects.
 - **Grid view** — *cimoxide: Show grid* (or the button in the editor title) draws the model

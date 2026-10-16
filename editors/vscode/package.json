@@ -103,6 +103,11 @@
         "command": "cimoxide.model.deleteAll",
         "title": "Delete with what it holds",
         "category": "cimoxide"
+      },
+      {
+        "command": "cimoxide.select",
+        "title": "Select range",
+        "category": "cimoxide"
       }
     ],
     "views": {
@@ -213,6 +218,10 @@
         },
         {
           "command": "cimoxide.model.deleteAll",
+          "when": "false"
+        },
+        {
+          "command": "cimoxide.select",
           "when": "false"
         }
       ],
