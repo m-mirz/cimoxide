@@ -13,7 +13,8 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
   value's definition, and the class and name of the object an `rdf:resource` points to.
 - **Go to definition / find references** — follow `rdf:resource="#_…"` across the files
   of the model set.
-- **Outline** — every object in the document, labelled by `IdentifiedObject.name`.
+- **Outline** — every object in the document, labelled by `IdentifiedObject.name`, with its
+  class and containers (`Breaker · PP_Brussels › 110.0 › Bay 3`).
 - **CIM Model** (in the Explorer) — the active document's model set as a tree: *Geographical*,
   regions down through substations, voltage levels, bays and equipment to terminals, limits and
   state variables; *Operational*, control and load areas; *Not contained*, what no container
@@ -21,7 +22,8 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
   missing (an IGM without its boundary set) is listed by its mRID. Each node shows the number of
   findings below it, in the colour of the worst; the filter button keeps only those with findings.
   Click to open where an object is written; *Show in grid* selects it in the grid view, inside its
-  substation where it has one.
+  substation where it has one. *Reveal in CIM Model* (editor context menu) selects the object at the
+  cursor; `cimoxide.model.followCursor` does so as the cursor moves.
 - **Completion** — after `<`: the attributes of the enclosing object's class (inherited ones
   included), or the classes of the document's namespace between objects.
 - **Grid view** — *cimoxide: Show grid* (or the button in the editor title) draws the model
@@ -53,6 +55,7 @@ Validation runs when a document is opened and saved; turn on
 | `cimoxide.validation.onType` | revalidate while typing |
 | `cimoxide.schema.rdfsDir` / `cimoxide.schema.shaclDir` | load RDFS / SHACL at runtime instead of the built-in tables |
 | `cimoxide.server.path` | use another `cimlsp` binary |
+| `cimoxide.model.followCursor` | select the object at the cursor in the *CIM Model* view |
 | `cimoxide.mcp.enabled` | offer the `cimmcp` MCP server to chat |
 | `cimoxide.mcp.path` | use another `cimmcp` binary |
 

@@ -246,9 +246,12 @@ pub fn symbols(view: &View) -> Vec<DocumentSymbol> {
                     children: None,
                 })
                 .collect();
+            // Its class, and where it is: `Breaker · PP_Brussels › 110.0 › Bay 3`.
+            let containers = view.set.map(|s| s.tree.containers(&el.mrid)).unwrap_or_default();
+            let detail = if containers.is_empty() { class.to_string() } else { format!("{class} · {}", containers.join(" › ")) };
             DocumentSymbol {
                 name,
-                detail: Some(class.to_string()),
+                detail: Some(detail),
                 kind: SymbolKind::OBJECT,
                 tags: None,
                 deprecated: None,
