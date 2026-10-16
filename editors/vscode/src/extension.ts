@@ -14,6 +14,7 @@ import {
   lm,
   McpStdioServerDefinition,
   Position,
+  Uri,
   window,
   workspace,
 } from "vscode";
@@ -121,7 +122,7 @@ export async function activate(context: ExtensionContext): Promise<void> {
   registerMcp(context);
   registerModelTree(context, () => client);
   context.subscriptions.push(
-    commands.registerCommand("cimoxide.showGrid", () => showGrid(context, client)),
+    commands.registerCommand("cimoxide.showGrid", (uri?: Uri) => showGrid(context, client, uri)),
     // After a quick fix adds a field: select its value, to type over; for a
     // reference, list what it can name.
     commands.registerCommand("cimoxide.select", async (uri: string, range: { start: Position; end: Position }, suggest?: boolean) => {

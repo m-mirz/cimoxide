@@ -507,10 +507,18 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
 }
 
 /// `cimoxide.revalidate [uri]`: the set of the given document, else of
-/// every open CIM document.
+/// every open CIM document. The given one need not be open: VS Code hands no
+/// file over 50 MB to an extension, so the client asks for its set by name.
 fn revalidate(state: &Shared, jobs: &Sender<PathBuf>, args: &[serde_json::Value]) {
     let st = state.lock().unwrap();
     let wanted: Option<Url> = args.first().and_then(|a| a.as_str()).and_then(|s| Url::parse(s).ok());
+    if let Some(w) = &wanted
+        && !st.docs.contains_key(w)
+        && let Some(dir) = w.to_file_path().ok().and_then(|p| p.parent().map(PathBuf::from))
+    {
+        jobs.send(dir).ok();
+        return;
+    }
     let dirs: HashSet<PathBuf> = st
         .docs
         .iter()

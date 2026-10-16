@@ -15,7 +15,7 @@ import {
   window,
 } from "vscode";
 import { LanguageClient } from "vscode-languageclient/node";
-import { openAt } from "./open";
+import { activeFile, openAt, validateSet } from "./open";
 
 /** A place in a file, as the server sends it. */
 interface Location {
@@ -47,13 +47,14 @@ const SUBSTATION_REQUEST = "cimoxide/substation";
 /** One panel per model set, by directory. */
 const panels = new Map<string, GridPanel>();
 
-export async function showGrid(context: ExtensionContext, client: LanguageClient | undefined): Promise<void> {
-  const editor = window.activeTextEditor;
-  if (!client || !editor || editor.document.uri.scheme !== "file") {
+/** Show the grid of `uri`'s model set (the editor title button passes it), else the active tab's. */
+export async function showGrid(context: ExtensionContext, client: LanguageClient | undefined, uri?: Uri): Promise<void> {
+  const file = uri?.scheme === "file" ? uri : activeFile();
+  if (!client || !file) {
     window.showInformationMessage("cimoxide: open a CGMES or NC file to show its model set's grid.");
     return;
   }
-  await openGrid(context, client, editor.document.uri);
+  await openGrid(context, client, file);
 }
 
 /** Show the grid of `uri`'s model set with an object selected, or inside its substation. */
@@ -69,13 +70,15 @@ async function openGrid(context: ExtensionContext, client: LanguageClient, uri: 
     open.panel.reveal(undefined, true);
     return open;
   }
-  // A set is validated shortly after one of its files opens.
-  let grid: Grid | null = null;
-  for (let attempt = 0; attempt < 20 && !grid; attempt++) {
+  // A set is validated shortly after one of its files opens; one whose file
+  // VS Code keeps from the server (over 50 MB) only when asked.
+  let grid: Grid | null = await client.sendRequest<Grid | null>(GRID_REQUEST, { uri: uri.toString() });
+  if (!grid) {
+    await validateSet(client, uri);
+  }
+  for (let attempt = 0; attempt < 60 && !grid; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
     grid = await client.sendRequest<Grid | null>(GRID_REQUEST, { uri: uri.toString() });
-    if (!grid) {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
   }
   if (!grid) {
     window.showInformationMessage("cimoxide: this file's model set has not been validated; is it a CGMES or NC file?");
