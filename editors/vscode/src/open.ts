@@ -34,3 +34,15 @@ export function activeFile(): Uri | undefined {
 export async function validateSet(client: LanguageClient, uri: Uri): Promise<void> {
   await client.sendRequest("workspace/executeCommand", { command: "cimoxide.revalidate", arguments: [uri.toString()] });
 }
+
+/**
+ * Open the files an edit changed, each at its first change, in tabs behind
+ * the active one: an edit to a file no editor shows leaves it unsaved and
+ * unseen (and VS Code's Save All passes over one it never handed an
+ * extension, over 50 MB).
+ */
+export async function openEdited(uris: Uri[], at?: (uri: Uri) => Range | undefined): Promise<void> {
+  for (const uri of uris) {
+    await commands.executeCommand("vscode.open", uri, { preview: false, preserveFocus: true, selection: at?.(uri) });
+  }
+}

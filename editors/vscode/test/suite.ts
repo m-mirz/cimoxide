@@ -95,6 +95,21 @@ test("an object's code actions: add in it, delete it (resolved: every file)", as
   const del = actions.find((a) => a.title.startsWith("Delete VoltageLevel 110.0 and"));
   assert.ok(del?.edit, titles.join(" | "));
   assert.ok(del.edit.entries().length >= 3, `the deletion reaches ${del.edit.entries().length} file(s)`);
+  // And then opens what it changed, for review.
+  assert.strictEqual(del.command?.command, "cimoxide.openEdited");
+  assert.strictEqual((del.command.arguments?.[0] as string[]).length, del.edit.entries().length);
+});
+
+test("a file changed on disk, unopened, is revalidated", async () => {
+  const nl = file("_NL_EQ_");
+  assert.ok(!workspace.textDocuments.some((d) => d.uri.toString() === nl.toString()), "the NL file is open");
+  const text = fs.readFileSync(nl.fsPath, "utf8");
+  const at = text.indexOf("<cim:ACLineSegment.r>");
+  const start = text.lastIndexOf("\n", at);
+  fs.writeFileSync(nl.fsPath, text.slice(0, start) + text.slice(text.indexOf("\n", at)));
+  const code = (d: Diagnostic) => (typeof d.code === "object" ? d.code.value : d.code);
+  await until("the finding on the file changed on disk", () =>
+    languages.getDiagnostics(nl).find((d) => code(d) === "eq:ACLineSegment.r-cardinality"));
 });
 
 test("a quick fix adds a missing field and selects its value", async () => {

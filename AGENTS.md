@@ -231,7 +231,11 @@ has been measured at 20% for identical code).
 `cimlsp` over stdio (`lsp-server`/`lsp-types`, no async runtime). A *model set* is every CIM
 XML file in a document's directory, open buffers taking precedence over disk; it is
 validated with `validate_files` + `combined_config`, as `cimcli validate` does, on a worker
-thread with a 300 ms debounce. The decoder keeps no positions, so `src/index.rs` makes its
+thread with a 300 ms debounce, on open and save, and on `workspace/didChangeWatchedFiles` (the
+extension watches `**/*.xml`) for a set validated or open: VS Code hands no file over 50 MB to an
+extension, so the server sees neither its opening nor its saving, nor that of a file an edit
+changed unopened. A deletion's resolved code action (and the tree's *Delete*) then opens the files
+it changed (`cimoxide.openEdited`), as an edit leaves an unopened file unsaved and unseen. The decoder keeps no positions, so `src/index.rs` makes its
 own quick-xml pass per document (ranges of elements, fields, `rdf:resource` values; mRID =
 text after the last `#`, as in `decode.rs`). A per-file finding is placed only in the file it
 was found in (`validate_files_traced`). Each diagnostic's `data` carries `object_id`

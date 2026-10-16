@@ -34,7 +34,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::{
-    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, DidSaveTextDocument, LogMessage,
+    DidChangeTextDocument, DidChangeWatchedFiles, DidCloseTextDocument, DidOpenTextDocument, DidSaveTextDocument, LogMessage,
     Notification as _, PublishDiagnostics,
 };
 use lsp_types::request::{
@@ -235,6 +235,21 @@ fn handle_notification(state: &Shared, jobs: &Sender<PathBuf>, opts: &InitOption
             // Its diagnostics stay: the file is still part of its model set.
             st.docs.remove(&p.text_document.uri);
         }
+        // A file changed on disk, whoever wrote it: a save VS Code never told
+        // the server of (a file over 50 MB, one an edit changed unopened),
+        // another tool, a checkout. Its set, if validated or open, again.
+        DidChangeWatchedFiles::METHOD => {
+            let Ok(p) = serde_json::from_value::<lsp_types::DidChangeWatchedFilesParams>(n.params) else { return };
+            let dirs: HashSet<PathBuf> = p
+                .changes
+                .iter()
+                .filter_map(|c| c.uri.to_file_path().ok()?.parent().map(PathBuf::from))
+                .filter(|d| st.sets.contains_key(d) || st.docs.keys().any(|u| u.to_file_path().ok().and_then(|p| p.parent().map(PathBuf::from)).as_ref() == Some(d)))
+                .collect();
+            for dir in dirs {
+                jobs.send(dir).ok();
+            }
+        }
         _ => {}
     }
 }
@@ -373,6 +388,16 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
                 return Response::new_ok(id, action);
             };
             action.edit = deletion(state, &p).map(|(d, _)| d.edit);
+            // Then open what it changed, for review: a file it changed unopened
+            // would otherwise stay unsaved, unseen.
+            if let Some(lsp_types::DocumentChanges::Edits(edits)) = action.edit.as_ref().and_then(|e| e.document_changes.as_ref()) {
+                let files: Vec<&Url> = edits.iter().map(|e| &e.text_document.uri).collect();
+                action.command = Some(lsp_types::Command {
+                    title: "Open the files it changes".into(),
+                    command: "cimoxide.openEdited".into(),
+                    arguments: Some(vec![serde_json::json!(files)]),
+                });
+            }
             serde_json::to_value(action)
         }
         ADDABLE => {
