@@ -264,8 +264,10 @@ two of them as edges; each finding counted on its object's node or edge (`elsewh
 It is built from the set's datasets before validation consumes them. Each DL diagram and each GL
 coordinate system is a layout: a node is at the mean of the points of the objects it holds (else of
 its lines' ends), an edge follows its line's points. The automatic layout is computed here too (`src/layout.rs`:
-Fruchterman–Reingold with repulsion only between nodes in neighbouring grid cells, linear per
-iteration, deterministic), as Cytoscape's `cose` is quadratic and hangs on RealGrid; inside a
+each component by PivotMDS, which keeps graph distances, then local Fruchterman–Reingold with
+repulsion only between nodes in neighbouring grid cells; linear, deterministic; the tests check
+distance faithfulness on a ring and a lattice), as Cytoscape's `cose` is quadratic and hangs on
+RealGrid, and a force layout alone, multilevel included, leaves it folded; inside a
 substation the view still runs `cose`, which boxes the voltage levels. `cimoxide/substation` answers what one
 substation holds, built with the grid: its equipment and the connectivity (else topological) nodes
 their terminals end at, by voltage level, a terminal as a link; equipment reaching other nodes as
