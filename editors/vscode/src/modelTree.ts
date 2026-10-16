@@ -25,7 +25,7 @@ import {
 } from "vscode";
 import { LanguageClient } from "vscode-languageclient/node";
 import { Reveal, revealInGrid } from "./gridView";
-import { openAt } from "./open";
+import { activeFile, openAt, validateSet } from "./open";
 
 const TREE_REQUEST = "cimoxide/tree";
 const PATH_REQUEST = "cimoxide/treePath";
@@ -164,6 +164,8 @@ class ModelTree implements TreeDataProvider<Entry> {
 
   constructor(private readonly client: () => LanguageClient | undefined) {}
 
+  /** The directories whose sets the tree asked the server to validate. */
+  private readonly asked = new Set<string>();
   /** The node listing each node fetched, by key, for `reveal`. */
   private readonly parents = new Map<string, Entry | undefined>();
 
@@ -187,6 +189,12 @@ class ModelTree implements TreeDataProvider<Entry> {
     });
     for (const child of result ?? []) {
       this.parents.set(child.key, entry);
+    }
+    // Not validated yet: perhaps a file VS Code keeps from the server (over 50 MB).
+    const dir = path.dirname(this.uri.fsPath);
+    if (!result && !entry && !this.asked.has(dir)) {
+      this.asked.add(dir);
+      await validateSet(client, this.uri);
     }
     return result ?? [];
   }
@@ -257,7 +265,8 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
   let refresh: NodeJS.Timeout | undefined;
 
   const follow = (uri: Uri | undefined, languageId: string | undefined): void => {
-    if (!uri || !languageId || !isCim(uri, languageId)) return;
+    // A tab with no text editor (a file over 50 MB): an XML file by its name.
+    if (!uri || !(languageId ? isCim(uri, languageId) : activeFile()?.toString() === uri.toString())) return;
     if (tree.uri && path.dirname(tree.uri.fsPath) === path.dirname(uri.fsPath)) return;
     tree.uri = uri;
     view.description = path.basename(path.dirname(uri.fsPath));
@@ -344,6 +353,7 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
   };
 
   follow(window.activeTextEditor?.document.uri, window.activeTextEditor?.document.languageId);
+  if (!window.activeTextEditor) follow(activeFile(), undefined);
   context.subscriptions.push(
     view,
     { dispose: () => (clearTimeout(refresh), clearTimeout(cursor)) } as Disposable,
@@ -361,6 +371,9 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
     commands.registerCommand("cimoxide.model.add", (e?: Entry | { id: string; uri: string; label: string }) => addIn(e)),
     window.registerFileDecorationProvider({ provideFileDecoration: decoration }),
     window.onDidChangeActiveTextEditor((ed) => follow(ed?.document.uri, ed?.document.languageId)),
+    window.tabGroups.onDidChangeTabs(() => {
+      if (!window.activeTextEditor) follow(activeFile(), undefined);
+    }),
     // Findings change with every validation, and the set is there after the first.
     languages.onDidChangeDiagnostics((e) => {
       const dir = tree.uri && path.dirname(tree.uri.fsPath);
