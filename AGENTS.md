@@ -241,7 +241,9 @@ and `property`; its `code` is the `rule_id`. Diagnostics must stay equal to
 `cimoxide/grid` (`src/grid.rs`) answers the set's grid at substation level as last validated:
 substations, and boundary points no substation holds, as nodes; equipment whose terminals reach
 two of them as edges; each finding counted on its object's node or edge (`elsewhere` if none).
-It is built from the set's datasets before validation consumes them.
+It is built from the set's datasets before validation consumes them. Each DL diagram and each GL
+coordinate system is a layout: a node is at the mean of the points of the objects it holds (else of
+its lines' ends), an edge follows its line's points.
 
 The extension (`editors/vscode/`, TypeScript, `vscode-languageclient`) passes settings as
 initialization options and schema directories as `CIMOXIDE_*` environment variables, and

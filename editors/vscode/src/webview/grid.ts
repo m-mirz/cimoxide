@@ -39,12 +39,29 @@ interface GridEdge {
   location: Location | null;
 }
 
+/** Positions from one DL diagram or one GL coordinate system, as written. */
+interface Layout {
+  id: string;
+  name: string;
+  kind: "diagram" | "geographic";
+  flipY: boolean;
+  nodes: Record<string, [number, number]>;
+  /** Edge id → its route, from its source's end to its target's. */
+  edges: Record<string, [number, number][]>;
+}
+
 interface Grid {
   files: string[];
   nodes: GridNode[];
   edges: GridEdge[];
   elsewhere: Findings;
+  layouts: Layout[];
 }
+
+type Point = { x: number; y: number };
+
+/** The layout picked in this panel: a layout id, or "auto". */
+let chosen: string | undefined;
 
 let cy: Core | undefined;
 let grid: Grid | undefined;
@@ -55,6 +72,8 @@ style.textContent = `
   body { display: flex; flex-direction: column; color: var(--vscode-foreground); background: var(--vscode-editor-background);
          font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); }
   #bar { display: flex; gap: 12px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--vscode-panel-border); }
+  #layout { color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background);
+            border: 1px solid var(--vscode-dropdown-border, transparent); padding: 2px 4px; }
   #search { width: 220px; color: var(--vscode-input-foreground); background: var(--vscode-input-background);
             border: 1px solid var(--vscode-input-border, transparent); padding: 3px 6px; }
   #summary { color: var(--vscode-descriptionForeground); }
@@ -208,6 +227,114 @@ function open(target: NodeSingular | EdgeSingular): void {
   }
 }
 
+/** The layout to draw: the one picked, else the TSO's diagram, else the map, else automatic. */
+function choice(g: Grid): string {
+  if (chosen && (chosen === "auto" || g.layouts.some((l) => l.id === chosen))) {
+    return chosen;
+  }
+  return (g.layouts.find((l) => l.kind === "diagram") ?? g.layouts[0])?.id ?? "auto";
+}
+
+/** Screen coordinates of a layout's positions and routes, scaled to the grid's size. */
+function place(g: Grid, l: Layout): { nodes: Map<string, Point>; routes: Map<string, Point[]> } {
+  const raw = Object.values(l.nodes);
+  let project = (p: [number, number]): Point => ({ x: p[0], y: l.flipY ? -p[1] : p[1] });
+  if (l.kind === "geographic") {
+    // Longitude shrinks with latitude; north is up.
+    const lat = raw.reduce((a, p) => a + p[1], 0) / raw.length;
+    const k = Math.cos((lat * Math.PI) / 180);
+    project = (p) => ({ x: p[0] * k, y: -p[1] });
+  }
+  const points = raw.map(project);
+  const minX = Math.min(...points.map((p) => p.x));
+  const minY = Math.min(...points.map((p) => p.y));
+  const span = Math.max(Math.max(...points.map((p) => p.x)) - minX, Math.max(...points.map((p) => p.y)) - minY, 1e-9);
+  const scale = Math.max(900, 70 * Math.sqrt(g.nodes.length)) / span;
+  const screen = (p: [number, number]): Point => {
+    const q = project(p);
+    return { x: (q.x - minX) * scale, y: (q.y - minY) * scale };
+  };
+  const nodes = new Map(Object.entries(l.nodes).map(([id, p]) => [id, screen(p)]));
+  const routes = new Map(Object.entries(l.edges).map(([id, ps]) => [id, ps.map(screen)]));
+
+  // A node the layout does not place goes among its placed neighbours, else below the rest.
+  const neighbours = new Map<string, string[]>();
+  for (const e of g.edges) {
+    neighbours.set(e.source, [...(neighbours.get(e.source) ?? []), e.target]);
+    neighbours.set(e.target, [...(neighbours.get(e.target) ?? []), e.source]);
+  }
+  let missing = g.nodes.map((n) => n.id).filter((id) => !nodes.has(id));
+  for (let round = 0; round < 5 && missing.length; round++) {
+    missing.forEach((id, i) => {
+      const known = (neighbours.get(id) ?? []).map((n) => nodes.get(n)).filter((p): p is Point => !!p);
+      if (known.length) {
+        const angle = (i * 2.4) % (2 * Math.PI);
+        nodes.set(id, {
+          x: known.reduce((a, p) => a + p.x, 0) / known.length + 25 * Math.cos(angle),
+          y: known.reduce((a, p) => a + p.y, 0) / known.length + 25 * Math.sin(angle),
+        });
+      }
+    });
+    missing = missing.filter((id) => !nodes.has(id));
+  }
+  const bottom = Math.max(0, ...[...nodes.values()].map((p) => p.y)) + 80;
+  missing.forEach((id, i) => nodes.set(id, { x: (i % 20) * 50, y: bottom + Math.floor(i / 20) * 50 }));
+  return { nodes, routes };
+}
+
+/** Bend an edge along its route: Cytoscape's segment points, relative to the line between its nodes. */
+function route(edge: EdgeSingular, points: Point[]): void {
+  const s = edge.source().position();
+  const t = edge.target().position();
+  const dx = t.x - s.x;
+  const dy = t.y - s.y;
+  const length = Math.hypot(dx, dy);
+  const d = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
+  if (points.length < 3 || length < 1e-6) {
+    edge.removeStyle();
+    return;
+  }
+  // The route may run from the target's end.
+  const ordered = d(points[0], t) < d(points[0], s) ? [...points].reverse() : points;
+  const inner = ordered.slice(1, -1);
+  const weights = inner.map((p) => ((p.x - s.x) * dx + (p.y - s.y) * dy) / (length * length));
+  const distances = inner.map((p) => ((p.y - s.y) * dx - (p.x - s.x) * dy) / length);
+  edge.style({
+    "curve-style": "segments",
+    "edge-distances": "node-position",
+    "segment-weights": weights.join(" "),
+    "segment-distances": distances.join(" "),
+  });
+}
+
+function arrange(g: Grid): void {
+  if (!cy) return;
+  const id = choice(g);
+  const layout = g.layouts.find((l) => l.id === id);
+  cy.edges().removeStyle();
+  if (!layout) {
+    cy.layout({ name: "cose", animate: false, nodeRepulsion: () => 8000, idealEdgeLength: () => 60, numIter: g.nodes.length > 500 ? 400 : 1000 }).run();
+    return;
+  }
+  const { nodes, routes } = place(g, layout);
+  cy.layout({ name: "preset", positions: Object.fromEntries(nodes), fit: true, padding: 30 }).run();
+  for (const e of g.edges) {
+    const points = routes.get(e.id);
+    if (points) {
+      route(cy.getElementById(`e:${e.id}`) as EdgeSingular, points);
+    }
+  }
+}
+
+/** The layout picker: shown when the set has a diagram or locations. */
+function picker(g: Grid): void {
+  const select = document.getElementById("layout") as HTMLSelectElement;
+  const options = [...g.layouts.map((l) => [l.id, l.name]), ["auto", "Automatic"]];
+  select.innerHTML = options.map(([v, n]) => `<option value="${escape(v)}">${escape(n)}</option>`).join("");
+  select.value = choice(g);
+  select.style.display = g.layouts.length ? "" : "none";
+}
+
 function draw(g: Grid): void {
   const previous = grid;
   grid = g;
@@ -229,11 +356,13 @@ function draw(g: Grid): void {
     container: document.getElementById("graph"),
     elements: elements(g),
     style: stylesheet(),
-    layout: { name: "cose", animate: false, nodeRepulsion: () => 8000, idealEdgeLength: () => 60, numIter: g.nodes.length > 500 ? 400 : 1000 },
+    layout: { name: "preset" },
     wheelSensitivity: 0.3,
     minZoom: 0.05,
     maxZoom: 4,
   });
+  picker(g);
+  arrange(g);
   cy.on("select", "node, edge", (e) => show(e.target));
   cy.on("unselect", () => show(undefined));
   cy.on("dbltap", "node, edge", (e) => open(e.target));
@@ -242,6 +371,11 @@ function draw(g: Grid): void {
 
 // Restyle when the colour theme changes.
 new MutationObserver(() => cy?.style(stylesheet())).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+
+(document.getElementById("layout") as HTMLSelectElement).addEventListener("change", (e) => {
+  chosen = (e.target as HTMLSelectElement).value;
+  if (grid) arrange(grid);
+});
 
 (document.getElementById("search") as HTMLInputElement).addEventListener("input", (e) => {
   if (!cy) return;
