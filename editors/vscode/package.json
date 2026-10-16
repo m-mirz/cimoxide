@@ -83,6 +83,11 @@
         "command": "cimoxide.model.open",
         "title": "Open definition",
         "category": "cimoxide"
+      },
+      {
+        "command": "cimoxide.model.reveal",
+        "title": "Reveal in CIM Model",
+        "category": "cimoxide"
       }
     ],
     "views": {
@@ -168,6 +173,13 @@
           "command": "cimoxide.model.open",
           "when": "false"
         }
+      ],
+      "editor/context": [
+        {
+          "command": "cimoxide.model.reveal",
+          "when": "resourceLangId == xml && cimoxide.model.active",
+          "group": "navigation@90"
+        }
       ]
     },
     "mcpServerDefinitionProviders": [
@@ -226,6 +238,11 @@
           "type": "string",
           "default": "",
           "markdownDescription": "Path to a `cimmcp` binary. Empty: the one bundled with the extension, else `cimmcp` on `PATH`."
+        },
+        "cimoxide.model.followCursor": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Select the object at the cursor in the *CIM Model* view as the cursor moves. *cimoxide: Reveal in CIM Model* does it once."
         },
         "cimoxide.trace.server": {
           "type": "string",

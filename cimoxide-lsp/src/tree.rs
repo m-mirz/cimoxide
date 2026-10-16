@@ -96,6 +96,8 @@ const AREAS: &[&str] = &["ControlArea", "LoadArea"];
 /// Children a node lists at once; more are grouped in ranges of this size.
 const PAGE: usize = 500;
 
+const NONE: u32 = u32::MAX;
+
 /// The class of a group of parents the set lacks.
 const MISSING: &str = "";
 
@@ -122,6 +124,8 @@ enum What {
 struct Node {
     what: What,
     children: Vec<u32>,
+    /// The node listing it; [`NONE`] for a section.
+    parent: u32,
     findings: Counts,
 }
 
@@ -255,6 +259,9 @@ fn grow(t: &mut Tree, children: &FastMap<u32, Vec<u32>>, o: u32, name: char) -> 
             stack.push((cn, c));
         }
         t.sort(&mut kids);
+        for &k in &kids {
+            t.nodes[k as usize].parent = n;
+        }
         t.nodes[n as usize].children = kids;
     }
     root
@@ -270,7 +277,7 @@ impl Tree {
 
     fn node(&mut self, o: u32, forest: char) -> u32 {
         let n = self.nodes.len() as u32;
-        self.nodes.push(Node { what: What::Object { object: o, forest }, children: Vec::new(), findings: Counts::default() });
+        self.nodes.push(Node { what: What::Object { object: o, forest }, children: Vec::new(), parent: NONE, findings: Counts::default() });
         let obj = &mut self.objects[o as usize];
         if forest == 'c' { obj.contained = Some(n) } else { obj.operational = Some(n) }
         n
@@ -278,16 +285,85 @@ impl Tree {
 
     fn section(&mut self, key: &'static str, label: &'static str, children: Vec<u32>) -> u32 {
         let n = self.nodes.len() as u32;
-        self.nodes.push(Node { what: What::Section { key, label }, children, findings: Counts::default() });
+        for &c in &children {
+            self.nodes[c as usize].parent = n;
+        }
+        self.nodes.push(Node { what: What::Section { key, label }, children, parent: NONE, findings: Counts::default() });
         self.named.insert(key.into(), n);
         n
     }
 
     fn group(&mut self, section: &'static str, class: &'static str, children: Vec<u32>) -> u32 {
         let n = self.nodes.len() as u32;
-        self.nodes.push(Node { what: What::Group { section, class }, children, findings: Counts::default() });
+        if section != "class" {
+            for &c in &children {
+                self.nodes[c as usize].parent = n;
+            }
+        }
+        self.nodes.push(Node { what: What::Group { section, class }, children, parent: NONE, findings: Counts::default() });
         self.named.insert(format!("{section}/{class}"), n);
         n
+    }
+
+    /// The key the view knows node `n` by.
+    fn key_of(&self, n: u32) -> String {
+        match self.nodes[n as usize].what {
+            What::Section { key, .. } => key.into(),
+            What::Group { section, class } => format!("{section}/{class}"),
+            What::Object { object, forest } => format!("{forest}/{}", self.objects[object as usize].id),
+        }
+    }
+
+    /// The labels of the containers of object `id`, outermost first; the
+    /// regions left out below a substation or line.
+    pub fn containers(&self, id: &str) -> Vec<&str> {
+        let Some(mut n) = self.by_id.get(id).and_then(|&o| self.objects[o as usize].contained) else { return Vec::new() };
+        let mut out = Vec::new();
+        while let Some(&Node { parent, .. }) = self.nodes.get(n as usize) {
+            match self.nodes.get(parent as usize).map(|p| &p.what) {
+                Some(What::Object { .. }) => out.push(parent),
+                _ => break,
+            }
+            n = parent;
+        }
+        out.reverse();
+        let region = |&n: &u32| matches!(self.class_of(n), "GeographicalRegion" | "SubGeographicalRegion");
+        if out.iter().any(|n| !region(n)) {
+            out.retain(|n| !region(n));
+        }
+        out.into_iter().map(|n| self.node_label(n)).collect()
+    }
+
+    /// The keys the view expands to reach object `id` in Geographical or Not
+    /// contained, from its section on, the class groups and pages a long
+    /// level is split into included; `None` if it is not listed (filtered out).
+    pub fn path(&self, id: &str, only_findings: bool) -> Option<Vec<String>> {
+        let mut chain = vec![self.objects[*self.by_id.get(id)? as usize].contained?];
+        while let Some(&p) = chain.last().map(|&n| &self.nodes[n as usize].parent).filter(|&&p| p != NONE) {
+            chain.push(p);
+        }
+        chain.reverse();
+        let mut keys = vec![self.key_of(chain[0])];
+        for pair in chain.windows(2) {
+            let (parent, child) = (self.key_of(pair[0]), pair[1]);
+            let entries = self.entries(&parent, only_findings)?;
+            let at = entries.iter().position(|e| matches!(e, Entry::Node(c) if *c == child))?;
+            // As `children_json` lists a long level.
+            if entries.len() > PAGE {
+                let class = self.class_of(child);
+                if entries.iter().any(|&e| self.entry_class(e) != class) {
+                    let within = entries.iter().take(at).filter(|&&e| self.entry_class(e) == class).count();
+                    keys.push(format!("{parent}|{class}"));
+                    if entries.iter().filter(|&&e| self.entry_class(e) == class).count() > PAGE {
+                        keys.push(format!("{parent}|{class}~{}", within / PAGE * PAGE));
+                    }
+                } else {
+                    keys.push(format!("{parent}~{}", at / PAGE * PAGE));
+                }
+            }
+            keys.push(self.key_of(child));
+        }
+        Some(keys)
     }
 
     fn class_of(&self, n: u32) -> &'static str {
@@ -545,6 +621,21 @@ mod tests {
         let classes: Vec<&str> = held.as_array().unwrap().iter().map(|x| x["class"].as_str().unwrap()).collect();
         assert_eq!(&classes[..5], ["VoltageLevel"; 5], "{classes:?}");
         assert!(classes.contains(&"PowerTransformer"), "{classes:?}");
+        assert_eq!(t.containers(brussels["id"].as_str().unwrap()), ["BE", "ELIA-Brussels"]);
+        assert_eq!(t.containers(held[0]["id"].as_str().unwrap()), ["PP_Brussels"]);
+
+        // Each object's path leads to it, a listed level at a time.
+        for group in children(Some("class")).as_array().unwrap() {
+            for x in children(group["key"].as_str()).as_array().unwrap() {
+                let keys = t.path(x["id"].as_str().unwrap(), false).unwrap();
+                assert!(["geo", "other"].contains(&keys[0].as_str()), "{keys:?}");
+                for step in keys.windows(2) {
+                    let listed = children(Some(&step[0]));
+                    assert!(listed.as_array().unwrap().iter().any(|y| y["key"] == step[1].as_str()), "{keys:?}");
+                }
+                assert_eq!(keys.last().unwrap(), &format!("c/{}", x["id"].as_str().unwrap()));
+            }
+        }
 
         // Each object of the set is once in Geographical or Not contained.
         let mut seen = 0;

@@ -8,7 +8,8 @@
 //! - `cimoxide/grid`: the model set's grid at substation level, for the
 //!   extension's grid view ([`grid`]); `cimoxide/substation`: what one of its
 //!   substations holds, for the view's drill-down; `cimoxide/tree`: its
-//!   objects by container, area and class ([`tree`]), a level at a time.
+//!   objects by container, area and class ([`tree`]), a level at a time;
+//!   `cimoxide/treePath`: the keys to expand to reach the object at a position.
 //!
 //! Initialization options (the VS Code extension sends its settings):
 //! `{ "common": bool, "quality": bool, "silence": [rule ids], "onType": bool }`.
@@ -61,6 +62,12 @@ const SUBSTATION: &str = "cimoxide/substation";
 /// ([`tree::Tree::children_json`]); `null` before its first validation or
 /// for a key it no longer has.
 const TREE: &str = "cimoxide/tree";
+
+/// `cimoxide/treePath` `{ "uri", "position", "onlyFindings"? }`: the object
+/// at `position` and the keys of the tree's nodes down to it
+/// ([`tree::Tree::path`]), `{ "id", "keys" }`; `null` off an object or
+/// before the set's first validation.
+const TREE_PATH: &str = "cimoxide/treePath";
 
 /// How long a burst of triggers is gathered before a set is validated.
 const DEBOUNCE: Duration = Duration::from_millis(300);
@@ -297,6 +304,26 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
                 f.parent().and_then(|d| st.sets.get(d)).cloned()
             });
             Ok(set.and_then(|s| s.tree.children_json(&s, &s.grid, p.key.as_deref(), p.only_findings)).unwrap_or(serde_json::Value::Null))
+        }
+        TREE_PATH => {
+            #[derive(serde::Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Params {
+                uri: Url,
+                position: lsp_types::Position,
+                #[serde(default)]
+                only_findings: bool,
+            }
+            let only_findings = std::cell::Cell::new(false);
+            with_params::<Params, _>(req, state, |p| {
+                only_findings.set(p.only_findings);
+                (p.uri, p.position)
+            }, |v, pos| {
+                let found = v.index.element_at(pos).zip(v.set).and_then(|(el, set)| {
+                    set.tree.path(&el.mrid, only_findings.get()).map(|keys| serde_json::json!({ "id": el.mrid, "keys": keys }))
+                });
+                Ok(found.unwrap_or(serde_json::Value::Null))
+            })
         }
         _ => return error(id, ErrorCode::MethodNotFound, format!("unhandled method {}", req.method)),
     };

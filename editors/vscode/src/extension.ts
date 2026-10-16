@@ -130,7 +130,8 @@ export async function activate(context: ExtensionContext): Promise<void> {
       if (
         e.affectsConfiguration("cimoxide") &&
         !e.affectsConfiguration("cimoxide.trace") &&
-        !e.affectsConfiguration("cimoxide.mcp")
+        !e.affectsConfiguration("cimoxide.mcp") &&
+        !e.affectsConfiguration("cimoxide.model")
       ) {
         await stop();
         await start(context);

@@ -12,6 +12,7 @@ import {
   FileDecoration,
   languages,
   MarkdownString,
+  Position,
   Range,
   ThemeColor,
   ThemeIcon,
@@ -28,6 +29,7 @@ import { LanguageClient } from "vscode-languageclient/node";
 import { Reveal, revealInGrid } from "./gridView";
 
 const TREE_REQUEST = "cimoxide/tree";
+const PATH_REQUEST = "cimoxide/treePath";
 const VIEW = "cimoxide.model";
 /** The scheme of the tree items' `resourceUri`, which carries their findings to the badge. */
 const SCHEME = "cimoxide-tree";
@@ -160,8 +162,16 @@ class ModelTree implements TreeDataProvider<Entry> {
 
   constructor(private readonly client: () => LanguageClient | undefined) {}
 
+  /** The node listing each node fetched, by key, for `reveal`. */
+  private readonly parents = new Map<string, Entry | undefined>();
+
   refresh(): void {
+    this.parents.clear();
     this.changed.fire(undefined);
+  }
+
+  getParent(e: Entry): Entry | undefined {
+    return this.parents.get(e.key);
   }
 
   async getChildren(entry?: Entry): Promise<Entry[]> {
@@ -173,7 +183,30 @@ class ModelTree implements TreeDataProvider<Entry> {
       key: entry?.key,
       onlyFindings: this.onlyFindings,
     });
+    for (const child of result ?? []) {
+      this.parents.set(child.key, entry);
+    }
     return result ?? [];
+  }
+
+  /**
+   * The node of the object at `position` in `doc`, its ancestors fetched on
+   * the way; `undefined` off an object, or if the filter hides it.
+   */
+  async locate(doc: Uri, position: Position): Promise<Entry | undefined> {
+    const client = this.client();
+    if (!client) return undefined;
+    const found = await client.sendRequest<{ id: string; keys: string[] } | null>(PATH_REQUEST, {
+      uri: doc.toString(),
+      position,
+      onlyFindings: this.onlyFindings,
+    });
+    let at: Entry | undefined;
+    for (const key of found?.keys ?? []) {
+      at = (await this.getChildren(at)).find((e) => e.key === key);
+      if (!at) return undefined;
+    }
+    return at;
   }
 
   getTreeItem(e: Entry): TreeItem {
@@ -234,6 +267,22 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
     view.message = on ? "Only objects with findings" : undefined;
     tree.refresh();
   };
+  // The object at the cursor, selected in the tree.
+  let shown: string | undefined;
+  const revealCursor = async (focus: boolean): Promise<void> => {
+    const editor = window.activeTextEditor;
+    if (!editor || !isCim(editor.document.uri, editor.document.languageId)) return;
+    follow(editor.document.uri, editor.document.languageId);
+    const at = await tree.locate(editor.document.uri, editor.selection.active);
+    if (!at) {
+      if (focus) window.showInformationMessage("cimoxide: no object of the model tree here (or the filter hides it).");
+      return;
+    }
+    if (!focus && at.key === shown) return;
+    shown = at.key;
+    await view.reveal(at, { select: true, focus, expand: false });
+  };
+  let cursor: NodeJS.Timeout | undefined;
   const reveal = async (e: Entry | undefined, inside: boolean): Promise<void> => {
     const c = client();
     if (!c || !tree.uri || !e?.grid) return;
@@ -243,7 +292,15 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
   follow(window.activeTextEditor?.document.uri, window.activeTextEditor?.document.languageId);
   context.subscriptions.push(
     view,
-    { dispose: () => clearTimeout(refresh) } as Disposable,
+    { dispose: () => (clearTimeout(refresh), clearTimeout(cursor)) } as Disposable,
+    // With `cimoxide.model.followCursor`, the tree follows the cursor while it is visible.
+    window.onDidChangeTextEditorSelection((e) => {
+      if (!view.visible || !workspace.getConfiguration("cimoxide").get<boolean>("model.followCursor")) return;
+      if (e.textEditor !== window.activeTextEditor) return;
+      clearTimeout(cursor);
+      cursor = setTimeout(() => revealCursor(false), 300);
+    }),
+    commands.registerCommand("cimoxide.model.reveal", () => revealCursor(true)),
     window.registerFileDecorationProvider({ provideFileDecoration: decoration }),
     window.onDidChangeActiveTextEditor((ed) => follow(ed?.document.uri, ed?.document.languageId)),
     // Findings change with every validation, and the set is there after the first.
