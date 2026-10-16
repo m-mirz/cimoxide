@@ -21,7 +21,8 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
   holds (base voltages, curves, …), by class; *By class*, every object. A region whose file is
   missing (an IGM without its boundary set) is listed by its mRID. Each node shows the number of
   findings below it, in the colour of the worst; the filter button keeps only those with findings.
-  Click to open where an object is written; *Show in grid* selects it in the grid view, inside its
+  The search button finds any object of the set by name or mRID as you type, not only what the
+  tree has loaded, and reveals it. Click to open where an object is written; *Show in grid* selects it in the grid view, inside its
   substation where it has one. *Reveal in CIM Model* (editor context menu) selects the object at the
   cursor; `cimoxide.model.followCursor` does so as the cursor moves.
 - **Rename and delete** — *Rename Symbol* (F2) on an `rdf:ID`, `rdf:about` or `rdf:resource`

@@ -314,6 +314,45 @@ impl Tree {
         }
     }
 
+    /// The objects whose name or mRID holds `query` (ignoring case), at most
+    /// `limit`: a name equal to it first, then one starting with it, then one
+    /// holding it, then an mRID holding it; by name within each.
+    pub fn search(&self, query: &str, limit: usize) -> Vec<(&str, &str, &'static str)> {
+        let q = query.trim().to_lowercase();
+        if q.is_empty() {
+            return Vec::new();
+        }
+        let mut hits: Vec<(u8, String, usize)> = self
+            .objects
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| o.class != MISSING)
+            .filter_map(|(i, o)| {
+                let name = o.label.as_deref().map(str::to_lowercase).unwrap_or_default();
+                let rank = if name == q {
+                    0
+                } else if name.starts_with(&q) {
+                    1
+                } else if name.contains(&q) {
+                    2
+                } else if o.id.to_lowercase().contains(&q) {
+                    3
+                } else {
+                    return None;
+                };
+                Some((rank, name, i))
+            })
+            .collect();
+        hits.sort();
+        hits.into_iter()
+            .take(limit)
+            .map(|(_, _, i)| {
+                let o = &self.objects[i];
+                (o.id.as_str(), self.label_of(i as u32), o.class)
+            })
+            .collect()
+    }
+
     /// What object `id` holds directly.
     pub fn children(&self, id: &str) -> Vec<&str> {
         let Some(n) = self.by_id.get(id).and_then(|&o| self.objects[o as usize].contained) else { return Vec::new() };
@@ -655,6 +694,16 @@ mod tests {
         assert_eq!(&classes[..5], ["VoltageLevel"; 5], "{classes:?}");
         assert!(classes.contains(&"PowerTransformer"), "{classes:?}");
         assert_eq!(t.containers(brussels["id"].as_str().unwrap()), ["BE", "ELIA-Brussels"]);
+
+        // Search: by name, ignoring case, the exact one first; by mRID.
+        assert_eq!(t.search("anvers", 5)[0].1, "Anvers");
+        // Names starting with it before names holding it; objects may share a name.
+        let lines: Vec<&str> = t.search("be-line_", 30).into_iter().map(|h| h.1).collect();
+        let starting = lines.iter().take_while(|l| l.starts_with("BE-Line_")).count();
+        assert!(starting >= 7 && lines[starting..].iter().all(|l| l.contains("BE-Line_") && !l.starts_with("BE-Line_")), "{lines:?}");
+        let id = brussels["id"].as_str().unwrap();
+        assert_eq!(t.search(&id[3..15], 5)[0].0, id);
+        assert!(t.search("  ", 5).is_empty());
         assert_eq!(t.containers(held[0]["id"].as_str().unwrap()), ["PP_Brussels"]);
 
         // Each object's path leads to it, a listed level at a time.

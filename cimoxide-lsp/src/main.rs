@@ -99,6 +99,16 @@ const FIXES: &str = "cimoxide/fixes";
 /// so also where VS Code hands the server no document (over 50 MB).
 const RENAME: &str = "cimoxide/rename";
 
+/// `cimoxide/search` `{ "uri", "query" }`: the document's model set's
+/// objects whose name or mRID holds `query` ([`tree::Tree::search`]):
+/// `[{ "id", "label", "class", "place", "location" }]`.
+const SEARCH: &str = "cimoxide/search";
+
+/// `cimoxide/treePathOf` `{ "uri", "id", "onlyFindings"? }`: as
+/// `cimoxide/treePath`, for object `id` of the document's model set, which
+/// need not be open.
+const TREE_PATH_OF: &str = "cimoxide/treePathOf";
+
 /// How long a burst of triggers is gathered before a set is validated.
 const DEBOUNCE: Duration = Duration::from_millis(300);
 
@@ -560,6 +570,52 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
                 f.parent().and_then(|d| st.sets.get(d)).cloned()
             });
             Ok(set.and_then(|s| s.tree.children_json(&s, &s.grid, p.key.as_deref(), p.only_findings)).unwrap_or(serde_json::Value::Null))
+        }
+        SEARCH => {
+            #[derive(serde::Deserialize)]
+            struct Params {
+                uri: Url,
+                query: String,
+            }
+            let p: Params = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return error(id, ErrorCode::InvalidParams, e.to_string()),
+            };
+            let set = p.uri.to_file_path().ok().and_then(|f| {
+                let st = state.lock().unwrap();
+                f.parent().and_then(|d| st.sets.get(d)).cloned()
+            });
+            let hits = set.map(|s| {
+                s.tree
+                    .search(&p.query, 100)
+                    .into_iter()
+                    .map(|(oid, label, class)| {
+                        let location = s.definition(oid).map(|(file, el)| serde_json::json!({ "uri": file.url, "range": el.head }));
+                        serde_json::json!({ "id": oid, "label": label, "class": class, "place": s.tree.containers(oid).join(" › "), "location": location })
+                    })
+                    .collect::<Vec<_>>()
+            });
+            Ok(serde_json::json!(hits.unwrap_or_default()))
+        }
+        TREE_PATH_OF => {
+            #[derive(serde::Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Params {
+                uri: Url,
+                id: String,
+                #[serde(default)]
+                only_findings: bool,
+            }
+            let p: Params = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return error(id, ErrorCode::InvalidParams, e.to_string()),
+            };
+            let set = p.uri.to_file_path().ok().and_then(|f| {
+                let st = state.lock().unwrap();
+                f.parent().and_then(|d| st.sets.get(d)).cloned()
+            });
+            let found = set.and_then(|s| s.tree.path(&p.id, p.only_findings)).map(|keys| serde_json::json!({ "id": p.id, "keys": keys }));
+            Ok(found.unwrap_or(serde_json::Value::Null))
         }
         TREE_PATH => {
             #[derive(serde::Deserialize)]

@@ -31,6 +31,8 @@ import { symbolOf } from "./symbols";
 
 const TREE_REQUEST = "cimoxide/tree";
 const PATH_REQUEST = "cimoxide/treePath";
+const PATH_OF_REQUEST = "cimoxide/treePathOf";
+const SEARCH_REQUEST = "cimoxide/search";
 const DELETE_REQUEST = "cimoxide/delete";
 const ADDABLE_REQUEST = "cimoxide/addable";
 const ADD_REQUEST = "cimoxide/add";
@@ -204,8 +206,25 @@ export class ModelTree implements TreeDataProvider<Entry> {
       position,
       onlyFindings: this.onlyFindings,
     });
+    return this.walk(found?.keys ?? []);
+  }
+
+  /** The node of object `id` of the set shown, its ancestors fetched on the way. */
+  async locateId(id: string): Promise<Entry | undefined> {
+    const client = this.client();
+    if (!client || !this.uri) return undefined;
+    const found = await client.sendRequest<{ id: string; keys: string[] } | null>(PATH_OF_REQUEST, {
+      uri: this.uri.toString(),
+      id,
+      onlyFindings: this.onlyFindings,
+    });
+    return this.walk(found?.keys ?? []);
+  }
+
+  /** Down `keys` from the sections, each level fetched. */
+  private async walk(keys: string[]): Promise<Entry | undefined> {
     let at: Entry | undefined;
-    for (const key of found?.keys ?? []) {
+    for (const key of keys) {
       at = (await this.getChildren(at)).find((e) => e.key === key);
       if (!at) return undefined;
     }
@@ -312,6 +331,46 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
     await view.reveal(at, { select: true, focus, expand: false });
   };
   let cursor: NodeJS.Timeout | undefined;
+  // Search the whole set, not only what the tree has loaded: the server
+  // matches names and mRIDs as one types.
+  const search = (): void => {
+    const c = client();
+    const uri = tree.uri;
+    if (!c || !uri) {
+      window.showInformationMessage("cimoxide: open a CGMES or NC file to search its model set.");
+      return;
+    }
+    type Hit = { id: string; label: string; class: string; place: string; location: Location | null };
+    const pick = window.createQuickPick<{ label: string; description: string; detail?: string; alwaysShow: boolean; hit: Hit }>();
+    pick.placeholder = `Find an object of ${path.basename(path.dirname(uri.fsPath))} by name or mRID`;
+    let typing: NodeJS.Timeout | undefined;
+    pick.onDidChangeValue((value) => {
+      clearTimeout(typing);
+      typing = setTimeout(async () => {
+        pick.busy = true;
+        const hits = await c.sendRequest<Hit[]>(SEARCH_REQUEST, { uri: uri.toString(), query: value });
+        // The server has filtered: keep its order, and what matched by mRID.
+        if (pick.value === value) {
+          pick.items = hits.map((h) => ({ label: h.label, description: h.class, detail: h.place || undefined, alwaysShow: true, hit: h }));
+        }
+        pick.busy = false;
+      }, 150);
+    });
+    pick.onDidAccept(async () => {
+      const hit = pick.selectedItems[0]?.hit;
+      pick.hide();
+      if (!hit) return;
+      if (hit.location) await openAt(hit.location.uri, hit.location.range, true);
+      const at = await tree.locateId(hit.id);
+      if (at) await view.reveal(at, { select: true, focus: true, expand: true });
+      else window.showInformationMessage(`cimoxide: ${hit.label} is hidden by the filter on findings.`);
+    });
+    pick.onDidHide(() => {
+      clearTimeout(typing);
+      pick.dispose();
+    });
+    pick.show();
+  };
   // Deleting goes through the refactoring preview: the server marks its edit as needing confirmation.
   const remove = async (e: Entry | undefined, dependents: boolean): Promise<void> => {
     const c = client();
@@ -418,6 +477,7 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
     commands.registerCommand("cimoxide.model.deleteAll", (e?: Entry) => remove(e, true)),
     commands.registerCommand("cimoxide.model.rename", (e?: Entry) => rename(e)),
     commands.registerCommand("cimoxide.model.fix", (e?: Entry) => fix(e)),
+    commands.registerCommand("cimoxide.model.search", search),
     commands.registerCommand("cimoxide.model.add", (e?: Entry | { id: string; uri: string; label: string }) => addIn(e)),
     window.registerFileDecorationProvider({ provideFileDecoration: decoration }),
     window.onDidChangeActiveTextEditor((ed) => follow(ed?.document.uri, ed?.document.languageId)),

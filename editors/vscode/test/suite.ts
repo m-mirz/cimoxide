@@ -147,6 +147,16 @@ test("the tree's fixes and rename come from the server, for files of any size", 
   assert.ok(Object.keys(renamed.changes).length >= 2, Object.keys(renamed.changes).join(", "));
 });
 
+test("search finds any object of the set, and the tree reaches it", async () => {
+  const hits = await api.request<{ id: string; label: string; class: string; place: string }[]>(
+    "cimoxide/search", { uri: eq.toString(), query: "be-tr2" });
+  assert.ok(hits.length >= 3 && hits.every((h) => h.label.toLowerCase().includes("be-tr2")), hits.map((h) => h.label).join(", "));
+  const transformer = hits.find((h) => h.class === "PowerTransformer");
+  assert.strictEqual(transformer?.place, "PP_Brussels");
+  const at = await api.modelTree.locateId(transformer.id);
+  assert.strictEqual(at?.key, `c/${transformer.id}`);
+});
+
 test("rename changes an mRID in every file that names it", async () => {
   const doc = await workspace.openTextDocument(eq);
   const at = idBefore(doc, "<cim:IdentifiedObject.name>BE-Line_1<");
