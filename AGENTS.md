@@ -286,6 +286,12 @@ down to an object, those class groups and pages included (`cimoxide/treePath`, f
 reveal the object at the cursor), and `Tree::containers` the outline's container labels
 (`micro_grid_tree`).
 
+`npm test` in `editors/vscode/` runs `test/suite.ts` in a downloaded VS Code with the extension on a
+copy of MicroGrid (needs `server/cimlsp`; `xvfb-run` without a display; `vscode.yml` runs it on
+Linux before anything is published): activation and the tree through the client, the tree's icon
+files, code actions with resolve, a quick fix, rename, the grid panel. `activate` returns the
+model tree for it.
+
 The extension (`editors/vscode/`, TypeScript, `vscode-languageclient`) passes settings as
 initialization options and schema directories as `CIMOXIDE_*` environment variables, and
 restarts the server on any `cimoxide.*` change. *Show grid* draws `cimoxide/grid` in a webview

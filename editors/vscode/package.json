@@ -327,7 +327,8 @@
     "vscode:prepublish": "npm run build -- --minify && node -e \"require('fs').copyFileSync('../../LICENSE', 'LICENSE')\"",
     "build": "esbuild src/symbols.ts --bundle --outfile=dist/symbols.cjs --format=cjs --platform=node && node build-symbols.js && esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18 && esbuild src/webview/grid.ts --bundle --outfile=dist/grid.js --format=iife --platform=browser --target=es2020",
     "watch": "npm run build -- --sourcemap --watch",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p src/webview",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p src/webview && tsc --noEmit -p test",
+    "test": "npm run build && esbuild test/suite.ts --bundle --outfile=dist/test/suite.js --external:vscode --format=cjs --platform=node && node test/run.js",
     "package": "vsce package"
   },
   "dependencies": {
@@ -337,6 +338,7 @@
   "devDependencies": {
     "@types/node": "^18.19.0",
     "@types/vscode": "~1.101.0",
+    "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.2.0",
     "esbuild": "^0.24.0",
     "typescript": "^5.6.0"
