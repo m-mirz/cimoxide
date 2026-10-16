@@ -1,6 +1,7 @@
 // The grid view: a model set's substations and the lines between them, with
 // each one's findings, drawn in a webview from the language server's
-// `cimoxide/grid` request. Clicking an object opens where it is written.
+// `cimoxide/grid` request, and what a substation holds from
+// `cimoxide/substation`. Clicking an object opens where it is written.
 
 import * as crypto from "crypto";
 import * as path from "path";
@@ -31,6 +32,7 @@ interface Grid {
 }
 
 const GRID_REQUEST = "cimoxide/grid";
+const SUBSTATION_REQUEST = "cimoxide/substation";
 
 /** One panel per model set, by directory. */
 const panels = new Map<string, GridPanel>();
@@ -66,6 +68,8 @@ export async function showGrid(context: ExtensionContext, client: LanguageClient
 class GridPanel {
   readonly panel: WebviewPanel;
   private files: Set<string>;
+  /** The substation shown inside, if any. */
+  private inside: string | undefined;
   private refresh: NodeJS.Timeout | undefined;
   private readonly disposables: Disposable[] = [];
 
@@ -95,7 +99,7 @@ class GridPanel {
 <title>Grid</title>
 </head>
 <body>
-<div id="bar"><select id="layout" title="Layout"></select><input id="search" type="search" placeholder="Find a substation"><span id="summary"></span></div>
+<div id="bar"><button id="back" title="Back to the grid (Escape)">&larr; Grid</button><select id="layout" title="Layout"></select><input id="search" type="search" placeholder="Find a substation"><span id="summary"></span></div>
 <div id="main"><div id="graph"></div><div id="info"></div></div>
 <script nonce="${nonce}" src="${script}"></script>
 </body>
@@ -124,11 +128,28 @@ class GridPanel {
       this.files = new Set(grid.files);
       this.post(grid);
     }
+    if (this.inside) {
+      await this.updateInside();
+    }
   }
 
-  private async receive(msg: { type: string; location?: Location }): Promise<void> {
+  /** What the substation shown holds; `null` once it is gone from the set. */
+  private async updateInside(): Promise<void> {
+    const inside = await this.client.sendRequest<unknown>(SUBSTATION_REQUEST, { uri: this.uri.toString(), id: this.inside });
+    if (!inside) {
+      this.inside = undefined;
+    }
+    this.panel.webview.postMessage({ type: "inside", inside });
+  }
+
+  private async receive(msg: { type: string; location?: Location; id?: string }): Promise<void> {
     if (msg.type === "ready") {
       await this.update();
+    } else if (msg.type === "enter" && msg.id) {
+      this.inside = msg.id;
+      await this.updateInside();
+    } else if (msg.type === "leave") {
+      this.inside = undefined;
     } else if (msg.type === "open" && msg.location) {
       const { uri, range } = msg.location;
       const doc = await workspace.openTextDocument(Uri.parse(uri));

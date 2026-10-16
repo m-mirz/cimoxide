@@ -20,8 +20,11 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
   set as substations, boundary points and the lines between them: as the set's Diagram Layout
   draws them, on its Geographical Locations, or laid out automatically. A ring marks each one with
   findings, in the colour of the worst and as wide as their number; select one for its voltage
-  levels, equipment and findings, double-click to open where it is written. The view follows
-  each revalidation.
+  levels, equipment and findings, double-click a line to open where it is written. Double-click
+  a substation to see inside it: its equipment and connectivity nodes by voltage level, its
+  switches open (hollow) or closed, out-of-service equipment faded, each with its findings, on
+  the Diagram Layout or laid out automatically; double-click a line there to go to its other end,
+  Escape to go back. The view follows each revalidation.
 
 - **Chat** — an MCP server, `cimmcp`, offered to chat (Copilot agent mode): ask about the
   model sets of the workspace. Its tools list the model sets, summarise one (headers, object

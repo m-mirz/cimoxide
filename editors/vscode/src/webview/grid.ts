@@ -1,5 +1,6 @@
 // The grid view's page: draws `cimoxide/grid` with Cytoscape.js, coloured by
-// each substation's and line's worst finding, in VS Code's theme colours.
+// each substation's and line's worst finding, in VS Code's theme colours; and,
+// double-clicking a substation, what it holds (`cimoxide/substation`).
 
 import cytoscape, { Core, ElementDefinition, NodeSingular, EdgeSingular } from "cytoscape";
 
@@ -58,13 +59,48 @@ interface Grid {
   layouts: Layout[];
 }
 
+/** Equipment, or a connectivity node (`junction`), inside a substation. */
+interface Item {
+  id: string;
+  label: string;
+  class: string;
+  junction: boolean;
+  /** Its voltage level's id. */
+  group: string | null;
+  open: boolean | null;
+  inService: boolean | null;
+  /** The other grid nodes the equipment reaches. */
+  far: { id: string; label: string; kind: string }[];
+  findings: Findings;
+  location: Location | null;
+}
+
+/** What a substation holds: its items by voltage level, and the terminals linking them. */
+interface Inside {
+  id: string;
+  label: string;
+  region: string | null;
+  kV: number[];
+  /** Findings on the substation that no item stands for. */
+  findings: Findings;
+  location: Location | null;
+  groups: { id: string; label: string; kV: number | null }[];
+  items: Item[];
+  links: { id: string; source: string; target: string; connected: boolean | null }[];
+  layouts: Layout[];
+}
+
 type Point = { x: number; y: number };
 
-/** The layout picked in this panel: a layout id, or "auto". */
-let chosen: string | undefined;
+/** The layout picked in this panel for the grid, and for substations: a layout id, or "auto". */
+const chosen: { grid?: string; inside?: string } = {};
 
 let cy: Core | undefined;
 let grid: Grid | undefined;
+/** The substation shown, if any; else the grid. */
+let inside: Inside | undefined;
+/** The grid's viewport when a substation was opened, to return to. */
+let gridView: { zoom: number; pan: Point; selected: string } | undefined;
 
 const style = document.createElement("style");
 style.textContent = `
@@ -76,6 +112,9 @@ style.textContent = `
             border: 1px solid var(--vscode-dropdown-border, transparent); padding: 2px 4px; }
   #search { width: 220px; color: var(--vscode-input-foreground); background: var(--vscode-input-background);
             border: 1px solid var(--vscode-input-border, transparent); padding: 3px 6px; }
+  #back { display: none; color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground);
+          border: none; padding: 3px 10px; cursor: pointer; }
+  #back:hover { background: var(--vscode-button-secondaryHoverBackground); }
   #summary { color: var(--vscode-descriptionForeground); }
   #main { flex: 1; display: flex; min-height: 0; }
   #graph { flex: 1; min-width: 0; }
@@ -85,7 +124,7 @@ style.textContent = `
   #info table { border-collapse: collapse; width: 100%; }
   #info td { padding: 1px 4px 1px 0; vertical-align: top; }
   #info td.n { text-align: right; }
-  #info button { margin-top: 10px; color: var(--vscode-button-foreground); background: var(--vscode-button-background);
+  #info button { margin: 10px 6px 0 0; color: var(--vscode-button-foreground); background: var(--vscode-button-background);
                  border: none; padding: 4px 10px; cursor: pointer; }
   #info button:hover { background: var(--vscode-button-hoverBackground); }
   .violation { color: var(--vscode-errorForeground); }
@@ -107,15 +146,19 @@ function total(f: Findings): number {
   return f.violation + f.warning + f.info;
 }
 
-function elements(g: Grid): ElementDefinition[] {
+/** The ring grows with the findings: one and forty must not look alike. */
+function ring(f: Findings): number {
+  return total(f) ? Math.min(8, 1.5 + 1.5 * Math.log2(total(f))) : 0;
+}
+
+function gridElements(g: Grid): ElementDefinition[] {
   const nodes = g.nodes.map((n) => {
     const size = Object.values(n.equipment).reduce((a, b) => a + b, 0);
     return {
       group: "nodes" as const,
       data: {
-        id: n.id, label: n.label, kind: n.kind, sev: worst(n.findings), size: Math.min(48, 16 + 4 * Math.sqrt(size)),
-        // The ring grows with the findings: one and forty must not look alike.
-        ring: total(n.findings) ? Math.min(8, 1.5 + 1.5 * Math.log2(total(n.findings))) : 0,
+        id: n.id, label: n.label, kind: n.kind === "Substation" ? "substation" : "boundary", sev: worst(n.findings),
+        size: Math.min(48, 16 + 4 * Math.sqrt(size)), ring: ring(n.findings),
       },
     };
   });
@@ -127,6 +170,48 @@ function elements(g: Grid): ElementDefinition[] {
     },
   }));
   return [...nodes, ...edges];
+}
+
+/** How an item is drawn. */
+function kindOf(it: Item): string {
+  const c = it.class;
+  if (it.junction) return "junction";
+  if (it.far.length) return "line";
+  if (it.open !== null) return "switch";
+  if (c === "BusbarSection") return "busbar";
+  if (/Transformer/.test(c)) return "transformer";
+  if (/Machine|Generat/.test(c)) return "machine";
+  if (/Load|Consumer/.test(c)) return "load";
+  if (/Compensator/.test(c)) return "shunt";
+  if (/Injection/.test(c)) return "injection";
+  if (/Converter/.test(c)) return "converter";
+  return "other";
+}
+
+function insideElements(s: Inside): ElementDefinition[] {
+  const groups = s.groups.map((g) => ({
+    group: "nodes" as const,
+    data: {
+      id: `g:${g.id}`, kind: "group", sev: "none", ring: 0,
+      // A level is often named by its voltage: "400.0".
+      label: g.kV === null ? g.label : Number(g.label) === g.kV ? `${g.kV} kV` : `${g.label} · ${g.kV} kV`,
+    },
+  }));
+  const items = s.items.map((it) => ({
+    group: "nodes" as const,
+    data: {
+      id: it.id, label: it.label, kind: kindOf(it), sev: worst(it.findings), parent: it.group ? `g:${it.group}` : undefined,
+      // An open switch is drawn hollow, so it needs an outline.
+      ring: it.open ? Math.max(2, ring(it.findings)) : ring(it.findings),
+    },
+    classes: [it.open ? "open" : "", it.inService === false ? "out" : ""].join(" ").trim(),
+  }));
+  const links = s.links.map((l) => ({
+    group: "edges" as const,
+    data: { id: `t:${l.id}`, source: l.source, target: l.target, sev: "none", width: 1.2 },
+    classes: l.connected === false ? "disconnected" : "",
+  }));
+  return [...groups, ...items, ...links];
 }
 
 function stylesheet(): cytoscape.StylesheetJson {
@@ -141,35 +226,78 @@ function stylesheet(): cytoscape.StylesheetJson {
   const focus = colour("--vscode-focusBorder", "#007fd4");
   const bySeverity = (prop: string) =>
     Object.entries(sev).map(([k, c]) => ({ selector: `[sev = "${k}"]`, style: { [prop]: c } }));
+  const shape = (kind: string, shape: string, width: number, height = width) =>
+    ({ selector: `node[kind = "${kind}"]`, style: { shape, width, height, "font-size": 8 } });
   return [
     {
       selector: "node",
       style: {
         label: "data(label)", color: fg, "font-size": 10, "text-valign": "bottom", "text-margin-y": 3,
         width: "data(size)", height: "data(size)", "background-color": fill, "border-width": "data(ring)",
+        "min-zoomed-font-size": 6,
       },
     },
-    { selector: 'node[kind != "Substation"]', style: { shape: "diamond", width: 12, height: 12, "font-size": 8 } },
-    ...bySeverity("border-color").map((s) => ({ ...s, selector: `node${s.selector}` })),
+    { selector: 'node[kind = "boundary"]', style: { shape: "diamond", width: 12, height: 12, "font-size": 8 } },
+    // Inside a substation: voltage levels as boxes, and a shape for each kind of equipment.
+    {
+      selector: 'node[kind = "group"]',
+      style: {
+        shape: "round-rectangle", "background-opacity": 0.06, "border-width": 1, "border-color": fill, "text-valign": "top",
+        "text-margin-y": -4, "font-size": 11, padding: "14px",
+      },
+    },
+    shape("junction", "ellipse", 7),
+    shape("busbar", "rectangle", 46, 7),
+    shape("switch", "rectangle", 12),
+    shape("transformer", "diamond", 22),
+    shape("machine", "ellipse", 18),
+    shape("load", "vee", 16),
+    shape("shunt", "barrel", 14),
+    shape("injection", "pentagon", 16),
+    shape("converter", "octagon", 18),
+    shape("line", "hexagon", 16),
+    shape("other", "round-rectangle", 14),
+    { selector: 'node[kind = "junction"]', style: { "font-size": 7, "text-opacity": 0.75 } },
+    ...bySeverity("border-color").map((s) => ({ ...s, selector: `node[kind != "group"]${s.selector}` })),
+    { selector: "node.open", style: { "background-opacity": 0 } },
+    { selector: "node.out", style: { opacity: 0.45, "border-style": "dashed" } },
     {
       selector: "edge",
       style: { width: "data(width)", "curve-style": "bezier", opacity: 0.85 },
     },
     ...bySeverity("line-color").map((s) => ({ ...s, selector: `edge${s.selector}` })),
-    { selector: "node:selected", style: { "background-color": focus } },
+    { selector: "edge.disconnected", style: { "line-style": "dashed" } },
+    { selector: "node:selected", style: { "background-color": focus, "background-opacity": 1 } },
+    { selector: 'node[kind = "group"]:selected', style: { "background-opacity": 0.15 } },
     { selector: "edge:selected", style: { "line-color": focus, opacity: 1 } },
     { selector: ".dim", style: { opacity: 0.15 } },
   ] as cytoscape.StylesheetJson;
 }
 
-function summary(g: Grid): string {
+function counts(f: Findings): string {
+  return `${f.violation} violation(s), ${f.warning} warning(s), ${f.info} info`;
+}
+
+function sum(fs: Findings[], start: Findings): Findings {
+  return fs.reduce((a, x) => ({ violation: a.violation + x.violation, warning: a.warning + x.warning, info: a.info + x.info }), { ...start });
+}
+
+const NONE: Findings = { violation: 0, warning: 0, info: 0 };
+
+function gridSummary(g: Grid): string {
   const subs = g.nodes.filter((n) => n.kind === "Substation").length;
-  const sum = [...g.nodes, ...g.edges].reduce(
-    (a, x) => ({ violation: a.violation + x.findings.violation, warning: a.warning + x.findings.warning, info: a.info + x.findings.info }),
-    { ...g.elsewhere },
-  );
+  const all = sum([...g.nodes, ...g.edges].map((x) => x.findings), g.elsewhere);
   return `${subs} substation(s), ${g.nodes.length - subs} boundary point(s), ${g.edges.length} connection(s) · ` +
-    `${sum.violation} violation(s), ${sum.warning} warning(s), ${sum.info} info · ${total(g.elsewhere)} not on the grid`;
+    `${counts(all)} · ${total(g.elsewhere)} not on the grid`;
+}
+
+function insideSummary(s: Inside): string {
+  const equipment = s.items.filter((it) => !it.junction);
+  const switches = equipment.filter((it) => it.open !== null);
+  const open = switches.filter((it) => it.open).length;
+  const all = sum(s.items.map((it) => it.findings), s.findings);
+  return `${s.label}: ${equipment.length} equipment, ${s.items.length - equipment.length} node(s), ` +
+    `${switches.length} switch(es)${open ? ` (${open} open)` : ""} · ${counts(all)}`;
 }
 
 function escape(s: string): string {
@@ -184,41 +312,109 @@ function findingsHtml(f: Findings): string {
     `<span class="info">${f.info} info</span></div>`;
 }
 
-function show(target: NodeSingular | EdgeSingular | undefined): void {
+/** Fill the side panel, with an *Open definition* button for `location` and then `buttons`. */
+function panel(html: string, location: Location | null | undefined, buttons: [string, () => void][] = []): void {
   const info = document.getElementById("info") as HTMLElement;
-  if (!grid || !target) {
-    info.innerHTML = `<div class="sub">Select a substation or a line; double-click to open where it is written.</div>`;
+  if (location) {
+    buttons = [["Open definition", () => vscode.postMessage({ type: "open", location })], ...buttons];
+  }
+  info.innerHTML = html + buttons.map(() => "<button></button>").join("");
+  info.querySelectorAll("button").forEach((b, i) => {
+    b.textContent = buttons[i][0];
+    b.addEventListener("click", buttons[i][1]);
+  });
+}
+
+function showGrid(g: Grid, target: NodeSingular | EdgeSingular | undefined): void {
+  if (!target) {
+    panel(`<div class="sub">Select a substation or a line. Double-click a substation to see inside it, a line to open where it is written.</div>`, null);
     return;
   }
-  let html: string;
-  let location: Location | null;
   if (target.isNode()) {
-    const n = grid.nodes.find((x) => x.id === target.id());
+    const n = g.nodes.find((x) => x.id === target.id());
     if (!n) return;
-    location = n.location;
     const kv = n.kV.length ? `${n.kV.join(" / ")} kV` : "";
     const equipment = Object.entries(n.equipment)
       .sort((a, b) => b[1] - a[1])
       .map(([k, v]) => `<tr><td>${escape(k)}</td><td class="n">${v}</td></tr>`)
       .join("");
-    html = `<h3>${escape(n.label || n.id)}</h3><div class="sub">${escape(n.kind)}${n.region ? ` · ${escape(n.region)}` : ""}${kv ? ` · ${kv}` : ""}</div>` +
-      findingsHtml(n.findings) + (equipment ? `<table>${equipment}</table>` : "");
+    panel(
+      `<h3>${escape(n.label || n.id)}</h3><div class="sub">${escape(n.kind)}${n.region ? ` · ${escape(n.region)}` : ""}${kv ? ` · ${kv}` : ""}</div>` +
+        findingsHtml(n.findings) + (equipment ? `<table>${equipment}</table>` : ""),
+      n.location,
+      n.kind === "Substation" ? [["Show inside", () => enter(n.id)]] : [],
+    );
   } else {
-    const e = grid.edges.find((x) => `e:${x.id}` === target.id());
+    const e = g.edges.find((x) => `e:${x.id}` === target.id());
     if (!e) return;
-    location = e.location;
-    const end = (id: string) => escape(grid?.nodes.find((x) => x.id === id)?.label || id);
-    html = `<h3>${escape(e.label)}</h3><div class="sub">${escape(e.class)}${e.kV !== null ? ` · ${e.kV} kV` : ""}</div>` +
-      `<div>${end(e.source)} — ${end(e.target)}</div>` + findingsHtml(e.findings);
+    const end = (id: string) => escape(g.nodes.find((x) => x.id === id)?.label || id);
+    panel(
+      `<h3>${escape(e.label)}</h3><div class="sub">${escape(e.class)}${e.kV !== null ? ` · ${e.kV} kV` : ""}</div>` +
+        `<div>${end(e.source)} — ${end(e.target)}</div>` + findingsHtml(e.findings),
+      e.location,
+    );
   }
-  if (location) {
-    html += `<button id="open">Open definition</button>`;
+}
+
+function showInside(s: Inside, target: NodeSingular | EdgeSingular | undefined): void {
+  const id = target?.isNode() ? target.id() : undefined;
+  const group = s.groups.find((g) => `g:${g.id}` === id);
+  if (group) {
+    const held = s.items.filter((x) => x.group === group.id);
+    panel(
+      `<h3>${escape(group.label)}</h3><div class="sub">VoltageLevel${group.kV !== null ? ` · ${group.kV} kV` : ""}</div>` +
+        findingsHtml(sum(held.map((x) => x.findings), NONE)) +
+        `<div>${held.filter((x) => !x.junction).length} equipment, ${held.filter((x) => x.junction).length} node(s)</div>`,
+      null,
+    );
+    return;
   }
-  info.innerHTML = html;
-  document.getElementById("open")?.addEventListener("click", () => vscode.postMessage({ type: "open", location }));
+  const it = s.items.find((x) => x.id === id);
+  if (!it) {
+    const kv = s.kV.length ? ` · ${s.kV.join(" / ")} kV` : "";
+    panel(
+      `<h3>${escape(s.label)}</h3><div class="sub">Substation${s.region ? ` · ${escape(s.region)}` : ""}${kv}</div>` +
+        `<div class="sub">On the substation, its voltage levels and bays:</div>` + findingsHtml(s.findings) +
+        `<div class="sub" style="margin-top:8px">Select equipment or a node; double-click to open where it is written, ` +
+        `a line to go to its other end. Hollow: an open switch; faded: out of service; dashed: a disconnected terminal.</div>`,
+      s.location,
+      [["Back to the grid", leave]],
+    );
+    return;
+  }
+  const state = [it.open === true ? "open" : it.open === false ? "closed" : "", it.inService === false ? "out of service" : ""]
+    .filter((x) => x)
+    .join(", ");
+  const level = s.groups.find((g) => g.id === it.group)?.label;
+  const far = it.far.length ? `<div>To ${it.far.map((f) => escape(f.label || f.id)).join(", ")}</div>` : "";
+  panel(
+    `<h3>${escape(it.label)}</h3><div class="sub">${escape(it.class)}${level ? ` · ${escape(level)}` : ""}${state ? ` · ${state}` : ""}</div>` +
+      far + findingsHtml(it.findings),
+    it.location,
+    it.far.filter((f) => f.kind === "Substation").map((f): [string, () => void] => [`Show ${f.label || f.id}`, () => enter(f.id)]),
+  );
+}
+
+function show(target: NodeSingular | EdgeSingular | undefined): void {
+  if (inside) showInside(inside, target);
+  else if (grid) showGrid(grid, target);
 }
 
 function open(target: NodeSingular | EdgeSingular): void {
+  if (inside) {
+    const it = inside.items.find((x) => x.id === target.id());
+    const far = it?.far.filter((f) => f.kind === "Substation") ?? [];
+    if (far.length === 1) {
+      enter(far[0].id);
+    } else if (it?.location) {
+      vscode.postMessage({ type: "open", location: it.location });
+    }
+    return;
+  }
+  if (target.isNode() && target.data("kind") === "substation") {
+    enter(target.id());
+    return;
+  }
   const location = target.isNode()
     ? grid?.nodes.find((x) => x.id === target.id())?.location
     : grid?.edges.find((x) => `e:${x.id}` === target.id())?.location;
@@ -227,16 +423,51 @@ function open(target: NodeSingular | EdgeSingular): void {
   }
 }
 
-/** The layout to draw: the one picked, else the TSO's diagram, else the map, else automatic. */
-function choice(g: Grid): string {
-  if (chosen && (chosen === "auto" || g.layouts.some((l) => l.id === chosen))) {
-    return chosen;
+/** Show what substation `id` holds; the extension answers with an `inside` message. */
+function enter(id: string): void {
+  if (!inside && cy) {
+    gridView = { zoom: cy.zoom(), pan: { ...cy.pan() }, selected: id };
   }
-  return (g.layouts.find((l) => l.kind === "diagram") ?? g.layouts[0])?.id ?? "auto";
+  vscode.postMessage({ type: "enter", id });
 }
 
-/** Screen coordinates of a layout's positions and routes, scaled to the grid's size. */
-function place(g: Grid, l: Layout): { nodes: Map<string, Point>; routes: Map<string, Point[]> } {
+function leave(): void {
+  if (!inside) return;
+  vscode.postMessage({ type: "leave" });
+  inside = undefined;
+  if (grid) draw();
+}
+
+/** The scene drawn: its layouts, its nodes' ids, the pairs of nodes its edges join, and its routed edges. */
+function scene(): { layouts: Layout[]; ids: string[]; pairs: [string, string][]; routed: { id: string; key: string }[] } {
+  if (inside) {
+    return {
+      layouts: inside.layouts,
+      ids: inside.items.map((it) => it.id),
+      pairs: inside.links.map((l): [string, string] => [l.source, l.target]),
+      routed: [],
+    };
+  }
+  const g = grid as Grid;
+  return {
+    layouts: g.layouts,
+    ids: g.nodes.map((n) => n.id),
+    pairs: g.edges.map((e): [string, string] => [e.source, e.target]),
+    routed: g.edges.map((e) => ({ id: `e:${e.id}`, key: e.id })),
+  };
+}
+
+/** The layout to draw: the one picked, else the TSO's diagram, else the map, else automatic. */
+function choice(layouts: Layout[]): string {
+  const picked = inside ? chosen.inside : chosen.grid;
+  if (picked && (picked === "auto" || layouts.some((l) => l.id === picked))) {
+    return picked;
+  }
+  return (layouts.find((l) => l.kind === "diagram") ?? layouts[0])?.id ?? "auto";
+}
+
+/** Screen coordinates of a layout's positions and routes, scaled to the scene's size. */
+function place(ids: string[], pairs: [string, string][], l: Layout): { nodes: Map<string, Point>; routes: Map<string, Point[]> } {
   const raw = Object.values(l.nodes);
   let project = (p: [number, number]): Point => ({ x: p[0], y: l.flipY ? -p[1] : p[1] });
   if (l.kind === "geographic") {
@@ -249,7 +480,7 @@ function place(g: Grid, l: Layout): { nodes: Map<string, Point>; routes: Map<str
   const minX = Math.min(...points.map((p) => p.x));
   const minY = Math.min(...points.map((p) => p.y));
   const span = Math.max(Math.max(...points.map((p) => p.x)) - minX, Math.max(...points.map((p) => p.y)) - minY, 1e-9);
-  const scale = Math.max(900, 70 * Math.sqrt(g.nodes.length)) / span;
+  const scale = Math.max(900, 70 * Math.sqrt(ids.length)) / span;
   const screen = (p: [number, number]): Point => {
     const q = project(p);
     return { x: (q.x - minX) * scale, y: (q.y - minY) * scale };
@@ -259,11 +490,11 @@ function place(g: Grid, l: Layout): { nodes: Map<string, Point>; routes: Map<str
 
   // A node the layout does not place goes among its placed neighbours, else below the rest.
   const neighbours = new Map<string, string[]>();
-  for (const e of g.edges) {
-    neighbours.set(e.source, [...(neighbours.get(e.source) ?? []), e.target]);
-    neighbours.set(e.target, [...(neighbours.get(e.target) ?? []), e.source]);
+  for (const [a, b] of pairs) {
+    neighbours.set(a, [...(neighbours.get(a) ?? []), b]);
+    neighbours.set(b, [...(neighbours.get(b) ?? []), a]);
   }
-  let missing = g.nodes.map((n) => n.id).filter((id) => !nodes.has(id));
+  let missing = ids.filter((id) => !nodes.has(id));
   for (let round = 0; round < 5 && missing.length; round++) {
     missing.forEach((id, i) => {
       const known = (neighbours.get(id) ?? []).map((n) => nodes.get(n)).filter((p): p is Point => !!p);
@@ -307,45 +538,61 @@ function route(edge: EdgeSingular, points: Point[]): void {
   });
 }
 
-function arrange(g: Grid): void {
+function arrange(): void {
   if (!cy) return;
-  const id = choice(g);
-  const layout = g.layouts.find((l) => l.id === id);
+  const { layouts, ids, pairs, routed } = scene();
+  const layout = layouts.find((l) => l.id === choice(layouts));
   cy.edges().removeStyle();
   if (!layout) {
-    cy.layout({ name: "cose", animate: false, nodeRepulsion: () => 8000, idealEdgeLength: () => 60, numIter: g.nodes.length > 500 ? 400 : 1000 }).run();
+    cy.layout({
+      name: "cose", animate: false, nodeRepulsion: () => 8000, idealEdgeLength: () => (inside ? 30 : 60),
+      numIter: ids.length > 500 ? 400 : 1000,
+    }).run();
     return;
   }
-  const { nodes, routes } = place(g, layout);
+  const { nodes, routes } = place(ids, pairs, layout);
   cy.layout({ name: "preset", positions: Object.fromEntries(nodes), fit: true, padding: 30 }).run();
-  for (const e of g.edges) {
-    const points = routes.get(e.id);
+  for (const e of routed) {
+    const points = routes.get(e.key);
     if (points) {
-      route(cy.getElementById(`e:${e.id}`) as EdgeSingular, points);
+      route(cy.getElementById(e.id) as EdgeSingular, points);
     }
   }
 }
 
-/** The layout picker: shown when the set has a diagram or locations. */
-function picker(g: Grid): void {
+/** The layout picker: shown when the scene has a diagram or locations. */
+function picker(layouts: Layout[]): void {
   const select = document.getElementById("layout") as HTMLSelectElement;
-  const options = [...g.layouts.map((l) => [l.id, l.name]), ["auto", "Automatic"]];
+  const options = [...layouts.map((l) => [l.id, l.name]), ["auto", "Automatic"]];
   select.innerHTML = options.map(([v, n]) => `<option value="${escape(v)}">${escape(n)}</option>`).join("");
-  select.value = choice(g);
-  select.style.display = g.layouts.length ? "" : "none";
+  select.value = choice(layouts);
+  select.style.display = layouts.length ? "" : "none";
 }
 
-function draw(g: Grid): void {
-  const previous = grid;
-  grid = g;
-  (document.getElementById("summary") as HTMLElement).textContent = summary(g);
-  const sameShape = cy && previous &&
-    previous.nodes.length === g.nodes.length && previous.edges.length === g.edges.length &&
-    g.nodes.every((n) => cy?.getElementById(n.id).nonempty()) && g.edges.every((e) => cy?.getElementById(`e:${e.id}`).nonempty());
-  if (cy && sameShape) {
-    // Only the findings changed: keep the layout.
-    for (const el of elements(g)) {
-      cy.getElementById(el.data.id as string).data(el.data);
+/** What is drawn: the substation shown, else the grid; and its size, to tell a refresh from a new scene. */
+type Shown = { kind: string; id: string; nodes: number; edges: number };
+
+function shown(): Shown {
+  return inside
+    ? { kind: "inside", id: inside.id, nodes: inside.items.length + inside.groups.length, edges: inside.links.length }
+    : { kind: "grid", id: "", nodes: grid?.nodes.length ?? 0, edges: grid?.edges.length ?? 0 };
+}
+
+/** Draw the substation shown, else the grid. A refresh of what `previous` drew keeps its layout. */
+function draw(previous?: Shown): void {
+  const els = inside ? insideElements(inside) : gridElements(grid as Grid);
+  (document.getElementById("summary") as HTMLElement).textContent = inside ? insideSummary(inside) : gridSummary(grid as Grid);
+  (document.getElementById("back") as HTMLElement).style.display = inside ? "inline-block" : "none";
+  (document.getElementById("search") as HTMLInputElement).placeholder = inside ? "Find equipment" : "Find a substation";
+  const now = shown();
+  const same = cy && previous && previous.kind === now.kind && previous.id === now.id &&
+    previous.nodes === now.nodes && previous.edges === now.edges && els.every((el) => cy?.getElementById(el.data.id as string).nonempty());
+  if (cy && same) {
+    // Only findings and states changed: keep the layout.
+    for (const el of els) {
+      const at = cy.getElementById(el.data.id as string);
+      at.data(el.data);
+      if (typeof el.classes === "string") at.classes(el.classes);
     }
     const selected = cy.$(":selected").first();
     show(selected.nonempty() ? (selected as NodeSingular | EdgeSingular) : undefined);
@@ -354,27 +601,42 @@ function draw(g: Grid): void {
   cy?.destroy();
   cy = cytoscape({
     container: document.getElementById("graph"),
-    elements: elements(g),
+    elements: els,
     style: stylesheet(),
     layout: { name: "preset" },
     wheelSensitivity: 0.3,
     minZoom: 0.05,
     maxZoom: 4,
   });
-  picker(g);
-  arrange(g);
+  picker(scene().layouts);
+  arrange();
+  if (!inside && gridView) {
+    // Back from a substation: the grid as it was, with that substation selected.
+    cy.zoom(gridView.zoom);
+    cy.pan(gridView.pan);
+    cy.getElementById(gridView.selected).select();
+    gridView = undefined;
+  }
   cy.on("select", "node, edge", (e) => show(e.target));
   cy.on("unselect", () => show(undefined));
   cy.on("dbltap", "node, edge", (e) => open(e.target));
-  show(undefined);
+  const selected = cy.$(":selected").first();
+  show(selected.nonempty() ? (selected as NodeSingular | EdgeSingular) : undefined);
 }
 
 // Restyle when the colour theme changes.
 new MutationObserver(() => cy?.style(stylesheet())).observe(document.body, { attributes: true, attributeFilter: ["class"] });
 
 (document.getElementById("layout") as HTMLSelectElement).addEventListener("change", (e) => {
-  chosen = (e.target as HTMLSelectElement).value;
-  if (grid) arrange(grid);
+  const value = (e.target as HTMLSelectElement).value;
+  if (inside) chosen.inside = value;
+  else chosen.grid = value;
+  arrange();
+});
+
+(document.getElementById("back") as HTMLButtonElement).addEventListener("click", leave);
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && document.activeElement?.id !== "search") leave();
 });
 
 (document.getElementById("search") as HTMLInputElement).addEventListener("input", (e) => {
@@ -383,15 +645,22 @@ new MutationObserver(() => cy?.style(stylesheet())).observe(document.body, { att
   cy.elements().removeClass("dim");
   if (!q) return;
   const hits = cy.nodes().filter((n) => String(n.data("label")).toLowerCase().includes(q));
-  cy.elements().not(hits).addClass("dim");
+  cy.elements().not(hits).not(hits.ancestors()).addClass("dim");
   if (hits.nonempty()) {
     cy.animate({ fit: { eles: hits, padding: 80 } }, { duration: 200 });
   }
 });
 
 window.addEventListener("message", (e) => {
+  const previous = cy ? shown() : undefined;
   if (e.data?.type === "grid") {
-    draw(e.data.grid as Grid);
+    grid = e.data.grid as Grid;
+    // Behind a substation, the grid is drawn on the way back.
+    if (!inside) draw(previous);
+  } else if (e.data?.type === "inside") {
+    // `null`: the substation is gone from the set.
+    inside = (e.data.inside as Inside | null) ?? undefined;
+    if (inside || grid) draw(previous);
   }
 });
 vscode.postMessage({ type: "ready" });
