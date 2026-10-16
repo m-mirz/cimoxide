@@ -108,6 +108,12 @@
         "command": "cimoxide.select",
         "title": "Select range",
         "category": "cimoxide"
+      },
+      {
+        "command": "cimoxide.model.add",
+        "title": "Add…",
+        "category": "cimoxide",
+        "icon": "$(add)"
       }
     ],
     "views": {
@@ -151,6 +157,11 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "cimoxide.model.add",
+          "when": "view == cimoxide.model && viewItem =~ /^object\\b/",
+          "group": "edit@0"
+        },
         {
           "command": "cimoxide.model.showInGrid",
           "when": "view == cimoxide.model && viewItem =~ /\\bgrid\\b/",
@@ -222,6 +233,10 @@
         },
         {
           "command": "cimoxide.select",
+          "when": "false"
+        },
+        {
+          "command": "cimoxide.model.add",
           "when": "false"
         }
       ],

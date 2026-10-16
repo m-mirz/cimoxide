@@ -251,7 +251,12 @@ reference, `edit::candidates` ranks the objects of the range class: linked to th
 (naming what it names with its other fields, or named by it), then by containers shared with the
 object (where the candidate is, or the objects naming it with the same field), then use; the same
 ranking feeds the `rdf:resource` completion (`candidates_rank_what_the_data_names` pins the
-MicroGrid hit rates).
+MicroGrid hit rates). Adding an object (`cimoxide/addable`, `cimoxide/add`, `edit::add`): the
+classes of the parent's family with a `CONTAINED` field ranging over the parent's class, of the
+profiles the set declares; written with a v4 UUID (from `RandomState`, no dependency) in the
+non-SSH file whose profile carries the class (the parent's own first), after the last element
+there of an object the parent holds, plus an empty `rdf:about` in the SSH file when the class is
+in SSH. No mandatory fields: the findings ask for them, and the quick fixes add them.
 
 `cimoxide/grid` (`src/grid.rs`) answers the set's grid at substation level as last validated:
 substations, and boundary points no substation holds, as nodes; equipment whose terminals reach
