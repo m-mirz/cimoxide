@@ -1,5 +1,6 @@
-// Starts `cimlsp` and connects it to XML documents. The server decides which
-// documents are CGMES / NC (by namespace) and ignores the rest.
+// Starts `cimlsp` and connects it to XML and CIM XML documents. The server
+// decides which documents are CGMES / NC (by namespace) and ignores the rest;
+// those the extension recognises open as CIM XML ([`claim`]).
 //
 // Also offers `cimmcp` to chat as an MCP server, reading the model sets of
 // the first workspace folder, draws a model set's grid ([`gridView`]) and
@@ -20,9 +21,10 @@ import {
   workspace,
 } from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions } from "vscode-languageclient/node";
+import { registerClaim } from "./claim";
 import { showGrid } from "./gridView";
 import { ModelTree, registerModelTree } from "./modelTree";
-import { openAt, openEdited } from "./open";
+import { CIM_XML, openAt, openEdited } from "./open";
 
 let client: LanguageClient | undefined;
 
@@ -72,7 +74,7 @@ async function start(context: ExtensionContext): Promise<void> {
   const command = serverCommand(context, "cimlsp", "server.path");
   const serverOptions: ServerOptions = { command, options: { env } };
   const clientOptions: LanguageClientOptions = {
-    documentSelector: [{ scheme: "file", language: "xml" }],
+    documentSelector: [{ scheme: "file", language: "xml" }, { scheme: "file", language: CIM_XML }],
     // Changes on disk, which the server revalidates on: also of files VS Code
     // never hands it (over 50 MB) and of files an edit changed unopened.
     synchronize: { fileEvents: watcher },
@@ -135,6 +137,7 @@ export interface Api {
 
 export async function activate(context: ExtensionContext): Promise<Api> {
   registerMcp(context);
+  registerClaim(context);
   const modelTree = registerModelTree(context, () => client);
   context.subscriptions.push(
     commands.registerCommand("cimoxide.showGrid", (uri?: Uri) => showGrid(context, client, uri)),
@@ -157,7 +160,8 @@ export async function activate(context: ExtensionContext): Promise<Api> {
         e.affectsConfiguration("cimoxide") &&
         !e.affectsConfiguration("cimoxide.trace") &&
         !e.affectsConfiguration("cimoxide.mcp") &&
-        !e.affectsConfiguration("cimoxide.model")
+        !e.affectsConfiguration("cimoxide.model") &&
+        !e.affectsConfiguration("cimoxide.claimFiles")
       ) {
         await stop();
         await start(context);

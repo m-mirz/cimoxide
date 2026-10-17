@@ -28,6 +28,7 @@
   },
   "activationEvents": [
     "onLanguage:xml",
+    "onLanguage:cimxml",
     "onMcpServerDefinitionProvider:cimoxide"
   ],
   "main": "./dist/extension.js",
@@ -158,7 +159,7 @@
       "editor/title": [
         {
           "command": "cimoxide.showGrid",
-          "when": "resourceLangId == xml",
+          "when": "resourceLangId =~ /^(cim)?xml$/",
           "group": "navigation"
         }
       ],
@@ -293,7 +294,7 @@
       "editor/context": [
         {
           "command": "cimoxide.model.reveal",
-          "when": "resourceLangId == xml && cimoxide.model.active",
+          "when": "resourceLangId =~ /^(cim)?xml$/ && cimoxide.model.active",
           "group": "navigation@90"
         }
       ]
@@ -302,6 +303,23 @@
       {
         "id": "cimoxide",
         "label": "cimoxide — CGMES & NC models"
+      }
+    ],
+    "languages": [
+      {
+        "id": "cimxml",
+        "aliases": [
+          "CIM XML",
+          "cimxml"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "cimxml",
+        "scopeName": "text.xml.cim",
+        "path": "./syntaxes/cimxml.tmLanguage.json"
       }
     ],
     "configuration": {
@@ -354,6 +372,11 @@
           "type": "string",
           "default": "",
           "markdownDescription": "Path to a `cimmcp` binary. Empty: the one bundled with the extension, else `cimmcp` on `PATH`."
+        },
+        "cimoxide.claimFiles": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Open CGMES and NC files as *CIM XML* rather than XML, so that extensions for XML in general (schema validation, formatting, …) leave them alone. Highlighting is XML's. Off: they stay XML; `files.associations` can still assign *CIM XML* (`cimxml`) by path."
         },
         "cimoxide.model.followCursor": {
           "type": "boolean",

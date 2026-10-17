@@ -26,7 +26,7 @@ import {
 } from "vscode";
 import { LanguageClient, WorkspaceEdit as LspWorkspaceEdit } from "vscode-languageclient/node";
 import { Reveal, revealInGrid } from "./gridView";
-import { activeFile, openAt, openEdited, validateSet } from "./open";
+import { activeFile, isXmlLanguage, openAt, openEdited, validateSet } from "./open";
 import { symbolOf } from "./symbols";
 
 const TREE_REQUEST = "cimoxide/tree";
@@ -269,7 +269,7 @@ function decoration(uri: Uri): FileDecoration | undefined {
 }
 
 function isCim(uri: Uri, languageId: string): boolean {
-  return uri.scheme === "file" && languageId === "xml";
+  return uri.scheme === "file" && isXmlLanguage(languageId);
 }
 
 export function registerModelTree(context: ExtensionContext, client: () => LanguageClient | undefined): ModelTree {

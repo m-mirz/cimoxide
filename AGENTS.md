@@ -310,7 +310,10 @@ panel. `activate` returns the model tree and the server's requests for it. `npm 
 
 The extension (`editors/vscode/`, TypeScript, `vscode-languageclient`) passes settings as
 initialization options and schema directories as `CIMOXIDE_*` environment variables, and
-restarts the server on any `cimoxide.*` change. *Show grid* draws `cimoxide/grid` in a webview
+restarts the server on any `cimoxide.*` change. It claims CGMES and NC files as the language
+`cimxml` (`src/claim.ts`, `cimoxide.claimFiles`), so XML extensions in general leave them alone:
+an `xml` document switched on open when its head names what `decode::is_cim` looks for (no file
+pattern tells them apart); its grammar includes `text.xml`. The client attaches to both ids. *Show grid* draws `cimoxide/grid` in a webview
 (`src/gridView.ts`; the page is `src/webview/grid.ts`, Cytoscape.js bundled by esbuild into
 `dist/grid.js`, as webviews load nothing from the network). Equipment symbols (after IEC 60617,
 drawn on a 16-px grid) are in `src/symbols.ts`, shared by the page (an SVG data URI per item, in

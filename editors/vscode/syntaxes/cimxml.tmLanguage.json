@@ -1,0 +1,5 @@
+{
+  "name": "CIM XML",
+  "scopeName": "text.xml.cim",
+  "patterns": [{ "include": "text.xml" }]
+}

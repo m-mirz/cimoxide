@@ -6,6 +6,7 @@
 
 import * as assert from "assert";
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import {
   CodeAction,
@@ -72,6 +73,22 @@ test("activates, validates the set and lists it in the tree", async () => {
     return s.length ? s : undefined;
   });
   assert.deepStrictEqual(sections.map((s) => s.label), ["Geographical", "Operational", "Not contained", "By class"]);
+});
+
+test("a CIM file opens as CIM XML, highlighted as XML; another XML file stays XML", async () => {
+  await until("the EQ file as CIM XML", () =>
+    workspace.textDocuments.find((d) => d.uri.toString() === eq.toString() && d.languageId === "cimxml"));
+  const grammar = (extensions.getExtension("m-mirz.cimoxide")?.packageJSON.contributes.grammars ?? [])
+    .find((g: { language: string }) => g.language === "cimxml");
+  const root = extensions.getExtension("m-mirz.cimoxide")?.extensionPath as string;
+  const rules = JSON.parse(fs.readFileSync(path.join(root, grammar.path), "utf8"));
+  assert.deepStrictEqual(rules.patterns, [{ include: "text.xml" }]);
+  const plain = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "cimoxide-plain-")), "plain.xml");
+  fs.writeFileSync(plain, '<?xml version="1.0"?>\n<project><name>not CIM</name></project>\n');
+  const doc = await workspace.openTextDocument(Uri.file(plain));
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.strictEqual(doc.languageId, "xml");
+  assert.ok(!doc.isClosed, "the plain file was switched");
 });
 
 test("the tree's equipment icons are files in the extension", async () => {

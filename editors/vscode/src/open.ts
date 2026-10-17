@@ -5,6 +5,14 @@
 import { commands, Range, TabInputText, Uri, ViewColumn, window } from "vscode";
 import { LanguageClient } from "vscode-languageclient/node";
 
+/** The language CGMES and NC files are claimed as (`claim.ts`), highlighted with XML's grammar. */
+export const CIM_XML = "cimxml";
+
+/** Whether a document of `languageId` may be a CGMES or NC file: XML, or claimed as CIM XML. */
+export function isXmlLanguage(languageId: string): boolean {
+  return languageId === "xml" || languageId === CIM_XML;
+}
+
 /** A range as the server sends it. */
 export interface Span {
   start: { line: number; character: number };

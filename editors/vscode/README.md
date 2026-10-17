@@ -90,6 +90,13 @@ has no hover, completion, quick fixes or rename; a notice says so when one opens
 still validated, and the *CIM Model* view browses, fixes (*Fix…*), renames, deletes and adds in
 them as in any other: its edits are computed from the files on disk, and open for review.
 
+**CIM XML**: CGMES and NC files open as their own language, *CIM XML*, highlighted as XML, so
+extensions for XML in general (schema validation, formatting, …) leave them alone. They are `.xml`
+like any other, so each XML file is looked at as it opens and switched if it names a CIM namespace:
+it shows as XML for a moment first. Set one back to XML with *Change Language Mode*, or turn
+`cimoxide.claimFiles` off; to have files open as CIM XML straight away, assign them by path with
+`files.associations` (`"**/models/**/*.xml": "cimxml"`).
+
 Validation runs when a document is opened and saved, and when a file of a model set changes on
 disk (another tool, a checkout, a file over 50 MB, which VS Code does not hand to extensions);
 turn on `cimoxide.validation.onType` to also run it while typing.
@@ -104,6 +111,7 @@ turn on `cimoxide.validation.onType` to also run it while typing.
 | `cimoxide.validation.onType` | revalidate while typing |
 | `cimoxide.schema.rdfsDir` / `cimoxide.schema.shaclDir` | load RDFS / SHACL at runtime instead of the built-in tables |
 | `cimoxide.server.path` | use another `cimlsp` binary |
+| `cimoxide.claimFiles` | open CGMES and NC files as *CIM XML*, not XML |
 | `cimoxide.model.followCursor` | select the object at the cursor in the *CIM Model* view |
 | `cimoxide.mcp.enabled` | offer the `cimmcp` MCP server to chat |
 | `cimoxide.mcp.path` | use another `cimmcp` binary |
