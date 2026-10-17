@@ -1,6 +1,10 @@
 **
 !dist/extension.js
+!dist/grid.js
+!dist/symbols/**
 !server/**
 !README.md
+!language-configuration.json
+!syntaxes/**
 !LICENSE
 !package.json

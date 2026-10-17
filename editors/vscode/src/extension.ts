@@ -1,8 +1,10 @@
-// Starts `cimlsp` and connects it to XML documents. The server decides which
-// documents are CGMES / NC (by namespace) and ignores the rest.
+// Starts `cimlsp` and connects it to XML and CIM XML documents. The server
+// decides which documents are CGMES / NC (by namespace) and ignores the rest;
+// those the extension recognises open as CIM XML ([`claim`]).
 //
 // Also offers `cimmcp` to chat as an MCP server, reading the model sets of
-// the first workspace folder.
+// the first workspace folder, draws a model set's grid ([`gridView`]) and
+// lists its objects in a tree ([`modelTree`]).
 
 import * as fs from "fs";
 import * as path from "path";
@@ -10,12 +12,19 @@ import {
   commands,
   EventEmitter,
   ExtensionContext,
+  FileSystemWatcher,
   lm,
   McpStdioServerDefinition,
+  Position,
+  Uri,
   window,
   workspace,
 } from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions } from "vscode-languageclient/node";
+import { registerClaim } from "./claim";
+import { showGrid } from "./gridView";
+import { ModelTree, registerModelTree } from "./modelTree";
+import { CIM_XML, openAt, openEdited } from "./open";
 
 let client: LanguageClient | undefined;
 
@@ -56,13 +65,19 @@ function schemaEnv(): Record<string, string> {
   return env;
 }
 
+let watcher: FileSystemWatcher | undefined;
+
 async function start(context: ExtensionContext): Promise<void> {
+  watcher = workspace.createFileSystemWatcher("**/*.xml");
   const cfg = workspace.getConfiguration("cimoxide");
   const env: NodeJS.ProcessEnv = { ...process.env, ...schemaEnv() };
   const command = serverCommand(context, "cimlsp", "server.path");
   const serverOptions: ServerOptions = { command, options: { env } };
   const clientOptions: LanguageClientOptions = {
-    documentSelector: [{ scheme: "file", language: "xml" }],
+    documentSelector: [{ scheme: "file", language: "xml" }, { scheme: "file", language: CIM_XML }],
+    // Changes on disk, which the server revalidates on: also of files VS Code
+    // never hands it (over 50 MB) and of files an edit changed unopened.
+    synchronize: { fileEvents: watcher },
     initializationOptions: {
       common: cfg.get<boolean>("validation.common"),
       quality: cfg.get<boolean>("validation.quality"),
@@ -83,6 +98,8 @@ async function stop(): Promise<void> {
   const c = client;
   client = undefined;
   await c?.stop();
+  watcher?.dispose();
+  watcher = undefined;
 }
 
 /** Offers `cimmcp` to chat; VS Code starts it when a chat first uses it. */
@@ -112,9 +129,26 @@ function registerMcp(context: ExtensionContext): void {
   );
 }
 
-export async function activate(context: ExtensionContext): Promise<void> {
+/** What `activate` returns, for the extension's tests (test/suite.ts): the model tree, and the server's requests. */
+export interface Api {
+  modelTree: ModelTree;
+  request<R>(method: string, params: unknown): Promise<R>;
+}
+
+export async function activate(context: ExtensionContext): Promise<Api> {
   registerMcp(context);
+  registerClaim(context);
+  const modelTree = registerModelTree(context, () => client);
   context.subscriptions.push(
+    commands.registerCommand("cimoxide.showGrid", (uri?: Uri) => showGrid(context, client, uri)),
+    // After a deletion: the files it changed, open for review.
+    commands.registerCommand("cimoxide.openEdited", (uris: string[]) => openEdited(uris.map((u) => Uri.parse(u)))),
+    // After a quick fix adds a field: select its value, to type over; for a
+    // reference, list what it can name.
+    commands.registerCommand("cimoxide.select", async (uri: string, range: { start: Position; end: Position }, suggest?: boolean) => {
+      await openAt(uri, range);
+      if (suggest) await commands.executeCommand("editor.action.triggerSuggest");
+    }),
     commands.registerCommand("cimoxide.restartServer", async () => {
       await stop();
       await start(context);
@@ -125,7 +159,9 @@ export async function activate(context: ExtensionContext): Promise<void> {
       if (
         e.affectsConfiguration("cimoxide") &&
         !e.affectsConfiguration("cimoxide.trace") &&
-        !e.affectsConfiguration("cimoxide.mcp")
+        !e.affectsConfiguration("cimoxide.mcp") &&
+        !e.affectsConfiguration("cimoxide.model") &&
+        !e.affectsConfiguration("cimoxide.claimFiles")
       ) {
         await stop();
         await start(context);
@@ -133,6 +169,13 @@ export async function activate(context: ExtensionContext): Promise<void> {
     }),
   );
   await start(context);
+  return {
+    modelTree,
+    request: <R>(method: string, params: unknown) => {
+      if (!client) throw new Error("no language server");
+      return client.sendRequest<R>(method, params);
+    },
+  };
 }
 
 export function deactivate(): Promise<void> {

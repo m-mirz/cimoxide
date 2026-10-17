@@ -231,16 +231,97 @@ has been measured at 20% for identical code).
 `cimlsp` over stdio (`lsp-server`/`lsp-types`, no async runtime). A *model set* is every CIM
 XML file in a document's directory, open buffers taking precedence over disk; it is
 validated with `validate_files` + `combined_config`, as `cimcli validate` does, on a worker
-thread with a 300 ms debounce. The decoder keeps no positions, so `src/index.rs` makes its
+thread with a 300 ms debounce, on open and save, and on `workspace/didChangeWatchedFiles` (the
+extension watches `**/*.xml`) for a set validated or open: VS Code hands no file over 50 MB to an
+extension, so the server sees neither its opening nor its saving, nor that of a file an edit
+changed unopened. The tree's edits then open the files they changed (`openEdited`), as an edit
+leaves an unopened file unsaved and unseen. The decoder keeps no positions, so `src/index.rs` makes its
 own quick-xml pass per document (ranges of elements, fields, `rdf:resource` values; mRID =
 text after the last `#`, as in `decode.rs`). A per-file finding is placed only in the file it
 was found in (`validate_files_traced`). Each diagnostic's `data` carries `object_id`
 and `property`; its `code` is the `rule_id`. Diagnostics must stay equal to
 `cimcli validate --format json` as sets of `(object_id, rule_id, property)` per directory.
 
+The editor helps with the text (hover, completion, definition, references, outline, quick fixes,
+rename); the model tree is where the model is edited, in files of any size: deleting and adding are
+the tree's alone (`cimoxide/delete`, `cimoxide/add`), *Fix…*, *Rename mRID…* and *Referenced by…*
+(`cimoxide/referrers`, `edit::referrers`) its versions of the editor's. Rename (an mRID) and
+deleting are text edits over the set's files as they are now: an open
+buffer, else the file on disk with the set's index of it (`src/edit.rs`). An mRID is the end of
+the value written, so only that suffix is replaced; a deletion takes whole lines and is annotated
+`needsConfirmation`, so the client previews it. The tree's *Fix…* and *Rename mRID…* go through
+`cimoxide/fixes` (the quick fixes' core, `fixes` in `main.rs`, for an object's findings, kept per
+object in `ModelSet::findings`, and `edit::reference_fixes` for references to nothing or to what the
+set lacks, which no finding reports) and `cimoxide/rename`, from the files on disk, so they work where
+the editor's do not: in a file over 50 MB, which VS Code hands no extension. Deleting with dependents takes the object's
+subtree in the tree's containment (`Tree::descendants`). A finding whose `property` the object
+writes in no file gets a quick fix adding it (`edit::add_missing`): to the file writing the object
+whose header profile is among the attribute's `origins`, after its last field, in its line ending;
+the action's command `cimoxide.select` (registered by the extension) selects the value. For a
+reference, `edit::candidates` ranks the objects of the range class: linked to the object first
+(naming what it names with its other fields, or named by it), then by containers shared with the
+object (where the candidate is, or the objects naming it with the same field), then use; the same
+ranking feeds the `rdf:resource` completion (`candidates_rank_what_the_data_names` pins the
+MicroGrid hit rates). Adding an object (`cimoxide/addable`, `cimoxide/add`, `edit::add`): the
+classes of the parent's family with a `CONTAINED` field ranging over the parent's class, of the
+profiles the set declares; written with a v4 UUID (from `RandomState`, no dependency) in the
+non-SSH file whose profile carries the class (the parent's own first), after the last element
+there of an object the parent holds, plus an empty `rdf:about` in the SSH file when the class is
+in SSH. No mandatory fields: the findings ask for them, and the quick fixes add them.
+
+`cimoxide/grid` (`src/grid.rs`) answers the set's grid at substation level as last validated:
+substations, and boundary points no substation holds, as nodes; equipment whose terminals reach
+two of them as edges; each finding counted on its object's node or edge (`elsewhere` if none).
+It is built from the set's datasets before validation consumes them. Each DL diagram and each GL
+coordinate system is a layout: a node is at the mean of the points of the objects it holds (else of
+its lines' ends), an edge follows its line's points. The automatic layout is computed here too (`src/layout.rs`:
+each component by PivotMDS, which keeps graph distances, then local Fruchterman–Reingold with
+repulsion only between nodes in neighbouring grid cells; linear, deterministic; the tests check
+distance faithfulness on a ring and a lattice), as Cytoscape's `cose` is quadratic and hangs on
+RealGrid, and a force layout alone, multilevel included, leaves it folded; inside a
+substation the view still runs `cose`, which boxes the voltage levels. `cimoxide/substation` answers what one
+substation holds, built with the grid: its equipment and the connectivity (else topological) nodes
+their terminals end at, by voltage level, a terminal as a link; equipment reaching other nodes as
+an item with its far ends; switch states and `inService`. A finding counted on the substation's node
+goes to the item its object stands for (the reference `place` followed), else to the substation
+itself, so the two add up to the node's count (`micro_grid_inside` checks this).
+
+`cimoxide/tree` (`src/tree.rs`) answers the set's objects as a tree, a level at a time by key, built
+with the grid from the same model: Geographical, each object under the target of the first
+`CONTAINED` field it writes, from the regions and containers no container holds; Operational, the
+areas; Not contained, the rest of that forest by class, so Geographical and Not contained hold each
+object once; By class, every object. A parent the set lacks is an object of its own. Each node
+counts its subtree's findings; a level of more than `PAGE` children is split by class, then in
+pages. Each object carries `Grid::reveal`, where the grid view shows it. `Tree::search` matches names and mRIDs
+over every object (`cimoxide/search`, the tree's search; `cimoxide/treePathOf` reveals a hit by id,
+for files no editor has). `Tree::path` gives the keys
+down to an object, those class groups and pages included (`cimoxide/treePath`, for the view to
+reveal the object at the cursor), and `Tree::containers` the outline's container labels
+(`micro_grid_tree`).
+
+`npm test` in `editors/vscode/` runs `test/suite.ts` in a downloaded VS Code with the extension on a
+copy of MicroGrid (needs `server/cimlsp`; `xvfb-run` without a display; `vscode.yml` runs it on
+Linux before anything is published): activation and the tree through the client, the tree's icon
+files, the tree's delete, fixes, rename, search and *Referenced by*, a quick fix, rename, the grid
+panel. `activate` returns the model tree and the server's requests for it. `npm run screenshots`
+(`test/screenshots.ts`) takes the README's screenshots the same way, on MicroGrid and RealGrid, into
+`screenshots/` (ignored): headless on Linux, through the DevTools protocol, reduced to 256 colours
+(`upng-js`) but for RealGrid's grid.
+
 The extension (`editors/vscode/`, TypeScript, `vscode-languageclient`) passes settings as
 initialization options and schema directories as `CIMOXIDE_*` environment variables, and
-restarts the server on any `cimoxide.*` change.
+restarts the server on any `cimoxide.*` change. It claims CGMES and NC files as the language
+`cimxml` (`src/claim.ts`, `cimoxide.claimFiles`), so XML extensions in general leave them alone:
+an `xml` document switched on open when its head names what `decode::is_cim` looks for (no file
+pattern tells them apart); its grammar includes `text.xml`. The client attaches to both ids. *Show grid* draws `cimoxide/grid` in a webview
+(`src/gridView.ts`; the page is `src/webview/grid.ts`, Cytoscape.js bundled by esbuild into
+`dist/grid.js`, as webviews load nothing from the network). Equipment symbols (after IEC 60617,
+drawn on a 16-px grid) are in `src/symbols.ts`, shared by the page (an SVG data URI per item, in
+its voltage's colour) and the tree (icon files `build-symbols.js` writes into `dist/symbols/` at build
+time, light and dark: VS Code loads tree icons only from trusted folders such as the extension's,
+not its storage). The *CIM Model* Explorer view
+(`src/modelTree.ts`) draws `cimoxide/tree` for the active editor's set; its findings badges are
+a `FileDecorationProvider` on the items' `cimoxide-tree:` resource URIs, which carry the counts.
 
 ### `cimoxide-mcp`
 

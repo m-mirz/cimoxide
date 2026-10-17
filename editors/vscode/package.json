@@ -28,6 +28,7 @@
   },
   "activationEvents": [
     "onLanguage:xml",
+    "onLanguage:cimxml",
     "onMcpServerDefinitionProvider:cimoxide"
   ],
   "main": "./dist/extension.js",
@@ -39,15 +40,286 @@
         "category": "cimoxide"
       },
       {
+        "command": "cimoxide.showGrid",
+        "title": "Show grid",
+        "category": "cimoxide",
+        "icon": "$(type-hierarchy)"
+      },
+      {
         "command": "cimoxide.restartServer",
         "title": "Restart language server",
         "category": "cimoxide"
+      },
+      {
+        "command": "cimoxide.model.refresh",
+        "title": "Refresh",
+        "category": "cimoxide",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "cimoxide.model.onlyFindings",
+        "title": "Show only objects with findings",
+        "category": "cimoxide",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "cimoxide.model.allObjects",
+        "title": "Show all objects",
+        "category": "cimoxide",
+        "icon": "$(filter-filled)"
+      },
+      {
+        "command": "cimoxide.model.showInGrid",
+        "title": "Show in grid",
+        "category": "cimoxide",
+        "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "cimoxide.model.showInside",
+        "title": "Show inside",
+        "category": "cimoxide",
+        "icon": "$(zoom-in)"
+      },
+      {
+        "command": "cimoxide.model.open",
+        "title": "Open definition",
+        "category": "cimoxide"
+      },
+      {
+        "command": "cimoxide.model.reveal",
+        "title": "Reveal in CIM Model",
+        "category": "cimoxide"
+      },
+      {
+        "command": "cimoxide.model.rename",
+        "title": "Rename mRID…",
+        "category": "cimoxide"
+      },
+      {
+        "command": "cimoxide.model.delete",
+        "title": "Delete",
+        "category": "cimoxide"
+      },
+      {
+        "command": "cimoxide.model.deleteAll",
+        "title": "Delete with what it holds",
+        "category": "cimoxide"
+      },
+      {
+        "command": "cimoxide.select",
+        "title": "Select range",
+        "category": "cimoxide"
+      },
+      {
+        "command": "cimoxide.model.add",
+        "title": "Add…",
+        "category": "cimoxide",
+        "icon": "$(add)"
+      },
+      {
+        "command": "cimoxide.openEdited",
+        "title": "Open edited files",
+        "category": "cimoxide"
+      },
+      {
+        "command": "cimoxide.model.fix",
+        "title": "Fix…",
+        "category": "cimoxide",
+        "icon": "$(lightbulb)"
+      },
+      {
+        "command": "cimoxide.model.search",
+        "title": "Find in model set",
+        "category": "cimoxide",
+        "icon": "$(search)"
+      },
+      {
+        "command": "cimoxide.model.referrers",
+        "title": "Referenced by…",
+        "category": "cimoxide",
+        "icon": "$(references)"
       }
     ],
+    "views": {
+      "explorer": [
+        {
+          "id": "cimoxide.model",
+          "name": "CIM Model",
+          "when": "cimoxide.model.active"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "cimoxide.model",
+        "contents": "No model set yet: open a CGMES or NC file. Its model set (every CIM file in its directory) is listed here once validated: by region, substation and voltage level, by area and by class, each object with its findings."
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "cimoxide.showGrid",
+          "when": "resourceLangId =~ /^(cim)?xml$/",
+          "group": "navigation"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "cimoxide.model.search",
+          "when": "view == cimoxide.model",
+          "group": "navigation@0"
+        },
+        {
+          "command": "cimoxide.model.onlyFindings",
+          "when": "view == cimoxide.model && !cimoxide.model.onlyFindings",
+          "group": "navigation"
+        },
+        {
+          "command": "cimoxide.model.allObjects",
+          "when": "view == cimoxide.model && cimoxide.model.onlyFindings",
+          "group": "navigation"
+        },
+        {
+          "command": "cimoxide.model.refresh",
+          "when": "view == cimoxide.model",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "cimoxide.model.fix",
+          "when": "view == cimoxide.model && viewItem =~ /^object\\b/",
+          "group": "edit@0"
+        },
+        {
+          "command": "cimoxide.model.referrers",
+          "when": "view == cimoxide.model && viewItem =~ /^object\\b/",
+          "group": "navigation@3"
+        },
+        {
+          "command": "cimoxide.model.add",
+          "when": "view == cimoxide.model && viewItem =~ /^object\\b/",
+          "group": "edit@0"
+        },
+        {
+          "command": "cimoxide.model.showInGrid",
+          "when": "view == cimoxide.model && viewItem =~ /\\bgrid\\b/",
+          "group": "inline"
+        },
+        {
+          "command": "cimoxide.model.showInside",
+          "when": "view == cimoxide.model && viewItem =~ /\\binside\\b/",
+          "group": "inline"
+        },
+        {
+          "command": "cimoxide.model.showInGrid",
+          "when": "view == cimoxide.model && viewItem =~ /\\bgrid\\b/",
+          "group": "navigation@1"
+        },
+        {
+          "command": "cimoxide.model.showInside",
+          "when": "view == cimoxide.model && viewItem =~ /\\binside\\b/",
+          "group": "navigation@2"
+        },
+        {
+          "command": "cimoxide.model.rename",
+          "when": "view == cimoxide.model && viewItem =~ /^object\\b/",
+          "group": "edit@1"
+        },
+        {
+          "command": "cimoxide.model.delete",
+          "when": "view == cimoxide.model && viewItem =~ /^object\\b/",
+          "group": "edit@2"
+        },
+        {
+          "command": "cimoxide.model.deleteAll",
+          "when": "view == cimoxide.model && viewItem =~ /\\bholds\\b/",
+          "group": "edit@3"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "cimoxide.model.onlyFindings",
+          "when": "false"
+        },
+        {
+          "command": "cimoxide.model.allObjects",
+          "when": "false"
+        },
+        {
+          "command": "cimoxide.model.showInGrid",
+          "when": "false"
+        },
+        {
+          "command": "cimoxide.model.showInside",
+          "when": "false"
+        },
+        {
+          "command": "cimoxide.model.open",
+          "when": "false"
+        },
+        {
+          "command": "cimoxide.model.rename",
+          "when": "false"
+        },
+        {
+          "command": "cimoxide.model.delete",
+          "when": "false"
+        },
+        {
+          "command": "cimoxide.model.deleteAll",
+          "when": "false"
+        },
+        {
+          "command": "cimoxide.select",
+          "when": "false"
+        },
+        {
+          "command": "cimoxide.model.add",
+          "when": "false"
+        },
+        {
+          "command": "cimoxide.openEdited",
+          "when": "false"
+        },
+        {
+          "command": "cimoxide.model.fix",
+          "when": "false"
+        },
+        {
+          "command": "cimoxide.model.referrers",
+          "when": "false"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "cimoxide.model.reveal",
+          "when": "resourceLangId =~ /^(cim)?xml$/ && cimoxide.model.active",
+          "group": "navigation@90"
+        }
+      ]
+    },
     "mcpServerDefinitionProviders": [
       {
         "id": "cimoxide",
         "label": "cimoxide — CGMES & NC models"
+      }
+    ],
+    "languages": [
+      {
+        "id": "cimxml",
+        "aliases": [
+          "CIM XML",
+          "cimxml"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "cimxml",
+        "scopeName": "text.xml.cim",
+        "path": "./syntaxes/cimxml.tmLanguage.json"
       }
     ],
     "configuration": {
@@ -101,6 +373,16 @@
           "default": "",
           "markdownDescription": "Path to a `cimmcp` binary. Empty: the one bundled with the extension, else `cimmcp` on `PATH`."
         },
+        "cimoxide.claimFiles": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Open CGMES and NC files as *CIM XML* rather than XML, so that extensions for XML in general (schema validation, formatting, …) leave them alone. Highlighting is XML's. Off: they stay XML; `files.associations` can still assign *CIM XML* (`cimxml`) by path."
+        },
+        "cimoxide.model.followCursor": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Select the object at the cursor in the *CIM Model* view as the cursor moves. *cimoxide: Reveal in CIM Model* does it once."
+        },
         "cimoxide.trace.server": {
           "type": "string",
           "enum": [
@@ -116,19 +398,24 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run build -- --minify && node -e \"require('fs').copyFileSync('../../LICENSE', 'LICENSE')\"",
-    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18",
+    "build": "esbuild src/symbols.ts --bundle --outfile=dist/symbols.cjs --format=cjs --platform=node && node build-symbols.js && esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18 && esbuild src/webview/grid.ts --bundle --outfile=dist/grid.js --format=iife --platform=browser --target=es2020",
     "watch": "npm run build -- --sourcemap --watch",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p src/webview && tsc --noEmit -p test",
+    "test": "npm run build && esbuild test/suite.ts --bundle --outfile=dist/test/suite.js --external:vscode --format=cjs --platform=node && node test/run.js",
+    "screenshots": "npm run build && esbuild test/screenshots.ts --bundle --outfile=dist/test/screenshots.js --external:vscode --format=cjs --platform=node && node test/screenshots.js",
     "package": "vsce package"
   },
   "dependencies": {
+    "cytoscape": "3.33.1",
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
     "@types/node": "^18.19.0",
     "@types/vscode": "~1.101.0",
+    "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.2.0",
     "esbuild": "^0.24.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "upng-js": "^2.1.0"
   }
 }

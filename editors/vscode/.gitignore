@@ -3,3 +3,5 @@ dist/
 server/
 *.vsix
 LICENSE
+.vscode-test/
+screenshots/
