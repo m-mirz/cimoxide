@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 128 128">
+  <!-- The extension's icon: a meshed grid of substations, an oxide crystal cell, an RDF graph.
+       Copper for the conductor, verdigris for its oxide. icon.png is rendered from this file. -->
+  <rect width="128" height="128" rx="26" fill="#14232b"/>
+  <path d="M64 26L96.9 45V83L64 102L31.1 83V45Z" fill="none" stroke="#4fb59c" stroke-width="6" stroke-linejoin="round"/>
+  <path d="M64 64V26M64 64L96.9 83M64 64L31.1 83" stroke="#4fb59c" stroke-width="6" stroke-linecap="round"/>
+  <g fill="#d9773f">
+    <circle cx="64" cy="26" r="9"/><circle cx="96.9" cy="45" r="9"/><circle cx="96.9" cy="83" r="9"/>
+    <circle cx="64" cy="102" r="9"/><circle cx="31.1" cy="83" r="9"/><circle cx="31.1" cy="45" r="9"/>
+  </g>
+  <circle cx="64" cy="64" r="11" fill="#f1e4d6"/>
+</svg>

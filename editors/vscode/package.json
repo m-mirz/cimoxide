@@ -4,6 +4,7 @@
   "description": "SHACL validation, hover, go to definition and completion for ENTSO-E CGMES and Network Code RDF/XML — and an MCP server to ask a chat about your model",
   "version": "0.6.0",
   "publisher": "m-mirz",
+  "icon": "icon.png",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
