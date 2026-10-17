@@ -1,8 +1,10 @@
 //! Model sets, decoded once and kept until a file of theirs changes.
 //!
 //! A model set is every CIM RDF/XML file in one directory — the unit
-//! `cimlsp` validates — or a single file. The merged dataset, the SPARQL store
-//! and the findings of each validation configuration are built on first use.
+//! `cimlsp` validates — or a single file, or files and directories listed
+//! together (an IGM with its boundary and common data, which live apart).
+//! The merged dataset, the SPARQL store, which file wrote each object and the
+//! findings of each validation configuration are built on first use.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -21,13 +23,28 @@ pub struct Options {
     pub silence: Vec<String>,
 }
 
+/// How one file wrote an object.
+#[derive(Debug, Clone, Copy)]
+pub struct Origin {
+    /// Index into [`ModelSet::files`].
+    pub file: usize,
+    /// `rdf:ID` (defined) rather than `rdf:about` (described).
+    pub defined: bool,
+    /// The class that file typed it with (its most specific, if several).
+    pub class: &'static str,
+}
+
 pub struct ModelSet {
-    /// The set's directory, or its one file.
+    /// The set's directory, its one file, or the directory its files share.
     pub root: PathBuf,
+    /// The set as named: its path, or its listed paths joined by ` + `.
+    pub name: String,
     pub files: Vec<PathBuf>,
     stamps: Vec<Option<SystemTime>>,
     pub dataset: CimDataset,
     store: Option<CimStore>,
+    /// Each object's mRID → the files that wrote it, in file order.
+    origins: Option<HashMap<String, Vec<Origin>>>,
     findings: Vec<(Options, Vec<Violation>)>,
 }
 
@@ -38,6 +55,23 @@ impl ModelSet {
             self.store = Some(CimStore::from_dataset(&self.dataset).map_err(|e| format!("building the RDF graph: {e}"))?);
         }
         Ok(self.store.as_ref().expect("built above"))
+    }
+
+    /// The files that wrote each object, computed on first use from each file
+    /// decoded on its own, and the merged dataset.
+    pub fn origins(&mut self) -> Result<(&CimDataset, &HashMap<String, Vec<Origin>>), String> {
+        if self.origins.is_none() {
+            let paths: Vec<&Path> = self.files.iter().map(PathBuf::as_path).collect();
+            let per_file = CimDataset::decode_files_parallel_separate(&paths).map_err(|e| e.to_string())?;
+            let mut origins: HashMap<String, Vec<Origin>> = HashMap::new();
+            for (file, ds) in per_file.into_iter().enumerate() {
+                for (mrid, el) in ds.entries {
+                    origins.entry(mrid).or_default().push(Origin { file, defined: el.defined(), class: el.type_name() });
+                }
+            }
+            self.origins = Some(origins);
+        }
+        Ok((&self.dataset, self.origins.as_ref().expect("built above")))
     }
 
     /// The findings of `cimcli validate` with `opts`, computed on first use,
@@ -72,7 +106,8 @@ impl ModelSet {
 pub struct Session {
     /// Where relative paths resolve; the set a tool reads when given none.
     pub base: PathBuf,
-    sets: HashMap<PathBuf, ModelSet>,
+    /// Keyed by the paths named, resolved.
+    sets: HashMap<Vec<PathBuf>, ModelSet>,
 }
 
 impl Session {
@@ -102,40 +137,88 @@ impl Session {
         }
     }
 
-    /// The model set at `path`, decoded if new or changed since.
-    pub fn model_set(&mut self, path: Option<&str>) -> Result<&mut ModelSet, String> {
-        let root = self.resolve(path);
-        let files = if root.is_file() {
-            vec![root.clone()]
-        } else if root.is_dir() {
-            cim_files(&root)
+    /// The model set `path` names, or the one `files` lists (each a file, or a
+    /// directory standing for its CIM files, merged in the order given),
+    /// decoded if new or changed since.
+    pub fn model_set(&mut self, path: Option<&str>, files: &[String]) -> Result<&mut ModelSet, String> {
+        let listed: Vec<&str> = files.iter().map(|f| f.trim()).filter(|f| !f.is_empty()).collect();
+        let (key, root, name, files) = if listed.is_empty() {
+            let root = self.resolve(path);
+            let files = if root.is_file() {
+                vec![root.clone()]
+            } else if root.is_dir() {
+                cim_files(&root)
+            } else {
+                return Err(format!("{} does not exist (paths are relative to {})", root.display(), self.base.display()));
+            };
+            if files.is_empty() {
+                return Err(self.no_cim_files(&root));
+            }
+            (vec![root.clone()], root.clone(), self.relative(&root), files)
         } else {
-            return Err(format!("{} does not exist (paths are relative to {})", root.display(), self.base.display()));
-        };
-        if files.is_empty() {
-            let mut msg = format!("{} holds no CGMES or NC RDF/XML file.", self.relative(&root));
-            let below = find_sets(&root, 4);
-            if !below.is_empty() {
-                msg.push_str(" Model sets below it:");
-                for dir in below.iter().take(20) {
-                    msg.push_str(&format!("\n  {}", self.relative(dir)));
+            if path.is_some() {
+                return Err("give `path` or `files`, not both".into());
+            }
+            let sources: Vec<PathBuf> = listed.iter().map(|f| self.resolve(Some(f))).collect();
+            let mut files: Vec<PathBuf> = Vec::new();
+            for source in &sources {
+                let found = if source.is_file() {
+                    if !head(source, 8192).is_some_and(|h| cimmodel::decode::is_cim(&h)) {
+                        return Err(format!("{} is not a CGMES or NC RDF/XML file", self.relative(source)));
+                    }
+                    vec![source.clone()]
+                } else if source.is_dir() {
+                    cim_files(source)
+                } else {
+                    return Err(format!("{} does not exist (paths are relative to {})", source.display(), self.base.display()));
+                };
+                if found.is_empty() {
+                    return Err(self.no_cim_files(source));
                 }
-                if below.len() > 20 {
-                    msg.push_str(&format!("\n  … and {} more (list_model_sets)", below.len() - 20));
+                for file in found {
+                    if !files.contains(&file) {
+                        files.push(file);
+                    }
                 }
             }
-            return Err(msg);
-        }
+            let name = sources.iter().map(|s| self.relative(s)).collect::<Vec<_>>().join(" + ");
+            (sources, common_dir(&files), name, files)
+        };
         let stamps: Vec<Option<SystemTime>> = files.iter().map(|f| f.metadata().and_then(|m| m.modified()).ok()).collect();
-        let fresh = self.sets.get(&root).is_some_and(|s| s.files == files && s.stamps == stamps);
+        let fresh = self.sets.get(&key).is_some_and(|s| s.files == files && s.stamps == stamps);
         if !fresh {
             let paths: Vec<&Path> = files.iter().map(PathBuf::as_path).collect();
-            let dataset = CimDataset::decode_files_parallel(&paths).map_err(|e| format!("decoding {}: {e}", root.display()))?;
-            let set = ModelSet { root: root.clone(), files, stamps, dataset, store: None, findings: Vec::new() };
-            self.sets.insert(root.clone(), set);
+            let dataset = CimDataset::decode_files_parallel(&paths).map_err(|e| format!("decoding {name}: {e}"))?;
+            let set = ModelSet { root, name, files, stamps, dataset, store: None, origins: None, findings: Vec::new() };
+            self.sets.insert(key.clone(), set);
         }
-        Ok(self.sets.get_mut(&root).expect("inserted above"))
+        Ok(self.sets.get_mut(&key).expect("inserted above"))
     }
+
+    /// That `dir` holds no CIM file, and the model sets below it.
+    fn no_cim_files(&self, dir: &Path) -> String {
+        let mut msg = format!("{} holds no CGMES or NC RDF/XML file.", self.relative(dir));
+        let below = find_sets(dir, 4);
+        if !below.is_empty() {
+            msg.push_str(" Model sets below it:");
+            for d in below.iter().take(20) {
+                msg.push_str(&format!("\n  {}", self.relative(d)));
+            }
+            if below.len() > 20 {
+                msg.push_str(&format!("\n  … and {} more (list_model_sets)", below.len() - 20));
+            }
+        }
+        msg
+    }
+}
+
+/// The deepest directory holding every one of `files`.
+fn common_dir(files: &[PathBuf]) -> PathBuf {
+    let mut dir = files[0].parent().map_or_else(PathBuf::new, Path::to_path_buf);
+    for file in &files[1..] {
+        while !file.starts_with(&dir) && dir.pop() {}
+    }
+    dir
 }
 
 /// The first bytes of `path`, enough to tell a CIM file and read its header.

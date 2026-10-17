@@ -38,11 +38,12 @@ triplets results are cached per dataset commit in `.cache/`.
 | Test | Checks |
 |---|---|
 | `test_import.py` | every file decoded by cimoxide (`entries()` and `foreign()`) equals triplets' triples |
-| `test_export.py` | each CGMES file round-trips through `to_xml_for_profile`; each NC file's profile export, and each file's `to_xml()`, is the same RDF graph |
+| `test_export.py` | each CGMES and NC file's profile export (`to_xml_for_profile`), and each file's `to_xml()`, is the same RDF graph as the source |
 | `test_validation.py` | every finding the tools disagree on has a cause in `harness.TRIAGE` |
 | `test_use_cases.py` | the report's 22 use cases (Annex 1), on what cimoxide decodes, each also on broken data |
 | `test_edits.py` | CO_UC1's and RA_UC4's edits through cimoxide-py, exported and validated in place of ReliCapGrid's files |
 | `test_mutations.py` | broken copies (report Table 2, §5.2, §13.1): which rules each tool newly reports |
+| `test_mcp.py` | the steps above through `cimmcp` (built from this checkout, or `$CIMMCP`): each result equals cimoxide-py's |
 
 A use case's data or documentation problems are listed in `test_use_cases.KNOWN`; a validation
 disagreement's cause in `harness.TRIAGE`. A new entry in either is a new difference to look at.

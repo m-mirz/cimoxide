@@ -5,7 +5,7 @@
 //! The transport is newline-delimited JSON-RPC 2.0 on stdin/stdout; the
 //! server answers `initialize`, `ping`, `tools/list` and `tools/call` and
 //! ignores notifications. Requests are handled one at a time, in order. The
-//! tools ([`tools`]) are read-only.
+//! tools ([`tools`]) read; `export` and `edit` write a file, inside the workspace.
 //!
 //! `cimmcp [--dir <path>]`: `--dir` (else `CIMOXIDE_MODEL_DIR`, else the
 //! working directory) is where relative `path` arguments resolve and what a
@@ -28,7 +28,9 @@ const PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 const INSTRUCTIONS: &str = "\
 Tools over ENTSO-E CGMES and Network Code (NC) RDF/XML. A model set is every CIM XML file in \
 one directory (EQ, SSH, SV, TP, … of one model); `path` names that directory, relative to the \
-workspace. Start with `list_model_sets` when you do not know where the data is, then `summary`.
+workspace. When a model's files lie apart (an IGM, its boundary and common data), `files` lists them \
+(files or directories) instead. Start with `list_model_sets` when you do not know where the data is, \
+then `summary`.
 - An object is identified by its mRID: the text after `#` in `rdf:ID`/`rdf:about`/`rdf:resource`, \
   often with a leading `_`.
 - Fields are keyed `Class.attr` by the class that declares the attribute \
@@ -36,7 +38,14 @@ workspace. Start with `list_model_sets` when you do not know where the data is, 
   references the target mRID, enumerations the value after `#`.
 - NC class names carry an `nc:` prefix (`nc:PowerSchedule`).
 - Prefer `find_objects` and `get_object`; use `sparql` for joins and aggregates. \
-  `describe_class` says what a class may carry.";
+  `describe_class` says what a class may carry.
+- `conflicts` lists objects more than one file defines and objects typed with unrelated classes; \
+  `get_object` names the files that define or describe an object.
+- `export` writes one profile (`EQ`, `SSH`, …, NC `CO`, …) or the whole set as RDF/XML; `edit` \
+  changes objects and writes the result the same way; `format: \"json\"` dumps every decoded \
+  object. They are the only tools that write a file, \
+  and never a model set's own. To validate an edit in place of a file, list the result in \
+  `validate`'s `files` instead of that file.";
 
 fn main() {
     let mut dir: Option<PathBuf> = None;

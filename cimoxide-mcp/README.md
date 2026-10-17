@@ -6,19 +6,25 @@
 a model: which generators a model has and their set points, why an object fails
 validation, what a CIM class or attribute means.
 
-Its tools are read-only:
+Its tools read; `export` and `edit` write a file, inside the workspace, over an existing one only
+when told to and never over a model set's own files:
 
 | Tool | |
 |---|---|
 | `list_model_sets` | directories holding CIM files, with each file's profiles |
 | `summary` | a model set's files, model headers and object counts by class |
 | `find_objects` | search by class (abstract classes included), name/mRID text and attribute value |
-| `get_object` | one object's fields, references resolved, and what references it |
+| `get_object` | one object's fields, references resolved, what references it, and the files that define or describe it |
 | `validate` | the ENTSO-E SHACL and SPARQL rules, as `cimcli validate` runs them |
+| `conflicts` | objects more than one file defines, and objects the files type with unrelated classes |
 | `sparql` | a SPARQL query over the merged CGMES data |
+| `export` | one profile (CGMES or NC) or the whole set as RDF/XML, as `to_xml_for_profile` / `to_xml` write it; or every decoded object as JSON |
+| `edit` | update, copy, create and delete objects, and write the result as `export` does |
 | `describe_class` | definitions of classes, attributes and enumerations from the ENTSO-E vocabulary |
 
-A model set is every CIM XML file in one directory. `--dir <path>` (else
+A model set is every CIM XML file in one directory (`path`), or the files and directories
+listed in `files`, for a model whose files lie apart (an IGM with its boundary and common
+data). `--dir <path>` (else
 `CIMOXIDE_MODEL_DIR`, else the working directory) is where relative paths resolve.
 
 ## Install

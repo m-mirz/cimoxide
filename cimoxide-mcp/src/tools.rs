@@ -1,10 +1,12 @@
 //! The tools: their definitions as `tools/list` returns them, and what each
-//! does. Every tool reads; none writes a file. Output is plain text sized for
-//! a model's context — long lists stop at a `limit` and say how many more
-//! there are.
+//! does. Every tool reads; `export` and `edit` write, a file inside the
+//! workspace the caller names, never over an existing one unless told to, and
+//! never a model set's files in place. Output is
+//! plain text sized for a model's context — long lists stop at a `limit` and
+//! say how many more there are.
 
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use cimmodel::base::{AttrKind, ClassDef};
 use cimmodel::registry::type_registry;
@@ -12,13 +14,22 @@ use cimmodel::{CimDataset, Element, FieldValue};
 use cimsparql::{QueryResults, Term};
 use serde_json::{Value, json};
 
-use crate::session::{self, Options, Session};
+use crate::session::{self, ModelSet, Options, Session};
 
 const PATH_DOC: &str = "Model set: a directory of CIM RDF/XML files (or one file), relative to the workspace. \
 Default: the workspace directory itself.";
 
+const FORMAT_DOC: &str = "`rdfxml` (default), or `json`: every decoded object, CIM and foreign (reference data's SKOS, PROV, DCAT), \
+as `{id: {\"_type\", \"id\", \"Class.attr\": value | [values], \"_lang\"?}}`, as cimoxide-py's `entries()` and `foreign()` give them. \
+JSON cannot tell a reference (the target's mRID) from text and takes no `profile`.";
+
+const FILES_DOC: &str = "Instead of `path`: the files that form one model set, relative to the workspace, when they \
+are not one directory (an IGM with its boundary and common data). A directory stands for its CIM files. Merged in the order given.";
+
 pub fn definitions() -> Value {
     let path = json!({ "type": "string", "description": PATH_DOC });
+    let files = json!({ "type": "array", "items": { "type": "string" }, "description": FILES_DOC });
+    let format = json!({ "type": "string", "enum": ["rdfxml", "json"], "description": FORMAT_DOC });
     let limit = |default: u64| json!({ "type": "integer", "minimum": 1, "description": format!("Most rows to return (default {default}).") });
     let read_only = json!({ "readOnlyHint": true, "openWorldHint": false });
     json!([
@@ -36,7 +47,7 @@ pub fn definitions() -> Value {
             "name": "summary",
             "title": "Summarise a model set",
             "description": "A model set's files, model headers (profiles, scenario time, dependencies) and object counts by class.",
-            "inputSchema": { "type": "object", "properties": { "path": path } },
+            "inputSchema": { "type": "object", "properties": { "path": path, "files": files } },
             "annotations": read_only,
         },
         {
@@ -46,6 +57,7 @@ pub fn definitions() -> Value {
 by name/mRID text, and by an attribute's value. Returns mRID, class and name of each match.",
             "inputSchema": { "type": "object", "properties": {
                 "path": path,
+                "files": files,
                 "class": { "type": "string", "description": "Class name, e.g. `ACLineSegment`, `Breaker`, `nc:PowerSchedule`." },
                 "text": { "type": "string", "description": "Case-insensitive substring of the name, description or mRID." },
                 "attribute": { "type": "string", "description": "Field to filter on: `Switch.open`, or just `open`." },
@@ -57,9 +69,11 @@ by name/mRID text, and by an attribute's value. Returns mRID, class and name of 
         {
             "name": "get_object",
             "title": "Get an object",
-            "description": "One object by mRID: its class, every field as written (references resolved to class and name) and the objects that reference it.",
+            "description": "One object by mRID: its class, the files that write it (defining it with `rdf:ID` or describing it with `rdf:about`), \
+every field as written (references resolved to class and name) and the objects that reference it.",
             "inputSchema": { "type": "object", "properties": {
                 "path": path,
+                "files": files,
                 "mrid": { "type": "string", "description": "The object's mRID (with or without leading `_` or `#`)." },
                 "limit": limit(100),
             }, "required": ["mrid"] },
@@ -72,6 +86,7 @@ by name/mRID text, and by an attribute's value. Returns mRID, class and name of 
 Returns counts by severity and rule, and the findings (filterable). Results are cached until a file changes.",
             "inputSchema": { "type": "object", "properties": {
                 "path": path,
+                "files": files,
                 "common": { "type": "boolean", "description": "Also run the common cross-profile checks (default false)." },
                 "quality": { "type": "boolean", "description": "Also run the modelling-quality checks (default false)." },
                 "silence": { "type": "array", "items": { "type": "string" }, "description": "Rule ids not to report." },
@@ -84,6 +99,18 @@ Returns counts by severity and rule, and the findings (filterable). Results are 
             "annotations": read_only,
         },
         {
+            "name": "conflicts",
+            "title": "Merge conflicts",
+            "description": "Where a model set's files disagree: objects more than one file defines (`rdf:ID`; common or boundary data \
+defined again by a model), and objects the files type with unrelated classes. `get_object` shows which files wrote one object.",
+            "inputSchema": { "type": "object", "properties": {
+                "path": path,
+                "files": files,
+                "limit": limit(50),
+            } },
+            "annotations": read_only,
+        },
+        {
             "name": "sparql",
             "title": "SPARQL query",
             "description": "Run a SPARQL 1.1 query over a model set's merged CGMES data. Prefixes `cim:`, `eu:`, `md:`, `rdf:`, `xsd:` and \
@@ -91,10 +118,52 @@ the other CGMES namespaces are pre-bound. Classes are `cim:ACLineSegment`, prope
 Object IRIs come back as mRIDs. NC data is not in the graph.",
             "inputSchema": { "type": "object", "properties": {
                 "path": path,
+                "files": files,
                 "query": { "type": "string", "description": "The query (SELECT, ASK, CONSTRUCT or DESCRIBE)." },
                 "limit": limit(100),
             }, "required": ["query"] },
             "annotations": read_only,
+        },
+        {
+            "name": "export",
+            "title": "Export a model set",
+            "description": "Write a model set as RDF/XML: one profile's content with that profile's header (CGMES `EQ`, `SSH`, `TP`, `SV`, …; \
+NC `CO`, `AE`, `RA`, …), or with no `profile` the whole merged dataset as read (CGMES, NC and reference data). \
+`format: \"json\"` writes every decoded object as JSON instead. Writes `output`; without it, returns the text when it is short.",
+            "inputSchema": { "type": "object", "properties": {
+                "path": path,
+                "files": files,
+                "profile": { "type": "string", "description": "Profile code; omit for the whole dataset." },
+                "format": format,
+                "output": { "type": "string", "description": "File to write, relative to the workspace and inside it. Not in the model set's own directory, or it joins the set." },
+                "overwrite": { "type": "boolean", "description": "Replace `output` if it exists (default false)." },
+            } },
+            "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false },
+        },
+        {
+            "name": "edit",
+            "title": "Edit a model set",
+            "description": "Change a model set and write the result as RDF/XML, as `export` does; the set's files stay as they are. \
+The changes apply in order, each to one object: update its `fields`, copy an object `from` another to a new `id`, create one of a `type`, \
+or `delete` it. `keep: \"changed\"` writes only the objects changed (a dataset of its own, such as a response). To validate the result in place \
+of a file, write it outside the set's directories and list it in `validate`'s `files` instead of that file.",
+            "inputSchema": { "type": "object", "properties": {
+                "path": path,
+                "files": files,
+                "changes": { "type": "array", "items": { "type": "object", "properties": {
+                    "id": { "type": "string", "description": "The object's mRID as the data writes it (`_…`, `urn:uuid:…`): an existing one to update or delete, a new one to create or copy to." },
+                    "from": { "type": "string", "description": "Copy this object, class and fields, to the new `id`; a field holding its own mRID as text (`IdentifiedObject.mRID`) follows the new id." },
+                    "type": { "type": "string", "description": "Class of a new object (`ACLineSegment`, `nc:RemedialActionScheduleResponse`)." },
+                    "fields": { "type": "object", "description": "`Class.attr` → a string, an array of strings for a repeated field, or null to remove it. A reference is the target's mRID, an enumeration value `Enum.value`." },
+                    "delete": { "type": "boolean", "description": "Remove the object." },
+                }, "required": ["id"] } },
+                "keep": { "type": "string", "enum": ["all", "changed"], "description": "Write every object (default) or only those changed." },
+                "profile": { "type": "string", "description": "Profile code to write; omit for the whole dataset." },
+                "format": format,
+                "output": { "type": "string", "description": "File to write, relative to the workspace and inside it." },
+                "overwrite": { "type": "boolean", "description": "Replace `output` if it exists (default false)." },
+            }, "required": ["changes"] },
+            "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false },
         },
         {
             "name": "describe_class",
@@ -120,7 +189,10 @@ pub fn call(session: &mut Session, name: &str, args: &Value) -> Option<Result<St
         "find_objects" => find_objects(session, args),
         "get_object" => get_object(session, args),
         "validate" => validate(session, args),
+        "conflicts" => conflicts(session, args),
         "sparql" => sparql(session, args),
+        "export" => export(session, args),
+        "edit" => edit(session, args),
         "describe_class" => describe_class(args),
         _ => return None,
     })
@@ -149,6 +221,11 @@ fn list_arg(args: &Value, key: &str) -> Vec<String> {
 }
 
 // --- Shared helpers ---------------------------------------------------------
+
+/// The model set `path` or `files` names.
+fn model_set<'s>(session: &'s mut Session, args: &Value) -> Result<&'s mut ModelSet, String> {
+    session.model_set(str_arg(args, "path"), &list_arg(args, "files"))
+}
 
 fn name_of(el: &Element) -> Option<&str> {
     el.get_str("IdentifiedObject.name").filter(|n| !n.is_empty())
@@ -286,12 +363,10 @@ fn list_model_sets(session: &mut Session, args: &Value) -> Result<String, String
 }
 
 fn summary(session: &mut Session, args: &Value) -> Result<String, String> {
-    let base = session.base.clone();
-    let set = session.model_set(str_arg(args, "path"))?;
+    let set = model_set(session, args)?;
     let ds = &set.dataset;
     let mut out = String::new();
-    let shown = set.root.strip_prefix(&base).map_or(set.root.display().to_string(), |p| p.display().to_string());
-    let _ = writeln!(out, "Model set {} — {} file(s), {} objects", if shown.is_empty() { "." } else { &shown }, set.files.len(), ds.entries.len());
+    let _ = writeln!(out, "Model set {} — {} file(s), {} objects", set.name, set.files.len(), ds.entries.len());
     for file in &set.files {
         let _ = writeln!(out, "  {}", file_line(&set.display(file), file));
     }
@@ -337,7 +412,7 @@ fn find_objects(session: &mut Session, args: &Value) -> Result<String, String> {
             return Err(format!("unknown class `{c}`{}", suggest(c)));
         }
     }
-    let set = session.model_set(str_arg(args, "path"))?;
+    let set = model_set(session, args)?;
     let ds = &set.dataset;
 
     let mut hits: Vec<(&Element, Option<String>)> = ds
@@ -381,8 +456,9 @@ fn find_objects(session: &mut Session, args: &Value) -> Result<String, String> {
 fn get_object(session: &mut Session, args: &Value) -> Result<String, String> {
     let mrid = str_arg(args, "mrid").ok_or("`mrid` is required")?;
     let limit = usize_arg(args, "limit", 100);
-    let set = session.model_set(str_arg(args, "path"))?;
-    let ds = &set.dataset;
+    let set = model_set(session, args)?;
+    let names: Vec<String> = set.files.iter().map(|f| set.display(f)).collect();
+    let (ds, origins) = set.origins()?;
     let el = lookup(ds, mrid).ok_or_else(|| format!("no object `{mrid}` in this model set; find_objects searches by name"))?;
     let reg = type_registry();
 
@@ -394,6 +470,13 @@ fn get_object(session: &mut Session, args: &Value) -> Result<String, String> {
     let others: Vec<&str> = el.types().skip(1).map(|c| c.qualified).collect();
     if !others.is_empty() {
         let _ = writeln!(out, "also typed: {}", others.join(", "));
+    }
+    if let Some(written) = origins.get(el.mrid()) {
+        let _ = writeln!(out, "\nFiles:");
+        for o in written {
+            let how = if o.defined { "defines (rdf:ID)" } else { "describes (rdf:about)" };
+            let _ = writeln!(out, "  {} — {how} as {}", names[o.file], o.class);
+        }
     }
 
     let _ = writeln!(out, "\nFields:");
@@ -448,6 +531,57 @@ fn get_object(session: &mut Session, args: &Value) -> Result<String, String> {
     Ok(out)
 }
 
+fn conflicts(session: &mut Session, args: &Value) -> Result<String, String> {
+    let limit = usize_arg(args, "limit", 50);
+    let set = model_set(session, args)?;
+    let names: Vec<String> = set.files.iter().map(|f| set.display(f)).collect();
+    let (ds, origins) = set.origins()?;
+
+    let mut twice: Vec<(&Element, Vec<&str>)> = origins
+        .iter()
+        .filter_map(|(mrid, written)| {
+            let by: Vec<&str> = written.iter().filter(|o| o.defined).map(|o| names[o.file].as_str()).collect();
+            (by.len() > 1).then(|| ds.entries.get(mrid).map(|el| (el, by))).flatten()
+        })
+        .collect();
+    twice.sort_by(|a, b| (a.0.type_name(), a.0.mrid()).cmp(&(b.0.type_name(), b.0.mrid())));
+    let typed = ds.type_conflicts();
+
+    if twice.is_empty() && typed.is_empty() {
+        return Ok(format!(
+            "No conflicts across {} file(s): no object is defined by more than one file, none is typed with unrelated classes.",
+            names.len()
+        ));
+    }
+    let mut out = String::new();
+    if !twice.is_empty() {
+        let _ = writeln!(out, "{} object(s) defined by more than one file:", twice.len());
+        for (el, by) in twice.iter().take(limit) {
+            let _ = writeln!(out, "  {} — {}", label(el), by.join(", "));
+        }
+        more(&mut out, limit.min(twice.len()), twice.len(), "; raise `limit`");
+    }
+    if !typed.is_empty() {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        let _ = writeln!(out, "{} object(s) typed with unrelated classes:", typed.len());
+    }
+    for (mrid, _) in typed.iter().take(limit) {
+        let mut by_class: Vec<(&str, Vec<&str>)> = Vec::new();
+        for o in origins.get(*mrid).into_iter().flatten() {
+            match by_class.iter_mut().find(|(c, _)| *c == o.class) {
+                Some((_, files)) => files.push(&names[o.file]),
+                None => by_class.push((o.class, vec![&names[o.file]])),
+            }
+        }
+        let shown: Vec<String> = by_class.iter().map(|(c, files)| format!("{c} in {}", files.join(", "))).collect();
+        let _ = writeln!(out, "  {mrid} — {}", shown.join("; "));
+    }
+    more(&mut out, limit.min(typed.len()), typed.len(), "; raise `limit`");
+    Ok(out)
+}
+
 fn validate(session: &mut Session, args: &Value) -> Result<String, String> {
     let opts = Options { common: bool_arg(args, "common"), quality: bool_arg(args, "quality"), silence: list_arg(args, "silence") };
     let rule = str_arg(args, "rule").map(str::to_lowercase);
@@ -456,7 +590,7 @@ fn validate(session: &mut Session, args: &Value) -> Result<String, String> {
     let severity = str_arg(args, "severity").map(|s| format!("sh:{}", s.trim_start_matches("sh:")));
     let limit = usize_arg(args, "limit", 50);
 
-    let set = session.model_set(str_arg(args, "path"))?;
+    let set = model_set(session, args)?;
     // An object filter matches however the mRID is written.
     let object = match object {
         Some(o) => Some(lookup(&set.dataset, o).map_or(o.to_string(), |e| e.mrid().to_string())),
@@ -520,10 +654,244 @@ fn validate(session: &mut Session, args: &Value) -> Result<String, String> {
     Ok(out)
 }
 
+/// Most characters `export` and `edit` return in place of writing a file.
+const EXPORT_INLINE: usize = 100_000;
+
+fn export(session: &mut Session, args: &Value) -> Result<String, String> {
+    let profile = str_arg(args, "profile");
+    let json = json_arg(args, profile)?;
+    let output = output_arg(session, args)?;
+    let set = model_set(session, args)?;
+    let xml = encode(&set.dataset, profile, json)?;
+    let what = match profile {
+        Some(code) => format!("profile {code} of {}", set.name),
+        None if json => format!("all of {} as JSON", set.name),
+        None => format!("all of {}", set.name),
+    };
+    let joins = joins_set(set, output.as_deref())?;
+    deliver(session, &xml, output, joins, &what)
+}
+
+/// The edited set as a change list leaves it: each change's line, and the
+/// dataset.
+fn edit(session: &mut Session, args: &Value) -> Result<String, String> {
+    let changes = args.get("changes").and_then(Value::as_array).filter(|c| !c.is_empty()).ok_or("`changes` is required: a non-empty array")?;
+    let keep_changed = match str_arg(args, "keep") {
+        None | Some("all") => false,
+        Some("changed") => true,
+        Some(other) => return Err(format!("`keep` is `all` or `changed`, not `{other}`")),
+    };
+    let profile = str_arg(args, "profile");
+    let json_out = json_arg(args, profile)?;
+    let output = output_arg(session, args)?;
+    let set = model_set(session, args)?;
+    // The set's own dataset stays as read; the edit works on a copy.
+    let paths: Vec<&Path> = set.files.iter().map(PathBuf::as_path).collect();
+    let mut ds = CimDataset::decode_files_parallel(&paths).map_err(|e| format!("decoding {}: {e}", set.name))?;
+    let joins = joins_set(set, output.as_deref())?;
+    let name = set.name.clone();
+
+    let mut changed: Vec<String> = Vec::new();
+    let mut report: Vec<String> = Vec::new();
+    for (i, change) in changes.iter().enumerate() {
+        let at = |e: String| format!("change {}: {e}", i + 1);
+        let text = |key: &str| change.get(key).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
+        let id = text("id").ok_or_else(|| at("`id` is required".into()))?;
+        let existing = lookup(&ds, id).map(|e| e.mrid().to_string());
+        let existed = existing.is_some();
+
+        if change.get("delete").and_then(Value::as_bool) == Some(true) {
+            let key = existing.ok_or_else(|| at(format!("no object `{id}` to delete")))?;
+            ds.remove(&key);
+            changed.retain(|k| *k != key);
+            report.push(format!("deleted {key}"));
+            continue;
+        }
+        let (key, mut json, source) = match (text("from"), existing) {
+            (Some(_), Some(key)) => return Err(at(format!("`{key}` exists; a copy needs a new `id`"))),
+            (Some(from), None) => {
+                let src = lookup(&ds, from).ok_or_else(|| at(format!("no object `{from}` to copy")))?;
+                (id.to_string(), element_json(src), Some(src.mrid().to_string()))
+            }
+            (None, Some(key)) => {
+                let json = element_json(&ds.entries[&key]);
+                (key, json, None)
+            }
+            (None, None) if text("type").is_some() => (id.to_string(), json!({}), None),
+            (None, None) => return Err(at(format!("no object `{id}`; give `type` to create it or `from` to copy one"))),
+        };
+        let obj = json.as_object_mut().expect("an element's JSON is an object");
+        if let Some(t) = text("type") {
+            obj.insert("_type".into(), t.into());
+        }
+        obj.insert("id".into(), key.as_str().into());
+        let fields = match change.get("fields") {
+            None | Some(Value::Null) => serde_json::Map::new(),
+            Some(Value::Object(f)) => f.clone(),
+            Some(_) => return Err(at("`fields` must be an object".into())),
+        };
+        // A copy's own identifier written as text (`IdentifiedObject.mRID`, a
+        // DCAT header's `identifier`) follows the new id, unless `fields` sets it.
+        let mut followed: Vec<String> = Vec::new();
+        if let Some(src) = &source {
+            let (old, new) = (bare_id(src), bare_id(&key));
+            for (k, v) in obj.iter_mut() {
+                if k != "id" && !fields.contains_key(k) && v.as_str() == Some(old) {
+                    *v = new.into();
+                    followed.push(k.clone());
+                }
+            }
+        }
+        for (k, v) in &fields {
+            match v {
+                Value::Null => {
+                    obj.remove(k);
+                }
+                Value::String(_) | Value::Array(_) => {
+                    obj.insert(k.clone(), v.clone());
+                }
+                other => return Err(at(format!("{k}: a string, an array of strings or null, not {other}"))),
+            }
+        }
+        let type_name = obj.get("_type").and_then(Value::as_str).unwrap_or_default().to_string();
+        let class = type_registry().by_type_name(&type_name).ok_or_else(|| at(format!("unknown class `{type_name}`{}", suggest(&type_name))))?;
+        let element = ds.element_from_json(class, &json).map_err(at)?;
+        ds.set(key.clone(), element);
+        if !changed.contains(&key) {
+            changed.push(key.clone());
+        }
+        let keys: Vec<&str> = fields.keys().map(String::as_str).collect();
+        let mut line = match &source {
+            Some(src) => format!("copied {src} to {key} ({type_name})"),
+            None if existed => format!("updated {key} ({type_name})"),
+            None => format!("created {key} ({type_name})"),
+        };
+        if !keys.is_empty() {
+            let _ = write!(line, ": {}", keys.join(", "));
+        }
+        if !followed.is_empty() {
+            let _ = write!(line, "; {} follow{} the new id", followed.join(", "), if followed.len() == 1 { "s" } else { "" });
+        }
+        report.push(line);
+    }
+    if keep_changed {
+        let rest: Vec<String> = ds.entries.keys().filter(|k| !changed.contains(k)).cloned().collect();
+        for key in &rest {
+            ds.remove(key);
+        }
+        ds.foreign.clear();
+        report.push(format!("kept the {} changed object(s), left out the other {}", changed.len(), rest.len()));
+    }
+
+    let xml = encode(&ds, profile, json_out)?;
+    let what = match profile {
+        Some(code) => format!("profile {code} of {name}, edited"),
+        None if json_out => format!("all of {name}, edited, as JSON"),
+        None => format!("all of {name}, edited"),
+    };
+    let delivered = deliver(session, &xml, output, joins, &what)?;
+    Ok(format!("{}\n\n{delivered}", report.join("\n")))
+}
+
+/// An element as `edit` changes it: its JSON form with its `_type`.
+fn element_json(el: &Element) -> Value {
+    let mut json = el.to_json_value();
+    json["_type"] = el.type_name().into();
+    json
+}
+
+/// An id without `urn:uuid:` or a leading `_`: how `IdentifiedObject.mRID`
+/// writes it.
+fn bare_id(id: &str) -> &str {
+    let id = id.trim_start_matches('#');
+    let id = id.strip_prefix("urn:uuid:").unwrap_or(id);
+    id.strip_prefix('_').unwrap_or(id)
+}
+
+/// `output`, checked before any work: inside the workspace, and not over a
+/// file unless `overwrite`.
+fn output_arg(session: &Session, args: &Value) -> Result<Option<PathBuf>, String> {
+    let Some(o) = str_arg(args, "output") else { return Ok(None) };
+    let out = output_path(&session.base, o)?;
+    if out.exists() && !bool_arg(args, "overwrite") {
+        return Err(format!("{} exists; set `overwrite` to replace it", session.relative(&out)));
+    }
+    Ok(Some(out))
+}
+
+/// Whether `format` asks for JSON; JSON has no profiles.
+fn json_arg(args: &Value, profile: Option<&str>) -> Result<bool, String> {
+    match str_arg(args, "format") {
+        None | Some("rdfxml") => Ok(false),
+        Some("json") if profile.is_some() => Err("`format: \"json\"` writes the whole dataset and takes no `profile`".into()),
+        Some("json") => Ok(true),
+        Some(other) => Err(format!("`format` is `rdfxml` or `json`, not `{other}`")),
+    }
+}
+
+/// The dataset as RDF/XML (one profile, or all of it) or as JSON: every CIM
+/// and foreign object, in the form cimoxide-py's `entries()` and `foreign()`
+/// give.
+fn encode(ds: &CimDataset, profile: Option<&str>, json: bool) -> Result<String, String> {
+    if json {
+        let all: serde_json::Map<String, Value> =
+            ds.entries.iter().chain(&ds.foreign).map(|(id, el)| (id.clone(), element_json(el))).collect();
+        return serde_json::to_string_pretty(&all).map_err(|e| e.to_string());
+    }
+    match profile {
+        Some(code) => cimmodel::convert::dataset_to_xml_for_profile(ds, code),
+        None => cimmodel::convert::dataset_to_xml(ds),
+    }
+    .map_err(|e| e.to_string())
+}
+
+/// Whether `output` lies in a directory the set read files from, and so
+/// joins it; an error if it is one of the set's files.
+fn joins_set(set: &ModelSet, output: Option<&Path>) -> Result<bool, String> {
+    let Some(out) = output else { return Ok(false) };
+    if set.files.iter().any(|f| f == out) {
+        return Err(format!("`output` is {}, a file of the model set; its files are never written", set.display(out)));
+    }
+    Ok(set.files.iter().any(|f| f.parent() == out.parent()))
+}
+
+/// `xml` written to `output`, or returned when there is none and it is short.
+fn deliver(session: &Session, xml: &str, output: Option<PathBuf>, joins: bool, what: &str) -> Result<String, String> {
+    let Some(out) = output else {
+        let n = xml.chars().count();
+        if n > EXPORT_INLINE {
+            return Err(format!("{what} is {n} characters; give `output` to write it to a file"));
+        }
+        return Ok(xml.to_string());
+    };
+    if let Some(dir) = out.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
+    }
+    std::fs::write(&out, xml).map_err(|e| format!("writing {}: {e}", out.display()))?;
+    let mut msg = format!("Wrote {} ({} bytes): {what}.", session.relative(&out), xml.len());
+    if joins {
+        msg.push_str(" Its directory holds the model set's files, so the set now includes it.");
+    }
+    Ok(msg)
+}
+
+/// `output` against the workspace, which it may not leave.
+fn output_path(base: &Path, output: &str) -> Result<PathBuf, String> {
+    let p = Path::new(output);
+    if p.components().any(|c| c == Component::ParentDir) {
+        return Err("`output` may not contain `..`".into());
+    }
+    let full = if p.is_absolute() { p.to_path_buf() } else { base.join(p) };
+    if !full.starts_with(base) || full == base {
+        return Err(format!("`output` must be a file inside the workspace {}", base.display()));
+    }
+    Ok(full)
+}
+
 fn sparql(session: &mut Session, args: &Value) -> Result<String, String> {
     let query = str_arg(args, "query").ok_or("`query` is required")?;
     let limit = usize_arg(args, "limit", 100);
-    let set = session.model_set(str_arg(args, "path"))?;
+    let set = model_set(session, args)?;
     let results = set.store()?.query(query).map_err(|e| format!("query failed: {e}"))?;
     let ds = &set.dataset;
     let prefixes = cimsparql::prefixes();

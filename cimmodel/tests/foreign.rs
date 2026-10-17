@@ -105,3 +105,26 @@ fn foreign_objects_merge() {
     assert_eq!(a.foreign[AGENT].get_str("atLocation"), Some("Belgovia"));
     assert_eq!(a.foreign[AGENT].get_str("type"), Some("TSO"));
 }
+
+/// An NC dataset that is its DCAT header alone, and reference data with no
+/// CIM namespace, are CIM files; other DCAT is not.
+#[test]
+fn header_only_datasets_and_reference_data_are_cim() {
+    let header_only = r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+    xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcat="http://www.w3.org/ns/dcat#">
+  <dcat:Dataset rdf:about="urn:uuid:43e52f47-22d9-428c-8b1c-d521e54a29b9">
+    <dcterms:conformsTo rdf:resource="https://ap.cim4.eu/ImpactAssessmentMatrix/2.4"/>
+  </dcat:Dataset>
+</rdf:RDF>"#;
+    let reference = r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+    xmlns:skos="http://www.w3.org/2004/02/skos/core#" xml:base="https://energy.referencedata.eu">
+  <skos:ConceptScheme rdf:about="https://energy.referencedata.eu/LicenseScheme/NCP/1.0"/>
+</rdf:RDF>"#;
+    let other = r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+    xmlns:dcat="http://www.w3.org/ns/dcat#">
+  <dcat:Dataset rdf:about="https://example.org/catalogue/1"/>
+</rdf:RDF>"#;
+    assert!(cimmodel::decode::is_cim(header_only));
+    assert!(cimmodel::decode::is_cim(reference));
+    assert!(!cimmodel::decode::is_cim(other));
+}
