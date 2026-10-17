@@ -8,5 +8,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["suite.ts"]
+  "include": ["suite.ts", "screenshots.ts"]
 }

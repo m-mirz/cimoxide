@@ -8,9 +8,13 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
   usually several files (EQ, SSH, SV, TP, …), so the unit of validation is a *model set*:
   every CIM XML file in the document's directory. Cross-profile findings appear on every
   file that writes the object.
+
+  ![A finding on a MicroGrid file: its squiggle, its message and rule id on hover, and the Problems panel](https://github.com/user-attachments/assets/2b9ca5b0-3331-44a4-95fb-2846f532d841)
 - **Hover** — a class's definition from the ENTSO-E vocabulary, inheritance chain and
   profiles, an attribute's definition, type, multiplicity and profiles, an enumeration
   value's definition, and the class and name of the object an `rdf:resource` points to.
+
+  ![Hover on a SynchronousMachine: its inheritance chain, ENTSO-E definition and profiles](https://github.com/user-attachments/assets/d0f57838-b8b8-46da-8f2e-9193b51b7a17)
 - **Go to definition / find references** — follow `rdf:resource="#_…"` across the files
   of the model set.
 - **Outline** — every object in the document, labelled by `IdentifiedObject.name`, with its
@@ -27,6 +31,8 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
   it. The view is where the model is edited — *Fix…*, *Rename mRID…*, *Delete*, *Add…* — in files
   of any size. *Reveal in CIM Model* (editor context menu) selects the object at the
   cursor; `cimoxide.model.followCursor` does so as the cursor moves.
+
+  ![The CIM Model view of MicroGrid, down through a substation and voltage level to a generator, with findings counts and equipment symbols](https://github.com/user-attachments/assets/f1760cf4-dcb3-45f8-bd86-5211a6c826cd)
 - **Rename and delete** — *Rename Symbol* (F2) on an `rdf:ID`, `rdf:about` or `rdf:resource`, or
   *Rename mRID…* in the *CIM Model* view, renames the mRID in every file of the model set:
   definitions, descriptions, references and an `IdentifiedObject.mRID` that writes it. *Delete* in
@@ -34,6 +40,8 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
   (a voltage level's bays, equipment, terminals, …); the edit opens in the refactoring preview
   first. Both change the files as written and nothing else, and are undone like any edit; the files
   they change open for review.
+
+  ![Deleting a voltage level with everything it holds, previewed across six files of the model set](https://github.com/user-attachments/assets/097a7556-58ad-4eca-9e2e-99066283a94a)
 - **Add an object** — *Add…* on an object in the *CIM Model* view: pick a class among those it can hold (equipment, bays and connectivity nodes in a voltage
   level; terminals, ends, limit sets on equipment, …) and a name. The object is written with a new
   UUID, its mRID, name and container, in the file whose profile carries it, after what the
@@ -48,6 +56,8 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
   objects listed to choose from; a reference to nothing (`rdf:resource="#"`), which no finding
   reports, or to an object the set lacks, is offered the same. With several missing on one object,
   one fix adds them all.
+
+  ![Quick fixes for an empty Terminal.ConnectivityNode, offering the five likeliest connectivity nodes](https://github.com/user-attachments/assets/fcb96f19-0655-44a4-a16b-0a46e1d39fba)
 - **Completion** in an `rdf:resource` value: the objects of the set the reference can name, the
   likeliest first (linked to the object through its other references, then nearest in its
   containers), or an enumeration's values.
@@ -64,6 +74,10 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
   open or closed, out-of-service equipment faded, each with its findings, on
   the Diagram Layout or laid out automatically; double-click a line there to go to its other end,
   Escape to go back. The view follows each revalidation.
+
+  ![RealGrid's 4,875 substations laid out automatically, lines coloured by voltage, findings ringed](https://github.com/user-attachments/assets/6f6c1460-cb9d-472f-a663-a2829a21682d)
+
+  ![Inside MicroGrid's PP_Brussels: voltage levels with equipment in single-line symbols](https://github.com/user-attachments/assets/2e5cabce-5dca-4e74-bebe-7d9e7001e2e2)
 
 - **Chat** — an MCP server, `cimmcp`, offered to chat (Copilot agent mode): ask about the
   model sets of the workspace. Its tools list the model sets, summarise one (headers, object

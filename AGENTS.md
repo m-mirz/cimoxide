@@ -303,7 +303,10 @@ reveal the object at the cursor), and `Tree::containers` the outline's container
 copy of MicroGrid (needs `server/cimlsp`; `xvfb-run` without a display; `vscode.yml` runs it on
 Linux before anything is published): activation and the tree through the client, the tree's icon
 files, the tree's delete, fixes, rename, search and *Referenced by*, a quick fix, rename, the grid
-panel. `activate` returns the model tree and the server's requests for it.
+panel. `activate` returns the model tree and the server's requests for it. `npm run screenshots`
+(`test/screenshots.ts`) takes the README's screenshots the same way, on MicroGrid and RealGrid, into
+`screenshots/` (ignored): headless on Linux, through the DevTools protocol, reduced to 256 colours
+(`upng-js`) but for RealGrid's grid.
 
 The extension (`editors/vscode/`, TypeScript, `vscode-languageclient`) passes settings as
 initialization options and schema directories as `CIMOXIDE_*` environment variables, and
