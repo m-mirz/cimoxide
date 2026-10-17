@@ -20,7 +20,9 @@ cargo run -p cimoxide-gen                 # regenerate cimmodel and cimvalidatio
 ```
 
 Submodules: `application-profiles-library/` (ENTSO-E RDFS and SHACL) and
-`CGMES-Test-Configurations/` (real test datasets).
+`CGMES-Test-Configurations/` (real test datasets). `relicapgrid/` (ENTSO-E's ReliCapGrid,
+for `scripts/relicapgrid`'s harness) is `update = none`: fetch it with
+`git submodule update --init --checkout relicapgrid`.
 
 ## Crates
 
@@ -74,8 +76,26 @@ file-name order wins; `cimlsp` hover and `cimmcp describe_class` show it); both
   `decode_files`, `decode_str`. `merge`: a later scalar wins, reference lists join, duplicate
   tracking stays per file. An object typed differently by different files keeps every type
   (`Element::types`); its class and `by_type` bucket are the most specific one.
+  `CimDataset::type_conflicts` lists objects whose types are unrelated (neither an ancestor of the
+  other).
 - `convert.rs` — RDF/XML export (`dataset_to_xml`, `dataset_to_xml_for_profile`) and JSON
-  (`{mrid: {"_type", "id", "Class.attr": "value" | [...]}}`)
+  (`{mrid: {"_type", "id", "Class.attr": "value" | [...], "_lang"?: {key: [tags]}}}`).
+  JSON cannot say whether a string is a reference; `CimDataset::element_from_json` (used by
+  cimoxide-py's `__setitem__`) holds a field as the dataset holds it on objects of the same
+  class, else as the class table declares it. `convert_nc.rs` — one NC
+  profile's export (DCAT header, elements, fields), which `dataset_to_xml_for_profile`
+  dispatches to for an NC code, and the NC and foreign part of `dataset_to_xml`, which
+  writes the whole dataset as read. An unknown profile code is an error.
+- An object of a class no table knows (reference data's SKOS/PROV/DCAT) goes to
+  `CimDataset::foreign`, keyed by its full IRI (`_:label` for an `rdf:nodeID`), with a
+  `base::foreign_class` whose `qualified` name is the class IRI. Apart from `entries`, so
+  validation, SPARQL and CIM lookups never see one; only the encoder and `foreign()` in
+  cimoxide-py do.
+- What the decoded value loses of how it was written is kept per dataset for the encoder:
+  `field_forms` by (class, key) — a field's namespace where not its declaration's (the DCAT
+  header's `dcterms:`/`prov:` properties), its `rdf:datatype`, the namespace a non-local
+  reference was cut from; `type_ns` — an element's namespace where not its class's;
+  `prefixes` — the documents' prefix bindings. JSON carries none of them.
 - `schema_source.rs` — generated vs. RDFS-loaded class tables
 
 Performance invariants:
@@ -108,6 +128,9 @@ audited against `application-profiles-library/validate/shacl-sparql/<rule>.rq`:
   `Fields::of`.
 - The Complex `*SolvedMAS`/`*NotSolvedMAS` rules (`sparql::mas_groups`) and the `!NS`
   table shapes run on the merged dataset, so dataset-wide counts span every file given.
+- A rule in one profile's file that reads another profile's attributes (check the
+  attribute's `origins`) runs on the merged dataset too, from `sparql::across_groups`:
+  per file it never fires (CsConverter ranges: SSH mode vs. EQ limits) or misfires.
 - `cimvalidation/tests/sparql_presence.rs` tests each rule with values present, absent and zero.
 
 ### `cimsparql`
@@ -126,7 +149,10 @@ vs `https://cim.ucaiug.io/ns#`). The decoder resolves `(namespace, local name)` 
 bare-name fallback.
 
 - NC `type_name`s and `by_type` keys carry an `nc:` prefix.
-- NC supports decode and validation only; the encoder skips NC elements.
+- NC exports per profile (`dataset_to_xml_for_profile`) or as part of the whole dataset
+  (`dataset_to_xml`). Ids are written in the form read (`rdf:ID`, `rdf:about="#…"`,
+  `urn:uuid:`). `scripts/relicapgrid`'s export tests compare each file and its exports as
+  RDF graphs.
 - Import the two families into **separate** `CimSpecification`s (shared `or_insert`
   prefix map; both bind `cim` and `base` differently).
 
@@ -163,6 +189,12 @@ Semantics to preserve:
 - `sh:in` values are keyed like a decoded `rdf:resource` (after the last `#`).
 - `sh:class` holds if any type of a merged element is an instance; `sh:in` on an `rdf:type`
   path (`RefClass`) tests every type.
+- In the per-file phase a class check reads the referenced object's types from the file;
+  if the file lacks it, NC shapes read them from the other files given (`validate_files`
+  passes the set), CGMES shapes stay silent. NCP's value types list every reachable class
+  (`cim16:`/`cim17:`/`cim:`/`nc:`); CGMES's per-profile ones list only their own profile's
+  classes (`sv:SvStatus.ConductingEquipment`: the two converters) and fail ~31k times on
+  the test configurations when read across files. The cross-profile files check CGMES types.
 - Paths are **not** verified against the class table (data may carry keys the table lacks).
 - Stepping a `Path::Chain` from an absent element makes the checks silent.
 - `sh:minCount` on `IdentifiedObject.mRID` skips a CGMES element no file defined (`rdf:ID`),

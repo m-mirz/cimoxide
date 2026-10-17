@@ -4,3 +4,8 @@
 [submodule "CGMES-Test-Configurations"]
 	path = CGMES-Test-Configurations
 	url = https://github.com/m-mirz/CGMES-Test-Configurations.git
+[submodule "relicapgrid"]
+	path = relicapgrid
+	url = https://github.com/entsoe/relicapgrid.git
+	branch = cgmes-3.0_ncp-2.5_tc-2.0
+	update = none

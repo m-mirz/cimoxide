@@ -188,6 +188,10 @@ impl PyCimDataset {
     /// `value` must be a dict shaped like the ones returned by `__getitem__`: a
     /// `"_type"` key naming a known CIM class, plus attribute keys. Raises
     /// `ValueError` if `"_type"` is missing or not a recognized CIM type.
+    /// Whether a string is a reference or text follows how the dataset holds
+    /// that attribute on objects of the same class (a DCAT header's
+    /// `conformsTo` is a reference, its `dcat:version` text), else the class
+    /// table; an attribute neither knows is text.
     fn __setitem__(&self, py: Python<'_>, mrid: String, value: Py<PyAny>) -> PyResult<()> {
         let json_val: serde_json::Value =
             pythonize::depythonize(value.bind(py)).map_err(map_err)?;
@@ -200,8 +204,8 @@ impl PyCimDataset {
         let class = reg
             .by_type_name(&type_name)
             .ok_or_else(|| PyValueError::new_err(format!("unknown CIM type \"{type_name}\"")))?;
-        let element = Element::from_json(class, reg, &json_val).map_err(PyValueError::new_err)?;
         let mut guard = self.lock()?;
+        let element = guard.ds.element_from_json(class, &json_val).map_err(PyValueError::new_err)?;
         guard.ds.set(mrid, element);
         guard.invalidate();
         Ok(())
@@ -239,6 +243,34 @@ impl PyCimDataset {
     /// Return all MRIDs as a list.
     fn mrids(&self) -> PyResult<Vec<String>> {
         Ok(self.lock()?.entries.keys().cloned().collect())
+    }
+
+    /// The MRIDs of the objects this dataset defines (`rdf:ID`), as opposed to
+    /// only describing objects another dataset defines (`rdf:about`). After a
+    /// merge, an object is defined if any merged file defined it.
+    fn defined_mrids(&self) -> PyResult<Vec<String>> {
+        let ds = self.lock()?;
+        Ok(ds.entries.iter().filter(|(_, e)| e.defined()).map(|(m, _)| m.clone()).collect())
+    }
+
+    /// Every type the files wrote `mrid` under: its class first, then any other
+    /// a merged file used (an SSH file's `Equipment` for an EQ
+    /// `ACLineSegment`). Raises `KeyError` if not found.
+    fn types(&self, mrid: &str) -> PyResult<Vec<String>> {
+        let ds = self.lock()?;
+        let entry = ds.entries.get(mrid).ok_or_else(|| PyKeyError::new_err(mrid.to_string()))?;
+        Ok(entry.types().map(|c| c.qualified.to_string()).collect())
+    }
+
+    /// The objects merged files typed with unrelated classes (neither an
+    /// ancestor of the other), as `[(mrid, [types])]`, sorted.
+    fn type_conflicts(&self) -> PyResult<Vec<(String, Vec<String>)>> {
+        let ds = self.lock()?;
+        Ok(ds
+            .type_conflicts()
+            .into_iter()
+            .map(|(m, t)| (m.to_string(), t.into_iter().map(str::to_string).collect()))
+            .collect())
     }
 
     /// Return a `dict[str, list[str]]` mapping type names to lists of MRIDs.
@@ -292,12 +324,33 @@ impl PyCimDataset {
         Ok(dict.into_any().unbind())
     }
 
-    /// Encode this dataset as a single CGMES profile's RDF/XML text.
+    /// Objects of classes no CIM class table knows — reference data's SKOS
+    /// concepts, PROV agents, DCAT catalogues — as a `dict[str, dict]` keyed by
+    /// identifier as written (a full IRI, or `_:` and a blank node's label).
+    /// `_type` is the class IRI. They are not in `entries()` and not validated.
+    fn foreign(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let ds = self.lock()?;
+        let dict = PyDict::new(py);
+        for (id, entry) in &ds.foreign {
+            dict.set_item(id, entry_to_python(py, entry)?)?;
+        }
+        Ok(dict.into_any().unbind())
+    }
+
+    /// Encode the whole dataset as RDF/XML: CGMES elements, then NC elements
+    /// and `foreign()` objects as they were read.
+    fn to_xml(&self) -> PyResult<String> {
+        let ds = self.lock()?;
+        cimmodel::convert::dataset_to_xml(&ds).map_err(map_err)
+    }
+
+    /// Encode this dataset as one profile's RDF/XML text: a CGMES profile
+    /// (`"EQ"`, `"SSH"`, …) or an NC one (`"CO"`, `"AE"`, …).
     ///
-    /// Only elements/fields whose CIM schema origin includes `profile` (e.g.
-    /// `"EQ"`, `"SSH"`) are emitted. If the dataset contains a decoded `FullModel`
-    /// header for this profile, it is reused verbatim; otherwise a minimal
-    /// synthetic header is generated.
+    /// Only elements/fields the profile exchanges are emitted, with the
+    /// dataset's own header for the profile when it has one (`md:FullModel`
+    /// for CGMES, `dcat:Dataset` for NC), else a synthesized one. An unknown
+    /// profile code raises `RuntimeError`.
     fn to_xml_for_profile(&self, profile: &str) -> PyResult<String> {
         let ds = self.lock()?;
         cimmodel::convert::dataset_to_xml_for_profile(&ds, profile).map_err(map_err)

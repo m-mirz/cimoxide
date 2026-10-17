@@ -101,6 +101,33 @@ pub fn intern(key: &str) -> &'static str {
     k
 }
 
+/// The class of an object no class table knows — a SKOS concept, a PROV
+/// agent, a DCAT catalogue — named by its namespace and local name. One leaked
+/// `ClassDef` per distinct class, kept for the process like [`intern`]'s keys.
+/// Its `qualified` name is the class IRI, which no family's `by_type` keys use.
+pub fn foreign_class(ns: &str, local: &str) -> &'static ClassDef {
+    use std::sync::{Mutex, OnceLock};
+    static CLASSES: OnceLock<Mutex<FastMap<String, &'static ClassDef>>> = OnceLock::new();
+    let iri = format!("{ns}{local}");
+    let mut classes = CLASSES.get_or_init(Default::default).lock().unwrap();
+    if let Some(c) = classes.get(&iri) {
+        return c;
+    }
+    let qualified: &'static str = Box::leak(iri.clone().into_boxed_str());
+    let class: &'static ClassDef = Box::leak(Box::new(ClassDef {
+        ns: intern(ns),
+        local: &qualified[ns.len()..],
+        qualified,
+        super_class: None,
+        concrete: true,
+        attrs: &[],
+        origins: &[],
+        comment: "",
+    }));
+    classes.insert(iri, class);
+    class
+}
+
 #[derive(Debug, Clone)]
 pub enum FieldValue {
     Text(String),
@@ -234,6 +261,20 @@ impl Element {
         self.langs.get_or_insert_with(Default::default).push((key, lang.into()));
     }
 
+    /// Hold `key`'s values as references, or as text: what a caller knows
+    /// that the class table does not ([`crate::CimDataset::element_from_json`]).
+    pub fn retype(&mut self, key: &str, reference: bool) {
+        if let Some(value) = self.fields.get_mut(key) {
+            *value = match (std::mem::replace(value, FieldValue::Text(String::new())), reference) {
+                (FieldValue::Text(s), true) => FieldValue::Resource(s),
+                (FieldValue::TextList(v), true) => FieldValue::ResourceList(v),
+                (FieldValue::Resource(s), false) => FieldValue::Text(s),
+                (FieldValue::ResourceList(v), false) => FieldValue::TextList(v),
+                (other, _) => other,
+            };
+        }
+    }
+
     pub fn get(&self, attr: &str) -> Option<&FieldValue> {
         self.fields.get(attr)
     }
@@ -348,12 +389,24 @@ impl Element {
     }
 
     /// `{"id": mRID, "Class.attr": value, ...}`: a value is a string, a
-    /// repeated one an array of strings.
+    /// repeated one an array of strings; when any text value had an
+    /// `xml:lang`, `"_lang"`: key → its tags in value order.
     pub fn to_json_value(&self) -> serde_json::Value {
-        let mut map = serde_json::Map::with_capacity(self.fields.len() + 1);
+        let mut map = serde_json::Map::with_capacity(self.fields.len() + 2);
         map.insert("id".to_string(), serde_json::Value::String(self.mrid.clone()));
         for (k, v) in &self.fields {
             map.insert(k.to_string(), field_to_json(v));
+        }
+        if let Some(langs) = &self.langs {
+            let mut tags = serde_json::Map::new();
+            for (key, lang) in langs.iter() {
+                if let serde_json::Value::Array(list) =
+                    tags.entry(key.to_string()).or_insert_with(|| serde_json::Value::Array(Vec::new()))
+                {
+                    list.push(serde_json::Value::String(lang.to_string()));
+                }
+            }
+            map.insert(LANG_KEY.to_string(), serde_json::Value::Object(tags));
         }
         serde_json::Value::Object(map)
     }
@@ -370,7 +423,7 @@ impl Element {
         let mrid = obj.get("id").and_then(|v| v.as_str()).ok_or("element has no \"id\"")?.to_string();
         let mut fields = FieldMap::default();
         for (k, v) in obj {
-            if k == "id" || k == "_type" {
+            if k == "id" || k == "_type" || k == LANG_KEY {
                 continue;
             }
             let is_ref = reg.attr(class, k).is_some_and(|a| a.kind != AttrKind::Literal);
@@ -388,9 +441,21 @@ impl Element {
             };
             fields.insert(reg.field_key(class, k), value);
         }
-        Ok(Self::with_fields(class, mrid, fields))
+        let mut element = Self::with_fields(class, mrid, fields);
+        if let Some(tags) = obj.get(LANG_KEY).and_then(|t| t.as_object()) {
+            for (k, list) in tags {
+                let key = reg.field_key(class, k);
+                for lang in list.as_array().into_iter().flatten().filter_map(|l| l.as_str()) {
+                    element.add_lang(key, lang);
+                }
+            }
+        }
+        Ok(element)
     }
 }
+
+/// The JSON key of an element's language tags ([`Element::to_json_value`]).
+pub const LANG_KEY: &str = "_lang";
 
 fn field_to_json(v: &FieldValue) -> serde_json::Value {
     match v {

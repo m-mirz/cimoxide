@@ -9,6 +9,7 @@
 
 pub mod base;
 pub mod convert;
+pub mod convert_nc;
 pub mod decode;
 pub mod registry;
 pub mod schema_source;
@@ -17,4 +18,4 @@ mod generated;
 pub use generated::*;
 
 pub use base::{Element, FieldValue};
-pub use decode::CimDataset;
+pub use decode::{CimDataset, FieldForm};

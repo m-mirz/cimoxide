@@ -143,40 +143,38 @@ pub fn dataset_from_json(json: &str) -> Result<CimDataset, Box<dyn Error>> {
     Ok(ds)
 }
 
-/// True when the element belongs to a profile family this encoder cannot write.
-///
-/// The writer serves the CGMES schema — its profiles, its prefixes, its
-/// `md:FullModel` header. Other families
-/// carry a qualified type name (`nc:Contingency`); emitting one as
-/// `<cim:nc:Contingency>` would produce a malformed document, so they are
-/// skipped and reported instead.
+/// True when the element belongs to another family than CGMES, whose
+/// qualified type names (`nc:Contingency`) the CGMES writer cannot emit;
+/// [`crate::convert_nc`] writes those.
 fn is_foreign_family(type_name: &str) -> bool {
     type_name.contains(':')
 }
 
+/// The whole dataset as RDF/XML: every CGMES element under the CGMES
+/// prefixes, then every NC element and every object of a class no table knows
+/// ([`CimDataset::foreign`]) as it was read ([`crate::convert_nc`]), under
+/// prefixes that do not clash with CGMES's (NC's `cim:` is another namespace).
 pub fn dataset_to_xml(ds: &CimDataset) -> Result<String, Box<dyn Error>> {
-    let mut out = String::new();
-    out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-    out.push_str("<rdf:RDF");
-    for (prefix, uri) in tables().schema.namespaces {
-        write!(out, " xmlns:{prefix}=\"{uri}\"")?;
-    }
-    out.push_str(">\n");
+    let mut body = String::new();
+    let cgmes = tables().schema.namespaces;
+    let mut prefixes = crate::convert_nc::Prefixes::seeded(ds, cgmes);
 
     let mut mrids: Vec<&str> = ds.entries.keys().map(String::as_str).collect();
     mrids.sort();
 
-    let mut skipped = 0usize;
     for mrid in mrids {
         let entry = &ds.entries[mrid];
         let block = entry;
         let type_name = block.type_name();
         if is_foreign_family(type_name) {
-            skipped += 1;
             continue;
         }
-        let ns = prefix_for_type(type_name);
-        write!(out, "  <{ns}:{type_name} rdf:about=\"#{}\">", escape_attr(mrid))?;
+        // The namespaces it was read in, where they differ from the schema's.
+        let ns = match ds.type_ns.get(mrid) {
+            Some(written) => prefixes.of(written),
+            None => prefix_for_type(type_name).to_string(),
+        };
+        write!(body, "  <{ns}:{type_name} {}>", about(mrid))?;
 
         // Emit fields sorted for deterministic output
         let mut fields: Vec<(&&'static str, &FieldValue)> = block.fields().iter().collect();
@@ -184,30 +182,57 @@ pub fn dataset_to_xml(ds: &CimDataset) -> Result<String, Box<dyn Error>> {
 
         let mut children = String::new();
         for (key, val) in fields {
-            write_field(&mut children, key, val, type_name, "#", ds)?;
+            let written = ds.field_forms.get(&(type_name, *key)).and_then(|f| f.ns).map(|n| prefixes.of(n));
+            write_field_as(&mut children, key, val, type_name, "#", ds, written.as_deref())?;
         }
 
         if children.is_empty() {
-            write!(out, "/>\n")?;
+            write!(body, "/>\n")?;
         } else {
-            write!(out, "{children}\n  </{ns}:{type_name}>\n")?;
+            write!(body, "{children}\n  </{ns}:{type_name}>\n")?;
         }
     }
 
-    out.push_str("</rdf:RDF>\n");
-    if skipped > 0 {
-        eprintln!(
-            "warning: skipped {skipped} element(s) from a profile family this encoder cannot write yet"
-        );
+    crate::convert_nc::write_as_read(&mut body, &mut prefixes, ds)?;
+
+    let mut out = String::new();
+    out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    out.push_str("<rdf:RDF");
+    for (prefix, uri) in cgmes {
+        write!(out, " xmlns:{prefix}=\"{uri}\"")?;
     }
+    let mut extra: Vec<(&String, &&str)> = prefixes
+        .bound
+        .iter()
+        .filter(|(ns, _)| !cgmes.iter().any(|(_, c)| c == *ns))
+        .map(|(ns, p)| (p, ns))
+        .collect();
+    extra.sort();
+    for (prefix, uri) in extra {
+        write!(out, " xmlns:{prefix}=\"{}\"", escape_attr(uri))?;
+    }
+    out.push_str(">\n");
+    out.push_str(&body);
+    out.push_str("</rdf:RDF>\n");
     Ok(out)
 }
 
+/// Export the dataset's content for one profile, CGMES (`EQ`, `SSH`, …) or NC
+/// (`CO`, `AE`, … — [`crate::convert_nc`]), with that profile's header.
+///
+/// A code neither family defines is an error: an empty document would look
+/// like an export of nothing.
 pub fn dataset_to_xml_for_profile(
     ds: &CimDataset,
     profile_code: &str,
 ) -> Result<String, Box<dyn Error>> {
     let tables = tables();
+    if !tables.schema.profiles.iter().any(|(k, _)| *k == profile_code) {
+        if crate::convert_nc::nc_profile_uri(profile_code).is_some() {
+            return crate::convert_nc::dataset_to_xml_for_nc_profile(ds, profile_code);
+        }
+        return Err(format!("unknown profile code {profile_code:?}: neither a CGMES nor an NC profile").into());
+    }
     let type_map = &tables.type_origins;
     let attr_map = &tables.attr_origins;
 
@@ -301,9 +326,13 @@ pub fn dataset_to_xml_for_profile(
 
         let ns = prefix_for_type(type_name);
         if is_primary {
-            write!(out, "  <{ns}:{type_name} rdf:ID=\"{}\">", escape_attr(mrid))?;
+            if mrid.contains(':') {
+                write!(out, "  <{ns}:{type_name} {}>", about(mrid))?;
+            } else {
+                write!(out, "  <{ns}:{type_name} rdf:ID=\"{}\">", escape_attr(mrid))?;
+            }
         } else {
-            write!(out, "  <{ns}:{type_name} rdf:about=\"#{}\">", escape_attr(mrid))?;
+            write!(out, "  <{ns}:{type_name} {}>", about(mrid))?;
         }
 
         fields.sort_by_key(|(k, _)| **k);
@@ -389,7 +418,7 @@ fn write_synthesized_header(
 
 /// `urn:uuid:` + a v5 UUID (RFC 9562, SHA-1 name-based) of the profile code and the
 /// dataset's sorted mRIDs.
-fn header_urn(ds: &CimDataset, profile_code: &str) -> String {
+pub(crate) fn header_urn(ds: &CimDataset, profile_code: &str) -> String {
     use sha1::{Digest, Sha1};
     let mut mrids: Vec<&str> = ds.entries.keys().map(String::as_str).collect();
     mrids.sort_unstable();
@@ -469,7 +498,7 @@ fn write_carried_fields(
     }
     for (class, mut fields) in by_class {
         let ns = prefix_for_type(class);
-        write!(out, "  <{ns}:{class} rdf:about=\"#{}\">", escape_attr(mrid))?;
+        write!(out, "  <{ns}:{class} {}>", about(mrid))?;
         fields.sort_by_key(|(k, _)| **k);
         let mut children = String::new();
         for (key, val) in fields {
@@ -501,8 +530,21 @@ fn write_field(
     resource_prefix: &str,
     ds: &CimDataset,
 ) -> Result<(), Box<dyn Error>> {
+    write_field_as(children, key, val, type_name, resource_prefix, ds, None)
+}
+
+/// [`write_field`] under `prefix` instead of the schema's, when given.
+fn write_field_as(
+    children: &mut String,
+    key: &str,
+    val: &FieldValue,
+    type_name: &str,
+    resource_prefix: &str,
+    ds: &CimDataset,
+    prefix: Option<&str>,
+) -> Result<(), Box<dyn Error>> {
     let meta = attr_meta(key, type_name);
-    let ns = meta.map_or(FALLBACK_PREFIX, |m| m.prefix);
+    let ns = prefix.unwrap_or_else(|| meta.map_or(FALLBACK_PREFIX, |m| m.prefix));
     let resource = |r: &str| {
         if let Some(m) = meta
             && m.is_enum
@@ -519,6 +561,10 @@ fn write_field(
             && let Some(ns_iri) = type_ns_iri(owner)
         {
             return format!("{ns_iri}{}", escape_attr(r));
+        }
+        // An IRI or URN (`urn:uuid:…`) is already absolute.
+        if r.contains(':') {
+            return escape_attr(r);
         }
         format!("{resource_prefix}{}", escape_attr(r))
     };
@@ -542,6 +588,16 @@ fn write_field(
         }
     }
     Ok(())
+}
+
+/// `rdf:about` for an object: its mRID as a fragment of the document, or as
+/// written when it is an IRI or URN (a header's `urn:uuid:…`).
+fn about(mrid: &str) -> String {
+    if mrid.contains(':') {
+        format!("rdf:about=\"{}\"", escape_attr(mrid))
+    } else {
+        format!("rdf:about=\"#{}\"", escape_attr(mrid))
+    }
 }
 
 fn escape_text(s: &str) -> String {

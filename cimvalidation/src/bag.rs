@@ -52,6 +52,9 @@ impl<'a> ReverseIndex<'a> {
 /// Everything a check needs besides the element itself.
 struct Ctx<'a> {
     ds: &'a CimDataset,
+    /// The other files validated with `ds`, read only for the type of an
+    /// object `ds` does not hold, and only by NC shapes ([`any_type`]).
+    set: &'a [CimDataset],
     source: Source,
     reverse: ReverseIndex<'a>,
 }
@@ -319,13 +322,41 @@ fn path_label(path: &Path) -> std::borrow::Cow<'static, str> {
     }
 }
 
-/// A referenced element, whose types the class checks read, or `None` when
-/// it is not in this dataset. Class checks are silent then: phase 1 runs per file, so a
-/// reference out of the file is normal and belongs to a cross-profile rule.
-/// Reporting it would make every cross-file association a value-type
-/// violation.
-fn class_of<'a>(ctx: &Ctx<'a>, mrid: &str) -> Option<&'a cimmodel::Element> {
-    ctx.ds.entries.get(mrid)
+/// Does any type of the referenced object `mrid` satisfy `test`? `None`
+/// when it is not found.
+///
+/// The types are those of `ds`'s element when it has one. Otherwise, for NC,
+/// every type the set's other files give it, as their merge would; for CGMES
+/// the check is silent.
+///
+/// The families' value types are written differently. NCP's list every class
+/// the association may reach in any namespace (`ps:PowerSchedule.GeneratingUnit`
+/// names the CGMES, CIM16, CIM17 and NC units), since the target is never in
+/// the referring file — a schedule points into EQ, a remedial action into
+/// another dataset. CGMES's per-profile files list only the classes of their
+/// own profile (`sv:SvStatus.ConductingEquipment` the two converters,
+/// `dl:DiagramObject.IdentifiedObject` the diagram classes): they hold on one
+/// file, where an EQ object has no type, and the cross-profile files
+/// (`sv456cpe:SvStatus.ConductingEquipment-valueType`, `sh:class
+/// ConductingEquipment`) check the type on the merged dataset. Read across
+/// the set, the CGMES ones failed some 31,000 times on the ENTSO-E test
+/// configurations, every association into EQ. An object no file holds is a
+/// dangling reference, which a cross-profile rule reports.
+fn any_type(ctx: &Ctx<'_>, mrid: &str, test: impl Fn(&cimmodel::base::ClassDef) -> bool) -> Option<bool> {
+    if let Some(e) = ctx.ds.entries.get(mrid) {
+        return Some(e.types().any(test));
+    }
+    if ctx.source != Source::Nc {
+        return None;
+    }
+    let mut held = false;
+    for e in ctx.set.iter().filter_map(|d| d.entries.get(mrid)) {
+        held = true;
+        if e.types().any(&test) {
+            return Some(true);
+        }
+    }
+    held.then_some(false)
 }
 
 /// Does `values` violate `constraint`? Unknown values violate nothing.
@@ -369,15 +400,15 @@ fn fails(ctx: &Ctx<'_>, el: &Fields, values: &Values<'_>, constraint: &Constrain
         // types (`Element::types`). `sh:class` needs one of them to be an
         // instance; `sh:in` on an `rdf:type` path tests each type, as each is
         // a value of the path — a type outside the list fails it.
-        Constraint::Class(allowed) => values.any_ref(|r| {
-            class_of(ctx, r).is_some_and(|e| !e.types().any(|t| allowed.contains(&t.qualified)))
-        }),
-        Constraint::RefClass(allowed) => values.any_ref(|r| {
-            class_of(ctx, r).is_some_and(|e| e.types().any(|t| !allowed.contains(&t.qualified)))
-        }),
-        Constraint::NotClass(forbidden) => values.any_ref(|r| {
-            class_of(ctx, r).is_some_and(|e| e.types().any(|t| forbidden.contains(&t.qualified)))
-        }),
+        Constraint::Class(allowed) => {
+            values.any_ref(|r| any_type(ctx, r, |t| allowed.contains(&t.qualified)) == Some(false))
+        }
+        Constraint::RefClass(allowed) => {
+            values.any_ref(|r| any_type(ctx, r, |t| !allowed.contains(&t.qualified)) == Some(true))
+        }
+        Constraint::NotClass(forbidden) => {
+            values.any_ref(|r| any_type(ctx, r, |t| forbidden.contains(&t.qualified)) == Some(true))
+        }
         Constraint::QualifiedIn { allowed, min } => {
             let mut n = 0u32;
             values.any_text(|v| {
@@ -691,13 +722,25 @@ pub fn validate_profile(
     ds: &CimDataset,
     profile: &str,
     shapes: &'static [ShapeDef],
+    cfg: &Config,
+) -> Vec<Violation> {
+    validate_profile_in(ds, &[], profile, shapes, cfg)
+}
+
+/// [`validate_profile`] on one file of a set: the class checks find a
+/// referenced object's type in the set's other files (see [`validate_shapes_in`]).
+pub fn validate_profile_in(
+    ds: &CimDataset,
+    set: &[CimDataset],
+    profile: &str,
+    shapes: &'static [ShapeDef],
     _cfg: &Config,
 ) -> Vec<Violation> {
     let active: Vec<&ShapeDef> = shapes
         .iter()
         .filter(|s| s.profiles.contains(&profile))
         .collect();
-    validate_shapes(ds, Source::Nc, &active)
+    validate_shapes_in(ds, set, Source::Nc, &active)
 }
 
 /// Elements per slice of a class's targets, the unit of work a thread takes.
@@ -712,6 +755,14 @@ const SLICE: usize = 2048;
 /// Targets outside `source` are skipped: a family's shapes describe its own
 /// elements.
 pub fn validate_shapes(ds: &CimDataset, source: Source, active: &[&ShapeDef]) -> Vec<Violation> {
+    validate_shapes_in(ds, &[], source, active)
+}
+
+/// [`validate_shapes`] on `ds`, one file of the files `set` validated
+/// together. Only NC's class checks (`sh:class`, `sh:in` on a type, `sh:not`)
+/// read the set, for the type of a referenced object `ds` does not hold;
+/// every other check sees `ds` alone, as a per-file rule must.
+pub fn validate_shapes_in(ds: &CimDataset, set: &[CimDataset], source: Source, active: &[&ShapeDef]) -> Vec<Violation> {
     if active.is_empty() {
         return Vec::new();
     }
@@ -757,7 +808,7 @@ pub fn validate_shapes(ds: &CimDataset, source: Source, active: &[&ShapeDef]) ->
     subject_fields.dedup();
 
     let (reverse, subjects) = build_indexes(ds, source, &count_fields, &list_fields, &subject_fields);
-    let ctx = Ctx { ds, source, reverse };
+    let ctx = Ctx { ds, set, source, reverse };
 
     // Element-major: visit each target once and apply every shape that
     // targets it, rather than walking a class's elements once per shape. The

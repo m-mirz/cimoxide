@@ -2,7 +2,11 @@ use cimmodel::CimDataset;
 use super::Fields;
 use crate::Violation;
 
-pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
+/// The rules of this profile's constraint files that read another profile's
+/// data, run on the merged dataset (`super::across_groups`).
+/// The measurement rule reads which equipment an EQ terminal belongs to; on
+/// the OP file alone every measured terminal looked foreign.
+pub fn validate_across(dataset: &CimDataset) -> Vec<Violation> {
     check_measurement_terminal_required_cases(dataset)
 }
 

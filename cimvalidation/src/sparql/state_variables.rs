@@ -2,9 +2,15 @@ use cimmodel::CimDataset;
 use super::Fields;
 use crate::Violation;
 
+/// The rules of this profile's constraint files that read another profile's
+/// data, run on the merged dataset (`super::across_groups`).
+/// The CsConverter ranges read SSH's operating mode.
+pub fn validate_across(dataset: &CimDataset) -> Vec<Violation> {
+    check_cs_converter_state_value_range(dataset)
+}
+
 pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
-    v.extend(check_cs_converter_state_value_range(dataset));
     v.extend(check_topological_island_count(dataset));
     v
 }

@@ -1,0 +1,15 @@
+[project]
+name = "cimoxide-relicapgrid"
+version = "0.0.0"
+description = "Runs cimoxide against the ENTSO-E ReliCapGrid dataset, with triplets as the reference"
+requires-python = ">=3.12"
+dependencies = [
+    # ReliCapGrid's own CI pins these (relicapgrid/pyproject.toml)
+    "triplets[polars,oxigraph,validation]==0.2.0",
+    "pandas!=2.3.3",
+    "pytest",
+    # cimoxide-py, built from this checkout: maturin develop -m cimoxide-py/Cargo.toml
+]
+
+[tool.pytest.ini_options]
+testpaths = ["."]

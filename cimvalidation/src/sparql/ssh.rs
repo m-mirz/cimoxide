@@ -3,11 +3,17 @@ use cimmodel::CimDataset;
 use crate::Violation;
 use super::Fields;
 
+/// The rules of this profile's constraint files that read another profile's
+/// data, run on the merged dataset (`super::across_groups`).
+/// The CsConverter ranges compare SSH's operating mode with EQ's limits.
+pub fn validate_across(dataset: &CimDataset) -> Vec<Violation> {
+    check_cs_converter_value_range(dataset)
+}
+
 pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     v.extend(check_energy_source_active_power_consumer(dataset));
     v.extend(check_regulating_control_target_deadband_applicability(dataset));
-    v.extend(check_cs_converter_value_range(dataset));
     v.extend(check_cs_converter_p_pcc_control(dataset));
     v.extend(check_vs_converter_p_pcc_control(dataset));
     v.extend(check_vs_converter_q_pcc_control(dataset));

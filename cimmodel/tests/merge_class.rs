@@ -68,3 +68,13 @@ fn an_object_any_file_defines_is_defined() {
     b.merge(ssh());
     assert!(b.entries["_x"].defined());
 }
+
+/// A superclass is no conflict; two unrelated classes are.
+#[test]
+fn unrelated_types_are_conflicts() {
+    let mut a = eq();
+    a.merge(ssh());
+    assert!(a.type_conflicts().is_empty());
+    a.merge(file("Breaker", "<cim:Switch.open>false</cim:Switch.open>"));
+    assert_eq!(a.type_conflicts(), [("_x", vec!["ACLineSegment", "Equipment", "Breaker"])]);
+}

@@ -2,11 +2,17 @@ use cimmodel::CimDataset;
 use crate::Violation;
 use super::Fields;
 
+/// The rules of this profile's constraint files that read another profile's
+/// data, run on the merged dataset (`super::across_groups`).
+/// The mbase equation reads the machine's EQ ratings.
+pub fn validate_across(dataset: &CimDataset) -> Vec<Violation> {
+    check_turbine_governor_mbase(dataset)
+}
+
 pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     v.extend(check_excitation_system_smd(dataset));
     v.extend(check_smtcr_model_type(dataset));
-    v.extend(check_turbine_governor_mbase(dataset));
     v.extend(check_excitation_system_gains(dataset));
     v.extend(check_pss_input_signals(dataset));
     v.extend(check_gov_hydro4_gain_points(dataset));

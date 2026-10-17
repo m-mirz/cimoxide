@@ -51,9 +51,6 @@ pub fn validate_profile_local(dataset: &CimDataset, profile: &str, cfg: &Config)
                 violations.extend(quality::check_base_voltage_in_eqbd_impl(dataset, eqbd_bv_ids));
             }
         }
-        "OP" => {
-            violations.extend(operation::validate(dataset));
-        }
         _ => {}
     }
 
@@ -78,8 +75,32 @@ pub fn validate_crossprofile(dataset: &CimDataset, cfg: &Config) -> Vec<Violatio
         groups.push(quality::validate);
     }
     groups.push(prof10::validate);
+    groups.extend(across_groups(cfg));
     groups.extend(mas_groups(cfg));
     crate::par::par_groups(dataset, &groups)
+}
+
+/// The rules of a profile's own constraint files that read another profile's
+/// data, for each profile in play.
+///
+/// The APL validates a model as a whole, and these rules assume it: the SSH
+/// CsConverter ranges compare SSH's operating mode with EQ's angle limits,
+/// the SV ones read SSH's mode, an EQ rule asks for SC's zero-sequence
+/// values, a DY rule for the machine's EQ ratings, an OP rule for the EQ
+/// terminal's equipment. On their own file they could never fire (or, for
+/// the OP rule, fired on every measurement), so they run on the merged
+/// dataset, in either solved state.
+pub fn across_groups(cfg: &Config) -> Vec<fn(&CimDataset) -> Vec<Violation>> {
+    type Group = fn(&CimDataset) -> Vec<Violation>;
+    const ACROSS: &[(&str, Group)] = &[
+        ("EQ", equipment::validate_across),
+        ("SSH", ssh::validate_across),
+        ("SV", state_variables::validate_across),
+        ("DY", dynamics::validate_across),
+        ("OP", operation::validate_across),
+    ];
+    let has = |p: &str| cfg.profiles.is_empty() || cfg.profiles.iter().any(|x| x == p);
+    ACROSS.iter().filter(|(profile, _)| has(profile)).map(|(_, group)| *group).collect()
 }
 
 /// The rules of the `*SolvedMAS` and `*NotSolvedMAS` files whose profile is in
