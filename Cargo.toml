@@ -1,5 +1,5 @@
 [workspace]
-members = ["cimoxide", "cimgen", "cimschema", "cimmodel", "cimvalidation", "cimsparql", "cimoxide-cli", "cimoxide-lsp", "cimoxide-mcp"]
+members = ["cimoxide", "cimgen", "cimschema", "cimmodel", "cimvalidation", "cimsparql", "cimoxide-cli", "cimview", "cimoxide-lsp", "cimoxide-mcp"]
 exclude = ["cimoxide-py"]
 resolver = "2"
 
@@ -21,3 +21,4 @@ cimoxide-schema = { path = "cimschema", version = "0.6.0" }
 cimoxide-model = { path = "cimmodel", version = "0.6.0" }
 cimoxide-validation = { path = "cimvalidation", version = "0.6.0" }
 cimoxide-sparql = { path = "cimsparql", version = "0.6.0" }
+cimoxide-view = { path = "cimview", version = "0.6.0" }

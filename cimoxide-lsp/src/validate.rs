@@ -41,9 +41,9 @@ pub struct ModelSet {
     /// mRID → (file, element) of its `rdf:ID`, else its first `rdf:about`.
     pub defs: HashMap<String, (usize, usize)>,
     /// The grid at substation level, with each object's findings counted.
-    pub grid: crate::grid::Grid,
+    pub grid: cimview::grid::Grid,
     /// The set's objects by container, area and class, with their findings.
-    pub tree: crate::tree::Tree,
+    pub tree: cimview::tree::Tree,
     /// Each object's findings: (property, rule, message), for the tree's fixes.
     pub findings: HashMap<String, Vec<(String, String, String)>>,
 }
@@ -53,6 +53,18 @@ impl ModelSet {
         let &(f, e) = self.defs.get(mrid)?;
         let file = &self.files[f];
         Some((file, &file.index.elements[e]))
+    }
+}
+
+impl cimview::Locations for ModelSet {
+    fn location(&self, id: &str) -> serde_json::Value {
+        match self.definition(id) {
+            Some((file, el)) => serde_json::json!({ "uri": file.url, "range": el.head }),
+            None => serde_json::Value::Null,
+        }
+    }
+    fn files(&self) -> Vec<serde_json::Value> {
+        self.files.iter().map(|f| serde_json::json!(f.url)).collect()
     }
 }
 
@@ -145,9 +157,9 @@ pub fn validate(files: &[(PathBuf, Arc<str>)], opts: &Options) -> (ModelSet, Vec
     if !datasets.is_empty() {
         let cfg = cimvalidation::combined_config(&datasets, None, None, opts.common, opts.quality, opts.silence.clone());
         {
-            let model = crate::grid::Model::new(&datasets);
-            set.grid = crate::grid::build(&model);
-            set.tree = crate::tree::build(&model);
+            let model = cimview::grid::Model::new(&datasets);
+            set.grid = cimview::grid::build(&model);
+            set.tree = cimview::tree::build(&model);
         }
         let violations = cimvalidation::validate_files_traced(datasets, &cfg);
         let violations: Vec<_> = violations.into_iter().map(|(d, v)| (d.map(|d| origin[d]), v)).collect();
@@ -251,6 +263,27 @@ mod tests {
 {body}
 </rdf:RDF>"##
         ))
+    }
+
+    /// The views' locations: the file of an object's `rdf:ID`, with its range.
+    #[test]
+    fn views_locate_an_object_where_it_is_defined() {
+        use cimview::Locations;
+        let ssh = doc("SteadyStateHypothesis-EU", r##"  <cim:Equipment rdf:about="#_b">
+    <cim:Equipment.inService>true</cim:Equipment.inService>
+  </cim:Equipment>"##);
+        let eq = doc("CoreEquipment-EU", r#"  <cim:BusbarSection rdf:ID="_b">
+    <cim:IdentifiedObject.mRID>b</cim:IdentifiedObject.mRID>
+  </cim:BusbarSection>"#);
+        let files = [(PathBuf::from("/set/a_SSH.xml"), ssh), (PathBuf::from("/set/b_EQ.xml"), eq)];
+        let (set, _) = validate(&files, &Options { common: false, quality: false, silence: vec![] });
+        let at = set.location("_b");
+        assert!(at["uri"].as_str().unwrap().ends_with("/set/b_EQ.xml"), "{at}");
+        assert!(at["range"]["start"]["line"].is_number(), "{at}");
+        assert!(set.location("nothing").is_null());
+        let listed = set.files();
+        assert_eq!(listed.len(), 2);
+        assert!(listed[0].as_str().unwrap().ends_with("/set/a_SSH.xml"));
     }
 
     #[test]

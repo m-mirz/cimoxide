@@ -19,8 +19,8 @@ use cimmodel::base::FastMap;
 use cimvalidation::Violation;
 use serde_json::{Value, json};
 
+use crate::Locations;
 use crate::grid::{Counts, Grid, Model};
-use crate::validate::ModelSet;
 
 /// The fields that name an object's container, the first written winning.
 pub const CONTAINED: &[&str] = &[
@@ -556,7 +556,7 @@ impl Tree {
     /// each with its key, label, class, number of children, findings, where
     /// it is written and where the grid view shows it. `None` for a key the
     /// tree does not have (any more).
-    pub fn children_json(&self, set: &ModelSet, grid: &Grid, key: Option<&str>, only_findings: bool) -> Option<Value> {
+    pub fn children_json(&self, set: &impl Locations, grid: &Grid, key: Option<&str>, only_findings: bool) -> Option<Value> {
         let entries = match key {
             Some(key) => self.entries(key, only_findings)?,
             None => {
@@ -610,12 +610,7 @@ impl Tree {
             };
             return Some(Value::Array(ranges));
         }
-        let location = |id: &str| -> Value {
-            match set.definition(id) {
-                Some((file, el)) => json!({ "uri": file.url, "range": el.head }),
-                None => Value::Null,
-            }
-        };
+        let location = |id: &str| set.location(id);
         // A line is shown as its segments are: the first of them on the grid.
         let reveal = |o: u32, kids: &[u32]| -> Option<Value> {
             grid.reveal(&self.objects[o as usize].id).or_else(|| {
@@ -665,7 +660,7 @@ mod tests {
 
     use serde_json::Value;
 
-    use crate::validate::{Options, collect, validate};
+    use crate::testing::{collect, validate};
 
     fn labels(v: &Value) -> Vec<&str> {
         v.as_array().unwrap().iter().map(|x| x["label"].as_str().unwrap()).collect()
@@ -677,9 +672,9 @@ mod tests {
     fn micro_grid_tree() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../CGMES-Test-Configurations/v3.0/MicroGrid/MicroGid-BaseCase/MicroGrid-BaseCase-Merged");
-        let files = collect(&dir, &Default::default());
+        let files = collect(&dir);
         assert_eq!(files.len(), 12, "missing test data — run `git submodule update --init`");
-        let (set, _) = validate(&files, &Options { common: true, quality: true, silence: vec![] });
+        let set = validate(&files);
         let t = &set.tree;
         let children = |key: Option<&str>| t.children_json(&set, &set.grid, key, false).unwrap();
         assert_eq!(labels(&children(None)), ["Geographical", "Operational", "Not contained", "By class"]);

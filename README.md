@@ -113,6 +113,7 @@ see [`cimoxide-mcp/README.md`](cimoxide-mcp/README.md).
 | `cimsparql` | SPARQL 1.1 over a decoded dataset, backed by in-memory oxigraph |
 | `cimoxide` | Facade re-exporting `cimmodel` (as `model`), `cimvalidation` and `cimsparql` |
 | `cimoxide-cli` | The command-line tool |
+| `cimview` | A model set's grid and tree, with findings, as JSON for whatever draws them |
 | `cimoxide-lsp` | `cimlsp`, the language server; its VS Code extension is `editors/vscode/` |
 | `cimoxide-mcp` | `cimmcp`, the MCP server for chat clients |
 | `cimoxide-py` | Python bindings (PyO3, built with `maturin`, outside the Cargo workspace) |
