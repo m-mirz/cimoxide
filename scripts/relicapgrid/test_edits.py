@@ -44,8 +44,8 @@ def unexplained(new, before, sources):
 # --- CO_UC1 ------------------------------------------------------------------
 
 CO = "Instance/Belgovia/NetworkCode/cimxml/Belgovia_CO.xml"
-CONTINGENCY = "_7e31c67d-67ba-4592-8ac1-9e806d697c8e"   # loss of the Belgovia-Galia tie-line
-SECOND_LINE = "_ed0c5d75-4a54-43c8-b782-b20d7431630b"   # the Belgovia-Svedala tie-line
+CONTINGENCY = "_7e31c67d-67ba-4592-8ac1-9e806d697c8e"   # loss of TieLine_SD_BO3; the report's Table 3 says Belgovia-Galia
+SECOND_LINE = "_ed0c5d75-4a54-43c8-b782-b20d7431630b"   # a Belgovia tie-line; the report's Table 3 says Belgovia-Svedala
 NEW_NAME = "Loss of TieLines Belgovia-Galia and Belgovia-Svedala"
 
 
