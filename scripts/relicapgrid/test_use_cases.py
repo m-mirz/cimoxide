@@ -773,3 +773,45 @@ def test_use_case(case):
 def test_use_case_notices_breakage(case):
     real = load(case)
     assert case.check(case.mutate(real)) != case.check(real)
+
+
+def test_co_uc1_table_differs_from_the_data():
+    """The report's Table 3 has 7e31c67d lose the Belgovia-Galia tie and e9eab3fe the Belgovia-Svedala
+    tie; the data has them the other way round. Its N-2 is of "two independent tie-lines"; both its
+    contingencies list the same two internal lines, which share a node."""
+    m = model(*(ALL_NC + ALL_GRID))
+
+    def lost(contingency):
+        return sorted(m.value(m.ref(element, "ContingencyEquipment.Equipment"), "IdentifiedObject.name")
+                      for element in m.referrers("ContingencyElement.Contingency", contingency))
+
+    assert lost("7e31c67d-67ba-4592-8ac1-9e806d697c8e") == ["TieLine_SD_BO3"]
+    assert lost("e9eab3fe-c328-4f78-9bc1-77adb59f6ba7") == ["TieLine_GA_BO3"]
+    assert lost("9d17b84c-33b5-4a68-b8b9-ed5b31038d40") == ["63-64", "64-65"]
+    assert lost("13334fdf-9cc2-4341-adb6-1281269040b4") == ["63-64", "64-65"]
+
+
+SUPPLIED_SAR = ALL_NC + ALL_GRID + COMMON + ("Jotunheim/Grid/cimxml/*.xml",)
+
+
+def supplied_result():
+    m = model(*SUPPLIED_SAR)
+    [result] = m.of_type("ContingencyPowerFlowResult")
+    return m, result
+
+
+def test_sar_uc1_supplied_result_is_on_what_its_contingency_trips():
+    """A violation of 1673.4 A on the line its contingency trips, which then carries nothing."""
+    m, result = supplied_result()
+    tripped = {m.ref(element, "ContingencyEquipment.Equipment") for element in m.referrers(
+        "ContingencyElement.Contingency", m.ref(result, "ContingencyPowerFlowResult.Contingency"))}
+    assert m.ref(m.ref(result, "PowerFlowResult.ACDCTerminal"), "Terminal.ConductingEquipment") in tripped
+    assert m.value(result, "PowerFlowResult.isViolation") == "true"
+
+
+def test_sar_uc1_supplied_value_is_a_ratio():
+    """The profile defines PowerFlowResult.value in percent: 1100 A on 1000 A is 110."""
+    m, result = supplied_result()
+    limit = float(m.value(m.ref(result, "PowerFlowResult.OperationalLimit"), "CurrentLimit.value"))
+    amps = float(m.value(result, "PowerFlowResult.valueA"))
+    assert float(m.value(result, "PowerFlowResult.value")) == pytest.approx(amps / limit, abs=1e-3)

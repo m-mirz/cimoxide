@@ -2,22 +2,28 @@
 
 What cimoxide does for each test case of the [2026 SV-IOP report](https://www.entsoe.eu/Documents/CIM_documents/Market%20CIM/SV_IOP_Report_2026.pdf)
 (Network Code Profiles 2.5, ReliCapGrid), and with what result. The section numbers follow the
-report's. Every statement here is backed by a test in this directory; the test names are given so
-each result can be reproduced.
+report's. Every statement here is backed by a test in this directory. Each use case's **Test** line
+names what backs it, so each result can be reproduced; [Finding the tests](#finding-the-tests) says
+how they fit together.
 
 ## Versions
 
 | | |
 |---|---|
-| cimoxide | 0.5.1, commit `c426108` (branch `relicapgrid`), Python bindings `cimoxide-py`; MCP server `cimmcp` at `e18f628` |
+| cimoxide | 0.6.0, commit `f17b9e5`, Python bindings `cimoxide-py` and MCP server `cimmcp` built from it |
 | Dataset | [entsoe/relicapgrid](https://github.com/entsoe/relicapgrid) `cgmes-3.0_ncp-2.5_tc-2.0` @ `f09bb34` (2026-09-11) |
 | Profiles | ENTSO-E application-profiles-library @ `d8b2d21` (CGMES 3.0, NCP 2.5), cimoxide's submodule |
 | Reference tool | [triplets](https://pypi.org/project/triplets/) 0.2.0, as ReliCapGrid's CI uses it |
 
 ## How cimoxide was tested
 
+cimoxide did not take part in the event. These are its own runs, afterwards, on a later commit of the dataset, with
+the report's results known, so they do not stand beside the participants' on equal terms.
+
 cimoxide is a library, a CLI (`cimcli`), a language server and an MCP server; it has no user
-interface to click through and no power-flow solver. It was tested through its Python bindings by a
+interface to click through and no power-flow solver. The grid calculations (PF_UC1's power flows, CO_UC1's
+execution, producing a SAR) are in [gridoxide's report](https://github.com/m-mirz/gridoxide/blob/main/docs/src/cgmes/sv_iop_2026.md), which builds on this one. It was tested
+through its Python bindings by a
 harness ([README](README.md)) that runs every step the report asks for and checks the result, so
 that each Annex 1 entry below is the outcome of an automated test rather than an inspection. Every
 step was repeated through the MCP server, the way a chat client drives it, with the same results
@@ -42,18 +48,47 @@ on a copy of the data broken where the use case matters, and must fail there, so
 check is known to look at something. Problems the check finds in the data or in the ReliCapGrid
 description are listed per use case.
 
+## Finding the tests
+
+| File | What it holds |
+|---|---|
+| `test_use_cases.py` | one `check_*` function per use case, and `USE_CASES`, which says what each decodes and how it is broken |
+| `test_edits.py` | the edit steps of CO_UC1 and RA_UC4 |
+| `test_import.py` | the import check, per file |
+| `test_export.py` | the export checks, per file |
+| `test_validation.py` | the validation check, per group |
+| `test_mutations.py` | the negative tests |
+| `test_mcp.py` | every step again through `cimmcp` |
+| `harness.py` | what the tests share: the groups, both tools' results, `TRIAGE`, `ANNEX_1` |
+
+A use case in `test_use_cases.py` runs twice, from its entry in `USE_CASES`: `test_use_case` asserts that
+its `check_*` finds on the real data exactly the problems listed for it in `KNOWN`, and
+`test_use_case_notices_breakage` asserts that it finds more on the entry's broken copy. Most entries
+decode files named by glob through `Model.load`. Those needing more have a loader of their own, named
+in their Test line.
+
+The **Test** lines name the check and whatever else is specific to the use case. Validation and export
+apply to every file and group, so they are not repeated: to find one, select by the group or file name.
+From this directory, with the [README](README.md)'s setup:
+
+```bash
+.venv/bin/python -m pytest -q -k RA_UC1                  # a use case, as each Test line gives it
+.venv/bin/python -m pytest -q test_validation.py -k nc-Belgovia    # a group's validation
+.venv/bin/python -m pytest -q test_export.py -k Belgovia_RA.xml    # a file's exports
+```
+
 ## Overall results
 
-| | Files or cases | Result |
-|---|---|---|
-| Import | 135 files | identical to triplets, value for value |
-| Validation | 19 groups | 1,151 findings both tools report; every disagreement explained (see [Validation](#validation-compared-with-triplets)) |
-| Export per profile, CGMES | 47 files | the same RDF graph, except that an SSH object typed with a class SSH does not have is written as `cim:Equipment`, as the ENTSO-E test configurations write it (5 objects in 4 files) |
-| Export per profile, NC | 72 files | the same RDF graph, less two `IdentifiedObject.mRID` the SAR profile does not allow; `Svedala_FAP_PV.xml` (Provenance 1.0) is refused, cimoxide has no Provenance profile |
-| Export whole | 127 files | the same RDF graph, every file |
-| Use cases | 36 checks | all pass; data and description problems listed below |
-| Edits | CO_UC1, RA_UC4 | replayed, exported and validated (`test_edits.py`) |
-| Through `cimmcp` | 421 checks | every step's result equal to the Python bindings' (`test_mcp.py`) |
+| | Files or cases | Result | Test |
+|---|---|---|---|
+| Import | 135 files | identical to triplets, value for value | `test_import.py`: `test_import_matches_triplets` |
+| Validation | 19 groups | 1,151 findings both tools report; every disagreement explained (see [Validation](#validation-compared-with-triplets)) | `test_validation.py`: `test_every_disagreement_is_triaged` |
+| Export per profile, CGMES | 47 files | the same RDF graph, except that an SSH object typed with a class SSH does not have is written as `cim:Equipment`, as the ENTSO-E test configurations write it (5 objects in 4 files) | `test_export.py`: `test_cgmes_round_trip` |
+| Export per profile, NC | 72 files | the same RDF graph, less two `IdentifiedObject.mRID` the SAR profile does not allow; `Svedala_FAP_PV.xml` (Provenance 1.0) is refused, cimoxide has no Provenance profile | `test_export.py`: `test_nc_round_trip` |
+| Export whole | 127 files | the same RDF graph, every file | `test_export.py`: `test_whole_round_trip` |
+| Use cases | 36 checks | all pass; data and description problems listed below | `test_use_cases.py`: `test_use_case`, `test_use_case_notices_breakage` |
+| Edits | CO_UC1, RA_UC4 | replayed, exported and validated | `test_edits.py` |
+| Through `cimmcp` | 421 checks | every step's result equal to the Python bindings' | `test_mcp.py` |
 
 ---
 
@@ -61,13 +96,15 @@ description are listed per use case.
 
 ### 1.1. PF_UC1: Power Flow ReliCapGrid model
 
+**Test.** `test_use_cases.py`: `check_pf`, the data a power flow needs. `pytest -k PF_UC1`.
+
 **Report.** Run power flow on each IGM, then on growing combinations of IGMs, then on the whole
 CGM (§1.1, Annex 2).
 
-**What cimoxide does.** cimoxide has no power-flow solver, so it runs no power flow. It checks
-what a power flow needs and what a solved case must contain, per IGM (`PF_UC1[<area>]`, nine areas:
-Belgovia, Britheim, DC-Espheim-Svedala, DC-Nordheim-Galia, Espheim, Galia, Nordheim, Portheim,
-Svedala):
+**What cimoxide does.** cimoxide has no power-flow solver, so it runs no power flow: see
+[gridoxide's PF_UC1](https://github.com/m-mirz/gridoxide/blob/main/docs/src/cgmes/sv_iop_2026.md#11-pf_uc1-power-flow-relicapgrid-model). It checks what a power flow needs and what a solved case must contain, per IGM
+(`PF_UC1[<area>]`, nine areas: Belgovia, Britheim, DC-Espheim-Svedala, DC-Nordheim-Galia, Espheim, Galia, Nordheim,
+Portheim, Svedala):
 
 1. Decodes `<area>/Grid/cimxml/*.xml` (`CimDataset.decode_files`).
 2. Checks that the IGM has EQ, SSH, TP and SV datasets (`md:Model.profile` of its headers).
@@ -76,7 +113,9 @@ Svedala):
 4. Validates the IGM with the boundary (group `cgmes-<area>`), which includes the SV
    `*SolvedMAS` rules on the merged model.
 
-**Result.** import, validate, export. All nine IGMs carry a complete, solved power-flow case.
+**Result.** import, validate, export. All nine IGMs carry the data of a power flow and a state for every energised
+node. That does not say the state is a solution of the data: Portheim's SV is at 1.75 p.u., and Espheim's holds a voltage
+its SSH does not ask for, as [gridoxide's PF_UC1](https://github.com/m-mirz/gridoxide/blob/main/docs/src/cgmes/sv_iop_2026.md#11-pf_uc1-power-flow-relicapgrid-model) finds.
 
 **Notes.**
 - In Espheim and Svedala, TopologicalNodes outside every TopologicalIsland have no SvVoltage; they
@@ -92,6 +131,8 @@ Svedala):
 ## 2. Boundary, Common and Reference data
 
 ### 2.9.1. BDS_UC1: Boundary Data Set Importing
+
+**Test.** `test_use_cases.py`: `check_bds`, on what `bds_model` merges and tags. `pytest -k BDS_UC1`.
 
 **Report.** Load the boundary dataset, merge it with the IGMs, check that matching nodes and
 terminals connect, with no duplication and no topology gap at the borders.
@@ -134,6 +175,7 @@ Objects defined by more than one dataset, identically in each:
 | GeographicalRegion `9356077b…` | Nordheim EQ, `Grid_CommonData_CGM-CD.xml` |
 
 **Notes.**
+- In a power flow, merging the boundary with an IGM changes no bus and no voltage: see [gridoxide's BDS_UC1](https://github.com/m-mirz/gridoxide/blob/main/docs/src/cgmes/sv_iop_2026.md#291-bds_uc1-boundary-data-set-importing).
 - The boundary files' `dcat:Dataset` header names vocabularies only (`dcterms:conformsTo`
   `CIM100#` and `nc/2.4#`), no application profile, so no tool knows which shapes apply.
   ReliCapGrid's CI validates them as `CoreEquipment-EU/3.0`; the harness gives cimoxide copies
@@ -144,6 +186,8 @@ Objects defined by more than one dataset, identically in each:
   datasets' definitions.
 
 ### 2.9.2. CD_UC1: Common Data Importing and exporting
+
+**Test.** `test_use_cases.py`: `check_cd`, on what `cd_model` decodes. `pytest -k CD_UC1`.
 
 **Report.** Import the common data; verify the twelve classes it lists. Common data is "defined
 once, with unique identifiers and agreed attribute values, to ensure consistency and prevent
@@ -176,6 +220,8 @@ CoordinatedCapacityCalculator.
 
 ### 2.9.3. RD_UC1: Reference Data Importing and exporting
 
+**Test.** `test_use_cases.py`: `check_rd`. `pytest -k RD_UC1`.
+
 **Report.** Load the reference data and verify that the other datasets use it consistently.
 
 **What cimoxide does.**
@@ -206,6 +252,10 @@ shapes, and the reference data files declare no profile.
 
 ### 3.8.1. CO_UC1: Importing, executing, updating and exporting
 
+**Test.** `test_use_cases.py`: `check_co`. `test_edits.py`: `co_update` makes the edit,
+`test_co_uc1_update_is_exported` and `test_co_uc1_update_validates` check it,
+`test_co_uc1_table_differs_from_the_data` the note below. `pytest -k CO_UC1`.
+
 **Report.** Import the contingencies, resolve them against the network model, execute them, update
 them, export the updated CO dataset in compliance with the profile. ReliCapGrid's description
 lists eleven contingencies (its CO_UC1 to CO_UC11) with the equipment each names.
@@ -233,7 +283,11 @@ reports anything on the new equipment that the original equipment did not have. 
 (no `ContingencyEquipment.contingentStatus`) is reported by both.
 
 **Notes.**
-- Execution (contingency analysis) is not in cimoxide.
+- Execution (contingency analysis) is not in cimoxide: see [gridoxide's CO_UC1](https://github.com/m-mirz/gridoxide/blob/main/docs/src/cgmes/sv_iop_2026.md#381-co_uc1-importing-executing-updating-and-exporting).
+- Table 3 differs from the data (`test_co_uc1_table_differs_from_the_data`): `7e31c67d…` and
+  `e9eab3fe…` lose the ties it gives the other way round (TieLine_SD_BO3 and TieLine_GA_BO3), and CO_UC11's
+  "two independent tie-lines" are, in both its contingencies, the same internal lines `63-64` and `64-65`,
+  which share a node. Steps 4 and 5 above use Table 3's names.
 - Both tools report `ContingencyEquipment.Equipment-valueType` on the contingencies because the
   SSH files type the same equipment `cim:Equipment` beside its EQ class; the value type lists
   concrete classes only.
@@ -246,6 +300,8 @@ reports anything on the new equipment that the original equipment did not have. 
 ## 4. Equipment Reliability
 
 ### 4.5. ER_UC1: Import/Export Equipment Reliability (ER) Profile
+
+**Test.** `test_use_cases.py`: `check_er`, on what `er_model` decodes per area. `pytest -k ER_UC1`.
 
 **Report.** Import and export the ER profile, validate it, check consistency with the other
 datasets.
@@ -277,6 +333,8 @@ and 5; Espheim for RA_UC3; Belgovia for RA_UC6 and 7), and validate them in the 
 
 ### 5.9. RA_UC1: Topology Remedial Action with One Topology Action
 
+**Test.** `test_use_cases.py`: `check_ra1`, with `applied` for the execution. `pytest -k RA_UC1`.
+
 **Report.** Import the RA with the IGM; the remedial action has exactly one topology action;
 execute it: the switch changes from closed to open.
 
@@ -296,6 +354,8 @@ topology (TP) of the changed grid.
 
 ### 5.10. RA_UC2: Dependent Topology Remedial Actions with Multiple Topology Actions
 
+**Test.** `test_use_cases.py`: `check_ra2`, with `applied`. `pytest -k RA_UC2`.
+
 **What cimoxide does.** Checks that dependencies `598ab84e…` and `13c29cc3…` are exclusive and
 name two different GridStateAlterationRemedialActions, each with several TopologyActions; applies
 each (as in RA_UC1) and checks that both act on the same four switches and set different
@@ -307,6 +367,8 @@ remedial actions on the same four switches of Substation A; the data's are
 
 ### 5.11. RA_UC3: Modification Prior to RAO of a Topology Remedial Action
 
+**Test.** `test_use_cases.py`: `check_ra3`. `pytest -k RA_UC3`.
+
 **What cimoxide does.** Checks that GridStateAlterationRemedialAction `d856a2a2…` has
 TopologyAction `4d3757fd…`; through SIS, that GridStateAlterationSchedule `f5205bd4…` schedules
 it with time points that both enable and disable it; through SSI, that `Espheim_SSI.xml` gives
@@ -316,6 +378,10 @@ the action's `GridStateAlteration.enabled`.
 23:30Z and enabled again at 2022-06-16T00:30Z (SIS); SSI enables it.
 
 ### 5.12. RA_UC4: Proposing Modifications of a Topology Remedial Action After RAO
+
+**Test.** `test_use_cases.py`: `check_ra4`. `test_edits.py`: `counter_proposal` makes the edit,
+`test_ra_uc4_counter_proposal_is_exported` and `test_ra_uc4_counter_proposal_validates` check it,
+`test_ra_uc4_dependency_kind_conflicts_with_the_apl` the note below. `pytest -k RA_UC4`.
 
 **Report.** Refuse the RAO's remedial action schedule as a whole, create a complete new schedule
 with new identifiers (new EventSchedule included) and a RemedialActionScheduleDependency of kind
@@ -344,6 +410,8 @@ ReliCapGrid's data, which gives no kind, follows the APL.
 
 ### 5.13. RA_UC5: Activation After RAO of a Topology Remedial Action
 
+**Test.** `test_use_cases.py`: `check_ra5`. `pytest -k RA_UC5`.
+
 **What cimoxide does.** Checks that remedial actions `7e422768…` and `fa3e3533…` are exclusive
 within group `6a9b5221…`, that EventSchedules `1c1e39cf…` and `023512a8…` belong to schedules
 `279bfb00…` and `87e90c47…`, and that at no time point both are active.
@@ -352,6 +420,8 @@ within group `6a9b5221…`, that EventSchedules `1c1e39cf…` and `023512a8…` 
 both schedules are active at 2024-11-20T00:30Z, 01:30Z and 02:30Z.
 
 ### 5.14. RA_UC6: Countertrade Remedial Action
+
+**Test.** `test_use_cases.py`: `check_ra6`, with `complete_points`. `pytest -k RA_UC6`.
 
 **What cimoxide does.** Checks that CountertradeRemedialAction `30f6377d…` has PowerSchedule
 `27940387…` for GeneratingUnit `413bbc8a…` (variant 1) and PowerBidSchedule `ae6a5ddd…`
@@ -364,6 +434,8 @@ and an `activatedP`, each PowerBidScheduleTimePoint a distinct time, a `p` and a
 subclasses; both tools report it.
 
 ### 5.15. RA_UC7: Redispatch Remedial Action
+
+**Test.** `test_use_cases.py`: `check_ra7`, with `complete_points`. `pytest -k RA_UC7`.
 
 **What cimoxide does.** Checks that variant 1's RedispatchRemedialAction `fa73cfee…` has
 PowerBidSchedule `6c0ba4c5…` whose time points (time point `250e37a5…` among them) each have a
@@ -378,6 +450,8 @@ PowerBidSchedule `6c0ba4c5…` to variant 1's `fa73cfee…`.
 ## 6. Availability Schedule
 
 ### 6.2. AS_UC1: Availability Remedial Action
+
+**Test.** `test_use_cases.py`: `check_as`. `pytest -k AS_UC1`.
 
 **Report.** The availability remedial action cancels, shortens or reschedules an availability
 schedule; verify that the resulting availability window matches the intent.
@@ -394,16 +468,17 @@ AvailabilityTimePoint: the outage window exists only as the text "Maintenance pe
 ## 7. Assessed Element
 
 All AE checks decode Belgovia's grid, NC and common data (AE_UC5 every area's NC data), validate in
-group `nc-Belgovia`, and export each file per profile and whole.
+group `nc-Belgovia`, and export each file per profile and whole. Each runs with
+`pytest -k <use case>`, as `AE_UC1`.
 
-| Use case | What cimoxide checks | Result |
-|---|---|---|
-| 7.1. AE_UC1 Secured | AssessedElement `992c2de6…` is in the base case and secured for region `56d81c91…` | import, validate, export |
-| 7.2. AE_UC2 Scanned | `1eb2eb03…` is not in the base case, scanned and secured, with an exclusion reason; `d463cbba…` is scanned only | import, validate, export |
-| 7.3. AE_UC3 Disable | AssessedElementSchedule `7221ae31…` on `992c2de6…`, whose time point `a26e3ae0…` disables it from 2023-07-22T16:00Z | import, validate, export |
-| 7.4. AE_UC4 Exclude | `1eb2eb03…` is excluded through ScannedForRegion | import, validate, export |
-| 7.5. AE_UC5 With contingency | `d17943b5…` is in the base case and combinable; AssessedElementWithContingency `1f38d403…` excludes and `deb4c65f…` includes a contingency that exists; `663c6c3c…` is not combinable | import, validate, export |
-| 7.6. AE_UC6 With remedial action | AssessedElementWithRemedialAction `66f786ce…` links `13d17257…` to GridStateAlterationRemedialAction `70b696ac…`, as included | import, validate, export |
+| Use case | What cimoxide checks | Result | Test (`test_use_cases.py`) |
+|---|---|---|---|
+| 7.1. AE_UC1 Secured | AssessedElement `992c2de6…` is in the base case and secured for region `56d81c91…` | import, validate, export | `check_ae1` |
+| 7.2. AE_UC2 Scanned | `1eb2eb03…` is not in the base case, scanned and secured, with an exclusion reason; `d463cbba…` is scanned only | import, validate, export | `check_ae2` |
+| 7.3. AE_UC3 Disable | AssessedElementSchedule `7221ae31…` on `992c2de6…`, whose time point `a26e3ae0…` disables it from 2023-07-22T16:00Z | import, validate, export | `check_ae3` |
+| 7.4. AE_UC4 Exclude | `1eb2eb03…` is excluded through ScannedForRegion | import, validate, export | `check_ae4` |
+| 7.5. AE_UC5 With contingency | `d17943b5…` is in the base case and combinable; AssessedElementWithContingency `1f38d403…` excludes and `deb4c65f…` includes a contingency that exists; `663c6c3c…` is not combinable | import, validate, export | `check_ae5` |
+| 7.6. AE_UC6 With remedial action | AssessedElementWithRemedialAction `66f786ce…` links `13d17257…` to GridStateAlterationRemedialAction `70b696ac…`, as included | import, validate, export | `check_ae6` |
 
 **Notes.** The AEs' `ConductingEquipment` are in the IGMs' EQ files; both tools check their type
 there and agree on 316 findings, raised by the SSH files typing the same equipment `cim:Equipment`.
@@ -411,6 +486,8 @@ there and agree on 316 findings, raised by the SSH files typing the same equipme
 ## 8. Object Registry (OR)
 
 ### 8.1.1. OR_UC1
+
+**Test.** `test_use_cases.py`: `check_resolves`, on its three classes. `pytest -k OR_UC1`.
 
 **Report.** Import Espheim's Object Registry, validate it, check consistency with the other
 datasets.
@@ -426,9 +503,12 @@ resolves; validates (groups `nc-Espheim`, `nc-commonData`) and exports `Espheim_
 
 ### 9.1.1. SAR_UC1
 
+**Test.** `test_use_cases.py`: `check_resolves`, on the two result classes; `test_sar_uc1_supplied_result_is_on_what_its_contingency_trips`
+and `test_sar_uc1_supplied_value_is_a_ratio` the notes below. `pytest -k SAR_UC1`.
+
 **Report.** Export a SAR: the tool produces security analysis results and exports them.
 
-**What cimoxide does.** cimoxide runs no security analysis and cannot produce a SAR. For the SAR
+**What cimoxide does.** cimoxide runs no security analysis and cannot produce a SAR; [gridoxide does](https://github.com/m-mirz/gridoxide/blob/main/docs/src/cgmes/sv_iop_2026.md#911-sar_uc1). For the SAR
 ReliCapGrid supplies (`Jotunheim/NetworkCode/2D_SAR_1030Z_Jotunheim.xml`), it decodes it with all
 grid, NC and common data, checks that its BaseCasePowerFlowResults and ContingencyPowerFlowResults
 exist and that every association resolves, validates it (group `nc-Jotunheim`), and re-exports it.
@@ -437,7 +517,14 @@ exist and that every association resolves, validates it (group `nc-Jotunheim`), 
 `IdentifiedObject.mRID` on ContingencyPowerFlowResults, which the SAR profile does not exchange
 (both tools report them as `ContingencyPowerFlowResult-AllowedProperties`).
 
+**Notes.**
+- The supplied SAR's one post-contingency violation, 1673.4 A on TieLine_SD_BO3, is for the contingency that trips
+  TieLine_SD_BO3.
+- Its `PowerFlowResult.value` is 1.0632, a ratio; the profile defines it in percent.
+
 ## Other ReliCapGrid use cases
+
+**Test.** `test_use_cases.py`: `check_resolves`, on `SIPS`. `pytest -k SIPS`.
 
 The five SIPS descriptions in ReliCapGrid (gate logic, complex SIPS logic, PATL/TATL conditions,
 last-line disconnection, anti-swing protection, overvoltage protection) are not in the report. They
@@ -447,6 +534,9 @@ PinTerminal, PinEquipmentTripping, RemedialActionScheme, TriggerCondition) exist
 association resolves. "Correction of generation production…" has no data.
 
 ## Validation compared with triplets
+
+**Test.** `test_validation.py`: `test_every_disagreement_is_triaged`, per group, on `harness.validation_diff`;
+`test_tools_agree_somewhere`.
 
 | | Findings |
 |---|---|
@@ -476,6 +566,8 @@ The largest:
 
 Copies of ReliCapGrid files broken one way each, run through both tools (`test_mutations.py`):
 
+Each case is an entry of `CASES`, run by `test_mutation`.
+
 | Case | triplets reports | cimoxide reports |
 |---|---|---|
 | Table 2: no `prov:wasGeneratedBy` | wasGeneratedBy-cardinality | wasGeneratedBy-cardinality |
@@ -496,15 +588,15 @@ Context Protocol. `test_mcp.py` starts it and calls its tools over stdio as a cl
 step above, and compares the result with what the Python bindings give for the same files. Equal
 results mean every check the other tests make on the bindings holds through `cimmcp` too.
 
-| Step | `cimmcp` tool | Equal to | Checks |
-|---|---|---|---|
-| Import | `export` with `format: "json"`: every decoded object, CIM and foreign | `entries()` and `foreign()` | 135 files |
-| Validation | `validate` with `files` (the group, which spans directories), `common`, `quality` | `validate_files`, finding by finding (severity, rule, message, class, object, property) | 19 groups |
-| Export, per profile | `export` with `profile` | `to_xml_for_profile`, byte for byte | 119 files |
-| Export, whole | `export` | `to_xml`, byte for byte | 127 files |
-| Common data defined again, type conflicts | `conflicts` with `files` | `defined_mrids()` per file, `type_conflicts()` | 19 groups |
-| CO_UC1 update | `edit`: rename the contingency, copy its equipment for the second tie-line; `profile: "CO"` | `test_edits.co_update`'s export, byte for byte | 1 |
-| RA_UC4 counter-proposal | `edit`: create the response and dependency, copy the schedule, event schedules, time points and header; `keep: "changed"`, `profile: "RAS"` | `test_edits.counter_proposal`'s export, byte for byte | 1 |
+| Step | `cimmcp` tool | Equal to | Checks | Test |
+|---|---|---|---|---|
+| Import | `export` with `format: "json"`: every decoded object, CIM and foreign | `entries()` and `foreign()` | 135 files | `test_import` |
+| Validation | `validate` with `files` (the group, which spans directories), `common`, `quality` | `validate_files`, finding by finding (severity, rule, message, class, object, property) | 19 groups | `test_validation` |
+| Export, per profile | `export` with `profile` | `to_xml_for_profile`, byte for byte | 119 files | `test_export_profile` |
+| Export, whole | `export` | `to_xml`, byte for byte | 127 files | `test_export_whole` |
+| Common data defined again, type conflicts | `conflicts` with `files` | `defined_mrids()` per file, `type_conflicts()` | 19 groups | `test_conflicts` |
+| CO_UC1 update | `edit`: rename the contingency, copy its equipment for the second tie-line; `profile: "CO"` | `test_edits.co_update`'s export, byte for byte | 1 | `test_co_uc1` |
+| RA_UC4 counter-proposal | `edit`: create the response and dependency, copy the schedule, event schedules, time points and header; `keep: "changed"`, `profile: "RAS"` | `test_edits.counter_proposal`'s export, byte for byte | 1 | `test_ra_uc4` |
 
 An edit is validated in place of ReliCapGrid's file by listing its output in `validate`'s `files`
 instead of that file. `edit` copies an object's own identifier written as text
@@ -541,30 +633,32 @@ Changes made to cimoxide while testing with ReliCapGrid:
 
 ## Annex 1: Test Use Cases Results
 
-| Use case | cimoxide 0.5.1 |
-|---|---|
-| **PF_UC1** | import, validate, export (no power flow) |
-| **BDS_UC1** | import, validate |
-| **CD_UC1** | import, validate, export |
-| **RD_UC1** | import, export |
-| **CO_UC1** | import, validate, edit, export (no contingency analysis) |
-| **ER_UC1** | import, validate, export |
-| **RA_UC1** | import, validate, export |
-| **RA_UC2** | import, validate, export |
-| **RA_UC3** | import, validate, export |
-| **RA_UC4** | import, validate, edit, export |
-| **RA_UC5** | import, validate, export |
-| **RA_UC6** | import, validate, export |
-| **RA_UC7** | import, validate, export |
-| **AS_UC1** | import, validate, export |
-| **AE_UC1** | import, validate, export |
-| **AE_UC2** | import, validate, export |
-| **AE_UC3** | import, validate, export |
-| **AE_UC4** | import, validate, export |
-| **AE_UC5** | import, validate, export |
-| **AE_UC6** | import, validate, export |
-| **OR_UC1** | import, validate, export |
-| **SAR_UC1** | import, validate (the supplied SAR; cimoxide cannot produce one) |
+`check_*` are in `test_use_cases.py`; `pytest -k <use case>` runs a row's tests.
+
+| Use case | cimoxide 0.6.0 | Test |
+|---|---|---|
+| **PF_UC1** | import, validate, export (no power flow) | `check_pf` |
+| **BDS_UC1** | import, validate | `check_bds` |
+| **CD_UC1** | import, validate, export | `check_cd` |
+| **RD_UC1** | import, export | `check_rd` |
+| **CO_UC1** | import, validate, edit, export (no contingency analysis) | `check_co`; `test_edits.py` |
+| **ER_UC1** | import, validate, export | `check_er` |
+| **RA_UC1** | import, validate, export | `check_ra1` |
+| **RA_UC2** | import, validate, export | `check_ra2` |
+| **RA_UC3** | import, validate, export | `check_ra3` |
+| **RA_UC4** | import, validate, edit, export | `check_ra4`; `test_edits.py` |
+| **RA_UC5** | import, validate, export | `check_ra5` |
+| **RA_UC6** | import, validate, export | `check_ra6` |
+| **RA_UC7** | import, validate, export | `check_ra7` |
+| **AS_UC1** | import, validate, export | `check_as` |
+| **AE_UC1** | import, validate, export | `check_ae1` |
+| **AE_UC2** | import, validate, export | `check_ae2` |
+| **AE_UC3** | import, validate, export | `check_ae3` |
+| **AE_UC4** | import, validate, export | `check_ae4` |
+| **AE_UC5** | import, validate, export | `check_ae5` |
+| **AE_UC6** | import, validate, export | `check_ae6` |
+| **OR_UC1** | import, validate, export | `check_resolves` |
+| **SAR_UC1** | import, validate (the supplied SAR; cimoxide cannot produce one) | `check_resolves` |
 
 ## Annex 2: Issues found in the data, the descriptions, the APL and triplets
 
@@ -581,8 +675,14 @@ Changes made to cimoxide while testing with ReliCapGrid:
 | ReliCapGrid data | 285 of 390 header URIs name reference data the reference data files do not define. |
 | ReliCapGrid data | A plain GeneratingUnit or RegulatingControl where a subclass is required (RA_UC6, PowerShiftKeySchedule, RegulatingControlAction). |
 | ReliCapGrid data | Britheim's PCC terminal is on an ACLineSegment. |
+| ReliCapGrid data | The SAR's post-contingency violation is on the equipment its contingency removes. |
+| ReliCapGrid data | The SAR's `PowerFlowResult.value` is a ratio (1.0632); the profile defines it in percent. |
+| ReliCapGrid descriptions | CO_UC1's Table 3 swaps two ties and calls two lines sharing a node, listed twice, independent tie-lines. |
 | ReliCapGrid descriptions | RA_UC2, RA_UC5 and RA_UC7 data differs from the description (see each). |
 | ReliCapGrid descriptions | RA_UC4's kind none contradicts the APL. |
 | APL | `sv:SvStatus.ConductingEquipment-valueType` and `dl:DiagramObject.IdentifiedObject-valueType` list only their own profile's classes. |
 | APL | NCP `sh:class` shapes name NC-namespace classes where `sh:in` value types also accept CIM100. |
 | triplets 0.2.0 | Runs per-profile CGMES shapes on merged groups; no `sh:alternativePath`; drops language tags; matches classes by local name; misses a value-type violation within one file (RA_UC4 broken variant). |
+
+What the grid calculations find in the data (voltage targets against the SV, the CGM's imbalance, limits, converter
+signs) is in [gridoxide's Annex 2](https://github.com/m-mirz/gridoxide/blob/main/docs/src/cgmes/sv_iop_2026.md#annex-2-issues-found-in-the-data).
