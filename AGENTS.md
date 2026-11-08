@@ -37,6 +37,7 @@ Data flow: RDFS/SHACL → `cimgen` → `cimmodel` (class tables) + `cimvalidatio
 | `cimsparql/` | `cimoxide-sparql` | SPARQL 1.1 over an in-memory oxigraph store |
 | `cimoxide/` | `cimoxide` | facade re-exporting the above |
 | `cimoxide-cli/` | `cimoxide-cli` (binary `cimcli`) | CLI |
+| `cimview/` | `cimoxide-view` | a model set's grid and tree, with findings, as JSON for whatever draws them |
 | `cimoxide-lsp/` | `cimoxide-lsp` (binary `cimlsp`) | language server; VS Code extension in `editors/vscode/` |
 | `cimoxide-mcp/` | `cimoxide-mcp` (binary `cimmcp`) | MCP server for chat clients; bundled and registered by the extension |
 | `cimoxide-py/` | — | PyO3 bindings, outside the workspace |
@@ -272,14 +273,18 @@ non-SSH file whose profile carries the class (the parent's own first), after the
 there of an object the parent holds, plus an empty `rdf:about` in the SSH file when the class is
 in SSH. No mandatory fields: the findings ask for them, and the quick fixes add them.
 
-`cimoxide/grid` (`src/grid.rs`) answers the set's grid at substation level as last validated:
+The grid and the tree are in `cimoxide-view`, which `cimlsp` serves, and which runs on wasm as well (gridox-web
+draws them in a browser), so threads stay out of it. Where an object is written is not in the data: a view asks its
+caller, through `cimview::Locations`, which `ModelSet` answers with a document and range.
+
+`cimoxide/grid` (`cimview/src/grid.rs`) answers the set's grid at substation level as last validated:
 substations, and boundary points no substation holds, as nodes; equipment whose terminals reach
 two of them as edges; each finding counted on its object's node or edge (`elsewhere` if none).
 It is built from the set's datasets before validation consumes them. Each DL diagram and each GL
 coordinate system is a layout: a node is at the mean of the points of the objects it holds (else of
-its lines' ends), an edge follows its line's points. The automatic layout is computed here too (`src/layout.rs`:
+its lines' ends), an edge follows its line's points. The automatic layout is computed here too (`cimview/src/layout.rs`:
 each component by PivotMDS, which keeps graph distances, then local Fruchterman–Reingold with
-repulsion only between nodes in neighbouring grid cells; linear, deterministic; the tests check
+repulsion only between nodes in neighbouring grid cells; linear, deterministic on one target; the tests check
 distance faithfulness on a ring and a lattice), as Cytoscape's `cose` is quadratic and hangs on
 RealGrid, and a force layout alone, multilevel included, leaves it folded; inside a
 substation the view still runs `cose`, which boxes the voltage levels. `cimoxide/substation` answers what one
@@ -289,7 +294,7 @@ an item with its far ends; switch states and `inService`. A finding counted on t
 goes to the item its object stands for (the reference `place` followed), else to the substation
 itself, so the two add up to the node's count (`micro_grid_inside` checks this).
 
-`cimoxide/tree` (`src/tree.rs`) answers the set's objects as a tree, a level at a time by key, built
+`cimoxide/tree` (`cimview/src/tree.rs`) answers the set's objects as a tree, a level at a time by key, built
 with the grid from the same model: Geographical, each object under the target of the first
 `CONTAINED` field it writes, from the regions and containers no container holds; Operational, the
 areas; Not contained, the rest of that forest by class, so Geographical and Not contained hold each

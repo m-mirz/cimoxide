@@ -21,10 +21,7 @@
 
 mod edit;
 mod features;
-mod grid;
 mod index;
-mod layout;
-mod tree;
 mod validate;
 
 use std::collections::{HashMap, HashSet};
@@ -57,22 +54,22 @@ use validate::{ModelSet, Options};
 const REVALIDATE: &str = "cimoxide.revalidate";
 
 /// `cimoxide/grid` `{ "uri" }`: the grid of the document's model set as last
-/// validated ([`grid::Grid::json`]), or `null` before its first validation.
+/// validated ([`cimview::grid::Grid::json`]), or `null` before its first validation.
 const GRID: &str = "cimoxide/grid";
 
 /// `cimoxide/substation` `{ "uri", "id" }`: what substation `id` of the
-/// document's model set holds ([`grid::Grid::inside_json`]), or `null`.
+/// document's model set holds ([`cimview::grid::Grid::inside_json`]), or `null`.
 const SUBSTATION: &str = "cimoxide/substation";
 
 /// `cimoxide/tree` `{ "uri", "key"?, "onlyFindings"? }`: the children of
 /// node `key` of the document's model set's tree, else its sections
-/// ([`tree::Tree::children_json`]); `null` before its first validation or
+/// ([`cimview::tree::Tree::children_json`]); `null` before its first validation or
 /// for a key it no longer has.
 const TREE: &str = "cimoxide/tree";
 
 /// `cimoxide/treePath` `{ "uri", "position", "onlyFindings"? }`: the object
 /// at `position` and the keys of the tree's nodes down to it
-/// ([`tree::Tree::path`]), `{ "id", "keys" }`; `null` off an object or
+/// ([`cimview::tree::Tree::path`]), `{ "id", "keys" }`; `null` off an object or
 /// before the set's first validation.
 const TREE_PATH: &str = "cimoxide/treePath";
 
@@ -101,7 +98,7 @@ const FIXES: &str = "cimoxide/fixes";
 const RENAME: &str = "cimoxide/rename";
 
 /// `cimoxide/search` `{ "uri", "query" }`: the document's model set's
-/// objects whose name or mRID holds `query` ([`tree::Tree::search`]):
+/// objects whose name or mRID holds `query` ([`cimview::tree::Tree::search`]):
 /// `[{ "id", "label", "class", "place", "location" }]`.
 const SEARCH: &str = "cimoxide/search";
 
@@ -510,7 +507,7 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
                 let st = state.lock().unwrap();
                 f.parent().and_then(|d| st.sets.get(d)).cloned()
             });
-            Ok(set.map_or(serde_json::Value::Null, |s| s.grid.json(&s)))
+            Ok(set.map_or(serde_json::Value::Null, |s| s.grid.json(&*s)))
         }
         SUBSTATION => {
             #[derive(serde::Deserialize)]
@@ -526,7 +523,7 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
                 let st = state.lock().unwrap();
                 f.parent().and_then(|d| st.sets.get(d)).cloned()
             });
-            Ok(set.and_then(|s| s.grid.inside_json(&s, &p.id)).unwrap_or(serde_json::Value::Null))
+            Ok(set.and_then(|s| s.grid.inside_json(&*s, &p.id)).unwrap_or(serde_json::Value::Null))
         }
         TREE => {
             #[derive(serde::Deserialize)]
@@ -545,7 +542,7 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
                 let st = state.lock().unwrap();
                 f.parent().and_then(|d| st.sets.get(d)).cloned()
             });
-            Ok(set.and_then(|s| s.tree.children_json(&s, &s.grid, p.key.as_deref(), p.only_findings)).unwrap_or(serde_json::Value::Null))
+            Ok(set.and_then(|s| s.tree.children_json(&*s, &s.grid, p.key.as_deref(), p.only_findings)).unwrap_or(serde_json::Value::Null))
         }
         SEARCH => {
             #[derive(serde::Deserialize)]

@@ -133,6 +133,7 @@ version = "0.6.0"
 dependencies = [
  "cimoxide-model",
  "cimoxide-validation",
+ "cimoxide-view",
  "crossbeam-channel",
  "lsp-server",
  "lsp-types",
@@ -188,6 +189,15 @@ dependencies = [
  "cimoxide-model",
  "cimoxide-schema",
  "criterion",
+]
+
+[[package]]
+name = "cimoxide-view"
+version = "0.6.0"
+dependencies = [
+ "cimoxide-model",
+ "cimoxide-validation",
+ "serde_json",
 ]
 
 [[package]]

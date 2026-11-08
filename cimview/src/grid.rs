@@ -1,4 +1,4 @@
-//! A model set's grid at substation level, for the extension's grid view:
+//! A model set's grid at substation level, for a grid view:
 //! substations (and boundary points no substation holds) as nodes, the
 //! equipment joining two of them (lines, mostly) as edges, and each
 //! object's findings counted on the node or edge it belongs to. Where the
@@ -17,8 +17,7 @@ use cimmodel::{CimDataset, Element};
 use cimvalidation::Violation;
 use serde_json::{Value, json};
 
-use crate::index::mrid_of;
-use crate::validate::ModelSet;
+use crate::{Locations, mrid_of};
 
 /// Where an object belongs in the view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -338,14 +337,14 @@ fn layouts(m: &Model, grid: &Grid) -> (Vec<Layout>, Vec<(usize, Layout)>) {
 
 /// The set's files read as one model: each object's elements, the defining
 /// one first.
-pub(crate) struct Model<'a> {
+pub struct Model<'a> {
     pub(crate) objects: FastMap<&'a str, Vec<&'a Element>>,
     /// ConductingEquipment → its terminals, by sequence number.
     terminals: FastMap<&'a str, Vec<&'a str>>,
 }
 
 impl<'a> Model<'a> {
-    pub(crate) fn new(datasets: &'a [CimDataset]) -> Self {
+    pub fn new(datasets: &'a [CimDataset]) -> Self {
         let mut objects: FastMap<&str, Vec<&Element>> = FastMap::default();
         for ds in datasets {
             for (mrid, el) in &ds.entries {
@@ -694,14 +693,8 @@ impl Grid {
     }
 
     /// The view's data: nodes and edges, each with where it is written.
-    pub fn json(&self, set: &ModelSet) -> Value {
-        let location = |id: &str| -> Value {
-            let id = id.split('#').next().unwrap_or(id);
-            match set.definition(id) {
-                Some((file, el)) => json!({ "uri": file.url, "range": el.head }),
-                None => Value::Null,
-            }
-        };
+    pub fn json(&self, set: &impl Locations) -> Value {
+        let location = |id: &str| set.location(id.split('#').next().unwrap_or(id));
         let nodes: Vec<Value> = self
             .nodes
             .iter()
@@ -732,7 +725,7 @@ impl Grid {
                 json!({ "id": l.id, "name": l.name, "kind": l.kind, "flipY": l.flip_y, "nodes": nodes, "edges": edges })
         };
         json!({
-            "files": set.files.iter().map(|f| &f.url).collect::<Vec<_>>(),
+            "files": set.files(),
             "nodes": nodes, "edges": edges, "elsewhere": self.elsewhere.json(),
             "layouts": self.layouts.iter().map(layout).collect::<Vec<_>>(), "auto": self.auto.as_ref().map(layout),
         })
@@ -740,17 +733,12 @@ impl Grid {
 
     /// What the substation `id` holds, for the view's drill-down; `None` if
     /// no substation of the set has that mRID.
-    pub fn inside_json(&self, set: &ModelSet, id: &str) -> Option<Value> {
+    pub fn inside_json(&self, set: &impl Locations, id: &str) -> Option<Value> {
         let n = self.nodes.iter().position(|x| x.id == id && x.kind == "Substation")?;
         let node = &self.nodes[n];
         let empty = Inside::default();
         let inside = self.inside.get(&n).unwrap_or(&empty);
-        let location = |id: &str| -> Value {
-            match set.definition(id) {
-                Some((file, el)) => json!({ "uri": file.url, "range": el.head }),
-                None => Value::Null,
-            }
-        };
+        let location = |id: &str| set.location(id);
         let groups: Vec<Value> = inside.groups.iter().map(|g| json!({ "id": g.id, "label": g.label, "kV": g.kv })).collect();
         let items: Vec<Value> = inside
             .items
@@ -788,7 +776,7 @@ impl Grid {
 mod tests {
     use std::path::Path;
 
-    use crate::validate::{Options, collect, validate};
+    use crate::testing::{collect, validate};
 
     /// MicroGrid: Belgium's two substations and the Netherlands' one, joined
     /// through the boundary's five border nodes; each line an edge.
@@ -796,9 +784,9 @@ mod tests {
     fn micro_grid() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../CGMES-Test-Configurations/v3.0/MicroGrid/MicroGid-BaseCase/MicroGrid-BaseCase-Merged");
-        let files = collect(&dir, &Default::default());
+        let files = collect(&dir);
         assert_eq!(files.len(), 12, "missing test data — run `git submodule update --init`");
-        let (set, _) = validate(&files, &Options { common: true, quality: true, silence: vec![] });
+        let set = validate(&files);
         let g = &set.grid;
         let mut subs: Vec<&str> = g.nodes.iter().filter(|n| n.kind == "Substation").map(|n| n.label.as_str()).collect();
         subs.sort();
@@ -868,7 +856,7 @@ mod tests {
     fn micro_grid_inside() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../CGMES-Test-Configurations/v3.0/MicroGrid/MicroGrid-Type1/MicroGrid-Type1-Merged");
-        let mut files = collect(&dir, &Default::default());
+        let mut files = collect(&dir);
         assert_eq!(files.len(), 12, "missing test data — run `git submodule update --init`");
         // A finding on a breaker (no normalOpen) and one on a voltage level (no name).
         let eq = files.iter_mut().find(|(p, _)| p.to_string_lossy().ends_with("_BE_EQ_1.xml")).unwrap();
@@ -878,7 +866,7 @@ mod tests {
             text.replace_range(at..at + written.len(), "");
         }
         eq.1 = text.into();
-        let (set, _) = validate(&files, &Options { common: true, quality: true, silence: vec![] });
+        let set = validate(&files);
         let g = &set.grid;
         let index = |label: &str| g.nodes.iter().position(|n| n.label == label).unwrap();
 

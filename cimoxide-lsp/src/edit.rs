@@ -293,7 +293,7 @@ impl Candidate {
 /// name them with the same field (a line's base voltage is the one the
 /// equipment of its voltage level names); then the most named.
 /// Empty if `key` is not a reference of the object's class.
-pub fn candidates(indexes: &[&Index], tree: &crate::tree::Tree, id: &str, key: &str, limit: usize) -> Vec<Candidate> {
+pub fn candidates(indexes: &[&Index], tree: &cimview::tree::Tree, id: &str, key: &str, limit: usize) -> Vec<Candidate> {
     let reg = type_registry();
     let class = indexes
         .iter()
@@ -377,7 +377,7 @@ fn class_in(files: &[File], id: &str) -> Option<&'static cimmodel::base::ClassDe
 }
 
 /// The concrete classes of `parent`'s family whose objects the containment
-/// puts in it: the first of [`crate::tree::CONTAINED`] they declare that
+/// puts in it: the first of [`cimview::tree::CONTAINED`] they declare that
 /// ranges over its class. Only classes of the profiles the set's files
 /// declare (all, if none declares one).
 pub fn addable(files: &[File], parent: &str) -> Vec<Addable> {
@@ -391,7 +391,7 @@ pub fn addable(files: &[File], parent: &str) -> Vec<Addable> {
         .iter()
         .filter(|c| c.concrete && (declared.is_empty() || c.origins.iter().any(|o| declared.contains(o))))
         .filter_map(|c| {
-            let key = crate::tree::CONTAINED.iter().find_map(|k| reg.attr(c, k).filter(|a| a.used && a.kind == AttrKind::Association))?;
+            let key = cimview::tree::CONTAINED.iter().find_map(|k| reg.attr(c, k).filter(|a| a.used && a.kind == AttrKind::Association))?;
             is(key.range).then_some(Addable { class: c, key: key.id })
         })
         .collect();
@@ -430,7 +430,7 @@ pub struct Added {
 /// of the parent's objects there, else after the parent, else at the end;
 /// and where the set has an SSH file and the class SSH attributes, an empty
 /// `rdf:about` there for them. What else it needs, validation asks for.
-pub fn add(files: &[File], tree: &crate::tree::Tree, parent: &str, class: &str, name: Option<&str>) -> Result<Added, String> {
+pub fn add(files: &[File], tree: &cimview::tree::Tree, parent: &str, class: &str, name: Option<&str>) -> Result<Added, String> {
     let reg = type_registry();
     let found = addable(files, parent);
     let Addable { class, key } = found.into_iter().find(|a| a.class.local == class).ok_or_else(|| format!("a {class} cannot be added there"))?;
@@ -503,7 +503,7 @@ pub fn add(files: &[File], tree: &crate::tree::Tree, parent: &str, class: &str, 
 /// else before the root's end tag; indented as the elements are, in the
 /// file's line endings. The edit with the indent's width, and the line the
 /// element starts on.
-fn insertion(file: &File, tree: &crate::tree::Tree, parent: &str, lines: &[String]) -> Result<((TextEdit, u32), u32), String> {
+fn insertion(file: &File, tree: &cimview::tree::Tree, parent: &str, lines: &[String]) -> Result<((TextEdit, u32), u32), String> {
     let (text, li) = (file.text, file.lines);
     let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
     let siblings: HashSet<&str> = tree.children(parent).into_iter().collect();
@@ -550,7 +550,7 @@ pub struct ReferenceFix {
 /// lacks, in every file that writes it, or only the field at `at`: each the
 /// five likeliest objects ([`candidates`]). An enumeration value is not a
 /// reference to an object, so it has none.
-pub fn reference_fixes(files: &[File], tree: &crate::tree::Tree, id: &str, at: Option<(&Url, Position)>) -> Vec<ReferenceFix> {
+pub fn reference_fixes(files: &[File], tree: &cimview::tree::Tree, id: &str, at: Option<(&Url, Position)>) -> Vec<ReferenceFix> {
     let sites: Vec<(&File, &crate::index::Field, &str, Range)> = files
         .iter()
         .filter(|f| at.is_none_or(|(u, _)| f.url == u))

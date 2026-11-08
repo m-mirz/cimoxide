@@ -6,8 +6,10 @@
 //! folded), then refined by local forces — Fruchterman–Reingold with
 //! repulsion only between nodes in neighbouring cells, so a step is linear —
 //! which pull apart what the projection put on top of each other. Linear in
-//! nodes and edges times the pivots, and deterministic: the same grid, the
-//! same layout.
+//! nodes and edges times the pivots, and deterministic on one target: the same
+//! grid, the same layout. Between targets `sin`, `cos` and `powf` round
+//! differently, and the steps amplify it: RealGrid on wasm is the same picture
+//! as natively, each node a fifth of a line's length or so away.
 
 use std::collections::VecDeque;
 

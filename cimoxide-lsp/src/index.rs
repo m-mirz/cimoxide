@@ -76,9 +76,7 @@ pub fn prefix(qname: &str) -> &str {
 }
 
 /// An IRI or fragment as the decoder keys it: the text after the last `#`.
-pub fn mrid_of(value: &str) -> &str {
-    value.rsplit_once('#').map_or(value, |(_, f)| f)
-}
+pub use cimview::mrid_of;
 
 pub use cimmodel::decode::is_cim;
 
