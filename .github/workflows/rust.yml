@@ -31,6 +31,13 @@ jobs:
       - name: Generate
         run: make generate
 
+      # gridox-web runs these in the browser. Compiling is not running: threads must go through
+      # cimvalidation's par.rs, as AGENTS.md says.
+      - name: Check WebAssembly
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo check --target wasm32-unknown-unknown -p cimoxide-model -p cimoxide-validation
+
       - name: Build
         run: make build
 

@@ -249,11 +249,10 @@ pub fn validate_profile_local_in(
 /// The two halves run concurrently; the SPARQL half spreads its rule groups
 /// over threads of its own.
 pub fn validate_crossprofile(dataset: &cimmodel::CimDataset, cfg: &Config) -> Vec<Violation> {
-    let (mut v, sparql) = std::thread::scope(|s| {
-        let sparql = s.spawn(|| sparql::validate_crossprofile(dataset, cfg));
-        let shacl = validate_crossprofile_shacl(dataset, cfg);
-        (shacl, sparql.join().expect("validation thread panicked"))
-    });
+    let (sparql, mut v) = par::par_two(
+        || sparql::validate_crossprofile(dataset, cfg),
+        || validate_crossprofile_shacl(dataset, cfg),
+    );
     v.extend(sparql);
     // CGMES codes first, as in `validate_profile_local`: data without NC
     // never loads the NC table.
@@ -307,26 +306,19 @@ pub fn validate_files(per_file: Vec<cimmodel::CimDataset>, cfg: &Config) -> Vec<
 /// `cimlsp` needs to put the finding there.
 pub fn validate_files_traced(per_file: Vec<cimmodel::CimDataset>, cfg: &Config) -> Vec<(Option<usize>, Violation)> {
     let set = per_file.as_slice();
-    let mut violations: Vec<(Option<usize>, Violation)> = std::thread::scope(|s| {
-        set
-            .iter()
-            .map(|ds| {
-                s.spawn(move || {
-                    let mut v = validate_header(ds, cfg);
-                    let mut profiles = detect_config(ds).profiles;
-                    profiles.extend(detect_nc_profiles(ds));
-                    for profile in &profiles {
-                        v.extend(validate_profile_local_in(ds, set, profile, cfg));
-                    }
-                    v
-                })
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
-            .enumerate()
-            .flat_map(|(i, h)| h.join().expect("validation thread panicked").into_iter().map(move |v| (Some(i), v)))
-            .collect()
-    });
+    let mut violations: Vec<(Option<usize>, Violation)> = par::par_each(set, |ds| {
+        let mut v = validate_header(ds, cfg);
+        let mut profiles = detect_config(ds).profiles;
+        profiles.extend(detect_nc_profiles(ds));
+        for profile in &profiles {
+            v.extend(validate_profile_local_in(ds, set, profile, cfg));
+        }
+        v
+    })
+    .into_iter()
+    .enumerate()
+    .flat_map(|(i, found)| found.into_iter().map(move |v| (Some(i), v)))
+    .collect();
 
     let mut merged = cimmodel::CimDataset::new();
     for ds in per_file {

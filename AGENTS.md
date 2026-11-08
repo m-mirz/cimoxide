@@ -209,7 +209,10 @@ Semantics to preserve:
 
 Walks over ≥20,000 elements run on threads (`cimvalidation/src/par.rs`, `std::thread::scope`)
 in contiguous runs concatenated in order, so output is byte-identical to one thread. Unit
-tests on small fixtures don't exercise the split; compare `cimcli` output on real data.
+tests on small fixtures don't exercise the split; compare `cimcli` output on real data. Threads
+go through `par.rs`: wasm32-unknown-unknown compiles `std::thread` and panics when it is used, so
+there everything runs in turn (`HAS_THREADS`), and `cimoxide-model` and `cimoxide-validation` must keep
+running on it, not only compiling.
 
 NC specifics: the Complex files are imported only by the `ALL` manifest
 (`resolve::MERGED_PROFILE`) and run once on the merged dataset (`validate_nc_merged`). NCP's
