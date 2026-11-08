@@ -10,16 +10,19 @@ how they fit together.
 
 | | |
 |---|---|
-| cimoxide | 0.5.1, commit `c426108` (branch `relicapgrid`), Python bindings `cimoxide-py`; MCP server `cimmcp` at `e18f628` |
+| cimoxide | 0.6.0, commit `f17b9e5`, Python bindings `cimoxide-py` and MCP server `cimmcp` built from it |
 | Dataset | [entsoe/relicapgrid](https://github.com/entsoe/relicapgrid) `cgmes-3.0_ncp-2.5_tc-2.0` @ `f09bb34` (2026-09-11) |
 | Profiles | ENTSO-E application-profiles-library @ `d8b2d21` (CGMES 3.0, NCP 2.5), cimoxide's submodule |
 | Reference tool | [triplets](https://pypi.org/project/triplets/) 0.2.0, as ReliCapGrid's CI uses it |
 
 ## How cimoxide was tested
 
+cimoxide did not take part in the event. These are its own runs, afterwards, on a later commit of the dataset, with
+the report's results known, so they do not stand beside the participants' on equal terms.
+
 cimoxide is a library, a CLI (`cimcli`), a language server and an MCP server; it has no user
 interface to click through and no power-flow solver. The grid calculations (PF_UC1's power flows, CO_UC1's
-execution, producing a SAR) are in [gridoxide's report](https://github.com/m-mirz/gridoxide/blob/main/docs/src/cgmes/sv_iop_2026.md), which builds on cimoxide. It was tested
+execution, producing a SAR) are in [gridoxide's report](https://github.com/m-mirz/gridoxide/blob/main/docs/src/cgmes/sv_iop_2026.md), which builds on this one. It was tested
 through its Python bindings by a
 harness ([README](README.md)) that runs every step the report asks for and checks the result, so
 that each Annex 1 entry below is the outcome of an automated test rather than an inspection. Every
@@ -99,7 +102,7 @@ From this directory, with the [README](README.md)'s setup:
 CGM (§1.1, Annex 2).
 
 **What cimoxide does.** cimoxide has no power-flow solver, so it runs no power flow: see
-[gridoxide's report](https://github.com/m-mirz/gridoxide/blob/main/docs/src/cgmes/sv_iop_2026.md). It checks what a power flow needs and what a solved case must contain, per IGM
+[gridoxide's PF_UC1](https://github.com/m-mirz/gridoxide/blob/main/docs/src/cgmes/sv_iop_2026.md#11-pf_uc1-power-flow-relicapgrid-model). It checks what a power flow needs and what a solved case must contain, per IGM
 (`PF_UC1[<area>]`, nine areas: Belgovia, Britheim, DC-Espheim-Svedala, DC-Nordheim-Galia, Espheim, Galia, Nordheim,
 Portheim, Svedala):
 
@@ -110,7 +113,9 @@ Portheim, Svedala):
 4. Validates the IGM with the boundary (group `cgmes-<area>`), which includes the SV
    `*SolvedMAS` rules on the merged model.
 
-**Result.** import, validate, export. All nine IGMs carry a complete, solved power-flow case.
+**Result.** import, validate, export. All nine IGMs carry the data of a power flow and a state for every energised
+node. That does not say the state is a solution of the data: Portheim's SV is at 1.75 p.u., and Espheim's holds a voltage
+its SSH does not ask for, as [gridoxide's PF_UC1](https://github.com/m-mirz/gridoxide/blob/main/docs/src/cgmes/sv_iop_2026.md#11-pf_uc1-power-flow-relicapgrid-model) finds.
 
 **Notes.**
 - In Espheim and Svedala, TopologicalNodes outside every TopologicalIsland have no SvVoltage; they
@@ -170,6 +175,7 @@ Objects defined by more than one dataset, identically in each:
 | GeographicalRegion `9356077b…` | Nordheim EQ, `Grid_CommonData_CGM-CD.xml` |
 
 **Notes.**
+- In a power flow, merging the boundary with an IGM changes no bus and no voltage: see [gridoxide's BDS_UC1](https://github.com/m-mirz/gridoxide/blob/main/docs/src/cgmes/sv_iop_2026.md#291-bds_uc1-boundary-data-set-importing).
 - The boundary files' `dcat:Dataset` header names vocabularies only (`dcterms:conformsTo`
   `CIM100#` and `nc/2.4#`), no application profile, so no tool knows which shapes apply.
   ReliCapGrid's CI validates them as `CoreEquipment-EU/3.0`; the harness gives cimoxide copies
@@ -277,7 +283,7 @@ reports anything on the new equipment that the original equipment did not have. 
 (no `ContingencyEquipment.contingentStatus`) is reported by both.
 
 **Notes.**
-- Execution (contingency analysis) is not in cimoxide: see [gridoxide's report](https://github.com/m-mirz/gridoxide/blob/main/docs/src/cgmes/sv_iop_2026.md).
+- Execution (contingency analysis) is not in cimoxide: see [gridoxide's CO_UC1](https://github.com/m-mirz/gridoxide/blob/main/docs/src/cgmes/sv_iop_2026.md#381-co_uc1-importing-executing-updating-and-exporting).
 - Table 3 differs from the data (`test_co_uc1_table_differs_from_the_data`): `7e31c67d…` and
   `e9eab3fe…` lose the ties it gives the other way round (TieLine_SD_BO3 and TieLine_GA_BO3), and CO_UC11's
   "two independent tie-lines" are, in both its contingencies, the same internal lines `63-64` and `64-65`,
@@ -502,7 +508,7 @@ and `test_sar_uc1_supplied_value_is_a_ratio` the notes below. `pytest -k SAR_UC1
 
 **Report.** Export a SAR: the tool produces security analysis results and exports them.
 
-**What cimoxide does.** cimoxide runs no security analysis and cannot produce a SAR; [gridoxide does](https://github.com/m-mirz/gridoxide/blob/main/docs/src/cgmes/sv_iop_2026.md). For the SAR
+**What cimoxide does.** cimoxide runs no security analysis and cannot produce a SAR; [gridoxide does](https://github.com/m-mirz/gridoxide/blob/main/docs/src/cgmes/sv_iop_2026.md#911-sar_uc1). For the SAR
 ReliCapGrid supplies (`Jotunheim/NetworkCode/2D_SAR_1030Z_Jotunheim.xml`), it decodes it with all
 grid, NC and common data, checks that its BaseCasePowerFlowResults and ContingencyPowerFlowResults
 exist and that every association resolves, validates it (group `nc-Jotunheim`), and re-exports it.
@@ -629,7 +635,7 @@ Changes made to cimoxide while testing with ReliCapGrid:
 
 `check_*` are in `test_use_cases.py`; `pytest -k <use case>` runs a row's tests.
 
-| Use case | cimoxide 0.5.1 | Test |
+| Use case | cimoxide 0.6.0 | Test |
 |---|---|---|
 | **PF_UC1** | import, validate, export (no power flow) | `check_pf` |
 | **BDS_UC1** | import, validate | `check_bds` |
@@ -679,4 +685,4 @@ Changes made to cimoxide while testing with ReliCapGrid:
 | triplets 0.2.0 | Runs per-profile CGMES shapes on merged groups; no `sh:alternativePath`; drops language tags; matches classes by local name; misses a value-type violation within one file (RA_UC4 broken variant). |
 
 What the grid calculations find in the data (voltage targets against the SV, the CGM's imbalance, limits, converter
-signs) is in [gridoxide's report](https://github.com/m-mirz/gridoxide/blob/main/docs/src/cgmes/sv_iop_2026.md).
+signs) is in [gridoxide's Annex 2](https://github.com/m-mirz/gridoxide/blob/main/docs/src/cgmes/sv_iop_2026.md#annex-2-issues-found-in-the-data).
