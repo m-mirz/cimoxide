@@ -22,6 +22,15 @@ pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
         check_sv_tap_step_instance,
         check_regulating_control_same_island,
     ];
+    if cfg!(target_family = "wasm") {
+        // No threads to start (see `par`). In the order the threads' results are joined below.
+        let topo = Topology::build(dataset);
+        return ON_TOPOLOGY
+            .iter()
+            .flat_map(|f| f(dataset, &topo))
+            .chain(PLAIN.iter().flat_map(|f| f(dataset)))
+            .collect();
+    }
     // Outside the scope, so the threads can borrow it.
     let built = std::sync::OnceLock::new();
     std::thread::scope(|s| {

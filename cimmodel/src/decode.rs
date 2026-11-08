@@ -124,7 +124,8 @@ impl CimDataset {
     /// Preserves input order. Falls back to sequential decoding for 0–1 paths
     /// to avoid thread-spawn overhead.
     pub fn decode_files_parallel_separate(paths: &[&Path]) -> Result<Vec<Self>, Box<dyn std::error::Error>> {
-        if paths.len() <= 1 {
+        // wasm32-unknown-unknown compiles `std::thread` and panics when it is used.
+        if paths.len() <= 1 || cfg!(target_family = "wasm") {
             return paths.iter().map(|p| Self::decode_file(p)).collect();
         }
         let results: Vec<Result<Self, String>> = std::thread::scope(|s| {

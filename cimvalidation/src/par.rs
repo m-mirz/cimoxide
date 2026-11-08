@@ -5,6 +5,11 @@
 //! contiguous runs and the results concatenated in run order, so the output is
 //! exactly what one thread produces, order included.
 
+/// Whether this target can start threads. wasm32-unknown-unknown compiles `std::thread` and panics
+/// when it is used, so everything here runs in turn there. As results are concatenated in order,
+/// the output is the same either way.
+const HAS_THREADS: bool = !cfg!(target_family = "wasm");
+
 /// Below this many elements a walk stays on the calling thread.
 const PARALLEL_MIN: usize = 20_000;
 /// Past a handful of threads a walk is limited by memory, not by cores.
@@ -12,7 +17,7 @@ const MAX_THREADS: usize = 8;
 
 /// How many threads a walk over `total` elements gets.
 pub(crate) fn threads_for(total: usize) -> usize {
-    if total < PARALLEL_MIN {
+    if total < PARALLEL_MIN || !HAS_THREADS {
         1
     } else {
         std::thread::available_parallelism().map_or(1, |n| n.get()).min(MAX_THREADS)
@@ -42,6 +47,7 @@ pub(crate) fn runs<T>(items: &[T], threads: usize, weight: impl Fn(&T) -> usize)
 pub(crate) fn par_map<T: Sync, R: Send>(runs: &[&[T]], f: impl Fn(&[T]) -> R + Sync) -> Vec<R> {
     match runs {
         [one] => vec![f(one)],
+        _ if !HAS_THREADS => runs.iter().map(|run| f(run)).collect(),
         _ => std::thread::scope(|s| {
             let handles: Vec<_> = runs.iter().map(|run| s.spawn(|| f(run))).collect();
             handles.into_iter().map(|h| h.join().expect("validation thread panicked")).collect()
@@ -54,12 +60,39 @@ pub(crate) fn par_concat<T: Sync, R: Send>(runs: &[&[T]], f: impl Fn(&[T]) -> Ve
     par_map(runs, f).into_iter().flatten().collect()
 }
 
+/// Run `f` on each item on its own thread, and return the results in item order.
+pub(crate) fn par_each<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    if !HAS_THREADS {
+        return items.iter().map(f).collect();
+    }
+    std::thread::scope(|s| {
+        let handles: Vec<_> = items.iter().map(|item| s.spawn(|| f(item))).collect();
+        handles.into_iter().map(|h| h.join().expect("validation thread panicked")).collect()
+    })
+}
+
+/// Run `first` on a thread of its own and `second` on this one, and return both.
+pub(crate) fn par_two<A: Send, B: Send>(first: impl FnOnce() -> A + Send, second: impl FnOnce() -> B) -> (A, B) {
+    if !HAS_THREADS {
+        let a = first();
+        return (a, second());
+    }
+    std::thread::scope(|s| {
+        let first = s.spawn(first);
+        let b = second();
+        (first.join().expect("validation thread panicked"), b)
+    })
+}
+
 /// Run independent rule groups over one dataset on their own threads, and
 /// concatenate their results in the order given.
 pub(crate) fn par_groups(
     dataset: &cimmodel::CimDataset,
     groups: &[fn(&cimmodel::CimDataset) -> Vec<crate::Violation>],
 ) -> Vec<crate::Violation> {
+    if !HAS_THREADS {
+        return groups.iter().flat_map(|g| g(dataset)).collect();
+    }
     std::thread::scope(|s| {
         let handles: Vec<_> = groups.iter().map(|g| s.spawn(move || g(dataset))).collect();
         handles
