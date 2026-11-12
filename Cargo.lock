@@ -97,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "cimoxide"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "cimoxide-model",
  "cimoxide-sparql",
@@ -106,7 +106,7 @@ dependencies = [
 
 [[package]]
 name = "cimoxide-cli"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "cimoxide-model",
  "cimoxide-sparql",
@@ -117,7 +117,7 @@ dependencies = [
 
 [[package]]
 name = "cimoxide-gen"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "cimoxide-schema",
  "glob",
@@ -129,7 +129,7 @@ dependencies = [
 
 [[package]]
 name = "cimoxide-lsp"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "cimoxide-model",
  "cimoxide-validation",
@@ -144,7 +144,7 @@ dependencies = [
 
 [[package]]
 name = "cimoxide-mcp"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "cimoxide-model",
  "cimoxide-sparql",
@@ -154,7 +154,7 @@ dependencies = [
 
 [[package]]
 name = "cimoxide-model"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "cimoxide-schema",
  "criterion",
@@ -166,7 +166,7 @@ dependencies = [
 
 [[package]]
 name = "cimoxide-schema"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "glob",
  "quick-xml",
@@ -174,7 +174,7 @@ dependencies = [
 
 [[package]]
 name = "cimoxide-sparql"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "cimoxide-model",
  "criterion",
@@ -184,7 +184,7 @@ dependencies = [
 
 [[package]]
 name = "cimoxide-validation"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "cimoxide-model",
  "cimoxide-schema",
@@ -193,7 +193,7 @@ dependencies = [
 
 [[package]]
 name = "cimoxide-view"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "cimoxide-model",
  "cimoxide-validation",
