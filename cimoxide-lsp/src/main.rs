@@ -281,8 +281,8 @@ fn apply_change(text: &mut String, change: TextDocumentContentChangeEvent) {
     match change.range {
         Some(range) => {
             let lines = LineIndex::new(text);
-            let start = lines.offset(text, range.start);
-            let end = lines.offset(text, range.end).max(start);
+            let start = lines.offset(text, index::ours(range.start));
+            let end = lines.offset(text, index::ours(range.end)).max(start);
             text.replace_range(start..end, &change.text);
         }
         None => *text = change.text,
@@ -316,8 +316,8 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
                 Ok(p) => p,
                 Err(e) => return error(id, ErrorCode::InvalidParams, e.to_string()),
             };
-            match with_set_files(state, &p.text_document.uri, |_, files| edit::prepare_rename(files, &p.text_document.uri, p.position)).flatten() {
-                Some((range, placeholder)) => serde_json::to_value(PrepareRenameResponse::RangeWithPlaceholder { range, placeholder }),
+            match with_set_files(state, &p.text_document.uri, |_, files| edit::prepare_rename(files, p.text_document.uri.as_str(), index::ours(p.position))).flatten() {
+                Some((range, placeholder)) => serde_json::to_value(PrepareRenameResponse::RangeWithPlaceholder { range: index::lsp(range), placeholder }),
                 None => return error(id, ErrorCode::RequestFailed, "not an mRID: rename an `rdf:ID`, `rdf:about` or `rdf:resource`".into()),
             }
         }
@@ -328,7 +328,7 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
             };
             let (uri, pos) = (&p.text_document_position.text_document.uri, p.text_document_position.position);
             let renamed = with_set_files(state, uri, |_, files| {
-                let (_, old) = edit::prepare_rename(files, uri, pos).ok_or("not an mRID")?;
+                let (_, old) = edit::prepare_rename(files, uri.as_str(), index::ours(pos)).ok_or("not an mRID")?;
                 edit::rename(files, &old, &p.new_name)
             });
             match renamed {
@@ -345,16 +345,16 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
             let uri = p.text_document.uri;
             let actions = with_set_files(state, &uri, |set, files| {
                 let mut out = quick_fixes(set, files, &uri, &p.context.diagnostics);
-                let Some(el) = files.iter().find(|f| f.url == &uri).and_then(|f| f.index.element_at(p.range.start)) else { return out };
+                let Some(el) = files.iter().find(|f| f.name == uri.as_str()).and_then(|f| f.index.element_at(index::ours(p.range.start))) else { return out };
                 if el.mrid.is_empty() {
                     return out;
                 }
                 // A reference to nothing, or to no object of the set: what it could name.
-                for f in edit::reference_fixes(files, &set.tree, &el.mrid, Some((&uri, p.range.start))) {
+                for f in edit::reference_fixes(files, &set.tree, &el.mrid, Some((uri.as_str(), index::ours(p.range.start)))) {
                     out.push(CodeActionOrCommand::CodeAction(CodeAction {
                         title: f.title,
                         kind: Some(if f.empty { CodeActionKind::QUICKFIX } else { CodeActionKind::REFACTOR_REWRITE }),
-                        edit: Some(change(&f.url, f.edit)),
+                        edit: Some(change_named(&f.file, f.edit)),
                         ..Default::default()
                     }));
                 }
@@ -451,7 +451,7 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
                 // References to nothing, or to what the set lacks, which no finding may report.
                 out.extend(edit::reference_fixes(files, &set.tree, &p.id, None).into_iter().map(|f| {
                     let detail = if f.empty { format!("{} names nothing", f.key) } else { format!("{} names an object the set does not have", f.key) };
-                    serde_json::json!({ "title": f.title, "detail": detail, "edit": change(&f.url, f.edit), "uri": f.url, "select": null })
+                    serde_json::json!({ "title": f.title, "detail": detail, "edit": change_named(&f.file, f.edit), "uri": f.file, "select": null })
                 }));
                 out
             });
@@ -604,7 +604,7 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
                 only_findings.set(p.only_findings);
                 (p.uri, p.position)
             }, |v, pos| {
-                let found = v.index.element_at(pos).zip(v.set).and_then(|(el, set)| {
+                let found = v.index.element_at(index::ours(pos)).zip(v.set).and_then(|(el, set)| {
                     set.tree.path(&el.mrid, only_findings.get()).map(|keys| serde_json::json!({ "id": el.mrid, "keys": keys }))
                 });
                 Ok(found.unwrap_or(serde_json::Value::Null))
@@ -700,10 +700,11 @@ fn fixes<D: Clone>(set: &ModelSet, files: &[edit::File], prefer: &Url, missing: 
             continue;
         }
         let Some(add) = edit::add_missing(files, prefer, &object, &property) else { continue };
-        let at = by_object.iter().position(|(o, u, adds)| *o == object && *u == add.url && !adds.iter().any(|(_, _, a)| a.edit == add.edit));
+        let Ok(url) = Url::parse(&add.file) else { continue };
+        let at = by_object.iter().position(|(o, u, adds)| *o == object && *u == url && !adds.iter().any(|(_, _, a)| a.edit == add.edit));
         match at {
             Some(i) => by_object[i].2.push((property, finding, add)),
-            None => by_object.push((object, add.url.clone(), vec![(property, finding, add)])),
+            None => by_object.push((object, url, vec![(property, finding, add)])),
         }
     }
     let mut out = Vec::new();
@@ -715,7 +716,7 @@ fn fixes<D: Clone>(set: &ModelSet, files: &[edit::File], prefer: &Url, missing: 
                 out.push(Fix {
                     title: format!("Add {property}: {} {}{place}", c.class, c.label),
                     url: url.clone(),
-                    edit: add.naming(c),
+                    edit: index::lsp_edit(add.naming(c)),
                     select: None,
                     preferred: i == 0 && adds.len() == 1,
                     fixes: vec![finding.clone()],
@@ -724,8 +725,8 @@ fn fixes<D: Clone>(set: &ModelSet, files: &[edit::File], prefer: &Url, missing: 
             out.push(Fix {
                 title: if add.reference { format!("Add {property}, choosing the object…") } else { format!("Add {property}") },
                 url: url.clone(),
-                edit: add.edit.clone(),
-                select: Some((add.value, add.reference)),
+                edit: index::lsp_edit(add.edit.clone()),
+                select: Some((index::lsp(add.value), add.reference)),
                 preferred: adds.len() == 1 && named.is_empty(),
                 fixes: vec![finding.clone()],
             });
@@ -737,7 +738,7 @@ fn fixes<D: Clone>(set: &ModelSet, files: &[edit::File], prefer: &Url, missing: 
             out.push(Fix {
                 title: format!("Add the {} missing fields", adds.len()),
                 url: url.clone(),
-                edit: lsp_types::TextEdit::new(at, text),
+                edit: lsp_types::TextEdit::new(index::lsp(at), text),
                 select: None,
                 preferred: true,
                 fixes: adds.iter().map(|(_, f, _)| f.clone()).collect(),
@@ -750,6 +751,12 @@ fn fixes<D: Clone>(set: &ModelSet, files: &[edit::File], prefer: &Url, missing: 
 /// A field-sized edit to one file.
 fn change(url: &Url, e: lsp_types::TextEdit) -> lsp_types::WorkspaceEdit {
     lsp_types::WorkspaceEdit { changes: Some(HashMap::from([(url.clone(), vec![e])])), ..Default::default() }
+}
+
+/// cimoxide-view's edit to the file its URL names.
+fn change_named(url: &str, e: cimview::text::TextEdit) -> lsp_types::WorkspaceEdit {
+    let changes = Url::parse(url).map(|u| HashMap::from([(u, vec![index::lsp_edit(e)])])).unwrap_or_default();
+    lsp_types::WorkspaceEdit { changes: Some(changes), ..Default::default() }
 }
 
 /// The command a fix runs after its edit: select the value it wrote.
@@ -853,7 +860,7 @@ fn with_set_files<R>(state: &Shared, url: &Url, f: impl FnOnce(&ModelSet, &[edit
                 }
                 Source::Disk(l) => (l, &file.index),
             };
-            edit::File { url: &file.url, text, lines, index }
+            edit::File { name: file.url.as_str(), text, lines, index }
         })
         .collect();
     Some(f(&set, &files))

@@ -197,6 +197,8 @@ version = "0.6.1"
 dependencies = [
  "cimoxide-model",
  "cimoxide-validation",
+ "quick-xml",
+ "serde",
  "serde_json",
 ]
 

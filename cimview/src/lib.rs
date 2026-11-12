@@ -3,13 +3,20 @@
 //! ([`tree`]), with validation's findings counted on each. `cimlsp` serves
 //! them to the VS Code extension. Runs on wasm32-unknown-unknown too.
 //!
+//! The files themselves, as text: where each object and field is written
+//! ([`index`], in [`text`]'s positions), and edits to them across a set
+//! ([`edit`]): renaming, deleting, adding objects and fields.
+//!
 //! The views answer in JSON. Where an object is written is not in the data:
 //! the caller says, through [`Locations`].
 
 use serde_json::Value;
 
+pub mod edit;
 pub mod grid;
+pub mod index;
 pub mod layout;
+pub mod text;
 pub mod tree;
 
 /// Where a set's objects are written, which only the caller of a view knows:

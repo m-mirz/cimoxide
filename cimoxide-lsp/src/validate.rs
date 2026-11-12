@@ -202,13 +202,13 @@ fn place(set: &ModelSet, violations: &[(Option<usize>, Violation)], out: &mut [(
             .iter()
             .flat_map(|&(fi, ei)| {
                 let el = &set.files[fi].index.elements[ei];
-                el.fields.iter().filter(|f| f.key() == key).map(move |f| (fi, f.full))
+                el.fields.iter().filter(|f| f.key() == key).map(move |f| (fi, crate::index::lsp(f.full)))
             })
             .collect();
         if placed.is_empty() {
             let at = |&(fi, ei): &(usize, usize)| {
                 let el = &set.files[fi].index.elements[ei];
-                (fi, el.id_range.unwrap_or(el.head))
+                (fi, crate::index::lsp(el.id_range.unwrap_or(el.head)))
             };
             placed = match def {
                 Some(def) => vec![at(def)],

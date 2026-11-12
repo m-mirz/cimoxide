@@ -37,7 +37,7 @@ Data flow: RDFS/SHACL → `cimgen` → `cimmodel` (class tables) + `cimvalidatio
 | `cimsparql/` | `cimoxide-sparql` | SPARQL 1.1 over an in-memory oxigraph store |
 | `cimoxide/` | `cimoxide` | facade re-exporting the above |
 | `cimoxide-cli/` | `cimoxide-cli` (binary `cimcli`) | CLI |
-| `cimview/` | `cimoxide-view` | a model set's grid and tree, with findings, as JSON for whatever draws them |
+| `cimview/` | `cimoxide-view` | a model set's grid and tree, with findings, as JSON for whatever draws them; its files' index and text edits across them |
 | `cimoxide-lsp/` | `cimoxide-lsp` (binary `cimlsp`) | language server; VS Code extension in `editors/vscode/` |
 | `cimoxide-mcp/` | `cimoxide-mcp` (binary `cimmcp`) | MCP server for chat clients; bundled and registered by the extension |
 | `cimoxide-py/` | — | PyO3 bindings, outside the workspace |
@@ -239,9 +239,10 @@ thread with a 300 ms debounce, on open and save, and on `workspace/didChangeWatc
 extension watches `**/*.xml`) for a set validated or open: VS Code hands no file over 50 MB to an
 extension, so the server sees neither its opening nor its saving, nor that of a file an edit
 changed unopened. The tree's edits then open the files they changed (`openEdited`), as an edit
-leaves an unopened file unsaved and unseen. The decoder keeps no positions, so `src/index.rs` makes its
+leaves an unopened file unsaved and unseen. The decoder keeps no positions, so `cimview::index` makes its
 own quick-xml pass per document (ranges of elements, fields, `rdf:resource` values; mRID =
-text after the last `#`, as in `decode.rs`). A per-file finding is placed only in the file it
+text after the last `#`, as in `decode.rs`), in `cimview::text`'s positions (UTF-16 columns, as
+LSP's; `cimoxide-lsp/src/index.rs` converts). A per-file finding is placed only in the file it
 was found in (`validate_files_traced`). Each diagnostic's `data` carries `object_id`
 and `property`; its `code` is the `rule_id`. Diagnostics must stay equal to
 `cimcli validate --format json` as sets of `(object_id, rule_id, property)` per directory.
@@ -251,7 +252,8 @@ rename); the model tree is where the model is edited, in files of any size: dele
 the tree's alone (`cimoxide/delete`, `cimoxide/add`), *Fix…*, *Rename mRID…* and *Referenced by…*
 (`cimoxide/referrers`, `edit::referrers`) its versions of the editor's. Rename (an mRID) and
 deleting are text edits over the set's files as they are now: an open
-buffer, else the file on disk with the set's index of it (`src/edit.rs`). An mRID is the end of
+buffer, else the file on disk with the set's index of it (`cimview::edit`, files named by their URLs,
+which `src/edit.rs` makes LSP workspace edits of). An mRID is the end of
 the value written, so only that suffix is replaced; a deletion takes whole lines and is annotated
 `needsConfirmation`, so the client previews it. The tree's *Fix…* and *Rename mRID…* go through
 `cimoxide/fixes` (the quick fixes' core, `fixes` in `main.rs`, for an object's findings, kept per
@@ -268,7 +270,8 @@ object (where the candidate is, or the objects naming it with the same field), t
 ranking feeds the `rdf:resource` completion (`candidates_rank_what_the_data_names` pins the
 MicroGrid hit rates). Adding an object (`cimoxide/addable`, `cimoxide/add`, `edit::add`): the
 classes of the parent's family with a `CONTAINED` field ranging over the parent's class, of the
-profiles the set declares; written with a v4 UUID (from `RandomState`, no dependency) in the
+profiles the set declares; written with a v4 UUID from random bytes its caller draws (cimlsp's from
+`RandomState` and the clock, no dependency; wasm has neither) in the
 non-SSH file whose profile carries the class (the parent's own first), after the last element
 there of an object the parent holds, plus an empty `rdf:about` in the SSH file when the class is
 in SSH. No mandatory fields: the findings ask for them, and the quick fixes add them.
