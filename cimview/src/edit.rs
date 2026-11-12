@@ -357,6 +357,192 @@ pub fn remove_field<'a>(files: &[File<'a>], id: &str, key: &str) -> Edits<'a> {
     changes
 }
 
+/// A field of `class` written as an element of `file`, its value as [`set_field`] takes it.
+fn field_element(file: &File, class: &'static cimmodel::base::ClassDef, key: &str, value: &str) -> Result<String, String> {
+    let attr = type_registry().attr(class, key).ok_or_else(|| format!("{} has no field {key}", class.local))?;
+    let prefix = file.index.prefix_of(attr.ns).ok_or_else(|| format!("{} binds no prefix to {}", file.name, attr.ns))?;
+    let tag = format!("{prefix}:{}", attr.id);
+    Ok(match attr.kind {
+        AttrKind::Literal => format!("<{tag}>{}</{tag}>", escape(value)),
+        AttrKind::Association => format!("<{tag} rdf:resource=\"{}\" />", reference(value)),
+        AttrKind::Enum => format!("<{tag} rdf:resource=\"{}{}\" />", attr.value_ns, enum_value(attr.range, value)),
+    })
+}
+
+/// `lines` (an element, unindented) inserted before the end tag of `file`'s root, indented as its
+/// elements are, in its line endings.
+fn at_end(file: &File, lines: &[String]) -> Result<TextEdit, String> {
+    let text = file.text;
+    let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let root_end = text.rfind("</").ok_or("the file has no root end tag")?;
+    let line_start = text[..root_end].rfind('\n').map_or(0, |i| i + 1);
+    let indent = file.index.elements.last().map_or("  ".to_string(), |el| {
+        let head = file.lines.offset(text, el.head.start);
+        text[text[..head].rfind('\n').map_or(0, |i| i + 1)..head].to_string()
+    });
+    let at = file.lines.position(text, line_start);
+    let body: String = lines.iter().map(|l| format!("{indent}{l}{eol}")).collect();
+    Ok(TextEdit::new(Range::new(at, at), body))
+}
+
+/// A fresh mRID, `_` and a UUID from `random`, that the set does not have yet nor `taken`.
+fn fresh(files: &[File], taken: &HashSet<String>, random: &mut dyn FnMut() -> [u8; 16]) -> String {
+    loop {
+        let id = format!("_{}", uuid(random()));
+        if !taken.contains(&id) && !files.iter().any(|f| f.index.elements.iter().any(|e| e.mrid == id)) {
+            return id;
+        }
+    }
+}
+
+/// A new object of `class`, with `values` (field, value as [`set_field`] takes it) and its
+/// `IdentifiedObject.mRID` where the class has one, written at the end of the file `into`, with an
+/// `rdf:ID` whose UUID is drawn from `random`. For objects in no container, which [`add`] cannot
+/// place: a response, a dependency.
+pub fn create<'a>(
+    files: &[File<'a>],
+    into: &str,
+    class: &str,
+    values: &[(&str, &str)],
+    random: &mut dyn FnMut() -> [u8; 16],
+) -> Result<Added<'a>, String> {
+    let reg = type_registry();
+    let file = files.iter().find(|f| f.name == into).ok_or_else(|| format!("no file {into}"))?;
+    // The class by the namespaces the file binds: CGMES's or NC's, whichever has it.
+    let found = file
+        .index
+        .namespaces
+        .iter()
+        .filter_map(|(_, ns)| reg.ns_table(ns)?.get(class).copied())
+        .next()
+        .ok_or_else(|| format!("{into} binds no namespace with a class {class}"))?;
+    let prefix = file.index.prefix_of(found.ns).ok_or("no prefix")?;
+    let id = fresh(files, &HashSet::new(), random);
+    let mut lines = vec![format!("<{prefix}:{} rdf:ID=\"{id}\">", found.local)];
+    if reg.attr(found, "IdentifiedObject.mRID").is_some() && !values.iter().any(|(k, _)| *k == "IdentifiedObject.mRID") {
+        lines.push(format!("  {}", field_element(file, found, "IdentifiedObject.mRID", &id[1..])?));
+    }
+    for (key, value) in values {
+        lines.push(format!("  {}", field_element(file, found, key, value)?));
+    }
+    lines.push(format!("</{prefix}:{}>", found.local));
+    let edit = at_end(file, &lines)?;
+    let first = edit.range.start.line;
+    let select = Range::new(Position::new(first, 0), Position::new(first, 0));
+    Ok(Added { edits: vec![(file.name, vec![edit])], file: file.name.to_string(), select, id })
+}
+
+/// Objects copied: the edits, and each object's new mRID.
+pub struct Copied<'a> {
+    pub edits: Edits<'a>,
+    /// (original, copy), in the order given.
+    pub ids: Vec<(String, String)>,
+}
+
+/// Copy objects `ids` with new mRIDs (`_` and a UUID from `random`): every element writing each
+/// of them, in every file, its `rdf:ID` or `rdf:about`, its `IdentifiedObject.mRID`, and its
+/// references to the objects copied, rewritten to the copies; references to anything else stay.
+/// Each copy goes after its original, or with `into`, at the end of that file, which must bind
+/// the prefixes the copies use as their files do.
+pub fn copy<'a>(
+    files: &[File<'a>],
+    ids: &[&str],
+    into: Option<&str>,
+    random: &mut dyn FnMut() -> [u8; 16],
+) -> Result<Copied<'a>, String> {
+    let target = match into {
+        Some(name) => Some(files.iter().find(|f| f.name == name).ok_or_else(|| format!("no file {name}"))?),
+        None => None,
+    };
+    let mut taken = HashSet::new();
+    let mut renamed: Vec<(String, String)> = Vec::new();
+    for id in ids {
+        if !files.iter().any(|f| f.index.elements.iter().any(|e| e.mrid == *id)) {
+            return Err(format!("no file writes `{id}`"));
+        }
+        let new = fresh(files, &taken, random);
+        taken.insert(new.clone());
+        renamed.push((id.to_string(), new));
+    }
+    let to: HashMap<&str, &str> = renamed.iter().map(|(o, n)| (o.as_str(), n.as_str())).collect();
+    let mut changes: Edits<'a> = Vec::new();
+    let mut moved: Vec<String> = Vec::new();
+    for file in files {
+        let text = file.text;
+        let mut edits = Vec::new();
+        for el in file.index.elements.iter().filter(|e| to.contains_key(e.mrid.as_str())) {
+            if let Some(t) = target.filter(|t| t.name != file.name) {
+                // The copy's prefixes, bound as they are here.
+                let qnames = std::iter::once(&el.qname).chain(el.fields.iter().map(|f| &f.qname));
+                for q in qnames {
+                    let p = crate::index::prefix(q);
+                    if t.index.namespace(p) != file.index.namespace(p) {
+                        return Err(format!("{} binds `{p}` otherwise than {}", t.name, file.name));
+                    }
+                }
+            }
+            let block = file.lines_of(el.full);
+            let (start, end) = (file.lines.offset(text, block.start), file.lines.offset(text, block.end));
+            // Replacements within the block, by offset.
+            let mut swaps: Vec<(usize, usize, String)> = Vec::new();
+            // An mRID at the end of the value written at `r`.
+            let suffix = |r: Range, old: &str, new: &str| {
+                let at = file.lines.offset(text, r.end);
+                (at - old.len(), at, new.to_string())
+            };
+            let old = el.mrid.as_str();
+            let new = to[old];
+            if let Some(r) = el.id_range {
+                swaps.push(suffix(r, old, new));
+            }
+            for f in &el.fields {
+                if let Some((target_id, r)) = &f.resource
+                    && let Some(n) = to.get(target_id.as_str())
+                {
+                    swaps.push(suffix(*r, target_id, n));
+                }
+                if f.key() == "IdentifiedObject.mRID"
+                    && let Some((value, r)) = file.field_text(f.head, f.full, &f.qname)
+                {
+                    let bare = |s: &str| s.strip_prefix('_').unwrap_or(s).to_string();
+                    let (vs, ve) = (file.lines.offset(text, r.start), file.lines.offset(text, r.end));
+                    if value.trim() == old {
+                        swaps.push((vs, ve, new.to_string()));
+                    } else if value.trim() == bare(old) {
+                        swaps.push((vs, ve, bare(new)));
+                    }
+                }
+            }
+            swaps.sort_by_key(|s| std::cmp::Reverse(s.0));
+            let mut copied = text[start..end].to_string();
+            for (s, e, with) in swaps {
+                copied.replace_range(s - start..e - start, &with);
+            }
+            if !copied.ends_with('\n') {
+                copied.push_str(if text.contains("\r\n") { "\r\n" } else { "\n" });
+            }
+            match target {
+                Some(_) => moved.push(copied),
+                None => edits.push(TextEdit::new(Range::new(block.end, block.end), copied)),
+            }
+        }
+        if !edits.is_empty() {
+            changes.push((file.name, edits));
+        }
+    }
+    if let Some(t) = target {
+        let root_end = t.text.rfind("</").ok_or("the file has no root end tag")?;
+        let line_start = t.text[..root_end].rfind('\n').map_or(0, |i| i + 1);
+        let at = t.lines.position(t.text, line_start);
+        let edit = TextEdit::new(Range::new(at, at), moved.concat());
+        match changes.iter_mut().find(|(n, _)| *n == t.name) {
+            Some((_, e)) => e.push(edit),
+            None => changes.push((t.name, vec![edit])),
+        }
+    }
+    Ok(Copied { edits: changes, ids: renamed })
+}
+
 /// An object a reference can name.
 pub struct Candidate {
     pub id: String,
@@ -828,6 +1014,52 @@ mod tests {
             let removed = remove_field(files, "_t1", "Terminal.ConductingEquipment");
             let eq = apply(EQ, of(&removed, "EQ.xml"));
             assert!(!eq.contains("ConductingEquipment") && eq.contains("<cim:Terminal rdf:ID=\"_t1\">\n    <cim:IdentifiedObject.name>T1"), "{eq}");
+        });
+    }
+
+    fn counting() -> impl FnMut() -> [u8; 16] {
+        let mut n = 0u8;
+        move || {
+            n += 1;
+            [n; 16]
+        }
+    }
+
+    #[test]
+    fn copies_objects_with_new_mrids_and_their_references_among_them() {
+        with_files(|files| {
+            let mut random = counting();
+            let copied = copy(files, &["_b1", "_t1"], None, &mut random).unwrap();
+            let (b2, t2) = (format!("_{}", uuid([1; 16])), format!("_{}", uuid([2; 16])));
+            assert_eq!(copied.ids, [("_b1".to_string(), b2.clone()), ("_t1".to_string(), t2.clone())]);
+            let eq = apply(EQ, of(&copied.edits, "EQ.xml"));
+            // The originals stay; the copies follow them, naming each other.
+            assert!(eq.contains(r#"<cim:Breaker rdf:ID="_b1">"#) && eq.contains(&format!(r#"<cim:Breaker rdf:ID="{b2}">"#)), "{eq}");
+            assert!(eq.contains(&format!("<cim:IdentifiedObject.mRID>{}</cim:IdentifiedObject.mRID>", &b2[1..])), "{eq}");
+            assert!(eq.contains(&format!(r##"<cim:Terminal.ConductingEquipment rdf:resource="#{b2}" />"##)), "{eq}");
+            assert_eq!(eq.matches(r##"rdf:resource="#_b1""##).count(), 1);
+            let ssh = apply(SSH, of(&copied.edits, "SSH.xml"));
+            assert!(ssh.contains(&format!(r##"<cim:Breaker rdf:about="#{b2}">"##)), "{ssh}");
+            // Only the terminal: its reference to the breaker stays.
+            let alone = copy(files, &["_t1"], None, &mut random).unwrap();
+            assert_eq!(apply(EQ, of(&alone.edits, "EQ.xml")).matches(r##"rdf:resource="#_b1""##).count(), 2);
+            // Into another file.
+            let moved = copy(files, &["_t1"], Some("SSH.xml"), &mut random).unwrap();
+            let ssh = apply(SSH, of(&moved.edits, "SSH.xml"));
+            assert!(ssh.contains(&format!(r#"<cim:Terminal rdf:ID="{}">"#, moved.ids[0].1)) && ssh.ends_with("</rdf:RDF>"), "{ssh}");
+            assert!(copy(files, &["_nothing"], None, &mut random).is_err());
+        });
+    }
+
+    #[test]
+    fn creates_an_object_of_any_class_with_its_values() {
+        with_files(|files| {
+            let created = create(files, "EQ.xml", "Breaker", &[("IdentifiedObject.name", "B9"), ("Switch.normalOpen", "true")], &mut counting()).unwrap();
+            let eq = apply(EQ, of(&created.edits, "EQ.xml"));
+            let id = &created.id;
+            assert!(eq.contains(&format!("  <cim:Breaker rdf:ID=\"{id}\">\n    <cim:IdentifiedObject.mRID>{}</cim:IdentifiedObject.mRID>\n    <cim:IdentifiedObject.name>B9</cim:IdentifiedObject.name>\n    <cim:Switch.normalOpen>true</cim:Switch.normalOpen>\n  </cim:Breaker>\n</rdf:RDF>", &id[1..])), "{eq}");
+            assert!(create(files, "EQ.xml", "NoSuchClass", &[], &mut counting()).is_err());
+            assert!(create(files, "EQ.xml", "Breaker", &[("ACLineSegment.r", "1")], &mut counting()).is_err());
         });
     }
 
