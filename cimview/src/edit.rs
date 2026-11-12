@@ -197,6 +197,12 @@ fn profiles(file: &File) -> Vec<&'static str> {
 /// none. `None` if a file writes it already, its class does not declare
 /// it, or no file fits.
 pub fn add_missing(files: &[File], prefer: &str, id: &str, key: &str) -> Option<Addition> {
+    addition(files, prefer, id, key, None)
+}
+
+/// [`add_missing`], with `given` as the value written (as [`set_field`] takes it) rather than
+/// one to type over.
+fn addition(files: &[File], prefer: &str, id: &str, key: &str, given: Option<&str>) -> Option<Addition> {
     let reg = type_registry();
     let sites: Vec<(&File, &crate::index::Element)> =
         files.iter().flat_map(|f| f.index.elements.iter().filter(|e| e.mrid == id).map(move |e| (f, e))).collect();
@@ -218,6 +224,7 @@ pub fn add_missing(files: &[File], prefer: &str, id: &str, key: &str) -> Option<
     let (open, value, close) = match attr.kind {
         AttrKind::Literal => {
             let value = match (attr.id, attr.xsd) {
+                _ if given.is_some() => escape(given.unwrap_or_default()),
                 ("IdentifiedObject.mRID", _) => id.strip_prefix('_').unwrap_or(id).to_string(),
                 (_, "boolean") => "false".into(),
                 (_, "double" | "float" | "decimal" | "integer" | "int" | "long" | "short") => "0".into(),
@@ -225,10 +232,14 @@ pub fn add_missing(files: &[File], prefer: &str, id: &str, key: &str) -> Option<
             };
             (format!("<{tag}>"), value, format!("</{tag}>"))
         }
-        AttrKind::Association => (format!("<{tag} rdf:resource=\"#"), String::new(), "\" />".into()),
+        AttrKind::Association => match given {
+            Some(target) => (format!("<{tag} rdf:resource=\""), reference(target), "\" />".into()),
+            None => (format!("<{tag} rdf:resource=\"#"), String::new(), "\" />".into()),
+        },
         AttrKind::Enum => {
             let first = reg.family_of(class.qualified).and_then(|f| reg.schema(f)).and_then(|s| s.enumeration(attr.range)).and_then(|e| e.values.first());
-            (format!("<{tag} rdf:resource=\"{}", attr.value_ns), first.map_or(String::new(), |v| v.id.to_string()), "\" />".into())
+            let value = given.map_or_else(|| first.map_or(String::new(), |v| v.id.to_string()), |v| enum_value(attr.range, v).to_string());
+            (format!("<{tag} rdf:resource=\"{}", attr.value_ns), value, "\" />".into())
         }
     };
     // On a line of its own after the last field, indented as it is; else
@@ -257,8 +268,93 @@ pub fn add_missing(files: &[File], prefer: &str, id: &str, key: &str) -> Option<
     let utf16 = |s: &str| s.encode_utf16().count() as u32;
     let start = if el.fields.is_empty() { Position::new(at.line, at.character + 2 + utf16(&open)) } else { Position::new(at.line + 1, utf16(&indent) + utf16(&open)) };
     let value_range = Range::new(start, Position::new(start.line, start.character + utf16(&value)));
-    let reference = attr.kind == AttrKind::Association;
+    let reference = attr.kind == AttrKind::Association && given.is_none();
     Some(Addition { file: file.name.to_string(), edit: TextEdit::new(Range::new(at, at), new_text), value: value_range, reference })
+}
+
+/// `text` as XML character data.
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// A reference to object `target` as written: `#_id`, or an IRI as it is.
+fn reference(target: &str) -> String {
+    if target.contains(':') { target.to_string() } else { format!("#{target}") }
+}
+
+/// An enumeration's value as its IRI ends: `WindingConnection.D`, from `D` or the whole name.
+fn enum_value<'v>(range: &str, value: &'v str) -> std::borrow::Cow<'v, str> {
+    let value = value.rsplit_once('#').map_or(value, |(_, v)| v);
+    if value.contains('.') { value.into() } else { format!("{range}.{value}").into() }
+}
+
+/// Set field `key` of object `id` to `value`: a literal's text (escaped here), a reference's
+/// object (its mRID, or an IRI), or an enumeration's value (`D`, or `WindingConnection.D`).
+/// Wherever a file writes the field, its value is replaced; where none does, it is added as
+/// [`add_missing`] adds it, `prefer` first. An error if the object's class does not declare it.
+pub fn set_field<'a>(files: &[File<'a>], prefer: &str, id: &str, key: &str, value: &str) -> Result<Edits<'a>, String> {
+    let reg = type_registry();
+    let (def_file, def) = files
+        .iter()
+        .flat_map(|f| f.index.elements.iter().filter(|e| e.mrid == id).map(move |e| (f, e)))
+        .max_by_key(|(_, e)| e.id_kind == Some(IdKind::Id))
+        .ok_or_else(|| format!("no file writes `{id}`"))?;
+    let class = def_file.index.class_of(&def.qname).ok_or_else(|| format!("`{}` is no class of the tables", def.qname))?;
+    let attr = reg.attr(class, key).ok_or_else(|| format!("{} has no field {key}", class.local))?;
+    let mut changes: Edits<'a> = Vec::new();
+    for file in files {
+        let mut edits = Vec::new();
+        for el in file.index.elements.iter().filter(|e| e.mrid == id) {
+            for f in el.fields.iter().filter(|f| f.key() == key) {
+                let edit = match (attr.kind, &f.resource) {
+                    (AttrKind::Literal, None) => match file.field_text(f.head, f.full, &f.qname) {
+                        Some((_, r)) => TextEdit::new(r, escape(value)),
+                        // `<x/>`: written anew.
+                        None => TextEdit::new(f.full, format!("<{q}>{}</{q}>", escape(value), q = f.qname)),
+                    },
+                    (AttrKind::Association, Some((_, r))) => TextEdit::new(*r, reference(value)),
+                    (AttrKind::Enum, Some((_, r))) => {
+                        let start = file.lines.offset(file.text, r.start);
+                        let end = file.lines.offset(file.text, r.end);
+                        let written = &file.text[start..end];
+                        // Its namespace as written, else the attribute's.
+                        let ns = written.rsplit_once('#').map_or(attr.value_ns.to_string(), |(ns, _)| format!("{ns}#"));
+                        TextEdit::new(*r, format!("{ns}{}", enum_value(attr.range, value)))
+                    }
+                    _ => return Err(format!("{key} is written in {} as it cannot be set", file.name)),
+                };
+                edits.push(edit);
+            }
+        }
+        if !edits.is_empty() {
+            changes.push((file.name, edits));
+        }
+    }
+    if changes.is_empty() {
+        let added = addition(files, prefer, id, key, Some(value)).ok_or_else(|| format!("no file of the set takes {key} for `{id}`"))?;
+        let name = files.iter().find(|f| f.name == added.file).map(|f| f.name).expect("one of the files");
+        changes.push((name, vec![added.edit]));
+    }
+    Ok(changes)
+}
+
+/// Remove field `key` from object `id` in every file writing it, its lines with it.
+pub fn remove_field<'a>(files: &[File<'a>], id: &str, key: &str) -> Edits<'a> {
+    let mut changes = Vec::new();
+    for file in files {
+        let edits: Vec<TextEdit> = file
+            .index
+            .elements
+            .iter()
+            .filter(|e| e.mrid == id)
+            .flat_map(|e| e.fields.iter().filter(|f| f.key() == key))
+            .map(|f| TextEdit::new(file.lines_of(f.full), String::new()))
+            .collect();
+        if !edits.is_empty() {
+            changes.push((file.name, edits));
+        }
+    }
+    changes
 }
 
 /// An object a reference can name.
@@ -711,6 +807,28 @@ mod tests {
         // Written already, or not the class's.
         assert!(added("_b1", "Switch.open").is_none());
         assert!(added("_b1", "ACLineSegment.r").is_none());
+    }
+
+    #[test]
+    fn sets_and_removes_a_field_wherever_it_is_written() {
+        with_files(|files| {
+            // A literal, escaped; written in the SSH file.
+            let set = set_field(files, "EQ.xml", "_b1", "Switch.open", "true").unwrap();
+            assert_eq!(apply(SSH, of(&set, "SSH.xml")), SSH.replace(">false<", ">true<"));
+            let named = set_field(files, "EQ.xml", "_b1", "IdentifiedObject.name", "B & 1").unwrap();
+            assert!(apply(EQ, of(&named, "EQ.xml")).contains("<cim:IdentifiedObject.name>B &amp; 1</cim:IdentifiedObject.name>"));
+            // A reference, to an mRID.
+            let to = set_field(files, "EQ.xml", "_t1", "Terminal.ConductingEquipment", "_b2").unwrap();
+            assert!(apply(EQ, of(&to, "EQ.xml")).contains(r##"<cim:Terminal.ConductingEquipment rdf:resource="#_b2" />"##));
+            // Written nowhere: added, with the value given.
+            let added = set_field(files, "EQ.xml", "_t1", "Terminal.phases", "ABC").unwrap();
+            assert!(apply(EQ, of(&added, "EQ.xml")).contains(r#"<cim:Terminal.phases rdf:resource="http://iec.ch/TC57/CIM100#PhaseCode.ABC" />"#));
+            assert!(set_field(files, "EQ.xml", "_b1", "ACLineSegment.r", "1").is_err());
+
+            let removed = remove_field(files, "_t1", "Terminal.ConductingEquipment");
+            let eq = apply(EQ, of(&removed, "EQ.xml"));
+            assert!(!eq.contains("ConductingEquipment") && eq.contains("<cim:Terminal rdf:ID=\"_t1\">\n    <cim:IdentifiedObject.name>T1"), "{eq}");
+        });
     }
 
     #[test]
