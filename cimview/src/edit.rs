@@ -443,16 +443,19 @@ pub struct Copied<'a> {
 }
 
 /// Copy objects `ids` with new mRIDs (`_` and a UUID from `random`): every element writing each
-/// of them, in every file, its `rdf:ID` or `rdf:about`, its `IdentifiedObject.mRID`, and its
+/// of them, in every file or only in `from`, its `rdf:ID` or `rdf:about`, its mRID field, and its
 /// references to the objects copied, rewritten to the copies; references to anything else stay.
 /// Each copy goes after its original, or with `into`, at the end of that file, which must bind
-/// the prefixes the copies use as their files do.
+/// the prefixes the copies use as their files do. `from` matters where two files define the same
+/// objects (a proposal and what was agreed of it): their copies would be one object written twice.
 pub fn copy<'a>(
     files: &[File<'a>],
     ids: &[&str],
+    from: Option<&str>,
     into: Option<&str>,
     random: &mut dyn FnMut() -> [u8; 16],
 ) -> Result<Copied<'a>, String> {
+    let sources = |f: &&File| from.is_none_or(|n| f.name == n);
     let target = match into {
         Some(name) => Some(files.iter().find(|f| f.name == name).ok_or_else(|| format!("no file {name}"))?),
         None => None,
@@ -460,8 +463,8 @@ pub fn copy<'a>(
     let mut taken = HashSet::new();
     let mut renamed: Vec<(String, String)> = Vec::new();
     for id in ids {
-        if !files.iter().any(|f| f.index.elements.iter().any(|e| e.mrid == *id)) {
-            return Err(format!("no file writes `{id}`"));
+        if !files.iter().filter(sources).any(|f| f.index.elements.iter().any(|e| e.mrid == *id)) {
+            return Err(format!("no file {}writes `{id}`", from.map_or(String::new(), |n| format!("but {n} "))));
         }
         let new = fresh(files, &taken, random);
         taken.insert(new.clone());
@@ -470,7 +473,7 @@ pub fn copy<'a>(
     let to: HashMap<&str, &str> = renamed.iter().map(|(o, n)| (o.as_str(), n.as_str())).collect();
     let mut changes: Edits<'a> = Vec::new();
     let mut moved: Vec<String> = Vec::new();
-    for file in files {
+    for file in files.iter().filter(sources) {
         let text = file.text;
         let mut edits = Vec::new();
         for el in file.index.elements.iter().filter(|e| to.contains_key(e.mrid.as_str())) {
@@ -1032,7 +1035,7 @@ mod tests {
     fn copies_objects_with_new_mrids_and_their_references_among_them() {
         with_files(|files| {
             let mut random = counting();
-            let copied = copy(files, &["_b1", "_t1"], None, &mut random).unwrap();
+            let copied = copy(files, &["_b1", "_t1"], None, None, &mut random).unwrap();
             let (b2, t2) = (format!("_{}", uuid([1; 16])), format!("_{}", uuid([2; 16])));
             assert_eq!(copied.ids, [("_b1".to_string(), b2.clone()), ("_t1".to_string(), t2.clone())]);
             let eq = apply(EQ, of(&copied.edits, "EQ.xml"));
@@ -1044,13 +1047,16 @@ mod tests {
             let ssh = apply(SSH, of(&copied.edits, "SSH.xml"));
             assert!(ssh.contains(&format!(r##"<cim:Breaker rdf:about="#{b2}">"##)), "{ssh}");
             // Only the terminal: its reference to the breaker stays.
-            let alone = copy(files, &["_t1"], None, &mut random).unwrap();
+            let alone = copy(files, &["_t1"], None, None, &mut random).unwrap();
             assert_eq!(apply(EQ, of(&alone.edits, "EQ.xml")).matches(r##"rdf:resource="#_b1""##).count(), 2);
-            // Into another file.
-            let moved = copy(files, &["_t1"], Some("SSH.xml"), &mut random).unwrap();
+            // From one file, into another: the breaker's SSH part is not copied.
+            let only = copy(files, &["_b1"], Some("EQ.xml"), None, &mut random).unwrap();
+            assert_eq!(only.edits.len(), 1, "EQ only");
+            let moved = copy(files, &["_t1"], None, Some("SSH.xml"), &mut random).unwrap();
             let ssh = apply(SSH, of(&moved.edits, "SSH.xml"));
             assert!(ssh.contains(&format!(r#"<cim:Terminal rdf:ID="{}">"#, moved.ids[0].1)) && ssh.ends_with("</rdf:RDF>"), "{ssh}");
-            assert!(copy(files, &["_nothing"], None, &mut random).is_err());
+            assert!(copy(files, &["_nothing"], None, None, &mut random).is_err());
+            assert!(copy(files, &["_t1"], Some("SSH.xml"), None, &mut random).is_err());
         });
     }
 
