@@ -73,7 +73,8 @@ pub fn prepare_rename(files: &[File], name: &str, pos: Position) -> Option<(Rang
 
 /// Rename mRID `old` to `new` in every file: each element's `rdf:ID` or
 /// `rdf:about`, each `rdf:resource` to it, and an `IdentifiedObject.mRID`
-/// that writes it (without its leading `_`, as CGMES 3 does, if so).
+/// (or a class's own `….mRID`) that writes it (without its leading `_`, as
+/// CGMES 3 does, if so).
 pub fn rename<'a>(files: &[File<'a>], old: &str, new: &str) -> Result<Edits<'a>, String> {
     let new = new.trim();
     if new.is_empty() || new.contains(|c: char| c.is_whitespace() || "\"'<>&#".contains(c)) {
@@ -95,7 +96,7 @@ pub fn rename<'a>(files: &[File<'a>], old: &str, new: &str) -> Result<Edits<'a>,
                 && let Some(id) = el.id_range
             {
                 edits.push(TextEdit::new(file.suffix(id, old.len()), new.into()));
-                for f in el.fields.iter().filter(|f| f.key() == "IdentifiedObject.mRID") {
+                for f in el.fields.iter().filter(|f| f.key().ends_with(".mRID")) {
                     let Some((text, r)) = file.field_text(f.head, f.full, &f.qname) else { continue };
                     let bare = |s: &str| s.strip_prefix('_').unwrap_or(s).to_string();
                     if text.trim() == old {
@@ -396,7 +397,7 @@ fn fresh(files: &[File], taken: &HashSet<String>, random: &mut dyn FnMut() -> [u
 }
 
 /// A new object of `class`, with `values` (field, value as [`set_field`] takes it) and its
-/// `IdentifiedObject.mRID` where the class has one, written at the end of the file `into`, with an
+/// mRID as text where the class has a field for it (`IdentifiedObject.mRID`, or its own), written at the end of the file `into`, with an
 /// `rdf:ID` whose UUID is drawn from `random`. For objects in no container, which [`add`] cannot
 /// place: a response, a dependency.
 pub fn create<'a>(
@@ -419,8 +420,10 @@ pub fn create<'a>(
     let prefix = file.index.prefix_of(found.ns).ok_or("no prefix")?;
     let id = fresh(files, &HashSet::new(), random);
     let mut lines = vec![format!("<{prefix}:{} rdf:ID=\"{id}\">", found.local)];
-    if reg.attr(found, "IdentifiedObject.mRID").is_some() && !values.iter().any(|(k, _)| *k == "IdentifiedObject.mRID") {
-        lines.push(format!("  {}", field_element(file, found, "IdentifiedObject.mRID", &id[1..])?));
+    // Its mRID as text: `IdentifiedObject.mRID`, or a class's own (`…Response.mRID`).
+    let mrid_key = reg.attrs(found).map(|a| a.id).find(|k| k.ends_with(".mRID"));
+    if let Some(key) = mrid_key.filter(|k| !values.iter().any(|(v, _)| v == k)) {
+        lines.push(format!("  {}", field_element(file, found, key, &id[1..])?));
     }
     for (key, value) in values {
         lines.push(format!("  {}", field_element(file, found, key, value)?));
@@ -501,7 +504,7 @@ pub fn copy<'a>(
                 {
                     swaps.push(suffix(*r, target_id, n));
                 }
-                if f.key() == "IdentifiedObject.mRID"
+                if f.key().ends_with(".mRID")
                     && let Some((value, r)) = file.field_text(f.head, f.full, &f.qname)
                 {
                     let bare = |s: &str| s.strip_prefix('_').unwrap_or(s).to_string();
