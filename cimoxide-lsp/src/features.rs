@@ -11,7 +11,7 @@ use lsp_types::{
     InsertTextFormat, Location, MarkupContent, MarkupKind, Position, Range, SymbolKind, TextEdit, Url,
 };
 
-use crate::index::{contains, local, prefix, Element, Field, IdKind, Index, LineIndex};
+use crate::index::{contains, local, lsp, lsp_pos, ours, Element, Field, IdKind, Index, LineIndex};
 use crate::validate::ModelSet;
 
 /// An open document, indexed.
@@ -27,12 +27,7 @@ pub struct View<'a> {
 /// The class an element's tag names: by the namespace its prefix is bound
 /// to, else by bare name — as the decoder resolves it.
 pub fn class_of(index: &Index, qname: &str) -> Option<&'static ClassDef> {
-    let reg = type_registry();
-    index
-        .namespace(prefix(qname))
-        .and_then(|ns| reg.ns_table(ns))
-        .and_then(|t| t.get(local(qname)).copied())
-        .or_else(|| reg.bare().get(local(qname)).copied())
+    index.class_of(qname)
 }
 
 /// What the cursor is on.
@@ -45,6 +40,7 @@ enum Target<'a> {
 }
 
 fn target_at(index: &Index, pos: Position) -> Option<Target<'_>> {
+    let pos = ours(pos);
     let el = index.element_at(pos)?;
     if el.id_range.is_some_and(|r| contains(r, pos)) {
         return Some(Target::Element { el, id: true });
@@ -54,18 +50,18 @@ fn target_at(index: &Index, pos: Position) -> Option<Target<'_>> {
     }
     let f = el.fields.iter().find(|f| contains(f.full, pos))?;
     if let Some((mrid, range)) = f.resource.as_ref().filter(|(_, r)| contains(*r, pos)) {
-        return Some(Target::Resource { el, key: f.key(), mrid, range: *range });
+        return Some(Target::Resource { el, key: f.key(), mrid, range: lsp(*range) });
     }
-    contains(f.head, pos).then(|| Target::Field { el, key: f.key(), head: f.head })
+    contains(f.head, pos).then(|| Target::Field { el, key: f.key(), head: lsp(f.head) })
 }
 
 pub fn hover(view: &View, pos: Position) -> Option<Hover> {
     let (text, range) = match target_at(view.index, pos)? {
         Target::Element { el, id } => {
             if id && el.id_kind == Some(IdKind::About) {
-                (object_summary(view, &el.mrid)?, el.id_range)
+                (object_summary(view, &el.mrid)?, el.id_range.map(lsp))
             } else {
-                (class_summary(class_of(view.index, &el.qname)?), Some(el.head))
+                (class_summary(class_of(view.index, &el.qname)?), Some(lsp(el.head)))
             }
         }
         Target::Field { el, key, head } => {
@@ -186,8 +182,8 @@ fn mrid_at<'a>(view: &View<'a>, pos: Position) -> Option<&'a str> {
 pub fn definition(view: &View, pos: Position) -> Option<Location> {
     let mrid = mrid_at(view, pos)?;
     Some(match definition_of(view, mrid)? {
-        Def::Here(el) => Location::new(view.url.clone(), el.id_range.unwrap_or(el.head)),
-        Def::Set(f, el) => Location::new(f.url.clone(), el.id_range.unwrap_or(el.head)),
+        Def::Here(el) => Location::new(view.url.clone(), lsp(el.id_range.unwrap_or(el.head))),
+        Def::Set(f, el) => Location::new(f.url.clone(), lsp(el.id_range.unwrap_or(el.head))),
     })
 }
 
@@ -200,13 +196,13 @@ pub fn references(view: &View, pos: Position, declaration: bool) -> Vec<Location
     let mut scan = |url: &Url, index: &Index| {
         for el in &index.elements {
             if declaration && el.mrid == mrid {
-                out.push(Location::new(url.clone(), el.id_range.unwrap_or(el.head)));
+                out.push(Location::new(url.clone(), lsp(el.id_range.unwrap_or(el.head))));
             }
             for f in &el.fields {
                 if let Some((m, r)) = &f.resource
                     && m == mrid
                 {
-                    out.push(Location::new(url.clone(), *r));
+                    out.push(Location::new(url.clone(), lsp(*r)));
                 }
             }
         }
@@ -241,8 +237,8 @@ pub fn symbols(view: &View) -> Vec<DocumentSymbol> {
                     kind: if f.resource.is_some() { SymbolKind::FIELD } else { SymbolKind::PROPERTY },
                     tags: None,
                     deprecated: None,
-                    range: f.full,
-                    selection_range: f.head,
+                    range: lsp(f.full),
+                    selection_range: lsp(f.head),
                     children: None,
                 })
                 .collect();
@@ -255,8 +251,8 @@ pub fn symbols(view: &View) -> Vec<DocumentSymbol> {
                 kind: SymbolKind::OBJECT,
                 tags: None,
                 deprecated: None,
-                range: el.full,
-                selection_range: el.id_range.unwrap_or(el.head),
+                range: lsp(el.full),
+                selection_range: lsp(el.id_range.unwrap_or(el.head)),
                 children: Some(children),
             }
         })
@@ -268,21 +264,22 @@ pub fn symbols(view: &View) -> Vec<DocumentSymbol> {
 /// `rdf:resource` value, what it can name ([`resource_completion`]).
 /// Between objects: the concrete classes of the document's family.
 pub fn completion(view: &View, pos: Position) -> Vec<CompletionItem> {
-    if let Some(el) = view.index.element_at(pos)
-        && let Some(f) = el.fields.iter().find(|f| f.resource.as_ref().is_some_and(|(_, r)| contains(*r, pos)))
+    let at = ours(pos);
+    if let Some(el) = view.index.element_at(at)
+        && let Some(f) = el.fields.iter().find(|f| f.resource.as_ref().is_some_and(|(_, r)| contains(*r, at)))
     {
         return resource_completion(view, el, f);
     }
-    let offset = view.lines.offset(view.text, pos);
+    let offset = view.lines.offset(view.text, at);
     let line_start = view.text[..offset].rfind('\n').map_or(0, |i| i + 1);
     let typed = &view.text[line_start..offset];
     // Replace from an opening `<` the user has typed, if any.
     let lt = typed.rfind('<').filter(|i| !typed[*i..].contains(['>', ' ', '"']));
-    let replace = Range::new(lt.map_or(pos, |i| view.lines.position(view.text, line_start + i)), pos);
+    let replace = Range::new(lt.map_or(pos, |i| lsp_pos(view.lines.position(view.text, line_start + i))), pos);
     let reg = type_registry();
 
-    if let Some(el) = view.index.element_at(pos) {
-        if contains(el.head, pos) || el.fields.iter().any(|f| contains(f.full, pos) && f.full.end != pos) {
+    if let Some(el) = view.index.element_at(at) {
+        if contains(el.head, at) || el.fields.iter().any(|f| contains(f.full, at) && f.full.end != at) {
             return Vec::new();
         }
         let Some(class) = class_of(view.index, &el.qname) else { return Vec::new() };
@@ -331,7 +328,7 @@ fn resource_completion(view: &View, el: &Element, f: &Field) -> Vec<CompletionIt
         kind: Some(kind),
         filter_text: Some(filter),
         sort_text: Some(format!("{rank:05}")),
-        text_edit: Some(CompletionTextEdit::Edit(TextEdit::new(*range, insert))),
+        text_edit: Some(CompletionTextEdit::Edit(TextEdit::new(lsp(*range), insert))),
         ..Default::default()
     };
     match attr.kind {

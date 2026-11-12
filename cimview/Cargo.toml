@@ -1,6 +1,6 @@
 [package]
 name = "cimoxide-view"
-description = "A CGMES or NC model set as views: its grid at substation level, laid out, and its objects as a tree, with validation findings on each"
+description = "A CGMES or NC model set as views: its grid at substation level, laid out, and its objects as a tree, with validation findings on each; and its files as text: where each object is written, and edits across them"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -16,4 +16,6 @@ name = "cimview"
 [dependencies]
 cimoxide-model = { workspace = true }
 cimoxide-validation = { workspace = true }
+quick-xml = "0.37"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
