@@ -16,6 +16,7 @@ pub mod edit;
 pub mod grid;
 pub mod index;
 pub mod layout;
+pub mod single_line;
 pub mod text;
 pub mod tree;
 

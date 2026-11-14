@@ -50,6 +50,10 @@ interface Layout {
   nodes: Record<string, [number, number]>;
   /** Edge id → its route, from its source's end to its target's. */
   edges: Record<string, [number, number][]>;
+  /** Node id → its width and height, where the layout sizes it (a busbar across its bays). */
+  sizes?: Record<string, [number, number]>;
+  /** Pixels per unit, for positions drawn as they are; else they are scaled to the scene's size. */
+  unit?: number | null;
 }
 
 interface Grid {
@@ -91,6 +95,8 @@ interface Inside {
   items: Item[];
   links: { id: string; source: string; target: string; connected: boolean | null }[];
   layouts: Layout[];
+  /** The automatic layout, a single-line diagram, computed by the server. */
+  auto: Layout | null;
 }
 
 type Point = { x: number; y: number };
@@ -310,6 +316,13 @@ function stylesheet(): cytoscape.StylesheetJson {
       },
     },
     { selector: 'node[symbol ^= "transformer"]', style: { width: 18, height: 18 } },
+    // Drawn as a single-line diagram: labels beside the bays' columns, a busbar's above it.
+    {
+      selector: 'node.drawn[kind = "symbol"], node.drawn[kind = "junction"]',
+      style: { "text-halign": "right", "text-valign": "center", "text-margin-x": 3, "text-margin-y": 0 },
+    },
+    { selector: 'node.drawn[kind = "busbar"]', style: { "text-valign": "top", "text-margin-y": -2 } },
+    { selector: "node.onbar", style: { "text-opacity": 0 } },
     ...bySeverity("border-color").map((s) => ({ ...s, selector: `node[kind != "group"]${s.selector}` })),
     // And a halo, which reads apart from a voltage colour of the same hue.
     ...bySeverity("underlay-color").filter((s) => !s.selector.includes('"none"')).map((s) => ({
@@ -504,9 +517,10 @@ function scene(): { layouts: Layout[]; auto?: Layout; ids: string[]; pairs: [str
   if (inside) {
     return {
       layouts: inside.layouts,
+      auto: inside.auto ?? undefined,
       ids: inside.items.map((it) => it.id),
       pairs: inside.links.map((l): [string, string] => [l.source, l.target]),
-      routed: [],
+      routed: inside.links.map((l) => ({ id: `t:${l.id}`, key: l.id })),
     };
   }
   const g = grid as Grid;
@@ -542,7 +556,7 @@ function place(ids: string[], pairs: [string, string][], l: Layout): { nodes: Ma
   const minX = Math.min(...points.map((p) => p.x));
   const minY = Math.min(...points.map((p) => p.y));
   const span = Math.max(Math.max(...points.map((p) => p.x)) - minX, Math.max(...points.map((p) => p.y)) - minY, 1e-9);
-  const scale = Math.max(900, 70 * Math.sqrt(ids.length)) / span;
+  const scale = l.unit ?? Math.max(900, 70 * Math.sqrt(ids.length)) / span;
   const screen = (p: [number, number]): Point => {
     const q = project(p);
     return { x: (q.x - minX) * scale, y: (q.y - minY) * scale };
@@ -575,24 +589,37 @@ function place(ids: string[], pairs: [string, string][], l: Layout): { nodes: Ma
   return { nodes, routes };
 }
 
-/** Bend an edge along its route: Cytoscape's segment points, relative to the line between its nodes. */
-function route(edge: EdgeSingular, points: Point[]): void {
+/**
+ * Bend an edge along its route: Cytoscape's segment points, relative to the line between its nodes.
+ * With `ends`, the edge also starts and ends where the route does (on a busbar, say), not at its
+ * nodes' centres.
+ */
+function route(edge: EdgeSingular, points: Point[], ends = false): void {
   const s = edge.source().position();
   const t = edge.target().position();
   const dx = t.x - s.x;
   const dy = t.y - s.y;
   const length = Math.hypot(dx, dy);
   const d = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
-  if (points.length < 3 || length < 1e-6) {
-    edge.removeStyle();
-    return;
-  }
+  edge.removeStyle();
+  if (points.length < 2) return;
   // The route may run from the target's end.
   const ordered = d(points[0], t) < d(points[0], s) ? [...points].reverse() : points;
+  const style: Record<string, string> = {};
+  if (ends) {
+    const [first, last] = [ordered[0], ordered[ordered.length - 1]];
+    if (d(first, s) > 0.5) style["source-endpoint"] = `${first.x - s.x}px ${first.y - s.y}px`;
+    if (d(last, t) > 0.5) style["target-endpoint"] = `${last.x - t.x}px ${last.y - t.y}px`;
+  }
   const inner = ordered.slice(1, -1);
+  if (!inner.length || length < 1e-6) {
+    if (Object.keys(style).length) edge.style({ ...style, "curve-style": "straight" });
+    return;
+  }
   const weights = inner.map((p) => ((p.x - s.x) * dx + (p.y - s.y) * dy) / (length * length));
   const distances = inner.map((p) => ((p.y - s.y) * dx - (p.x - s.x) * dy) / length);
   edge.style({
+    ...style,
     "curve-style": "segments",
     "edge-distances": "node-position",
     "segment-weights": weights.join(" "),
@@ -604,9 +631,11 @@ function arrange(): void {
   if (!cy) return;
   const { layouts, auto, ids, pairs, routed } = scene();
   const picked = choice(layouts);
-  // Automatic: the server's layout for the grid; Cytoscape's inside a substation (it boxes the voltage levels).
+  // Automatic: the server's layout, for the grid and inside a substation (a single-line diagram);
+  // Cytoscape's where it has none.
   const layout = layouts.find((l) => l.id === picked) ?? (picked === "auto" ? auto : undefined);
-  cy.edges().removeStyle();
+  cy.elements().removeStyle();
+  cy.nodes().removeClass("drawn onbar");
   if (!layout) {
     // `cose` is quadratic per iteration: past a few hundred nodes, a plain grid rather than a hang.
     cy.layout(ids.length > 1000 ? { name: "grid", animate: false } : {
@@ -617,12 +646,24 @@ function arrange(): void {
   }
   const { nodes, routes } = place(ids, pairs, layout);
   cy.layout({ name: "preset", positions: Object.fromEntries(nodes), fit: true, padding: 30 }).run();
+  // Drawn as laid out: busbars as long as the layout makes them, labels beside the bays' columns.
+  const drawn = !!layout.unit;
+  if (drawn) {
+    cy.nodes().addClass("drawn");
+    for (const [id, [width, height]] of Object.entries(layout.sizes ?? {})) {
+      const bar = cy.getElementById(id);
+      bar.style({ shape: "rectangle", width, height });
+      // A busbar section's node is the bar drawn: its own name would only cross the next one.
+      if (bar.data("kind") === "busbar") bar.connectedEdges().connectedNodes('[kind = "junction"]').addClass("onbar");
+    }
+  }
   for (const e of routed) {
     const points = routes.get(e.key);
     if (points) {
-      route(cy.getElementById(e.id) as EdgeSingular, points);
+      route(cy.getElementById(e.id) as EdgeSingular, points, drawn);
     }
   }
+  if (drawn) cy.fit(undefined, 30);
 }
 
 /** The layout picker: shown when the scene has a diagram or locations. */
