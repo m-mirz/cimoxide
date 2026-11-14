@@ -365,8 +365,8 @@ For an intentional generator or schema change:
 
 Version, license and internal dependency versions live once in the root `Cargo.toml`
 (`[workspace.package]`, `[workspace.dependencies]`). Pushing a `v*` tag runs `release.yml`
-(cimcli, cimlsp and cimmcp binaries), `pypi.yml` (the `cimoxide` bindings, and the
-`cimoxide-mcp` wheels: `cimmcp` as a maturin `bindings = "bin"` wheel per platform, for
+(cimcli binaries; cimlsp ships in the VS Code extension, cimmcp there and through PyPI and crates.io), `pypi.yml` (the `cimoxide` bindings, and the
+`cimoxide-mcp` wheel: `cimmcp` as a maturin `bindings = "bin"` wheel for Linux x86_64 only, for
 `uvx --from cimoxide-mcp cimmcp`; its version comes from the workspace) and `crates-io.yml` (needs `CARGO_REGISTRY_TOKEN` in the
 `crates-release` environment; runs `make generate`, hence `--allow-dirty`; dry-runnable via
 `workflow_dispatch`). Publishing goes through `scripts/publish-workspace.sh`, which skips

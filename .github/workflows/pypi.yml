@@ -134,16 +134,11 @@ jobs:
 
   # cimoxide-mcp: the `cimmcp` binary as a wheel (maturin `bindings = "bin"`), so MCP
   # clients can start it with `uvx --from cimoxide-mcp cimmcp`. Wheels only — an sdist
-  # would need the generated tables — for the platforms the other packages ship.
+  # would need the generated tables — and for Linux x86_64 only, to keep the release
+  # short: Windows and macOS get `cimmcp` from crates.io and the VS Code extension.
   mcp:
-    name: cimoxide-mcp ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - { name: linux-x86_64, os: ubuntu-latest, target: x86_64 }
-          - { name: windows-x64, os: windows-latest, target: x64 }
-          - { name: macos-aarch64, os: macos-latest, target: aarch64 }
+    name: cimoxide-mcp linux-x86_64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -157,22 +152,22 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-mcp-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-mcp-${{ matrix.target }}-
+          key: ${{ runner.os }}-cargo-mcp-x86_64-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-mcp-x86_64-
 
       - name: Generate cimmodel and cimvalidation
         run: make generate
 
       - uses: PyO3/maturin-action@v1
         with:
-          target: ${{ matrix.target }}
+          target: x86_64
           working-directory: cimoxide-mcp
           args: --release --out ../dist
           manylinux: auto
 
       - uses: actions/upload-artifact@v4
         with:
-          name: wheels-mcp-${{ matrix.name }}
+          name: wheels-mcp-linux-x86_64
           path: dist
 
   publish:

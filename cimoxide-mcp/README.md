@@ -29,15 +29,16 @@ data). `--dir <path>` (else
 
 ## Install
 
-With [uv](https://docs.astral.sh/uv/), nothing needs installing first; clients start it as
+On Linux x86_64, with [uv](https://docs.astral.sh/uv/), nothing needs installing first;
+clients start it as
 
 ```
 uvx --from cimoxide-mcp cimmcp --dir /path/to/models
 ```
 
 or install it once with `uv tool install cimoxide-mcp` (or `pipx install cimoxide-mcp`) and
-run `cimmcp`. It is also on crates.io (`cargo install cimoxide-mcp`), as binaries on each
-[GitHub release](https://github.com/m-mirz/cimoxide/releases), and bundled in the
+run `cimmcp`. PyPI carries a wheel for Linux x86_64 only; elsewhere use one of the following. It
+is also on crates.io (`cargo install cimoxide-mcp`) and bundled in the
 [VS Code extension](https://marketplace.visualstudio.com/items?itemName=m-mirz.cimoxide).
 
 ## Configure a client
