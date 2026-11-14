@@ -99,7 +99,7 @@ codex mcp add cimoxide -- uvx --from cimoxide-mcp cimmcp --dir /path/to/models  
 
 Clients configured by an `mcpServers` JSON block (Claude Desktop, Cursor, Windsurf,
 Antigravity, …) take `"command": "uvx", "args": ["--from", "cimoxide-mcp", "cimmcp", "--dir",
-"/path/to/models"]`. `cargo install cimoxide-mcp` and the GitHub release binaries work too;
+"/path/to/models"]`. `cargo install cimoxide-mcp` and the VS Code extension's bundled binary work too;
 see [`cimoxide-mcp/README.md`](cimoxide-mcp/README.md).
 
 ## Repository layout
