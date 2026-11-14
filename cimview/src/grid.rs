@@ -169,6 +169,12 @@ pub struct Layout {
     pub nodes: BTreeMap<usize, (f64, f64)>,
     /// Edge index → its route, from its source's end to its target's.
     pub edges: BTreeMap<usize, Vec<(f64, f64)>>,
+    /// Node index → its width and height, where the layout sizes it (a
+    /// busbar, as long as the bays it joins).
+    pub sizes: BTreeMap<usize, (f64, f64)>,
+    /// Pixels per unit, where the positions are to be drawn as they are;
+    /// `None`, to be scaled to fit.
+    pub unit: Option<f64>,
 }
 
 /// Points gathered for a layout: a node's own, and those it takes from the
@@ -206,7 +212,7 @@ impl Gather {
         };
         let mut nodes: BTreeMap<usize, (f64, f64)> = self.ends.iter().map(|(&n, ps)| (n, mean(ps))).collect();
         nodes.extend(self.own.iter().map(|(&n, ps)| (n, mean(ps))));
-        (!nodes.is_empty()).then_some(Layout { id, name, kind, flip_y, nodes, edges: self.routes })
+        (!nodes.is_empty()).then_some(Layout { id, name, kind, flip_y, nodes, edges: self.routes, ..Default::default() })
     }
 }
 
@@ -307,7 +313,7 @@ fn layouts(m: &Model, grid: &Grid) -> (Vec<Layout>, Vec<(usize, Layout)>) {
             })
             .collect();
         let (flip_y, name) = diagram_flip(m, diagram);
-        inside.push((n, Layout { id: format!("dl:{diagram}"), name, kind: "diagram", flip_y, nodes, edges: BTreeMap::new() }));
+        inside.push((n, Layout { id: format!("dl:{diagram}"), name, kind: "diagram", flip_y, nodes, ..Default::default() }));
     }
 
     // GL: each Location's points, on the resources it locates, by coordinate system.
@@ -722,7 +728,7 @@ impl Grid {
                     .iter()
                     .map(|(&e, ps)| (self.edges[e].id.clone(), json!(ps.iter().map(|&(x, y)| [x, y]).collect::<Vec<_>>())))
                     .collect();
-                json!({ "id": l.id, "name": l.name, "kind": l.kind, "flipY": l.flip_y, "nodes": nodes, "edges": edges })
+                json!({ "id": l.id, "name": l.name, "kind": l.kind, "flipY": l.flip_y, "unit": l.unit, "nodes": nodes, "edges": edges })
         };
         json!({
             "files": set.files(),
@@ -765,9 +771,18 @@ impl Grid {
                 json!({ "id": l.id, "name": l.name, "kind": l.kind, "flipY": l.flip_y, "nodes": nodes, "edges": {} })
             })
             .collect();
+        // Laid out when asked for: a few substations are opened, of thousands.
+        let auto = crate::single_line::single_line(inside);
+        let id_of = |i: &usize| inside.items[*i].id.clone();
+        let auto = json!({
+            "id": auto.id, "name": auto.name, "kind": auto.kind, "flipY": auto.flip_y, "unit": auto.unit,
+            "nodes": auto.nodes.iter().map(|(i, &(x, y))| (id_of(i), json!([x, y]))).collect::<serde_json::Map<_, _>>(),
+            "edges": auto.edges.iter().map(|(&k, ps)| (inside.links[k].id.clone(), json!(ps.iter().map(|&(x, y)| [x, y]).collect::<Vec<_>>()))).collect::<serde_json::Map<_, _>>(),
+            "sizes": auto.sizes.iter().map(|(i, &(w, h))| (id_of(i), json!([w, h]))).collect::<serde_json::Map<_, _>>(),
+        });
         Some(json!({
             "id": node.id, "label": node.label, "region": node.region, "kV": node.kv, "findings": inside.findings.json(),
-            "location": location(&node.id), "groups": groups, "items": items, "links": links, "layouts": layouts,
+            "location": location(&node.id), "groups": groups, "items": items, "links": links, "layouts": layouts, "auto": auto,
         }))
     }
 }
@@ -906,6 +921,11 @@ mod tests {
 
         let json = g.inside_json(&set, &g.nodes[index("Anvers")].id).unwrap();
         assert_eq!(json["items"].as_array().unwrap().len(), 20);
+        // Its single-line diagram places every item, routes every link and sizes the busbars.
+        assert_eq!(json["auto"]["nodes"].as_object().unwrap().len(), 20);
+        assert_eq!(json["auto"]["edges"].as_object().unwrap().len(), 19);
+        assert_eq!(json["auto"]["sizes"].as_object().unwrap().len(), 3);
+        assert_eq!(json["auto"]["unit"], 1.0);
         assert!(json["items"][0]["location"]["uri"].as_str().unwrap().ends_with("_BE_EQ_1.xml"));
         assert!(g.inside_json(&set, "no such substation").is_none());
     }
