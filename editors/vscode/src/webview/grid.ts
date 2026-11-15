@@ -136,6 +136,15 @@ style.textContent = `
   #info button { margin: 10px 6px 0 0; color: var(--vscode-button-foreground); background: var(--vscode-button-background);
                  border: none; padding: 4px 10px; cursor: pointer; }
   #info button:hover { background: var(--vscode-button-hoverBackground); }
+  #edit, #palette { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  #palette { padding: 4px 10px; border-bottom: 1px solid var(--vscode-panel-border); overflow-x: auto; flex-wrap: nowrap; }
+  #edit button, #palette button { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground);
+          border: none; padding: 3px 10px; cursor: pointer; flex: none; }
+  #edit button:hover, #palette button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+  #palette button[aria-pressed="true"] { outline: 1px solid var(--vscode-focusBorder); }
+  #palette select { color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); flex: none; }
+  #edit .hint { color: var(--vscode-descriptionForeground); }
+  #edit .failed { color: var(--vscode-errorForeground); }
   .violation { color: var(--vscode-errorForeground); }
   .warning { color: var(--vscode-editorWarning-foreground); }
   .info { color: var(--vscode-editorInfo-foreground); }
@@ -507,6 +516,7 @@ function enter(id: string): void {
 
 function leave(): void {
   if (!inside) return;
+  stopEditing(false);
   vscode.postMessage({ type: "leave" });
   inside = undefined;
   if (grid) draw();
@@ -543,7 +553,11 @@ function choice(layouts: Layout[]): string {
 }
 
 /** Screen coordinates of a layout's positions and routes, scaled to the scene's size. */
-function place(ids: string[], pairs: [string, string][], l: Layout): { nodes: Map<string, Point>; routes: Map<string, Point[]>; scale: number } {
+function place(
+  ids: string[],
+  pairs: [string, string][],
+  l: Layout,
+): { nodes: Map<string, Point>; routes: Map<string, Point[]>; scale: number; back: (p: Point) => [number, number] } {
   const raw = Object.values(l.nodes);
   let project = (p: [number, number]): Point => ({ x: p[0], y: l.flipY ? -p[1] : p[1] });
   if (l.kind === "geographic") {
@@ -586,7 +600,11 @@ function place(ids: string[], pairs: [string, string][], l: Layout): { nodes: Ma
   }
   const bottom = Math.max(0, ...[...nodes.values()].map((p) => p.y)) + 80;
   missing.forEach((id, i) => nodes.set(id, { x: (i % 20) * 50, y: bottom + Math.floor(i / 20) * 50 }));
-  return { nodes, routes, scale };
+  const back = (p: Point): [number, number] => {
+    const y = p.y / scale + minY;
+    return [p.x / scale + minX, l.flipY ? -y : y];
+  };
+  return { nodes, routes, scale, back };
 }
 
 /**
@@ -641,34 +659,53 @@ function arrange(): void {
     }).run();
     return;
   }
-  const { nodes, routes, scale } = place(ids, pairs, layout);
+  const { nodes, routes, scale, back } = place(ids, pairs, layout);
   cy.layout({ name: "preset", positions: Object.fromEntries(nodes), fit: true, padding: 30 }).run();
+  const pair = (p: Point): [number, number] => [p.x, p.y];
+  const screen: Layout = {
+    ...layout,
+    flipY: false,
+    nodes: Object.fromEntries([...nodes].map(([id, p]) => [id, pair(p)])),
+    edges: Object.fromEntries([...routes].map(([id, ps]) => [id, ps.map(pair)])),
+    sizes: Object.fromEntries(Object.entries(layout.sizes ?? {}).map(([id, [w, h]]) => [id, [w * scale, h * scale]])),
+  };
+  current = inside && layout.kind === "diagram" ? { screen, from: layout, back, scale } : undefined;
   // Drawn as laid out: busbars as long as the layout makes them, labels beside the bays' columns.
-  const drawn = !!layout.unit;
-  // The busbars, and the nodes they are drawn for: where routes end on a bar.
-  const bars = new Set<string>();
-  if (drawn) {
-    cy.nodes().addClass("drawn");
-    for (const [id, [width, height]] of Object.entries(layout.sizes ?? {})) {
-      const bar = cy.getElementById(id);
-      bar.style({ shape: "rectangle", width: width * scale, height: height * scale });
-      bars.add(id);
-      // A busbar section's node is the bar drawn: its own name would only cross the next one.
-      if (bar.data("kind") === "busbar") {
-        bar.connectedEdges().connectedNodes('[kind = "junction"]').forEach((j) => {
-          j.addClass("onbar");
-          bars.add(j.id());
-        });
+  paint(screen, routed, !!layout.unit);
+  if (layout.unit) cy.fit(undefined, 30);
+}
+
+/**
+ * Draw `l` (on the screen): busbars as long as it makes them, routes as it runs them, and, drawn
+ * as laid out, labels beside the bays' columns. With `move`, its items moved to it too.
+ */
+function paint(l: Layout, routed: { id: string; key: string }[], drawn: boolean, move = false): void {
+  if (!cy) return;
+  const core = cy;
+  core.batch(() => {
+    if (move) for (const [id, [x, y]] of Object.entries(l.nodes)) core.getElementById(id).position({ x, y });
+    // The busbars, and the nodes they are drawn for: where routes end on a bar.
+    const bars = new Set<string>();
+    if (drawn) {
+      core.nodes().addClass("drawn");
+      for (const [id, [width, height]] of Object.entries(l.sizes ?? {})) {
+        const bar = core.getElementById(id);
+        bar.style({ shape: "rectangle", width, height });
+        bars.add(id);
+        // A busbar section's node is the bar drawn: its own name would only cross the next one.
+        if (bar.data("kind") === "busbar") {
+          bar.connectedEdges().connectedNodes('[kind = "junction"]').forEach((j) => {
+            j.addClass("onbar");
+            bars.add(j.id());
+          });
+        }
       }
     }
-  }
-  for (const e of routed) {
-    const points = routes.get(e.key);
-    if (points) {
-      route(cy.getElementById(e.id) as EdgeSingular, points, bars);
+    for (const e of routed) {
+      const points = l.edges[e.key];
+      if (points) route(core.getElementById(e.id) as EdgeSingular, points.map(([x, y]) => ({ x, y })), bars);
     }
-  }
-  if (drawn) cy.fit(undefined, 30);
+  });
 }
 
 /** The layout picker: shown when the scene has a diagram or locations. */
@@ -730,9 +767,39 @@ function draw(previous?: Shown): void {
     cy.getElementById(gridView.selected).select();
     gridView = undefined;
   }
-  cy.on("select", "node, edge", (e) => show(e.target));
-  cy.on("unselect", () => show(undefined));
-  cy.on("dbltap", "node, edge", (e) => open(e.target));
+  cy.on("select", "node, edge", (e) => {
+    const t = e.target as NodeSingular | EdgeSingular;
+    picked = !inside ? undefined : t.isEdge() ? { kind: "link", id: t.id().slice(2) } : t.data("kind") === "group" ? undefined : { kind: "item", id: t.id() };
+    show(t);
+    toolbar();
+  });
+  cy.on("unselect", () => {
+    queueMicrotask(() => {
+      if (cy?.$(":selected").empty()) {
+        picked = undefined;
+        show(undefined);
+        toolbar();
+      }
+    });
+  });
+  cy.on("dbltap", "node, edge", (e) => {
+    const it = editing ? inside?.items.find((x) => x.id === (e.target as NodeSingular).id()) : undefined;
+    // Editing, a switch double-clicked opens or closes.
+    if (it && it.open !== null && !it.junction) void topology({ op: "switch", id: it.id, open: !it.open });
+    else open(e.target);
+  });
+  cy.on("dragfree", "node", (e) => {
+    if (editing) released(e.target as NodeSingular);
+  });
+  cy.on("tap", (e) => {
+    if (editing && armed) {
+      const entry = armed;
+      armed = undefined;
+      toolbar();
+      drop(entry, e.position);
+    }
+  });
+  toolbar();
   const selected = cy.$(":selected").first();
   show(selected.nonempty() ? (selected as NodeSingular | EdgeSingular) : undefined);
 }
@@ -749,7 +816,15 @@ new MutationObserver(() => cy?.style(stylesheet())).observe(document.body, { att
 
 (document.getElementById("back") as HTMLButtonElement).addEventListener("click", leave);
 window.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && document.activeElement?.id !== "search") leave();
+  const typing = document.activeElement instanceof HTMLElement && document.activeElement.closest("input, select, textarea");
+  if (e.key === "Escape" && !typing) {
+    if (armed) {
+      armed = undefined;
+      toolbar();
+    } else if (editing) stopEditing(true);
+    else leave();
+  }
+  if (editing && !typing && (e.key === "Delete" || e.key === "Backspace")) deletePicked();
 });
 
 (document.getElementById("search") as HTMLInputElement).addEventListener("input", (e) => {
@@ -765,6 +840,13 @@ window.addEventListener("keydown", (e) => {
 });
 
 window.addEventListener("message", (e) => {
+  if (e.data?.type === "reply") {
+    const waiting = asked.get(e.data.n as number);
+    asked.delete(e.data.n as number);
+    if (e.data.error) waiting?.reject(new Error(String(e.data.error)));
+    else waiting?.resolve(e.data.value);
+    return;
+  }
   const previous = cy ? shown() : undefined;
   if (e.data?.type === "grid") {
     grid = e.data.grid as Grid;
@@ -773,9 +855,15 @@ window.addEventListener("message", (e) => {
   } else if (e.data?.type === "inside") {
     // `null`: the substation is gone from the set.
     inside = (e.data.inside as Inside | null) ?? undefined;
-    if (inside || grid) draw(previous);
+    if (!inside) stopEditing(false);
+    // After an edit here, drawn anew: on the diagram it saved, its moves gone.
+    const anew = redraw;
+    redraw = false;
+    changed = false;
+    if (inside || grid) draw(anew ? undefined : previous);
   } else if (e.data?.type === "leave" && inside) {
     inside = undefined;
+    stopEditing(false);
     if (grid) draw();
   } else if (e.data?.type === "select") {
     select(String(e.data.id));
@@ -791,4 +879,303 @@ function select(id: string): void {
   const near = el.isEdge() ? el.union(el.connectedNodes()) : (el as NodeSingular).closedNeighborhood();
   cy.animate({ fit: { eles: near, padding: 80 } }, { duration: 200 });
 }
+// Editing inside a substation: moving items (the routes follow, the layout saved as a DL
+// diagram) and its topology (switches, deleting, joining nodes, adding from the palette), each
+// asked of the language server through the extension, which applies the edit it answers.
+
+/** The layout shown inside a substation, on the screen; the one it came from; and the way back. */
+let current: { screen: Layout; from: Layout; back: (p: Point) => [number, number]; scale: number } | undefined;
+let editing = false;
+/** An item moved since editing began. */
+let changed = false;
+/** Draw anew with the next substation the extension sends. */
+let redraw = false;
+let busy = false;
+let palette: { classes: { group: string; class: string }[]; templates: { id: string; label: string }[] } | undefined;
+let armed: { class?: string; template?: string; label: string } | undefined;
+let picked: { kind: "item" | "link"; id: string } | undefined;
+let failed = "";
+
+/** Requests to the extension waiting for its reply, by number. */
+const asked = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+let asking = 0;
+
+/** Ask the language server `method` (one of the editing requests) with `params`, through the extension. */
+function ask<T>(method: string, params: Record<string, unknown>): Promise<T> {
+  const n = ++asking;
+  return new Promise<T>((resolve, reject) => {
+    asked.set(n, { resolve: resolve as (v: unknown) => void, reject });
+    vscode.postMessage({ type: "ask", n, method, params });
+  });
+}
+
+type TopologyOp =
+  | { op: "switch"; id: string; open: boolean }
+  | { op: "delete"; ids: string[] }
+  | { op: "merge"; from: string; into: string }
+  | { op: "disconnect"; terminal: string }
+  | { op: "add"; class: string; level: string }
+  | { op: "insert"; class: string; terminal: string }
+  | { op: "bay"; template: string; bus: string };
+
+const MIME = "application/x-cimoxide-add";
+const COMMON = ["BusbarSection", "Breaker", "Disconnector", "LoadBreakSwitch", "ConformLoad", "EnergyConsumer", "SynchronousMachine", "LinearShuntCompensator", "PowerTransformer"];
+
+const links = () => inside?.links.map((l) => ({ id: `t:${l.id}`, key: l.id })) ?? [];
+const itemOf = (id: string) => inside?.items.find((x) => x.id === id);
+const isBus = (n: NodeSingular) => n.data("kind") === "junction" || n.data("kind") === "busbar";
+
+function button(label: string, run: () => void, title = ""): HTMLButtonElement {
+  const b = document.createElement("button");
+  b.textContent = label;
+  b.title = title;
+  b.disabled = busy;
+  b.addEventListener("click", run);
+  return b;
+}
+
+/** The editing controls in the bar, and the palette, as things are now. */
+function toolbar(): void {
+  const bar = document.getElementById("edit") as HTMLElement;
+  const pal = document.getElementById("palette") as HTMLElement;
+  bar.replaceChildren();
+  pal.replaceChildren();
+  pal.style.display = "none";
+  if (!inside) return;
+  if (!editing) {
+    const edit = button("Edit", () => void startEditing(), "Move, wire, add and delete equipment");
+    edit.disabled = !current;
+    bar.append(edit);
+    return;
+  }
+  bar.append(button("Save as diagram", () => void saveDiagram()), button(changed ? "Discard" : "Done", () => stopEditing(true)));
+  const it = picked?.kind === "item" ? itemOf(picked.id) : undefined;
+  if (it && !it.junction && it.open !== null) bar.append(button(`${it.open ? "Close" : "Open"} ${it.label || "switch"}`, () => void topology({ op: "switch", id: it.id, open: !it.open })));
+  if (it && !it.junction) bar.append(button(`Delete ${it.label || it.class}`, deletePicked));
+  if (picked?.kind === "link") {
+    const terminal = picked.id;
+    bar.append(button("Disconnect", () => void topology({ op: "disconnect", terminal })));
+  }
+  const hint = document.createElement("span");
+  hint.className = failed ? "failed" : "hint";
+  hint.textContent = failed
+    ? `Not edited: ${failed}`
+    : armed
+      ? `Click where ${armed.label} goes: a voltage level, a wire for a switch, a busbar for a bay.`
+      : changed
+        ? "Save or discard the moves before changing the topology."
+        : "Drag to move; drop a node onto another to join them; add from below.";
+  bar.append(hint);
+  if (!palette) return;
+  pal.style.display = "";
+  const entries = [
+    ...COMMON.filter((c) => palette?.classes.some((x) => x.class === c)).map((c) => ({ label: c, add: { class: c } })),
+    ...palette.templates.map((t) => ({ label: t.label, add: { template: t.id } })),
+  ];
+  for (const entry of entries) {
+    const b = button(entry.label, () => {
+      armed = armed?.label === entry.label ? undefined : { ...entry.add, label: entry.label };
+      toolbar();
+    });
+    b.draggable = true;
+    b.disabled = busy || changed;
+    b.setAttribute("aria-pressed", String(armed?.label === entry.label));
+    b.addEventListener("dragstart", (e) => e.dataTransfer?.setData(MIME, JSON.stringify(entry.add)));
+    pal.append(b);
+  }
+  const more = document.createElement("select");
+  more.title = "More equipment";
+  more.disabled = busy || changed;
+  more.innerHTML = `<option value="">More…</option>` +
+    [...new Set(palette.classes.map((c) => c.group))]
+      .map((g) => `<optgroup label="${escape(g)}">${palette?.classes.filter((c) => c.group === g).map((c) => `<option>${escape(c.class)}</option>`).join("")}</optgroup>`)
+      .join("");
+  more.addEventListener("change", () => {
+    if (more.value) armed = { class: more.value, label: more.value };
+    toolbar();
+  });
+  pal.append(more);
+}
+
+async function startEditing(): Promise<void> {
+  editing = true;
+  failed = "";
+  toolbar();
+  const level = inside?.groups[0]?.id;
+  palette = level ? await ask<typeof palette>("cimoxide/palette", { level }).catch(() => undefined) : undefined;
+  toolbar();
+}
+
+function stopEditing(rearrange: boolean): void {
+  const moved = changed;
+  editing = false;
+  changed = false;
+  armed = undefined;
+  failed = "";
+  if (rearrange && moved) arrange();
+  toolbar();
+}
+
+/** An item moved: snapped to the grid, and the routes follow. */
+async function moved(node: NodeSingular): Promise<void> {
+  if (!cy || !inside || !current) return;
+  const snap = (v: number, step: number) => Math.round(v / step) * step;
+  node.union(node.descendants()).forEach((n) => {
+    if (n.data("kind") === "group") return;
+    const p = n.position();
+    n.position({ x: snap(p.x, 4), y: snap(p.y, 14) });
+  });
+  const core = cy;
+  const nodes = Object.fromEntries(inside.items.map((it) => {
+    const p = core.getElementById(it.id).position();
+    return [it.id, [p.x, p.y]];
+  }));
+  try {
+    const again = await ask<Layout | null>("cimoxide/reroute", { id: inside.id, layout: { ...current.screen, nodes, edges: {} } });
+    if (!again || !current) return;
+    current = { ...current, screen: { ...again, flipY: false } };
+    changed = true;
+    paint(current.screen, links(), true, true);
+    toolbar();
+  } catch (e) {
+    failed = String(e instanceof Error ? e.message : e);
+    toolbar();
+  }
+}
+
+/** The layout edited, saved as a DL diagram: into the diagram shown, else as a new one. */
+async function saveDiagram(): Promise<void> {
+  if (!inside || !current) return;
+  const { screen, from, back, scale } = current;
+  const at = ([x, y]: [number, number]) => back({ x, y });
+  const layout = {
+    ...from,
+    nodes: Object.fromEntries(Object.entries(screen.nodes).map(([id, p]) => [id, at(p)])),
+    edges: Object.fromEntries(Object.entries(screen.edges).map(([id, ps]) => [id, ps.map(at)])),
+    sizes: Object.fromEntries(Object.entries(screen.sizes ?? {}).map(([id, [w, h]]) => [id, [w / scale, h / scale]])),
+  };
+  const existing = from.id.startsWith("dl:") ? from.id.slice(3) : null;
+  busy = true;
+  failed = "";
+  toolbar();
+  try {
+    const done = await ask<{ id: string }>("cimoxide/diagram", { substation: inside.id, layout, existing, name: `${inside.label} single-line` });
+    chosen.inside = `dl:${done.id}`;
+    editing = false;
+    redraw = true;
+  } catch (e) {
+    failed = String(e instanceof Error ? e.message : e);
+  } finally {
+    busy = false;
+    toolbar();
+  }
+}
+
+/** A topology edit inside the substation shown; in a DL diagram, drawn there too, what is new `at`. */
+async function topology(op: TopologyOp, at: Point | null = null): Promise<void> {
+  if (!inside || busy) return;
+  if (changed) {
+    failed = "save or discard the moves first";
+    toolbar();
+    return;
+  }
+  const diagram = current?.from.id.startsWith("dl:") ? current.from.id.slice(3) : null;
+  busy = true;
+  failed = "";
+  toolbar();
+  try {
+    await ask("cimoxide/topology", { substation: inside.id, op, diagram, at: at && current ? current.back(at) : null });
+    redraw = true;
+  } catch (e) {
+    failed = String(e instanceof Error ? e.message : e);
+  } finally {
+    busy = false;
+    toolbar();
+  }
+}
+
+function deletePicked(): void {
+  const it = picked?.kind === "item" ? itemOf(picked.id) : undefined;
+  if (it && !it.junction) void topology({ op: "delete", ids: [it.id] });
+}
+
+/** How far `p` is from wire `e`, as drawn. */
+function distance(e: EdgeSingular, p: Point): number {
+  const points = [e.sourceEndpoint(), ...(e.segmentPoints() ?? []), e.targetEndpoint()];
+  let best = Infinity;
+  for (let k = 1; k < points.length; k++) {
+    const [a, b] = [points[k - 1], points[k]];
+    const [dx, dy] = [b.x - a.x, b.y - a.y];
+    const t = dx || dy ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy))) : 0;
+    best = Math.min(best, Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy)));
+  }
+  return best;
+}
+
+/** What is at `p` (in the scene's coordinates): an item, a wire, the voltage level around it. */
+function hit(p: Point, except?: NodeSingular): { node?: NodeSingular; edge?: EdgeSingular; group?: string } {
+  const core = cy as Core;
+  const pad = 4 / core.zoom();
+  const within = (n: NodeSingular, by = pad) => {
+    const bb = n.boundingBox({ includeLabels: false });
+    return p.x >= bb.x1 - by && p.x <= bb.x2 + by && p.y >= bb.y1 - by && p.y <= bb.y2 + by;
+  };
+  const node = core.nodes().filter((n) => n.data("kind") !== "group" && (!except || n.id() !== except.id()) && within(n));
+  const edge = node.empty() ? core.edges().filter((e) => distance(e, p) < 6 / core.zoom()) : core.collection();
+  const group = core.nodes('[kind = "group"]').filter((g) => within(g, 0));
+  return {
+    node: node.nonempty() ? (node.first() as NodeSingular) : undefined,
+    edge: edge.nonempty() ? (edge.first() as EdgeSingular) : undefined,
+    group: group.nonempty() ? group.last().id().slice(2) : inside?.groups.length === 1 ? inside.groups[0].id : undefined,
+  };
+}
+
+/** A palette entry dropped at `p`: a bay onto a busbar, a switch into a wire, else equipment in the level there. */
+function drop(entry: { class?: string; template?: string }, p: Point): void {
+  const at = hit(p);
+  const fail = (why: string) => {
+    failed = why;
+    toolbar();
+  };
+  if (entry.template) {
+    if (!at.node || !isBus(at.node)) return fail("drop a bay onto a busbar");
+    void topology({ op: "bay", template: entry.template, bus: at.node.id() }, p);
+    return;
+  }
+  const cls = entry.class as string;
+  const isSwitch = palette?.classes.some((c) => c.class === cls && c.group === "Switches");
+  if (isSwitch && at.edge) {
+    void topology({ op: "insert", class: cls, terminal: at.edge.id().slice(2) }, p);
+    return;
+  }
+  const level = (at.node && itemOf(at.node.id())?.group) || at.group;
+  if (!level) return fail("drop it into a voltage level");
+  void topology({ op: "add", class: cls, level }, p);
+}
+
+/** A node let go of, while editing: a junction onto another joins them, else a move. */
+function released(node: NodeSingular): void {
+  if (node.data("kind") === "junction") {
+    const onto = hit(node.position(), node).node;
+    if (onto && isBus(onto)) {
+      void topology({ op: "merge", from: node.id(), into: onto.id() });
+      return;
+    }
+  }
+  void moved(node);
+}
+
+const graphBox = document.getElementById("graph") as HTMLElement;
+graphBox.addEventListener("dragover", (e) => {
+  if (editing && e.dataTransfer?.types.includes(MIME)) e.preventDefault();
+});
+graphBox.addEventListener("drop", (e) => {
+  const data = e.dataTransfer?.getData(MIME);
+  if (!editing || !data || !cy) return;
+  e.preventDefault();
+  const box = graphBox.getBoundingClientRect();
+  const pan = cy.pan();
+  drop(JSON.parse(data), { x: (e.clientX - box.left - pan.x) / cy.zoom(), y: (e.clientY - box.top - pan.y) / cy.zoom() });
+});
+
 vscode.postMessage({ type: "ready" });

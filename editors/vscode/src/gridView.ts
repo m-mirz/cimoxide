@@ -13,8 +13,9 @@ import {
   ViewColumn,
   WebviewPanel,
   window,
+  workspace,
 } from "vscode";
-import { LanguageClient } from "vscode-languageclient/node";
+import { LanguageClient, WorkspaceEdit as LspWorkspaceEdit } from "vscode-languageclient/node";
 import { activeFile, openAt, validateSet } from "./open";
 
 /** A place in a file, as the server sends it. */
@@ -43,6 +44,8 @@ export interface Reveal {
 
 const GRID_REQUEST = "cimoxide/grid";
 const SUBSTATION_REQUEST = "cimoxide/substation";
+/** What the webview may ask of the server while editing inside a substation. */
+const EDITING_REQUESTS = new Set(["cimoxide/reroute", "cimoxide/diagram", "cimoxide/palette", "cimoxide/topology"]);
 
 /** One panel per model set, by directory. */
 const panels = new Map<string, GridPanel>();
@@ -98,6 +101,8 @@ class GridPanel {
   /** Whether the page has drawn the grid, and what to show once it has. */
   private ready = false;
   private pending: Reveal | undefined;
+  /** What a topology edit added: selected and opened once the substation shows it. */
+  private opening: string | undefined;
   private readonly disposables: Disposable[] = [];
 
   constructor(
@@ -126,7 +131,8 @@ class GridPanel {
 <title>Grid</title>
 </head>
 <body>
-<div id="bar"><button id="back" title="Back to the grid (Escape)">&larr; Grid</button><select id="layout" title="Layout"></select><input id="search" type="search" placeholder="Find a substation"><span id="summary"></span></div>
+<div id="bar"><button id="back" title="Back to the grid (Escape)">&larr; Grid</button><select id="layout" title="Layout"></select><input id="search" type="search" placeholder="Find a substation"><span id="edit"></span><span id="summary"></span></div>
+<div id="palette" style="display:none"></div>
 <div id="main"><div id="graph"></div><div id="info"></div></div>
 <script nonce="${nonce}" src="${script}"></script>
 </body>
@@ -167,6 +173,13 @@ class GridPanel {
       this.inside = undefined;
     }
     this.panel.webview.postMessage({ type: "inside", inside });
+    const added = this.opening && (inside as { items?: { id: string; location?: Location | null }[] } | null)?.items?.find((it) => it.id === this.opening);
+    if (added) {
+      this.opening = undefined;
+      this.panel.webview.postMessage({ type: "select", id: added.id });
+      // Where it is written, for what it still needs: validation's findings and their quick fixes.
+      if (added.location) await openAt(added.location.uri, added.location.range, true);
+    }
   }
 
   /** Select an object, entering its substation first, or leaving the one shown. */
@@ -189,7 +202,41 @@ class GridPanel {
     }
   }
 
-  private async receive(msg: { type: string; location?: Location; id?: string }): Promise<void> {
+  /**
+   * An editing request from the webview, for the server: the edit it answers applied (left
+   * unsaved, as VS Code's refactorings are), the rest replied. What it added is opened once the
+   * set is validated again.
+   */
+  private async ask(n: number, method: string, params: Record<string, unknown>): Promise<void> {
+    const reply = (value: unknown, error?: string) => this.panel.webview.postMessage({ type: "reply", n, value, error });
+    if (!EDITING_REQUESTS.has(method)) {
+      reply(null, `no request ${method}`);
+      return;
+    }
+    try {
+      const answer = await this.client.sendRequest<Record<string, unknown> | null>(method, { uri: this.uri.toString(), ...params });
+      if (answer && typeof answer === "object" && "edit" in answer) {
+        const edit = await this.client.protocol2CodeConverter.asWorkspaceEdit(answer.edit as LspWorkspaceEdit);
+        if (!edit || !(await workspace.applyEdit(edit))) {
+          reply(null, "VS Code did not apply the edit");
+          return;
+        }
+        const { edit: _, ...rest } = answer;
+        if (typeof rest.select === "string") this.opening = rest.select;
+        reply(rest);
+        return;
+      }
+      reply(answer);
+    } catch (e) {
+      reply(null, e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  private async receive(msg: { type: string; location?: Location; id?: string; n?: number; method?: string; params?: Record<string, unknown> }): Promise<void> {
+    if (msg.type === "ask" && msg.n !== undefined && msg.method) {
+      await this.ask(msg.n, msg.method, msg.params ?? {});
+      return;
+    }
     if (msg.type === "ready") {
       await this.update();
       this.ready = true;
