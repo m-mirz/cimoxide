@@ -606,9 +606,13 @@ pub fn build(m: &Model<'_>) -> Grid {
     if !grid.nodes.is_empty() {
         let edges: Vec<(usize, usize)> = grid.edges.iter().map(|e| (e.source, e.target)).collect();
         let pos = crate::layout::force(grid.nodes.len(), &edges);
+        // Drawn as a schematic: lines along axes and diagonals only.
+        let (pos, routes) = crate::schematic::octilinear(&pos, &edges);
         grid.auto = Some(Layout {
             id: "auto".into(), name: "Automatic".into(), kind: "diagram",
-            nodes: pos.into_iter().enumerate().collect(), ..Default::default()
+            nodes: pos.into_iter().enumerate().collect(),
+            edges: routes.into_iter().enumerate().filter(|(_, r)| !r.is_empty()).collect(),
+            ..Default::default()
         });
     }
     for (n, l) in inside {
