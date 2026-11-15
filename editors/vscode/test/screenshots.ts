@@ -40,13 +40,40 @@ async function until<T>(what: string, f: () => Promise<T | undefined> | T | unde
 
 type Send = (method: string, params?: object) => Promise<{ result?: any; error?: { message: string } }>;
 
+type Target = { type: string; url: string; webSocketDebuggerUrl: string };
+
+/** The DevTools targets: the workbench's page, its webviews' frames, … */
+async function targets(): Promise<Target[]> {
+  return (await (await fetch(`http://127.0.0.1:${port}/json`)).json()) as Target[];
+}
+
 /** A DevTools session with the workbench's page. */
 async function workbench(): Promise<Send> {
-  type Target = { type: string; url: string; webSocketDebuggerUrl: string };
-  const targets = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()) as Target[];
-  const page = targets.find((t) => t.type === "page" && t.url.includes("workbench"));
-  if (!page) throw new Error(`no workbench page among ${targets.map((t) => t.url).join(", ")}`);
-  const ws = new WebSocket(page.webSocketDebuggerUrl);
+  const page = (await targets()).find((t) => t.type === "page" && t.url.includes("workbench"));
+  if (!page) throw new Error("no workbench page");
+  return connect(page);
+}
+
+/**
+ * Runs `script` in the webview whose document has an element `#id`: a webview's frame is a target of
+ * its own, its content in a frame of the same origin inside. `script` gets that document as `doc`.
+ */
+async function inWebview(id: string, script: string): Promise<unknown> {
+  const expression = `(() => {
+    const find = (d) => d.getElementById(${JSON.stringify(id)}) ? d : [...d.querySelectorAll("iframe")].map((f) => { try { return find(f.contentDocument); } catch { return null; } }).find((x) => x);
+    const doc = find(document);
+    return doc ? ((doc) => { ${script} })(doc) : undefined;
+  })()`;
+  for (const t of (await targets()).filter((t) => t.type === "iframe" && t.url.startsWith("vscode-webview:"))) {
+    const r = await (await connect(t))("Runtime.evaluate", { expression, returnByValue: true });
+    const v = r.result?.result?.value;
+    if (v !== undefined) return v;
+  }
+  throw new Error(`no webview with #${id}`);
+}
+
+async function connect(target: Target): Promise<Send> {
+  const ws = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise<void>((resolve, reject) => ((ws.onopen = resolve), (ws.onerror = reject)));
   let id = 0;
   const pending = new Map<number, (r: any) => void>();
@@ -215,6 +242,13 @@ export async function run(): Promise<void> {
     if (!substation) throw new Error("no PP_Brussels");
     await commands.executeCommand("cimoxide.model.showInside", await api.modelTree.locateId(substation.id));
     await sleep(5000);
+    // Its single-line diagram as laid out here, with the SV's values.
+    await inWebview("layout", `
+      const pick = (id, value) => { const s = doc.getElementById(id); s.value = value; s.dispatchEvent(new Event("change")); };
+      pick("layout", "auto");
+      pick("values", "all");
+      return true;`);
+    await sleep(2000);
     await shot("grid-substation");
   }
   if (take.includes("quick-fix")) {

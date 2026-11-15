@@ -65,19 +65,38 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
   included), or the classes of the document's namespace between objects.
 - **Grid view** — *cimoxide: Show grid* (or the button in the editor title) draws the model
   set as substations, boundary points and the lines between them: as the set's Diagram Layout
-  draws them, on its Geographical Locations, or laid out automatically. Lines, substations and voltage
-  levels are coloured by voltage (legend in the side panel); a ring and halo mark each one with
-  findings, in the colour of the worst and as wide as their number; select one for its voltage
-  levels, equipment and findings, double-click a line to open where it is written. Double-click
-  a substation to see inside it: its equipment, drawn with single-line symbols (after IEC 60617,
-  as the CIM Model view's icons are), and connectivity nodes by voltage level, its switches drawn
-  open or closed, out-of-service equipment faded, each with its findings, on
-  the Diagram Layout or laid out automatically; double-click a line there to go to its other end,
-  Escape to go back. The view follows each revalidation.
+  draws them, on its Geographical Locations, or laid out automatically as a schematic, every line
+  horizontal, vertical or at 45°, routed round other substations, with lines that share a stretch
+  (double circuits among them) drawn side by side. Substations are boxes in their highest voltage's
+  colour; lines are wider the higher their voltage (legend in the side panel). Labels that would
+  crowd a more important one are hidden until you zoom in; hover anything for its name and values.
+  Select one for its voltage levels, equipment and findings; double-click a line to open where it
+  is written. Drag to pan, or pan with the middle or right button over anything. Findings are the
+  *CIM Model* view's to show, not the drawing's.
+- **Inside a substation** — double-click a substation to see its single-line diagram: equipment in
+  single-line symbols (after IEC 60617, as the CIM Model view's icons are), busbars, bays and
+  connectivity nodes by voltage level, switches drawn open or closed, out-of-service equipment
+  faded; as its Diagram Layout draws it, or laid out automatically. Names appear by importance as
+  you zoom in: busbars, lines and transformers first, switches and nodes close up. Double-click a
+  line to go to its other end, Escape to go back. The view follows each revalidation.
+- **State** — where the set has an SV file, *Colour by* switches between voltage levels (the
+  default) and the SV's state: voltages within 5 % of nominal and lines loaded below 80 % of their
+  PATL in green, then amber, then red. *Values* shows the voltages, loadings and flows beside what
+  they describe: only those needing attention (the default), all, or none; arrows show which way
+  active power flows.
+- **Edit a substation** — *Edit* inside a substation: drag items to move them (the routes follow)
+  and *Save as diagram* to keep the layout as a DL diagram, into a new DL file if the set has
+  none. Double-click a switch to open or close it; select equipment and press Delete to remove it
+  with its terminals, limits and diagram objects; drop a node onto another or onto a busbar to
+  join them (where it would land is highlighted); *Disconnect* a selected wire. Add from the
+  palette by dragging, or clicking and then clicking where it goes: equipment into a voltage
+  level, a switch into a wire, a bay (single or double feeder, transformer bay, coupler) onto a
+  busbar. What is added opens where it is written, with what it still needs as findings. Edits
+  are left unsaved and undoable, as VS Code's refactorings are.
 
-  ![RealGrid's 4,875 substations laid out automatically, lines coloured by voltage, findings ringed](https://github.com/user-attachments/assets/6f6c1460-cb9d-472f-a663-a2829a21682d)
+  ![RealGrid's 4,875 substations as a schematic: lines along axes and diagonals, wider and brighter the higher their voltage, the 380 kV backbone standing out](https://github.com/user-attachments/assets/ea3ae615-2345-4e8f-a1d4-6b8fe4be2816)
 
-  ![Inside MicroGrid's PP_Brussels: voltage levels with equipment in single-line symbols](https://github.com/user-attachments/assets/2e5cabce-5dca-4e74-bebe-7d9e7001e2e2)
+  ![Inside MicroGrid's PP_Brussels: its single-line diagram, voltage levels stacked from 380 kV down, with the SV's voltages and loadings beside each item](https://github.com/user-attachments/assets/0c4ec6d8-de9f-4459-9d50-b364f3b61152)
 
 - **Chat** — an MCP server, `cimmcp`, offered to chat (Copilot agent mode): ask about the
   model sets of the workspace. Its tools list the model sets, summarise one (headers, object
@@ -88,7 +107,8 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
 **Files over 50 MB** (a large EQ file): VS Code does not pass them to extensions, so their editor
 has no hover, completion, quick fixes or rename; a notice says so when one opens. Their model set is
 still validated, and the *CIM Model* view browses, fixes (*Fix…*), renames, deletes and adds in
-them as in any other: its edits are computed from the files on disk, and open for review.
+them as in any other, as does the grid view's *Edit*: their edits are computed from the files on
+disk and written straight to them, which VS Code cannot undo (the status bar says so).
 
 **CIM XML**: CGMES and NC files open as their own language, *CIM XML*, highlighted as XML, so
 extensions for XML in general (schema validation, formatting, …) leave them alone. They are `.xml`
