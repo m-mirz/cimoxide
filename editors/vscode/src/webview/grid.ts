@@ -385,6 +385,17 @@ function gridElements(g: Grid): ElementDefinition[] {
 }
 
 /** How an item is drawn: a connectivity node as a dot, a busbar as a bar, the rest as a symbol. */
+/**
+ * How much an item's name matters inside its substation, so that the more it does, the sooner it
+ * is named as one zooms in: a busbar, a line or a transformer (`main`), other equipment, a switch,
+ * a connectivity node.
+ */
+function roleOf(it: Item, symbol: string): "main" | "equipment" | "switch" | "node" {
+  if (it.junction) return "node";
+  if (it.class === "BusbarSection" || it.far.length || /^transformer/.test(symbol)) return "main";
+  return it.open !== null ? "switch" : "equipment";
+}
+
 function kindOf(it: Item): string {
   if (it.junction) return "junction";
   if (!it.far.length && it.class === "BusbarSection") return "busbar";
@@ -426,6 +437,7 @@ function insideElements(s: Inside): ElementDefinition[] {
       // A transformer joins levels: no one level's colour.
       band: /^transformer/.test(symbolFor(it, terminals.get(it.id) ?? 0)) ? "none" : bandOf.get(it.id),
       ring: ring(it.findings),
+      role: roleOf(it, symbolFor(it, terminals.get(it.id) ?? 0)),
     },
     classes: [it.open ? "open" : "", it.inService === false ? "out" : ""].join(" ").trim(),
   }));
@@ -492,6 +504,11 @@ function stylesheet(): cytoscape.StylesheetJson {
     shape("junction", "ellipse", 4),
     shape("busbar", "rectangle", 36, 4),
     { selector: 'node[kind = "junction"]', style: { "font-size": 6, "text-opacity": 0.7 } },
+    // Named as one zooms in, what matters most first: a busbar, line or transformer from the
+    // start, other equipment soon, a switch or a node close up.
+    { selector: 'node[role = "main"]', style: { "font-size": 8, "min-zoomed-font-size": 6 } },
+    { selector: 'node[role = "switch"]', style: { "font-size": 6.5, "min-zoomed-font-size": 9 } },
+    { selector: 'node[role = "node"]', style: { "min-zoomed-font-size": 10 } },
     ...byBand('node[kind = "junction"]', "background-color"),
     ...byBand('node[kind = "busbar"]', "background-color"),
     // Equipment: its symbol, in its voltage's colour, on a transparent disc
@@ -515,6 +532,12 @@ function stylesheet(): cytoscape.StylesheetJson {
       style: { "text-halign": "right", "text-valign": "center", "text-margin-x": 3, "text-margin-y": 0 },
     },
     { selector: 'node.drawn[kind = "busbar"]', style: { "text-valign": "top", "text-margin-y": -2 } },
+    // Bays in rows beside upright busbars: names below, clear of the next one in the row.
+    {
+      selector: 'node.drawn.across[kind = "symbol"], node.drawn.across[kind = "junction"]',
+      style: { "text-halign": "center", "text-valign": "bottom", "text-margin-x": 0, "text-margin-y": 2 },
+    },
+    { selector: 'node.drawn.across[kind = "busbar"]', style: { "text-valign": "top", "text-halign": "center" } },
     { selector: "node.onbar", style: { "text-opacity": 0 } },
     ...bySeverity("border-color").map((s) => ({ ...s, selector: `node[kind != "group"]${s.selector}` })),
     // And a halo, which reads apart from a voltage colour of the same hue.
@@ -853,7 +876,7 @@ function arrange(): void {
   // Cytoscape's where it has none.
   const layout = layouts.find((l) => l.id === picked) ?? (picked === "auto" ? auto : undefined);
   cy.elements().removeStyle();
-  cy.nodes().removeClass("drawn onbar");
+  cy.nodes().removeClass("drawn onbar across");
   if (!layout) {
     // `cose` is quadratic per iteration: past a few hundred nodes, a plain grid rather than a hang.
     cy.layout(ids.length > 1000 ? { name: "grid", animate: false } : {
@@ -891,6 +914,9 @@ function paint(l: Layout, routed: { id: string; key: string }[], drawn: boolean,
     const bars = new Set<string>();
     if (drawn) {
       core.nodes().addClass("drawn");
+      // Upright busbars: bays in rows.
+      const sizes = Object.values(l.sizes ?? {});
+      if (sizes.filter(([w, h]) => h > w).length * 2 > sizes.length) core.nodes().addClass("across");
       for (const [id, [width, height]] of Object.entries(l.sizes ?? {})) {
         const bar = core.getElementById(id);
         bar.style({ shape: "rectangle", width, height });
