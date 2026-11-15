@@ -57,6 +57,30 @@ interface Layout {
   sizes?: Record<string, [number, number]>;
   /** Pixels per unit, for positions drawn as they are; else they are scaled to the scene's size. */
   unit?: number | null;
+  /** Edge id → how many line spacings aside it runs from its route, left of its way (negative: right). */
+  tracks?: Record<string, number>;
+}
+
+/** How far apart, in pixels, lines sharing a stretch run: the widest line and a gap. */
+const TRACK = 5;
+
+/**
+ * `points` (on the screen) drawn `by` pixels to the left of their way (negative: right), corners
+ * mitred so that each piece stays parallel to its own; the ends joined back to where they were.
+ */
+function aside(points: Point[], by: number): Point[] {
+  if (!by || points.length < 2) return points;
+  const normals = points.slice(1).map((p, i) => {
+    const [dx, dy] = [p.x - points[i].x, p.y - points[i].y];
+    const l = Math.hypot(dx, dy) || 1;
+    return { x: -dy / l, y: dx / l };
+  });
+  const shifted = points.map((p, i) => {
+    const [a, b] = [normals[Math.max(0, i - 1)], normals[Math.min(normals.length - 1, i)]];
+    const k = by / (1 + a.x * b.x + a.y * b.y);
+    return { x: p.x + (a.x + b.x) * k, y: p.y + (a.y + b.y) * k };
+  });
+  return [points[0], ...shifted, points[points.length - 1]];
 }
 
 interface Grid {
@@ -796,7 +820,8 @@ function place(
     return { x: (q.x - minX) * scale, y: (q.y - minY) * scale };
   };
   const nodes = new Map(Object.entries(l.nodes).map(([id, p]) => [id, screen(p)]));
-  const routes = new Map(Object.entries(l.edges).map(([id, ps]) => [id, ps.map(screen)]));
+  // Lines sharing a stretch, each on its own track: a line width and a gap apart, whatever the scale.
+  const routes = new Map(Object.entries(l.edges).map(([id, ps]) => [id, aside(ps.map(screen), (l.tracks?.[id] ?? 0) * TRACK)]));
 
   // A node the layout does not place goes among its placed neighbours, else below the rest.
   const neighbours = new Map<string, string[]>();
