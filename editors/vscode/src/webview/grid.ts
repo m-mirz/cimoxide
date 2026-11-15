@@ -4,8 +4,10 @@
 
 import cytoscape, { Core, ElementDefinition, NodeSingular, EdgeSingular } from "cytoscape";
 import { Symbol, symbolOf, symbolSvg } from "../symbols";
+import { keepDecluttered } from "./declutter";
 
-declare function acquireVsCodeApi(): { postMessage(msg: unknown): void; getState(): { showValues?: boolean } | undefined; setState(state: { showValues?: boolean }): void };
+type ValuesShown = "all" | "exceptions" | "off";
+declare function acquireVsCodeApi(): { postMessage(msg: unknown): void; getState(): { valuesShown?: ValuesShown } | undefined; setState(state: { valuesShown?: ValuesShown }): void };
 const vscode = acquireVsCodeApi();
 
 interface Findings {
@@ -123,7 +125,8 @@ let inside: Inside | undefined;
 /** What the scene is coloured by: voltage levels, or the SV's state where the set has one. */
 let colourBy: "voltage" | "state" = "voltage";
 /** The SV's values beside what they describe, on or off apart from the colouring. */
-let showValues = vscode.getState()?.showValues ?? true;
+/** The SV's values beside what they describe: all, only those that need attention (loaded from 80 %, 5 % off nominal), or none. */
+let valuesShown: ValuesShown = vscode.getState()?.valuesShown ?? "exceptions";
 /** The grid's viewport when a substation was opened, to return to. */
 let gridView: { zoom: number; pan: Point; selected: string } | undefined;
 
@@ -133,9 +136,11 @@ style.textContent = `
   body { display: flex; flex-direction: column; color: var(--vscode-foreground); background: var(--vscode-editor-background);
          font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); }
   #bar { display: flex; gap: 12px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--vscode-panel-border); }
-  #values { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
-  #values input { margin: 0; }
-  #layout, #colour { color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background);
+  #hover { position: fixed; z-index: 5; max-width: 280px; padding: 4px 8px; pointer-events: none; display: none;
+           color: var(--vscode-editorHoverWidget-foreground); background: var(--vscode-editorHoverWidget-background);
+           border: 1px solid var(--vscode-editorHoverWidget-border); }
+  #hover div { color: var(--vscode-descriptionForeground); }
+  #layout, #colour, #values { color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background);
             border: 1px solid var(--vscode-dropdown-border, transparent); padding: 2px 4px; }
   #search { width: 220px; color: var(--vscode-input-foreground); background: var(--vscode-input-background);
             border: 1px solid var(--vscode-input-border, transparent); padding: 3px 6px; }
@@ -263,8 +268,14 @@ function stateOf(id: string, kind: string | undefined, o: Overlay): { band: stri
 
 /** An element's state, for the side panel. */
 function stateHtml(id: string): string {
+  const lines = stateLines(id);
+  return lines.length ? `<div class="sub" style="margin-top:8px">From the SV:</div>${lines.map((l) => `<div>${escape(l)}</div>`).join("")}` : "";
+}
+
+/** An element's state, as lines of text. */
+function stateLines(id: string): string[] {
   const o = grid?.state;
-  if (!o) return "";
+  if (!o) return [];
   const lines: string[] = [];
   const v = o.nodes[id] ?? (o.voltages[id] ? { min: o.voltages[id].pu, max: o.voltages[id].pu } : undefined);
   if (v) lines.push(v.min === v.max ? `Voltage ${v.min.toFixed(4)} p.u.` : `Voltage ${v.min.toFixed(4)} to ${v.max.toFixed(4)} p.u.`);
@@ -275,7 +286,7 @@ function stateHtml(id: string): string {
     const loading = e.loading === null ? "" : `, ${e.loading.toFixed(1)} % of its PATL`;
     lines.push(`End ${i + 1}: ${e.p.toFixed(1)} MW, ${e.q.toFixed(1)} Mvar into it${amps}${loading}`);
   }
-  return lines.length ? `<div class="sub" style="margin-top:8px">From the SV:</div>${lines.map((l) => `<div>${escape(l)}</div>`).join("")}` : "";
+  return lines;
 }
 
 /** The legend of the state's colours, for the side panel. */
@@ -301,7 +312,7 @@ function shownState(): Overlay | null {
 function paintState(): void {
   if (!cy) return;
   const on = shownState();
-  const values = showValues ? grid?.state ?? null : null;
+  const values = valuesShown === "off" ? null : grid?.state ?? null;
   cy.batch(() => {
     cy?.elements().forEach((el) => {
       if (el.data("base") === undefined) el.data("base", el.data("label") ?? "");
@@ -310,7 +321,8 @@ function paintState(): void {
       const band = on ? stateOf(el.id(), kind, on) : null;
       if (on && kind !== "group" && !el.id().startsWith("t:")) el.data("pf", band?.band ?? "none");
       else el.removeData("pf");
-      const found = values ? stateOf(el.id(), kind, values) : null;
+      const value = values ? stateOf(el.id(), kind, values) : null;
+      const found = value && (valuesShown === "all" || value.band === "warn" || value.band === "bad") ? value : null;
       if (el.group() === "edges") {
         if (found) el.data("flowLabel", found.text);
         else el.removeData("flowLabel");
@@ -322,9 +334,9 @@ function paintState(): void {
   const pick = document.getElementById("colour") as HTMLSelectElement;
   pick.style.display = grid?.state ? "" : "none";
   pick.value = colourBy;
-  const toggle = document.getElementById("values") as HTMLElement;
-  toggle.style.display = grid?.state ? "" : "none";
-  (toggle.querySelector("input") as HTMLInputElement).checked = showValues;
+  const shown = document.getElementById("values") as HTMLSelectElement;
+  shown.style.display = grid?.state ? "" : "none";
+  shown.value = valuesShown;
 }
 
 /** The legend of the bands, for the side panel. */
@@ -504,6 +516,8 @@ function stylesheet(): cytoscape.StylesheetJson {
     // Where what is dragged would land, while editing: over findings' halos.
     { selector: ".target", style: { "overlay-color": focus, "overlay-opacity": 0.3, "overlay-padding": 6, "overlay-shape": "round-rectangle" } },
     { selector: 'node[kind = "group"].target', style: { "border-color": focus, "border-width": 2, "overlay-opacity": 0 } },
+    // A label that would crowd one that matters more (declutter.ts).
+    { selector: ".crowded", style: { "text-opacity": 0 } },
     { selector: ".dim", style: { opacity: 0.15 } },
   ] as cytoscape.StylesheetJson;
 }
@@ -914,6 +928,19 @@ function draw(previous?: Shown): void {
   });
   picker(scene().layouts);
   arrange();
+  keepDecluttered(cy);
+  hover(undefined);
+  cy.on("mouseover", "node, edge", (e) => hover(e.target as NodeSingular | EdgeSingular));
+  // Only its own: leaving the voltage level around it comes after entering it.
+  cy.on("mouseout", "node, edge", (e) => {
+    if (hovered === (e.target as NodeSingular).id()) hover(undefined);
+  });
+  // The view moved under it: beside it still.
+  cy.on("viewport", () => {
+    const el = hovered ? cy?.getElementById(hovered) : undefined;
+    if (el?.nonempty()) hoverAt(el as NodeSingular | EdgeSingular);
+  });
+  cy.on("grab tapstart", () => hover(undefined));
   if (!inside && gridView) {
     // Back from a substation: the grid as it was, with that substation selected.
     cy.zoom(gridView.zoom);
@@ -988,11 +1015,39 @@ new MutationObserver(() => cy?.style(stylesheet())).observe(document.body, { att
   show(selected?.nonempty() ? (selected as NodeSingular | EdgeSingular) : undefined);
 });
 
-(document.querySelector("#values input") as HTMLInputElement).addEventListener("change", (e) => {
-  showValues = (e.target as HTMLInputElement).checked;
-  vscode.setState({ ...(vscode.getState() ?? {}), showValues });
+(document.getElementById("values") as HTMLSelectElement).addEventListener("change", (e) => {
+  valuesShown = (e.target as HTMLSelectElement).value as ValuesShown;
+  vscode.setState({ ...(vscode.getState() ?? {}), valuesShown });
   paintState();
 });
+
+/** Hovered: what it is and its state, beside the pointer. */
+const hoverBox = document.createElement("div");
+hoverBox.id = "hover";
+hoverBox.setAttribute("role", "tooltip");
+document.body.append(hoverBox);
+let hovered: string | undefined;
+
+function hoverAt(el: NodeSingular | EdgeSingular): void {
+  const box = (document.getElementById("graph") as HTMLElement).getBoundingClientRect();
+  const p = el.isNode() ? el.renderedPosition() : el.renderedMidpoint();
+  hoverBox.style.left = `${box.left + p.x + 14}px`;
+  hoverBox.style.top = `${box.top + p.y + 14}px`;
+}
+
+function hover(el: NodeSingular | EdgeSingular | undefined): void {
+  const id = el?.id().replace(/^e:/, "").split("#")[0];
+  const heading = el ? String(el.data("base") ?? el.data("label") ?? "") : "";
+  if (!el || !id || !heading || el.data("kind") === "group" || el.id().startsWith("t:")) {
+    hovered = undefined;
+    hoverBox.style.display = "none";
+    return;
+  }
+  hovered = el.id();
+  hoverBox.innerHTML = `<strong>${escape(heading)}</strong>` + stateLines(id).slice(0, 4).map((l) => `<div>${escape(l)}</div>`).join("");
+  hoverAt(el);
+  hoverBox.style.display = "block";
+}
 
 (document.getElementById("back") as HTMLButtonElement).addEventListener("click", leave);
 window.addEventListener("keydown", (e) => {

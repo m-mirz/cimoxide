@@ -132,7 +132,7 @@ class GridPanel {
 <title>Grid</title>
 </head>
 <body>
-<div id="bar"><button id="back" title="Back to the grid (Escape)">&larr; Grid</button><select id="layout" title="Layout"></select><select id="colour" title="Colour by" style="display:none"><option value="voltage">Voltage level</option><option value="state">State (SV)</option></select><label id="values" title="The SV's values beside what they describe" style="display:none"><input type="checkbox" checked> Values</label><input id="search" type="search" placeholder="Find a substation"><span id="edit"></span><span id="summary"></span></div>
+<div id="bar"><button id="back" title="Back to the grid (Escape)">&larr; Grid</button><select id="layout" title="Layout"></select><select id="colour" title="Colour by" style="display:none"><option value="voltage">Voltage level</option><option value="state">State (SV)</option></select><select id="values" title="The SV's values beside what they describe: all, those that need attention (loaded from 80 %, 5 % off nominal), or none" style="display:none"><option value="exceptions">Values: exceptions</option><option value="all">Values: all</option><option value="off">Values: off</option></select><input id="search" type="search" placeholder="Find a substation"><span id="edit"></span><span id="summary"></span></div>
 <div id="palette" style="display:none"></div>
 <div id="main"><div id="graph"></div><div id="info"></div></div>
 <script nonce="${nonce}" src="${script}"></script>
