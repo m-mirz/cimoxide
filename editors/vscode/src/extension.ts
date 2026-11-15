@@ -20,10 +20,11 @@ import {
   window,
   workspace,
 } from "vscode";
-import { LanguageClient, LanguageClientOptions, ServerOptions } from "vscode-languageclient/node";
+import { LanguageClient, LanguageClientOptions, ServerOptions, WorkspaceEdit as LspWorkspaceEdit } from "vscode-languageclient/node";
 import { registerClaim } from "./claim";
 import { showGrid } from "./gridView";
 import { ModelTree, registerModelTree } from "./modelTree";
+import { applyEdit } from "./applyEdit";
 import { CIM_XML, openAt, openEdited } from "./open";
 
 let client: LanguageClient | undefined;
@@ -133,6 +134,8 @@ function registerMcp(context: ExtensionContext): void {
 export interface Api {
   modelTree: ModelTree;
   request<R>(method: string, params: unknown): Promise<R>;
+  /** Makes one of the server's workspace edits as the views do ([`applyEdit`]). */
+  apply(edit: unknown): Promise<Uri[] | undefined>;
 }
 
 export async function activate(context: ExtensionContext): Promise<Api> {
@@ -174,6 +177,10 @@ export async function activate(context: ExtensionContext): Promise<Api> {
     request: <R>(method: string, params: unknown) => {
       if (!client) throw new Error("no language server");
       return client.sendRequest<R>(method, params);
+    },
+    apply: (edit: unknown) => {
+      if (!client) throw new Error("no language server");
+      return applyEdit(client, edit as LspWorkspaceEdit);
     },
   };
 }

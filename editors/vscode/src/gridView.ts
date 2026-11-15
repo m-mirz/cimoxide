@@ -16,6 +16,7 @@ import {
   workspace,
 } from "vscode";
 import { LanguageClient, WorkspaceEdit as LspWorkspaceEdit } from "vscode-languageclient/node";
+import { applyEdit } from "./applyEdit";
 import { activeFile, openAt, validateSet } from "./open";
 
 /** A place in a file, as the server sends it. */
@@ -216,8 +217,7 @@ class GridPanel {
     try {
       const answer = await this.client.sendRequest<Record<string, unknown> | null>(method, { uri: this.uri.toString(), ...params });
       if (answer && typeof answer === "object" && "edit" in answer) {
-        const edit = await this.client.protocol2CodeConverter.asWorkspaceEdit(answer.edit as LspWorkspaceEdit);
-        if (!edit || !(await workspace.applyEdit(edit))) {
+        if (!(await applyEdit(this.client, answer.edit as LspWorkspaceEdit))) {
           reply(null, "VS Code did not apply the edit");
           return;
         }

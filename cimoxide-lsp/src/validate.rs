@@ -31,6 +31,17 @@ pub struct SetFile {
     pub path: PathBuf,
     pub url: Url,
     pub index: Index,
+    /// What the text indexed hashes to: a file changed on disk since is indexed again before
+    /// an edit is reckoned on it.
+    pub seen: u64,
+}
+
+/// A text's hash, to tell whether a file is still the one indexed.
+pub fn text_hash(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut h);
+    h.finish()
 }
 
 /// A validated model set: its files' indexes and where each object is
@@ -121,7 +132,7 @@ pub fn validate(files: &[(PathBuf, Arc<str>)], opts: &Options) -> (ModelSet, Vec
     // The set file each dataset was decoded from.
     let mut origin = Vec::new();
     let mut out: Vec<(Url, Vec<Diagnostic>)> = Vec::new();
-    for ((path, _), (ds, index)) in files.iter().zip(decoded) {
+    for ((path, text), (ds, index)) in files.iter().zip(decoded) {
         let Ok(url) = Url::from_file_path(path) else { continue };
         let mut diags = Vec::new();
         match ds {
@@ -138,7 +149,7 @@ pub fn validate(files: &[(PathBuf, Arc<str>)], opts: &Options) -> (ModelSet, Vec
                 ..Default::default()
             }),
         }
-        set.files.push(SetFile { path: path.clone(), url: url.clone(), index });
+        set.files.push(SetFile { path: path.clone(), url: url.clone(), index, seen: text_hash(text) });
         out.push((url, diags));
     }
     for (fi, f) in set.files.iter().enumerate() {

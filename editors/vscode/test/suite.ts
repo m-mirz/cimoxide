@@ -254,6 +254,44 @@ test("Show grid opens its panel", async () => {
     window.tabGroups.all.flatMap((g) => g.tabs).find((t) => t.input instanceof TabInputWebview && t.label.startsWith("Grid:")));
 });
 
+test("a file over 50 MB, which VS Code keeps from the server, takes topology edits one after another", async () => {
+  // NL's EQ file, padded past VS Code's limit for passing documents to extensions.
+  await commands.executeCommand("workbench.action.closeAllEditors");
+  const nl = file("_NL_EQ_");
+  const text = fs.readFileSync(nl.fsPath, "utf8");
+  const end = text.lastIndexOf("</rdf:RDF>");
+  const pad = `<!-- ${"padding ".repeat(Math.ceil((51 * 1024 * 1024) / 8))} -->\n`;
+  fs.writeFileSync(nl.fsPath, text.slice(0, end) + pad + text.slice(end));
+  assert.ok(fs.statSync(nl.fsPath).size > 50 * 1024 * 1024);
+  type Inside = { groups: { id: string }[]; items: { id: string; class: string }[] };
+  const amsterdam = await until("PP_Amsterdam, revalidated", async () =>
+    (await api.request<Hit[]>("cimoxide/search", { uri: nl.toString(), query: "PP_Amsterdam" })).find((h) => h.class === "Substation"));
+  const inside = await api.request<Inside>("cimoxide/substation", { uri: nl.toString(), id: amsterdam.id });
+  const level = inside.groups[0].id;
+  const add = async () => {
+    const added = await api.request<{ edit: Parameters<typeof applyChanges>[0]; select: string }>("cimoxide/topology", {
+      uri: nl.toString(), substation: amsterdam.id, op: { op: "add", class: "Breaker", level },
+    });
+    assert.ok(Object.keys(added.edit.changes).some((u) => u.includes("_NL_EQ_")), "into NL's EQ file");
+    assert.ok(await api.apply(added.edit), "the edit made");
+    return added.select;
+  };
+  // Two in a row, as one adds in the grid view, before anything is saved.
+  const first = await add();
+  const second = await add();
+  await workspace.saveAll(false);
+  const written = fs.readFileSync(nl.fsPath, "utf8");
+  const counts = [first, second].map((id) => written.split(`rdf:ID="${id}"`).length - 1);
+  const at = written.indexOf(`rdf:ID="${first}"`);
+  assert.deepStrictEqual(counts, [1, 1], `written ${counts} times; first ${first}, second ${second}; around the first: ${JSON.stringify(written.slice(Math.max(0, at - 300), at + 900))}`);
+  // And the server, reading it again, finds both in the substation.
+  await until("both breakers, read again", async () => {
+    const now = await api.request<Inside>("cimoxide/substation", { uri: nl.toString(), id: amsterdam.id });
+    const ids = new Set(now.items.map((it) => it.id));
+    return ids.has(first) && ids.has(second) ? true : undefined;
+  }, 30000);
+});
+
 export async function run(): Promise<void> {
   let failed = 0;
   for (const [name, f] of tests) {

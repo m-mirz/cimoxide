@@ -908,12 +908,14 @@ fn deletion(state: &Shared, p: &DeleteParams) -> Option<(edit::Deletion, String)
 }
 
 /// Run `f` over the files of `url`'s model set as they are now: an open
-/// document's buffer, else the file on disk with the set's index of it.
-/// `None` before the set's first validation.
+/// document's buffer, else the file on disk with the set's index of it, or
+/// one built now if the file changed on disk since it was indexed (VS Code
+/// keeps a file over 50 MB from the server, and an edit to one is written
+/// straight to disk). `None` before the set's first validation.
 fn with_set_files<R>(state: &Shared, url: &Url, f: impl FnOnce(&ModelSet, &[edit::File]) -> R) -> Option<R> {
     enum Source {
         Open(Built),
-        Disk(LineIndex),
+        Disk(LineIndex, Option<Index>),
     }
     let dir = url.to_file_path().ok()?.parent()?.to_path_buf();
     let (set, held) = {
@@ -931,10 +933,14 @@ fn with_set_files<R>(state: &Shared, url: &Url, f: impl FnOnce(&ModelSet, &[edit
     };
     let sources: Vec<(Arc<str>, Source)> = held
         .into_iter()
-        .map(|(text, built)| {
+        .zip(&set.files)
+        .map(|((text, built), file)| {
             let source = match built {
                 Some(b) => Source::Open(b),
-                None => Source::Disk(LineIndex::new(&text)),
+                None => {
+                    let again = (validate::text_hash(&text) != file.seen).then(|| Index::build(&text));
+                    Source::Disk(LineIndex::new(&text), again)
+                }
             };
             (text, source)
         })
@@ -948,7 +954,7 @@ fn with_set_files<R>(state: &Shared, url: &Url, f: impl FnOnce(&ModelSet, &[edit
                     let (l, i) = b.get_or_init(|| (LineIndex::new(text), Index::build(text)));
                     (l, i)
                 }
-                Source::Disk(l) => (l, &file.index),
+                Source::Disk(l, again) => (l, again.as_ref().unwrap_or(&file.index)),
             };
             edit::File { name: file.url.as_str(), text, lines, index }
         })
