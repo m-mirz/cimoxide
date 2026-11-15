@@ -353,6 +353,9 @@ function stylesheet(): cytoscape.StylesheetJson {
     { selector: 'node[kind = "group"]:selected', style: { "background-opacity": 0.15 } },
     { selector: 'node[kind = "symbol"]:selected', style: { "background-opacity": 0.3 } },
     { selector: "edge:selected", style: { "line-color": focus, opacity: 1 } },
+    // Where what is dragged would land, while editing: over findings' halos.
+    { selector: ".target", style: { "overlay-color": focus, "overlay-opacity": 0.3, "overlay-padding": 6, "overlay-shape": "round-rectangle" } },
+    { selector: 'node[kind = "group"].target', style: { "border-color": focus, "border-width": 2, "overlay-opacity": 0 } },
     { selector: ".dim", style: { opacity: 0.15 } },
   ] as cytoscape.StylesheetJson;
 }
@@ -788,6 +791,17 @@ function draw(previous?: Shown): void {
     if (it && it.open !== null && !it.junction) void topology({ op: "switch", id: it.id, open: !it.open });
     else open(e.target);
   });
+  // A junction dragged: the busbar or node it would join, if let go there.
+  cy.on("drag", "node", (e) => {
+    const node = e.target as NodeSingular;
+    if (!editing || node.data("kind") !== "junction") return;
+    const onto = hit(node.position(), node).node;
+    target(onto && isBus(onto) ? onto : undefined);
+  });
+  // Armed from the palette: where a click would put it.
+  cy.on("mousemove", (e) => {
+    if (editing && armed) target(targetOf(armed, e.position));
+  });
   cy.on("dragfree", "node", (e) => {
     if (editing) released(e.target as NodeSingular);
   });
@@ -795,6 +809,7 @@ function draw(previous?: Shown): void {
     if (editing && armed) {
       const entry = armed;
       armed = undefined;
+      target();
       toolbar();
       drop(entry, e.position);
     }
@@ -861,6 +876,9 @@ window.addEventListener("message", (e) => {
     redraw = false;
     changed = false;
     if (inside || grid) draw(anew ? undefined : previous);
+    // After a topology edit, the view where it was.
+    if (anew && keepView && inside && cy) restore(keepView);
+    keepView = undefined;
   } else if (e.data?.type === "leave" && inside) {
     inside = undefined;
     stopEditing(false);
@@ -876,6 +894,11 @@ function select(id: string): void {
   if (!cy || !el || el.empty()) return;
   cy.$(":selected").unselect();
   el.select();
+  // Editing, the view stays where it is: what was added only brought into it.
+  if (inside && editing) {
+    if (!inView(el)) cy.animate({ center: { eles: el } }, { duration: 200 });
+    return;
+  }
   const near = el.isEdge() ? el.union(el.connectedNodes()) : (el as NodeSingular).closedNeighborhood();
   cy.animate({ fit: { eles: near, padding: 80 } }, { duration: 200 });
 }
@@ -936,6 +959,7 @@ function button(label: string, run: () => void, title = ""): HTMLButtonElement {
 
 /** The editing controls in the bar, and the palette, as things are now. */
 function toolbar(): void {
+  if (!armed) target();
   const bar = document.getElementById("edit") as HTMLElement;
   const pal = document.getElementById("palette") as HTMLElement;
   bar.replaceChildren();
@@ -980,7 +1004,14 @@ function toolbar(): void {
     b.draggable = true;
     b.disabled = busy || changed;
     b.setAttribute("aria-pressed", String(armed?.label === entry.label));
-    b.addEventListener("dragstart", (e) => e.dataTransfer?.setData(MIME, JSON.stringify(entry.add)));
+    b.addEventListener("dragstart", (e) => {
+      e.dataTransfer?.setData(MIME, JSON.stringify(entry.add));
+      carried = entry.add;
+    });
+    b.addEventListener("dragend", () => {
+      carried = undefined;
+      target();
+    });
     pal.append(b);
   }
   const more = document.createElement("select");
@@ -1083,11 +1114,13 @@ async function topology(op: TopologyOp, at: Point | null = null): Promise<void> 
   busy = true;
   failed = "";
   toolbar();
+  keepView = anchor();
   try {
     await ask("cimoxide/topology", { substation: inside.id, op, diagram, at: at && current ? current.back(at) : null });
     redraw = true;
   } catch (e) {
     failed = String(e instanceof Error ? e.message : e);
+    keepView = undefined;
   } finally {
     busy = false;
     toolbar();
@@ -1130,6 +1163,73 @@ function hit(p: Point, except?: NodeSingular): { node?: NodeSingular; edge?: Edg
   };
 }
 
+/** What a palette entry dropped at `p` would go into: a busbar, a wire, a voltage level; as `drop` decides. */
+function targetOf(entry: { class?: string; template?: string }, p: Point): cytoscape.Collection | NodeSingular | EdgeSingular | undefined {
+  const core = cy as Core;
+  const at = hit(p);
+  if (entry.template) return at.node && isBus(at.node) ? at.node : undefined;
+  const isSwitch = palette?.classes.some((c) => c.class === entry.class && c.group === "Switches");
+  if (isSwitch && at.edge) return at.edge;
+  const level = (at.node && itemOf(at.node.id())?.group) || at.group;
+  const group = level ? core.getElementById(`g:${level}`) : undefined;
+  return group?.nonempty() ? group : undefined;
+}
+
+/** Marks where a drop would land, while something is dragged; nothing, when it would land nowhere. */
+function target(el?: cytoscape.Collection | NodeSingular | EdgeSingular): void {
+  cy?.$(".target").removeClass("target");
+  el?.addClass("target");
+}
+
+/** What is being dragged from the palette: `dragover` cannot read what is carried. */
+let carried: { class?: string; template?: string } | undefined;
+
+/**
+ * Where the view was before a topology edit: drawn again, it stays there, not fitted anew. The
+ * drawing may shift as a whole, so the view keeps an item near its middle where it was.
+ */
+let keepView: { zoom: number; id: string; at: Point } | undefined;
+
+function anchor(): typeof keepView {
+  if (!cy) return undefined;
+  const core = cy;
+  const middle = { x: core.width() / 2, y: core.height() / 2 };
+  const items = core.nodes().filter((n) => n.data("kind") !== "group");
+  if (items.empty()) return undefined;
+  const off = (n: NodeSingular) => Math.hypot(n.renderedPosition().x - middle.x, n.renderedPosition().y - middle.y);
+  const near = items.min((n) => off(n as NodeSingular)).ele as NodeSingular;
+  return { zoom: core.zoom(), id: near.id(), at: { ...near.renderedPosition() } };
+}
+
+/** The view as `keep` had it, if its item is still drawn and the drawing in view. */
+function restore(keep: NonNullable<typeof keepView>): void {
+  const core = cy as Core;
+  const el = core.getElementById(keep.id);
+  if (el.empty() || !el.isNode()) return;
+  const fitted = { zoom: core.zoom(), pan: { ...core.pan() } };
+  core.zoom(keep.zoom);
+  const now = el.renderedPosition();
+  core.panBy({ x: keep.at.x - now.x, y: keep.at.y - now.y });
+  const bb = core.elements().renderedBoundingBox({});
+  const [w, h] = [core.width(), core.height()];
+  // Nothing of it in view any more: as fitted.
+  if (bb.x2 < 0 || bb.y2 < 0 || bb.x1 > w || bb.y1 > h) {
+    core.viewport(fitted);
+    return;
+  }
+  // A drawing that fits at this zoom is moved wholly into view, as little as it takes.
+  const pad = 20;
+  const into = (lo: number, hi: number, size: number) => (hi - lo > size - 2 * pad ? 0 : lo < pad ? pad - lo : hi > size - pad ? size - pad - hi : 0);
+  core.panBy({ x: into(bb.x1, bb.x2, w), y: into(bb.y1, bb.y2, h) });
+}
+
+/** `el` is wholly in view. */
+function inView(el: cytoscape.SingularElementArgument): boolean {
+  const core = cy as Core;
+  const bb = el.renderedBoundingBox({ includeLabels: false });
+  return bb.x1 >= 0 && bb.y1 >= 0 && bb.x2 <= core.width() && bb.y2 <= core.height();
+}
+
 /** A palette entry dropped at `p`: a bay onto a busbar, a switch into a wire, else equipment in the level there. */
 function drop(entry: { class?: string; template?: string }, p: Point): void {
   const at = hit(p);
@@ -1155,6 +1255,7 @@ function drop(entry: { class?: string; template?: string }, p: Point): void {
 
 /** A node let go of, while editing: a junction onto another joins them, else a move. */
 function released(node: NodeSingular): void {
+  target();
   if (node.data("kind") === "junction") {
     const onto = hit(node.position(), node).node;
     if (onto && isBus(onto)) {
@@ -1166,16 +1267,25 @@ function released(node: NodeSingular): void {
 }
 
 const graphBox = document.getElementById("graph") as HTMLElement;
+/** The scene's coordinates of a point on the screen. */
+function sceneAt(clientX: number, clientY: number): Point {
+  const core = cy as Core;
+  const box = graphBox.getBoundingClientRect();
+  const pan = core.pan();
+  return { x: (clientX - box.left - pan.x) / core.zoom(), y: (clientY - box.top - pan.y) / core.zoom() };
+}
 graphBox.addEventListener("dragover", (e) => {
-  if (editing && e.dataTransfer?.types.includes(MIME)) e.preventDefault();
+  if (!editing || !e.dataTransfer?.types.includes(MIME)) return;
+  e.preventDefault();
+  if (carried && cy) target(targetOf(carried, sceneAt(e.clientX, e.clientY)));
 });
+graphBox.addEventListener("dragleave", () => target());
 graphBox.addEventListener("drop", (e) => {
+  target();
   const data = e.dataTransfer?.getData(MIME);
   if (!editing || !data || !cy) return;
   e.preventDefault();
-  const box = graphBox.getBoundingClientRect();
-  const pan = cy.pan();
-  drop(JSON.parse(data), { x: (e.clientX - box.left - pan.x) / cy.zoom(), y: (e.clientY - box.top - pan.y) / cy.zoom() });
+  drop(JSON.parse(data), sceneAt(e.clientX, e.clientY));
 });
 
 vscode.postMessage({ type: "ready" });
