@@ -10,7 +10,7 @@
 //! `cimmcp [--dir <path>]`: `--dir` (else `CIMOXIDE_MODEL_DIR`, else the
 //! working directory) is where relative `path` arguments resolve and what a
 //! tool reads when given none. RDFS and SHACL directories come from
-//! `CIMOXIDE_RDFS_DIR` / `CIMOXIDE_SHACL_DIR`, as for `cimcli`.
+//! `CIMOXIDE_RDFS_DIR` / `CIMOXIDE_SHACL_DIR`, as for `cimox`.
 
 mod session;
 mod tools;

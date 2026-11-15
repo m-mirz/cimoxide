@@ -82,7 +82,7 @@ every field as written (references resolved to class and name) and the objects t
         {
             "name": "validate",
             "title": "Validate a model set",
-            "description": "Run the ENTSO-E SHACL and SPARQL rules over a model set, as `cimcli validate` does. \
+            "description": "Run the ENTSO-E SHACL and SPARQL rules over a model set, as `cimox validate` does. \
 Returns counts by severity and rule, and the findings (filterable). Results are cached until a file changes.",
             "inputSchema": { "type": "object", "properties": {
                 "path": path,

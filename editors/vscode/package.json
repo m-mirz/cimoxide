@@ -334,12 +334,12 @@
         "cimoxide.validation.common": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Run the common cross-profile checks (`cimcli validate --common`)."
+          "markdownDescription": "Run the common cross-profile checks (`cimox validate --common`)."
         },
         "cimoxide.validation.quality": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Run the CIMdesk modelling-quality checks (`cimcli validate --quality`)."
+          "markdownDescription": "Run the CIMdesk modelling-quality checks (`cimox validate --quality`)."
         },
         "cimoxide.validation.silence": {
           "type": "array",
@@ -347,7 +347,7 @@
             "type": "string"
           },
           "default": [],
-          "markdownDescription": "Rule ids not to report (`cimcli validate --silence`)."
+          "markdownDescription": "Rule ids not to report (`cimox validate --silence`)."
         },
         "cimoxide.validation.onType": {
           "type": "boolean",

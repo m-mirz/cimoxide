@@ -1,4 +1,4 @@
-//! `cimcli validate --format sarif`: SARIF 2.1.0, one result per finding.
+//! `cimox validate --format sarif`: SARIF 2.1.0, one result per finding.
 //!
 //! Each result names its rule (with the rule's metadata in `tool.driver.rules`),
 //! the object as a logical location, and every input file and line that writes
@@ -161,7 +161,7 @@ mod tests {
 
     #[test]
     fn findings_point_at_every_file_writing_the_object() {
-        let dir = std::env::temp_dir().join(format!("cimcli-sarif-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("cimox-sarif-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let eq = dir.join("eq.xml");
         let ssh = dir.join("ssh.xml");

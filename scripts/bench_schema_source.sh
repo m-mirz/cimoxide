@@ -85,7 +85,7 @@ fi
 
 echo "Building cimoxide-cli (release)..."
 cargo build --release -p cimoxide-cli >/dev/null 2>&1
-cimcli="$repo_root/target/release/cimcli"
+cimox="$repo_root/target/release/cimox"
 fixture="$repo_root/testdata/test_nc_CO_001.xml"
 
 now_ns() { date +%s%N; }
@@ -95,17 +95,17 @@ median() {
 }
 
 # A three-element fixture is the point here: it isolates startup from decoding.
-echo "=== 2. startup wall clock — 'cimcli import' on a 3-element file ==="
+echo "=== 2. startup wall clock — 'cimox import' on a 3-element file ==="
 gen_ms=()
 dyn_ms=()
 for ((i = 1; i <= repeat; i++)); do
 	start=$(now_ns)
-	env -u CIMOXIDE_RDFS_DIR "$cimcli" import "$fixture" >/dev/null
+	env -u CIMOXIDE_RDFS_DIR "$cimox" import "$fixture" >/dev/null
 	end=$(now_ns)
 	gen_ms+=($(((end - start) / 1000000)))
 
 	start=$(now_ns)
-	CIMOXIDE_RDFS_DIR="$rdfs_dir" "$cimcli" import "$fixture" >/dev/null
+	CIMOXIDE_RDFS_DIR="$rdfs_dir" "$cimox" import "$fixture" >/dev/null
 	end=$(now_ns)
 	dyn_ms+=($(((end - start) / 1000000)))
 done
@@ -118,8 +118,8 @@ echo
 
 echo "=== 3. peak RSS ==="
 if command -v /usr/bin/time >/dev/null 2>&1; then
-	g_rss=$(env -u CIMOXIDE_RDFS_DIR /usr/bin/time -f '%M' "$cimcli" import "$fixture" 2>&1 >/dev/null | tail -1)
-	d_rss=$(CIMOXIDE_RDFS_DIR="$rdfs_dir" /usr/bin/time -f '%M' "$cimcli" import "$fixture" 2>&1 >/dev/null | tail -1)
+	g_rss=$(env -u CIMOXIDE_RDFS_DIR /usr/bin/time -f '%M' "$cimox" import "$fixture" 2>&1 >/dev/null | tail -1)
+	d_rss=$(CIMOXIDE_RDFS_DIR="$rdfs_dir" /usr/bin/time -f '%M' "$cimox" import "$fixture" 2>&1 >/dev/null | tail -1)
 	echo "  generated table : ${g_rss} KB"
 	echo "  RDFS-loaded     : ${d_rss} KB"
 	echo "  difference      : +$((d_rss - g_rss)) KB"
@@ -129,6 +129,6 @@ fi
 echo
 
 echo "=== 4. binary size ==="
-echo "  cimcli: $(stat -c '%s' "$cimcli") bytes"
+echo "  cimox: $(stat -c '%s' "$cimox") bytes"
 echo "  (the generated table remains compiled in as the fallback, so this is"
 echo "   expected to be unchanged by the feature)"

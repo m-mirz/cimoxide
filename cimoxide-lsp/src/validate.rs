@@ -4,7 +4,7 @@
 //! rules need all of them, so the unit of validation is a *model set*: every
 //! CIM RDF/XML file in one directory, which is how the CGMES test
 //! configurations and most exchanges are laid out. The set runs through
-//! [`cimvalidation::validate_files`], exactly as `cimcli validate` does, and
+//! [`cimvalidation::validate_files`], exactly as `cimox validate` does, and
 //! each finding is placed on the file it was found in, or for one found on
 //! the merged set, on every file that writes its object.
 
@@ -17,7 +17,7 @@ use lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range,
 
 use crate::index::{IdKind, Index};
 
-/// What `cimcli validate` takes as flags.
+/// What `cimox validate` takes as flags.
 #[derive(Debug, Default, Clone, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Options {
@@ -113,7 +113,7 @@ pub fn collect(dir: &Path, open: &HashMap<PathBuf, Arc<str>>) -> Vec<(PathBuf, A
 /// Validate `files` as one model set. Returns the set and the diagnostics
 /// of every file in it, an empty list for a clean one.
 pub fn validate(files: &[(PathBuf, Arc<str>)], opts: &Options) -> (ModelSet, Vec<(Url, Vec<Diagnostic>)>) {
-    // Decode and index each file on its own thread, as `cimcli` decodes.
+    // Decode and index each file on its own thread, as `cimox` decodes.
     let decoded: Vec<(Result<cimmodel::CimDataset, String>, Index)> = std::thread::scope(|s| {
         files
             .iter()
@@ -258,7 +258,7 @@ fn diagnostic(v: &Violation, range: Range) -> Diagnostic {
         code: Some(NumberOrString::String(v.rule_id.clone())),
         source: Some("cimoxide".into()),
         message,
-        // The finding as `cimcli validate --format json` names it.
+        // The finding as `cimox validate --format json` names it.
         data: Some(serde_json::json!({ "object_id": v.object_id, "property": v.property })),
         ..Default::default()
     }

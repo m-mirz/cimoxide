@@ -14,14 +14,14 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            binary: cimcli
-            artifact: cimcli-linux-amd64
+            binary: cimox
+            artifact: cimox-linux-amd64
           - os: windows-latest
-            binary: cimcli.exe
-            artifact: cimcli-windows-amd64.exe
+            binary: cimox.exe
+            artifact: cimox-windows-amd64.exe
           - os: macos-latest
-            binary: cimcli
-            artifact: cimcli-darwin-arm64
+            binary: cimox
+            artifact: cimox-darwin-arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -76,6 +76,6 @@ jobs:
             --title "Release ${{ github.ref_name }}" \
             --generate-notes \
             --repo ${{ github.repository }} \
-            cimcli-linux-amd64 \
-            cimcli-windows-amd64.exe \
-            cimcli-darwin-arm64
+            cimox-linux-amd64 \
+            cimox-windows-amd64.exe \
+            cimox-darwin-arm64

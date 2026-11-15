@@ -52,7 +52,7 @@ fi
 
 echo "Building cimoxide-cli (release)..."
 (cd "$repo_root" && cargo build --release -p cimoxide-cli)
-cimcli="$repo_root/target/release/cimcli"
+cimox="$repo_root/target/release/cimox"
 
 echo "Files (${#files[@]}):"
 printf '  %s\n' "${files[@]}"
@@ -67,7 +67,7 @@ for ((i = 1; i <= repeat; i++)); do
 	echo "Run $i/$repeat"
 
 	start=$(now_ns)
-	if ! "$cimcli" import "${files[@]}" >/dev/null; then
+	if ! "$cimox" import "${files[@]}" >/dev/null; then
 		echo "  cimoxide-cli import failed" >&2
 		exit 1
 	fi
@@ -84,7 +84,7 @@ for ((i = 1; i <= repeat; i++)); do
 	# false unless --common is given, so this is needed for the two tools'
 	# runs to enable the same rule set.
 	set +e
-	"$cimcli" validate --common "${files[@]}" >/dev/null
+	"$cimox" validate --common "${files[@]}" >/dev/null
 	status=$?
 	set -e
 	if [ "$status" -ne 0 ] && [ "$status" -ne 2 ]; then
