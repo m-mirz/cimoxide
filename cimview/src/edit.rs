@@ -435,6 +435,45 @@ pub fn create<'a>(
     Ok(Added { edits: vec![(file.name, vec![edit])], file: file.name.to_string(), select, id })
 }
 
+/// The text of a new file of profile `code` (`DL`) beside `like`: its
+/// prolog and root, with their namespaces, and a FullModel header under the
+/// model id `urn:uuid:{id}` dependent on `like`'s model, with its times,
+/// version and modelling authority set.
+pub fn companion(like: &File, code: &str, id: &str) -> Result<String, String> {
+    let profile = type_registry()
+        .schema("cgmes")
+        .and_then(|s| s.profiles.iter().find(|(c, _)| *c == code))
+        .map(|(_, uri)| *uri)
+        .ok_or_else(|| format!("no profile {code}"))?;
+    let text = like.text;
+    let root_end = text
+        .find("<rdf:RDF")
+        .and_then(|s| text[s..].find('>').map(|e| s + e + 1))
+        .ok_or_else(|| format!("{} has no rdf:RDF root", like.name))?;
+    let header = like
+        .index
+        .elements
+        .iter()
+        .find(|e| local(&e.qname) == "FullModel")
+        .ok_or_else(|| format!("{} has no FullModel header", like.name))?;
+    let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let start = like.lines.offset(text, header.full.start);
+    let indent = text[..start].rsplit_once('\n').map_or("", |(_, i)| i);
+    let prefix = header.qname.split_once(':').map_or("md", |(p, _)| p);
+    let model = if header.mrid.contains(':') { header.mrid.clone() } else { format!("#{}", header.mrid) };
+    let mut lines = vec![format!("<{prefix}:FullModel rdf:about=\"urn:uuid:{id}\">")];
+    for f in &header.fields {
+        if matches!(f.key(), "Model.created" | "Model.scenarioTime" | "Model.version" | "Model.modelingAuthoritySet") {
+            lines.push(format!("  {}", &text[like.lines.offset(text, f.full.start)..like.lines.offset(text, f.full.end)]));
+        }
+    }
+    lines.push(format!("  <{prefix}:Model.profile>{profile}</{prefix}:Model.profile>"));
+    lines.push(format!("  <{prefix}:Model.DependentOn rdf:resource=\"{model}\" />"));
+    lines.push(format!("</{prefix}:FullModel>"));
+    let body: String = lines.iter().map(|l| format!("{indent}{l}{eol}")).collect();
+    Ok(format!("{}{eol}{body}</rdf:RDF>{eol}", &text[..root_end]))
+}
+
 /// An object a diagram draws: the mRID it shows, its name, and its points.
 pub type Drawn<'a> = (&'a str, &'a str, Vec<(f64, f64)>);
 
@@ -1291,6 +1330,36 @@ mod tests {
         assert_eq!(set2.tree.containers(&added.id), ["PP_Brussels", "110.0"]);
         let ssh = edited.iter().find(|(p, _)| p.to_string_lossy().contains("_BE_SSH_")).unwrap();
         assert!(ssh.1.contains(&format!("rdf:about=\"#{}\"", added.id)));
+    }
+
+    /// A DL file beside MicroGrid's EQ: its namespaces, a header of its own
+    /// dependent on EQ's, and room for a diagram, which validates.
+    #[test]
+    fn a_companion_file_takes_a_diagram() {
+        let read = crate::testing::collect(&micro_grid());
+        let names: Vec<String> = read.iter().map(|(p, _)| p.to_string_lossy().into_owned()).collect();
+        let at = names.iter().position(|n| n.contains("_BE_EQ_")).unwrap();
+        let (lines, index) = (LineIndex::new(&read[at].1), Index::build(&read[at].1));
+        let eq = File { name: &names[at], text: &read[at].1, lines: &lines, index: &index };
+        let text = companion(&eq, "DL", "0d1e2f30-0000-4000-8000-000000000000").unwrap();
+        assert!(text.contains("<md:Model.profile>http://iec.ch/TC57/ns/CIM/DiagramLayout-EU/3.0</md:Model.profile>"), "{text}");
+        assert!(text.contains(&format!("<md:Model.DependentOn rdf:resource=\"{}\" />", index.elements[0].mrid)), "{text}");
+        assert!(!text.contains("CoreEquipment"), "{text}");
+        let (dl_lines, dl_index) = (LineIndex::new(&text), Index::build(&text));
+        let dl = File { name: "new_DL.xml", text: &text, lines: &dl_lines, index: &dl_index };
+        let mut counter = 0u8;
+        let mut random = || {
+            counter += 1;
+            [counter; 16]
+        };
+        let breaker = index.elements.iter().find(|e| local(&e.qname) == "Breaker").map(|e| e.mrid.clone());
+        let shown = breaker.as_deref().unwrap_or("_x");
+        let added = diagram(&[dl], "new_DL.xml", None, "One", &[(shown, "B", vec![(1.0, 2.5)])], &mut random).unwrap();
+        let written = crate::text::apply(&text, &added.edits[0].1);
+        assert!(written.contains("<cim:DiagramObjectPoint.xPosition>1</cim:DiagramObjectPoint.xPosition>"), "{written}");
+        assert!(written.contains("<cim:DiagramObjectPoint.yPosition>2.5</cim:DiagramObjectPoint.yPosition>"), "{written}");
+        assert!(written.contains("OrientationKind.negative"), "{written}");
+        cimmodel::CimDataset::decode_str(&written).unwrap();
     }
 }
 
