@@ -317,6 +317,8 @@ function paintState(): void {
       } else el.data("label", found ? (base ? `${base}\n${found.text}` : found.text) : base);
     });
   });
+  // Data removed does not restyle what was matched on it (`edge[flowLabel]`, `[pf]`).
+  cy.style().update();
   const pick = document.getElementById("colour") as HTMLSelectElement;
   pick.style.display = grid?.state ? "" : "none";
   pick.value = colourBy;
