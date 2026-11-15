@@ -411,6 +411,10 @@ fn draw(inside: &Inside, mut at: BTreeMap<usize, (f64, f64)>, bars: &[Bar]) -> L
 /// now hangs from them, and every link routed anew; another junction a
 /// point. Positions in pixels.
 pub fn reroute(inside: &Inside, nodes: &BTreeMap<usize, (f64, f64)>, sizes: &BTreeMap<usize, (f64, f64)>) -> Layout {
+    // Upright busbars (a diagram's, drawn so): routed as lying ones, x and y swapped.
+    if upright(sizes) {
+        return transposed(reroute(inside, &swapped(nodes), &swapped(sizes)));
+    }
     let bus = buses(inside);
     let mut bars: BTreeMap<usize, Bar> = BTreeMap::new();
     for (&i, &(w, _)) in sizes {
@@ -438,6 +442,28 @@ pub fn reroute(inside: &Inside, nodes: &BTreeMap<usize, (f64, f64)>, sizes: &BTr
     layout
 }
 
+/// Whether most bars of `sizes` stand upright: taller than wide.
+fn upright(sizes: &BTreeMap<usize, (f64, f64)>) -> bool {
+    let up = sizes.values().filter(|(w, h)| h > w).count();
+    up > sizes.len() - up
+}
+
+fn swap((x, y): (f64, f64)) -> (f64, f64) {
+    (y, x)
+}
+
+fn swapped(m: &BTreeMap<usize, (f64, f64)>) -> BTreeMap<usize, (f64, f64)> {
+    m.iter().map(|(&i, &p)| (i, swap(p))).collect()
+}
+
+/// `l` with x and y swapped: its positions, routes and sizes.
+fn transposed(mut l: Layout) -> Layout {
+    l.nodes = swapped(&l.nodes);
+    l.sizes = swapped(&l.sizes);
+    l.edges = l.edges.into_iter().map(|(k, ps)| (k, ps.into_iter().map(swap).collect())).collect();
+    l
+}
+
 /// `layout`, a diagram of `inside` as its data writes it, with what it does
 /// not place yet placed and every link routed anew; what it places stays.
 /// The first item placed goes `at` (where an editor dropped it, in the
@@ -453,13 +479,18 @@ pub fn complete(inside: &Inside, layout: &Layout, at: Option<(f64, f64)>) -> Lay
     let back = |(x, y): (f64, f64)| (x / unit, y * flip / unit);
     let mut placed: BTreeMap<usize, (f64, f64)> = layout.nodes.iter().filter(|(i, _)| **i < inside.items.len()).map(|(&i, &p)| (i, screen(p))).collect();
     let mut sizes: BTreeMap<usize, (f64, f64)> = layout.sizes.iter().filter(|(i, _)| placed.contains_key(i)).map(|(&i, &(w, h))| (i, (w * unit, h * unit))).collect();
+    // Upright busbars: placed as for lying ones, x and y swapped, and swapped back.
+    let up = upright(&sizes);
+    if up {
+        (placed, sizes) = (swapped(&placed), swapped(&sizes));
+    }
     let mut adj: Vec<Vec<usize>> = vec![Vec::new(); inside.items.len()];
     for l in &inside.links {
         adj[l.item].push(l.junction);
         adj[l.junction].push(l.item);
     }
     let mut missing: BTreeSet<usize> = (0..inside.items.len()).filter(|i| !placed.contains_key(i)).collect();
-    let mut drop = at.map(screen);
+    let mut drop = at.map(screen).map(|p| if up { swap(p) } else { p });
     let snap = |(x, y): (f64, f64)| ((x / 4.0).round() * 4.0, (y / 14.0).round() * 14.0);
     while let Some(&next) = missing.iter().max_by_key(|&&i| (adj[i].iter().filter(|n| placed.contains_key(n)).count(), !inside.items[i].junction, Reverse(i))) {
         missing.remove(&next);
@@ -507,6 +538,9 @@ pub fn complete(inside: &Inside, layout: &Layout, at: Option<(f64, f64)>) -> Lay
         }
     }
     let mut out = reroute(inside, &placed, &sizes);
+    if up {
+        out = transposed(out);
+    }
     out.nodes = out.nodes.into_iter().map(|(i, p)| (i, back(p))).collect();
     out.edges = out.edges.into_iter().map(|(k, ps)| (k, ps.into_iter().map(back).collect())).collect();
     out.sizes = out.sizes.into_iter().map(|(i, (w, h))| (i, (w / unit, h / unit))).collect();
@@ -519,10 +553,13 @@ pub fn complete(inside: &Inside, layout: &Layout, at: Option<(f64, f64)>) -> Lay
 /// a point, a busbar a line on its bus's junction (its sections, which it
 /// draws, nothing of their own), and a terminal its route.
 pub fn diagram_objects<'a>(inside: &'a Inside, layout: &Layout) -> Vec<crate::edit::Drawn<'a>> {
-    let mut spans: BTreeMap<usize, (f64, f64, f64)> = BTreeMap::new();
+    // Each bus's bar: from where to where along it, and where across; lying, or upright.
+    let mut spans: BTreeMap<usize, (f64, f64, f64, bool)> = BTreeMap::new();
     let mut pieces = BTreeSet::new();
-    for (&i, &(w, _)) in &layout.sizes {
-        let Some(&(x, y)) = layout.nodes.get(&i) else { continue };
+    let up = upright(&layout.sizes);
+    for (&i, &size) in &layout.sizes {
+        let Some(&at) = layout.nodes.get(&i) else { continue };
+        let ((x, y), (w, _)) = if up { (swap(at), swap(size)) } else { (at, size) };
         let bus = if inside.items[i].junction {
             i
         } else {
@@ -532,8 +569,8 @@ pub fn diagram_objects<'a>(inside: &'a Inside, layout: &Layout) -> Vec<crate::ed
                 None => continue,
             }
         };
-        let span = spans.entry(bus).or_insert((x - w / 2.0, x + w / 2.0, y));
-        *span = (span.0.min(x - w / 2.0), span.1.max(x + w / 2.0), y);
+        let span = spans.entry(bus).or_insert((x - w / 2.0, x + w / 2.0, y, up));
+        *span = (span.0.min(x - w / 2.0), span.1.max(x + w / 2.0), y, up);
     }
     let mut out = Vec::new();
     for (i, it) in inside.items.iter().enumerate() {
@@ -541,7 +578,8 @@ pub fn diagram_objects<'a>(inside: &'a Inside, layout: &Layout) -> Vec<crate::ed
             continue;
         }
         let points = match (spans.get(&i), layout.nodes.get(&i)) {
-            (Some(&(lo, hi, y)), _) => vec![(lo, y), (hi, y)],
+            (Some(&(lo, hi, y, false)), _) => vec![(lo, y), (hi, y)],
+            (Some(&(lo, hi, x, true)), _) => vec![(x, lo), (x, hi)],
             (None, Some(&p)) => vec![p],
             (None, None) => continue,
         };

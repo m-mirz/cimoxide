@@ -1084,15 +1084,16 @@ mod tests {
                 assert!((p.0 - q.0).abs() < 1e-6 && (p.1 - q.1).abs() < 1e-6, "{id} stays: {p:?} → {q:?}");
             }
         }
-        // The bay's switches in a column, below the bar.
+        // The bay's switches in a line away from the bar: MicroGrid's bars stand upright, so to
+        // its right, in a row (lying bars, below it in a column).
+        assert!(drawn.sizes.values().all(|(w, h)| h > w));
         let new: Vec<usize> = (0..now.items.len()).filter(|i| !before.contains_key(&now.items[*i].id) && now.items[*i].open.is_some()).collect();
         assert_eq!(new.len(), 3);
-        let flip = if drawn.flip_y { -1.0 } else { 1.0 };
         for i in &new {
-            assert!(flip * (done.nodes[i].1 - at.1) > 0.0, "{} below the bar", now.items[*i].label);
+            assert!(done.nodes[i].0 > at.0, "{} right of the bar", now.items[*i].label);
         }
-        let xs: BTreeSet<i64> = new.iter().map(|i| done.nodes[i].0.round() as i64).collect();
-        assert_eq!(xs.len(), 1, "in one column: {xs:?}");
+        let ys: BTreeSet<i64> = new.iter().map(|i| (done.nodes[i].1 * 100.0).round() as i64).collect();
+        assert_eq!(ys.len(), 1, "in one row: {ys:?}");
     }
 
     #[test]
@@ -1124,5 +1125,52 @@ mod tests {
         let shown = now.layouts.iter().find(|l| l.id == format!("dl:{diagram}")).unwrap();
         assert_eq!(shown.nodes.len(), now.items.len(), "the bay drawn too");
         none_more(&read, &edited, &[]);
+    }
+
+    #[test]
+    fn a_diagram_redrawn_reads_back_as_it_was() {
+        let read = micro_grid();
+        let set = validate(&read);
+        let inside = inside_of(&set, "Anvers");
+        let substation = set.grid.nodes.iter().find(|n| n.label == "Anvers").unwrap().id.clone();
+        let old = inside.layouts.iter().find(|l| l.kind == "diagram").unwrap();
+        let diagram = old.id.trim_start_matches("dl:").to_string();
+        let texts: Vec<(String, String)> = read.iter().map(|(p, t)| (p.to_string_lossy().into_owned(), t.to_string())).collect();
+        let drawn = redraw(&texts, &substation, &diagram, None, &mut random()).unwrap();
+        let edited: Read = texts
+            .iter()
+            .map(|(n, t)| {
+                let e: Vec<TextEdit> = drawn.iter().filter(|(m, _)| m == n).flat_map(|(_, e)| e.clone()).collect();
+                (PathBuf::from(n), Arc::from(crate::text::apply(t, &e)))
+            })
+            .collect();
+        let again = validate(&edited);
+        let now = inside_of(&again, "Anvers");
+        let shown = now.layouts.iter().find(|l| l.id == old.id).unwrap();
+        // Equipment stays, as written (to 0.01); bars stand as they stood, their lengths fitted
+        // to what hangs from them.
+        let mut wrong = Vec::new();
+        for (&i, p) in &old.nodes {
+            let it = &inside.items[i];
+            let j = now.items.iter().position(|x| x.id == it.id).unwrap();
+            if it.junction || old.sizes.contains_key(&i) {
+                continue;
+            }
+            let q = shown.nodes[&j];
+            if (p.0 - q.0).abs() > 0.01 || (p.1 - q.1).abs() > 0.01 {
+                wrong.push(format!("{}: {p:?} → {q:?}", it.label));
+            }
+        }
+        let bars: Vec<_> = old.sizes.iter().filter(|(i, _)| inside.items[**i].class == "BusbarSection").collect();
+        assert!(!bars.is_empty() && bars.iter().all(|(_, (w, h))| h > w), "MicroGrid draws Anvers's busbars upright");
+        for (&i, _) in bars {
+            let j = now.items.iter().position(|x| x.id == inside.items[i].id).unwrap();
+            let bus = now.links.iter().find(|l| l.item == j).map_or(j, |l| l.junction);
+            let (w, h) = shown.sizes.get(&j).or(shown.sizes.get(&bus)).copied().unwrap_or_default();
+            if h <= w {
+                wrong.push(format!("{} lies: {w} × {h}", inside.items[i].label));
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 }
