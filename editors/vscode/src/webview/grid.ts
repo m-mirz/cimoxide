@@ -5,7 +5,7 @@
 import cytoscape, { Core, ElementDefinition, NodeSingular, EdgeSingular } from "cytoscape";
 import { Symbol, symbolOf, symbolSvg } from "../symbols";
 
-declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
+declare function acquireVsCodeApi(): { postMessage(msg: unknown): void; getState(): { showValues?: boolean } | undefined; setState(state: { showValues?: boolean }): void };
 const vscode = acquireVsCodeApi();
 
 interface Findings {
@@ -121,7 +121,9 @@ let grid: Grid | undefined;
 /** The substation shown, if any; else the grid. */
 let inside: Inside | undefined;
 /** What the scene is coloured by: voltage levels, or the SV's state where the set has one. */
-let colourBy: "voltage" | "state" = "state";
+let colourBy: "voltage" | "state" = "voltage";
+/** The SV's values beside what they describe, on or off apart from the colouring. */
+let showValues = vscode.getState()?.showValues ?? true;
 /** The grid's viewport when a substation was opened, to return to. */
 let gridView: { zoom: number; pan: Point; selected: string } | undefined;
 
@@ -131,6 +133,8 @@ style.textContent = `
   body { display: flex; flex-direction: column; color: var(--vscode-foreground); background: var(--vscode-editor-background);
          font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); }
   #bar { display: flex; gap: 12px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--vscode-panel-border); }
+  #values { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+  #values input { margin: 0; }
   #layout, #colour { color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background);
             border: 1px solid var(--vscode-dropdown-border, transparent); padding: 2px 4px; }
   #search { width: 220px; color: var(--vscode-input-foreground); background: var(--vscode-input-background);
@@ -259,7 +263,7 @@ function stateOf(id: string, kind: string | undefined, o: Overlay): { band: stri
 
 /** An element's state, for the side panel. */
 function stateHtml(id: string): string {
-  const o = shownState();
+  const o = grid?.state;
   if (!o) return "";
   const lines: string[] = [];
   const v = o.nodes[id] ?? (o.voltages[id] ? { min: o.voltages[id].pu, max: o.voltages[id].pu } : undefined);
@@ -290,19 +294,23 @@ function shownState(): Overlay | null {
 }
 
 /**
- * Labels and colours the scene by the state shown, or as drawn: each element keeps its own label
- * as `base`, and a state adds a line to it; on an edge, a label of its own.
+ * Colours the scene by the SV's state, or as drawn; and, apart from that, adds its values to the
+ * labels: each element keeps its own label as `base`, a value adds a line to it; on an edge, a
+ * label of its own.
  */
 function paintState(): void {
   if (!cy) return;
   const on = shownState();
+  const values = showValues ? grid?.state ?? null : null;
   cy.batch(() => {
     cy?.elements().forEach((el) => {
       if (el.data("base") === undefined) el.data("base", el.data("label") ?? "");
       const base = el.data("base") as string;
-      const found = on ? stateOf(el.id(), el.data("kind") as string | undefined, on) : null;
-      if (on && el.data("kind") !== "group" && !el.id().startsWith("t:")) el.data("pf", found?.band ?? "none");
+      const kind = el.data("kind") as string | undefined;
+      const band = on ? stateOf(el.id(), kind, on) : null;
+      if (on && kind !== "group" && !el.id().startsWith("t:")) el.data("pf", band?.band ?? "none");
       else el.removeData("pf");
+      const found = values ? stateOf(el.id(), kind, values) : null;
       if (el.group() === "edges") {
         if (found) el.data("flowLabel", found.text);
         else el.removeData("flowLabel");
@@ -312,6 +320,9 @@ function paintState(): void {
   const pick = document.getElementById("colour") as HTMLSelectElement;
   pick.style.display = grid?.state ? "" : "none";
   pick.value = colourBy;
+  const toggle = document.getElementById("values") as HTMLElement;
+  toggle.style.display = grid?.state ? "" : "none";
+  (toggle.querySelector("input") as HTMLInputElement).checked = showValues;
 }
 
 /** The legend of the bands, for the side panel. */
@@ -973,6 +984,12 @@ new MutationObserver(() => cy?.style(stylesheet())).observe(document.body, { att
   paintState();
   const selected = cy?.$(":selected").first();
   show(selected?.nonempty() ? (selected as NodeSingular | EdgeSingular) : undefined);
+});
+
+(document.querySelector("#values input") as HTMLInputElement).addEventListener("change", (e) => {
+  showValues = (e.target as HTMLInputElement).checked;
+  vscode.setState({ ...(vscode.getState() ?? {}), showValues });
+  paintState();
 });
 
 (document.getElementById("back") as HTMLButtonElement).addEventListener("click", leave);
