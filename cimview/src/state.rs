@@ -49,6 +49,21 @@ fn patls<'a>(m: &Model<'a>) -> BTreeMap<&'a str, f64> {
     out
 }
 
+/// Where active power leaves equipment on the grid: the grid node of the end it flows out at
+/// (into the node, `p` below zero), when its ends are at different ones; `None` without a flow
+/// to speak of.
+pub fn towards(ends: &[(Value, Option<String>)]) -> Option<String> {
+    let at: Vec<&String> = ends.iter().filter_map(|(_, a)| a.as_ref()).collect();
+    if at.windows(2).all(|w| w[0] == w[1]) {
+        return None;
+    }
+    let (out, at) = ends
+        .iter()
+        .filter_map(|(e, a)| Some((e["p"].as_f64()?, a.as_ref()?)))
+        .min_by(|a, b| a.0.total_cmp(&b.0))?;
+    (out < -1e-3).then(|| at.clone())
+}
+
 /// The SV's state of `m` over `grid`, as `{ nodes, voltages, flows }` (see the module); `None` if
 /// the set publishes no voltage or flow.
 pub fn overlay(m: &Model<'_>, grid: &Grid) -> Option<Value> {
@@ -108,7 +123,7 @@ pub fn overlay(m: &Model<'_>, grid: &Grid) -> Option<Value> {
 
     // Flows, by equipment: each terminal's, into it, and its loading.
     let limits = patls(m);
-    let mut flows: BTreeMap<&str, Vec<Value>> = BTreeMap::new();
+    let mut flows: BTreeMap<&str, Vec<(Value, Option<String>)>> = BTreeMap::new();
     for sv in svf {
         let Some(terminal) = m.reference(sv, "SvPowerFlow.Terminal") else { continue };
         let Some(equipment) = m.reference(terminal, "Terminal.ConductingEquipment") else { continue };
@@ -118,16 +133,21 @@ pub fn overlay(m: &Model<'_>, grid: &Grid) -> Option<Value> {
             .or_else(|| m.reference(terminal, "Terminal.ConnectivityNode").and_then(|cn| m.reference(cn, "ConnectivityNode.TopologicalNode")));
         let amps = tn.and_then(|tn| kv_at.get(tn)).map(|kv| 1e3 * p.hypot(q) / (3f64.sqrt() * kv));
         let loading = amps.zip(limits.get(terminal)).map(|(a, l)| round(100.0 * a / l, 2));
-        flows.entry(equipment).or_default().push(json!({
+        // Where the grid shows this end: its node's substation, else its boundary point.
+        let at = tn.and_then(&place).or_else(|| m.reference(terminal, "Terminal.ConnectivityNode").and_then(&place));
+        let end = json!({
             "terminal": terminal, "p": round(p, 3), "q": round(q, 3),
             "amps": amps.map(|a| round(a, 2)), "loading": loading,
-        }));
+        });
+        flows.entry(equipment).or_default().push((end, at));
     }
     let flows: Map<String, Value> = flows
         .into_iter()
         .map(|(equipment, ends)| {
+            let towards = towards(&ends);
+            let ends: Vec<Value> = ends.into_iter().map(|(e, _)| e).collect();
             let loading = ends.iter().filter_map(|e| e["loading"].as_f64()).reduce(f64::max);
-            (equipment.to_string(), json!({ "ends": ends, "loading": loading }))
+            (equipment.to_string(), json!({ "ends": ends, "loading": loading, "towards": towards }))
         })
         .collect();
     Some(json!({
@@ -177,6 +197,10 @@ mod tests {
         assert_eq!(ends.len(), 2, "{f}");
         assert!(ends.iter().all(|e| e["amps"].as_f64().is_some_and(|a| a > 0.0)), "{f}");
         assert!(f["loading"].as_f64().is_some_and(|l| l > 0.0 && l < 200.0), "{f}");
+        // Its power leaves it at one of the substations it joins.
+        let edge = grid.edges.iter().find(|e| e.id.split('#').next() == Some(line.id.as_str())).unwrap();
+        let towards = f["towards"].as_str().expect("a direction");
+        assert!([&grid.nodes[edge.source].id, &grid.nodes[edge.target].id].contains(&&towards.to_string()), "{towards}");
     }
 
     #[test]
