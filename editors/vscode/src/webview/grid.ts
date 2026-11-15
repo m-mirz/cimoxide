@@ -212,11 +212,6 @@ function total(f: Findings): number {
   return f.violation + f.warning + f.info;
 }
 
-/** The ring grows with the findings: one and forty must not look alike. */
-function ring(f: Findings): number {
-  return total(f) ? Math.min(6, 1.5 + Math.log2(total(f))) : 0;
-}
-
 /** Voltage bands, coloured as grid maps colour them (in the theme's chart colours). */
 const BANDS: [string, number, string, string][] = [
   ["v300", 300, "--vscode-charts-red", "#e5534b"],
@@ -394,7 +389,7 @@ function gridElements(g: Grid): ElementDefinition[] {
       group: "nodes" as const,
       data: {
         id: n.id, label: n.label, kind: n.kind === "Substation" ? "substation" : "boundary", sev: worst(n.findings),
-        size: height, width: height + 5 * Math.max(0, Math.min(3, n.kV.length - 1)), ring: ring(n.findings), band: band(n.kV[0]),
+        size: height, width: height + 5 * Math.max(0, Math.min(3, n.kV.length - 1)), band: band(n.kV[0]),
       },
     };
   });
@@ -460,7 +455,6 @@ function insideElements(s: Inside): ElementDefinition[] {
       sev: worst(it.findings), parent: it.group ? `g:${it.group}` : undefined,
       // A transformer joins levels: no one level's colour.
       band: /^transformer/.test(symbolFor(it, terminals.get(it.id) ?? 0)) ? "none" : bandOf.get(it.id),
-      ring: ring(it.findings),
       role: roleOf(it, symbolFor(it, terminals.get(it.id) ?? 0)),
     },
     classes: [it.open ? "open" : "", it.inService === false ? "out" : ""].join(" ").trim(),
@@ -474,18 +468,10 @@ function insideElements(s: Inside): ElementDefinition[] {
 }
 
 function stylesheet(): cytoscape.StylesheetJson {
-  const sev = {
-    violation: colour("--vscode-errorForeground", "#f14c4c"),
-    warning: colour("--vscode-editorWarning-foreground", "#cca700"),
-    info: colour("--vscode-editorInfo-foreground", "#3794ff"),
-    none: colour("--vscode-descriptionForeground", "#888888"),
-  };
   const fg = colour("--vscode-foreground", "#cccccc");
   const bg = colour("--vscode-editor-background", "#1e1e1e");
   const fill = colour("--vscode-descriptionForeground", "#8b8b8b");
   const focus = colour("--vscode-focusBorder", "#007fd4");
-  const bySeverity = (prop: string) =>
-    Object.entries(sev).map(([k, c]) => ({ selector: `[sev = "${k}"]`, style: { [prop]: c } }));
   // Each voltage band's colour, on what `prop` paints of `selector`.
   const byBand = (selector: string, ...props: string[]) =>
     BANDS.map(([b, , v, fb]) => ({
@@ -501,7 +487,7 @@ function stylesheet(): cytoscape.StylesheetJson {
         label: "data(label)", color: fg, "font-size": 9, "text-valign": "bottom", "text-margin-y": 2, "text-wrap": "wrap",
         // Legible over the lines it sits on.
         "text-outline-color": bg, "text-outline-width": 2, "text-outline-opacity": 0.85,
-        width: "data(size)", height: "data(size)", "background-color": fill, "border-width": "data(ring)",
+        width: "data(size)", height: "data(size)", "background-color": fill, "border-width": 0,
         "min-zoomed-font-size": 7,
       },
     },
@@ -563,15 +549,8 @@ function stylesheet(): cytoscape.StylesheetJson {
     },
     { selector: 'node.drawn.across[kind = "busbar"]', style: { "text-valign": "top", "text-halign": "center" } },
     { selector: "node.onbar", style: { "text-opacity": 0 } },
-    ...bySeverity("border-color").map((s) => ({ ...s, selector: `node[kind != "group"]${s.selector}` })),
-    // And a halo, which reads apart from a voltage colour of the same hue.
-    ...bySeverity("underlay-color").filter((s) => !s.selector.includes('"none"')).map((s) => ({
-      ...s, selector: `node[kind != "group"]${s.selector}`,
-      style: { ...s.style, "underlay-opacity": 0.35, "underlay-padding": 4, "underlay-shape": "ellipse" },
-    })),
-
-    // Without findings, set off from the lines it joins.
-    { selector: 'node[kind = "substation"][sev = "none"]', style: { "border-width": 1.5, "border-color": bg } },
+    // Set off from the lines it joins. Findings are the CIM Model view's to show, not the grid's.
+    { selector: 'node[kind = "substation"]', style: { "border-width": 1.5, "border-color": bg } },
     { selector: "node.out", style: { opacity: 0.45, "border-style": "dashed" } },
     {
       selector: "edge",
@@ -583,16 +562,13 @@ function stylesheet(): cytoscape.StylesheetJson {
     // Which way active power flows, where its values are shown.
     { selector: 'edge[arrow = "target"]', style: { "mid-target-arrow-shape": "triangle", "arrow-scale": 1.1 } },
     { selector: 'edge[arrow = "source"]', style: { "mid-source-arrow-shape": "triangle", "arrow-scale": 1.1 } },
-    // Findings on a line: a halo in the worst one's colour, apart from its voltage colour.
-    ...bySeverity("underlay-color").filter((s) => !s.selector.includes('"none"'))
-      .map((s) => ({ ...s, selector: `edge${s.selector}`, style: { ...s.style, "underlay-opacity": 0.4, "underlay-padding": 5 } })),
     { selector: "edge.disconnected", style: { "line-style": "dashed" } },
     { selector: "node:selected", style: { "background-color": focus, "background-opacity": 1 } },
     { selector: 'node[kind = "group"]:selected', style: { "background-opacity": 0.15 } },
     { selector: 'node[kind = "symbol"]:selected', style: { "background-opacity": 0.3 } },
     { selector: "edge:selected", style: { "line-color": focus, opacity: 1 } },
     ...stateBands(),
-    // Where what is dragged would land, while editing: over findings' halos.
+    // Where what is dragged would land, while editing: over a state's halos.
     { selector: ".target", style: { "overlay-color": focus, "overlay-opacity": 0.3, "overlay-padding": 6, "overlay-shape": "round-rectangle" } },
     { selector: 'node[kind = "group"].target', style: { "border-color": focus, "border-width": 2, "overlay-opacity": 0 } },
     // A label that would crowd one that matters more (declutter.ts).
