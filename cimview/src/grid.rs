@@ -352,8 +352,10 @@ fn layouts(m: &Model, grid: &Grid) -> (Vec<Layout>, Vec<(usize, Layout)>) {
 
 /// A substation's diagram drawn as its single-line diagram is: to the
 /// scale that sets its items a row apart (half its wires, else its links
-/// from item to junction, are shorter), each junction drawn as a line a busbar of that length, and
-/// a busbar section not drawn itself that bar, its junction at the bar's end.
+/// from item to junction, are shorter); a bus drawn as a line a busbar of
+/// that length, a busbar section not drawn itself that bar, its junction at
+/// the bar's end; any other junction drawn as a line, a line as thin as a
+/// wire (a diagram may draw every junction as one).
 fn busbars(inside: &Inside, placed: &BTreeMap<usize, Vec<(f64, f64)>>, layout: &mut Layout) {
     // The wires drawn, else from item to junction.
     let wires: Vec<f64> = layout.edges.values().map(|ps| ps.windows(2).map(|w| (w[0].0 - w[1].0).hypot(w[0].1 - w[1].1)).sum()).collect();
@@ -374,7 +376,7 @@ fn busbars(inside: &Inside, placed: &BTreeMap<usize, Vec<(f64, f64)>>, layout: &
     let typical = lengths[lengths.len() / 2];
     let unit = crate::single_line::ROW / typical;
     layout.unit = Some(unit);
-    let thick = crate::single_line::BAR / unit;
+    let bus = crate::single_line::buses(inside);
     for (&j, ps) in placed {
         if !inside.items[j].junction || ps.len() < 2 {
             continue;
@@ -382,15 +384,16 @@ fn busbars(inside: &Inside, placed: &BTreeMap<usize, Vec<(f64, f64)>>, layout: &
         let (x0, x1) = ps.iter().fold((f64::MAX, f64::MIN), |a, p| (a.0.min(p.0), a.1.max(p.0)));
         let (y0, y1) = ps.iter().fold((f64::MAX, f64::MIN), |a, p| (a.0.min(p.1), a.1.max(p.1)));
         let (w, h) = (x1 - x0, y1 - y0);
-        if w.max(h) < typical {
+        if w.max(h) < 1e-9 || !bus[j] && w.max(h) < typical {
             continue;
         }
+        let thick = if bus[j] { crate::single_line::BAR } else { crate::single_line::WIRE } / unit;
         let (size, end) = if w >= h { ((w, thick), (x1, (y0 + y1) / 2.0)) } else { ((thick, h), ((x0 + x1) / 2.0, y1)) };
         let centre = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
         let sections: Vec<usize> = inside
             .links
             .iter()
-            .filter(|l| l.junction == j && inside.items[l.item].class == "BusbarSection" && !placed.contains_key(&l.item))
+            .filter(|l| bus[j] && l.junction == j && inside.items[l.item].class == "BusbarSection" && !placed.contains_key(&l.item))
             .map(|l| l.item)
             .collect();
         if sections.is_empty() {
@@ -1033,6 +1036,21 @@ mod tests {
         let names: Vec<&str> = anvers.layouts.iter().map(|l| l.name.as_str()).collect();
         assert_eq!(names, ["Diagram: MAS BE", "Diagram: Assembled"]);
         assert!(anvers.layouts.iter().all(|l| l.nodes.len() > 10), "{:?}", anvers.layouts.iter().map(|l| l.nodes.len()).collect::<Vec<_>>());
+
+        // MAS BE draws every junction as a line: its busbars as bars (BE-Busbar_2, and the
+        // sections the couplers join it to), the junctions inside bays as thin as a wire.
+        let mas = anvers.layouts.iter().find(|l| l.name == "Diagram: MAS BE").unwrap();
+        let unit = mas.unit.unwrap();
+        let thickness = |class: &str, label: &str| {
+            let i = anvers.items.iter().position(|it| it.class == class && it.label == label).unwrap();
+            mas.sizes.get(&i).map(|&(w, h)| (w.min(h) * unit * 100.0).round() / 100.0)
+        };
+        for section in ["BE-Busbar_2", "N1230992411", "N1230992414"] {
+            assert_eq!(thickness("BusbarSection", section), Some(crate::single_line::BAR), "{section}");
+        }
+        for node in ["N1230991550", "N1230991529", "Series Compensator"] {
+            assert_eq!(thickness("ConnectivityNode", node), Some(crate::single_line::WIRE), "{node}");
+        }
 
         let json = g.inside_json(&set, &g.nodes[index("Anvers")].id).unwrap();
         assert_eq!(json["items"].as_array().unwrap().len(), 20);

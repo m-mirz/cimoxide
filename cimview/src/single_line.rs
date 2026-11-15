@@ -45,6 +45,8 @@ const CHAR: (f64, f64) = (4.2, 3.6);
 const MAX_CHARS: usize = 18;
 /// A busbar's thickness.
 pub(crate) const BAR: f64 = 4.0;
+/// A wire's: a junction a diagram draws as a line, not a bus.
+pub(crate) const WIRE: f64 = 1.0;
 
 /// Whether equipment of `class` is a switch: it joins a bay's junctions.
 fn is_switch(class: &str) -> bool {
@@ -83,59 +85,14 @@ pub fn single_line(inside: &Inside) -> Layout {
     let rank_of = |i: usize| rank[items[i].group.unwrap_or(none)];
 
     let busbar = |i: usize| items[i].class == "BusbarSection";
-    let mut bus = vec![false; n];
-    for g in 0..=none {
-        let js: Vec<usize> = (0..n).filter(|&i| items[i].junction && items[i].group.unwrap_or(none) == g).collect();
-        if !js.iter().any(|&j| adj[j].iter().any(|&(e, _)| is_switch(items[e].class))) {
-            js.iter().for_each(|&j| bus[j] = true);
-            continue;
-        }
-        let bars: Vec<usize> = js.iter().copied().filter(|&j| adj[j].iter().any(|&(e, _)| busbar(e))).collect();
-        if !bars.is_empty() {
-            bars.iter().for_each(|&j| bus[j] = true);
-        } else if js.iter().any(|&j| adj[j].len() >= 4) {
-            // Where four or more meet: a bay's own junctions join three at most
-            // (a breaker, a disconnector, an earthing switch).
-            js.iter().filter(|&&j| adj[j].len() >= 4).for_each(|&j| bus[j] = true);
-        } else if let Some(most) = js.iter().map(|&j| adj[j].len()).max().filter(|&d| d >= 3) {
-            js.iter().filter(|&&j| adj[j].len() == most).for_each(|&j| bus[j] = true);
-        } else {
-            // A level of single bays (a generator's): its bus where it is fed, from a
-            // transformer or another level, else where most meet.
-            let fed = |j: usize| adj[j].iter().any(|&(e, _)| items[e].group != Some(g));
-            let j = js.iter().copied().max_by_key(|&j| (fed(j), adj[j].len(), Reverse(j))).unwrap();
-            bus[j] = true;
-        }
-    }
-
-    // Bays, until each has a bus: one without takes its likeliest junction.
-    let (bar_of, bays) = loop {
-        let bar_of: Vec<Option<usize>> = (0..n)
-            .map(|i| {
-                let on: Vec<usize> = adj[i].iter().map(|&(j, _)| j).collect();
-                (busbar(i) && !on.is_empty() && on.iter().all(|&j| bus[j])).then(|| on[0])
-            })
-            .collect();
-        let bays = components(&adj, |i| bus[i] || bar_of[i].is_some());
-        let mut added = false;
-        for members in &bays {
-            if members.iter().any(|&i| adj[i].iter().any(|&(o, _)| bus[o])) {
-                continue;
-            }
-            let likeliest = members
-                .iter()
-                .copied()
-                .filter(|&i| items[i].junction)
-                .max_by_key(|&j| (adj[j].iter().any(|&(e, _)| busbar(e)), adj[j].len(), Reverse(j)));
-            if let Some(j) = likeliest {
-                bus[j] = true;
-                added = true;
-            }
-        }
-        if !added {
-            break (bar_of, bays);
-        }
-    };
+    let bus = buses(inside);
+    let bar_of: Vec<Option<usize>> = (0..n)
+        .map(|i| {
+            let on: Vec<usize> = adj[i].iter().map(|&(j, _)| j).collect();
+            (busbar(i) && !on.is_empty() && on.iter().all(|&j| bus[j])).then(|| on[0])
+        })
+        .collect();
+    let bays = components(&adj, |i| bus[i] || bar_of[i].is_some());
 
     let touched: Vec<BTreeSet<usize>> =
         bays.iter().map(|m| m.iter().flat_map(|&i| adj[i].iter().map(|&(o, _)| o)).filter(|&o| bus[o]).collect()).collect();
@@ -324,6 +281,76 @@ pub fn single_line(inside: &Inside) -> Layout {
     layout
 }
 
+/// Which items are buses: the junctions a busbar section stands on; in a
+/// voltage level without busbar sections, those where four or more meet,
+/// else most; in one without switches (bus-branch), every junction; in a
+/// level of single bays, where it is fed. And, until every bay reaches one,
+/// a bay's likeliest junction.
+pub fn buses(inside: &Inside) -> Vec<bool> {
+    let items = &inside.items;
+    let n = items.len();
+    let none = inside.groups.len();
+    let mut adj: Vec<Vec<(usize, usize)>> = vec![Vec::new(); n];
+    for (k, l) in inside.links.iter().enumerate() {
+        adj[l.item].push((l.junction, k));
+        adj[l.junction].push((l.item, k));
+    }
+    let busbar = |i: usize| items[i].class == "BusbarSection";
+    let mut bus = vec![false; n];
+    for g in 0..=none {
+        let js: Vec<usize> = (0..n).filter(|&i| items[i].junction && items[i].group.unwrap_or(none) == g).collect();
+        if !js.iter().any(|&j| adj[j].iter().any(|&(e, _)| is_switch(items[e].class))) {
+            js.iter().for_each(|&j| bus[j] = true);
+            continue;
+        }
+        let bars: Vec<usize> = js.iter().copied().filter(|&j| adj[j].iter().any(|&(e, _)| busbar(e))).collect();
+        if !bars.is_empty() {
+            bars.iter().for_each(|&j| bus[j] = true);
+        } else if js.iter().any(|&j| adj[j].len() >= 4) {
+            // Where four or more meet: a bay's own junctions join three at most
+            // (a breaker, a disconnector, an earthing switch).
+            js.iter().filter(|&&j| adj[j].len() >= 4).for_each(|&j| bus[j] = true);
+        } else if let Some(most) = js.iter().map(|&j| adj[j].len()).max().filter(|&d| d >= 3) {
+            js.iter().filter(|&&j| adj[j].len() == most).for_each(|&j| bus[j] = true);
+        } else {
+            // A level of single bays (a generator's): its bus where it is fed, from a
+            // transformer or another level, else where most meet.
+            let fed = |j: usize| adj[j].iter().any(|&(e, _)| items[e].group != Some(g));
+            let j = js.iter().copied().max_by_key(|&j| (fed(j), adj[j].len(), Reverse(j))).unwrap();
+            bus[j] = true;
+        }
+    }
+
+    // Bays, until each has a bus: one without takes its likeliest junction.
+    loop {
+        let bar_of: Vec<Option<usize>> = (0..n)
+            .map(|i| {
+                let on: Vec<usize> = adj[i].iter().map(|&(j, _)| j).collect();
+                (busbar(i) && !on.is_empty() && on.iter().all(|&j| bus[j])).then(|| on[0])
+            })
+            .collect();
+        let bays = components(&adj, |i| bus[i] || bar_of[i].is_some());
+        let mut added = false;
+        for members in &bays {
+            if members.iter().any(|&i| adj[i].iter().any(|&(o, _)| bus[o])) {
+                continue;
+            }
+            let likeliest = members
+                .iter()
+                .copied()
+                .filter(|&i| items[i].junction)
+                .max_by_key(|&j| (adj[j].iter().any(|&(e, _)| busbar(e)), adj[j].len(), Reverse(j)));
+            if let Some(j) = likeliest {
+                bus[j] = true;
+                added = true;
+            }
+        }
+        if !added {
+            break bus;
+        }
+    }
+}
+
 /// A busbar: its bus junction, the busbar sections drawn as it (none: the
 /// junction is), its height, and its extent when nothing hangs from it.
 struct Bar {
@@ -379,13 +406,18 @@ fn draw(inside: &Inside, mut at: BTreeMap<usize, (f64, f64)>, bars: &[Bar]) -> L
     layout
 }
 
-/// The layout again after items moved to `nodes`: busbars (the items
-/// `sizes` has, horizontal) at their height across what now hangs from
-/// them, and every link routed anew. Positions in pixels.
+/// The layout again after items moved to `nodes`: busbars (the buses
+/// and busbar sections `sizes` has, horizontal) at their height across what
+/// now hangs from them, and every link routed anew; another junction a
+/// point. Positions in pixels.
 pub fn reroute(inside: &Inside, nodes: &BTreeMap<usize, (f64, f64)>, sizes: &BTreeMap<usize, (f64, f64)>) -> Layout {
+    let bus = buses(inside);
     let mut bars: BTreeMap<usize, Bar> = BTreeMap::new();
     for (&i, &(w, _)) in sizes {
         let Some(&(x, y)) = nodes.get(&i) else { continue };
+        if inside.items[i].junction && !bus[i] {
+            continue;
+        }
         let bus = if inside.items[i].junction {
             i
         } else {
