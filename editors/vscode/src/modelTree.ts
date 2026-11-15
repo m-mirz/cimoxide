@@ -25,6 +25,7 @@ import {
   workspace,
 } from "vscode";
 import { LanguageClient, WorkspaceEdit as LspWorkspaceEdit } from "vscode-languageclient/node";
+import { applyEdit, SYNC_LIMIT } from "./applyEdit";
 import { Reveal, revealInGrid } from "./gridView";
 import { activeFile, isXmlLanguage, openAt, openEdited, validateSet } from "./open";
 import { symbolOf } from "./symbols";
@@ -40,7 +41,6 @@ const ADD_REQUEST = "cimoxide/add";
 const FIXES_REQUEST = "cimoxide/fixes";
 const RENAME_REQUEST = "cimoxide/rename";
 /** What VS Code hands an extension at most of a file. */
-const SYNC_LIMIT = 50 * 1024 * 1024;
 const VIEW = "cimoxide.model";
 /** The scheme of the tree items' `resourceUri`, which carries their findings to the badge. */
 const SCHEME = "cimoxide-tree";
@@ -429,18 +429,15 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
       window.showErrorMessage(`cimoxide: ${e instanceof Error ? e.message : e}`);
       return;
     }
-    const edit = await c.protocol2CodeConverter.asWorkspaceEdit(added.edit as LspWorkspaceEdit);
-    if (!edit || !(await workspace.applyEdit(edit))) return;
+    if (!(await applyEdit(c, added.edit as LspWorkspaceEdit))) return;
     await openAt(added.uri, added.select);
   };
   // Renaming is the editor's: put the cursor on the object's start tag and ask for it.
   // The tree's edits are the server's, from the files as they are: so they
-  // work where the editor's do not, in a file over 50 MB.
+  // work where the editor's do not, in a file over 50 MB (made on disk).
   const apply = async (edit: LspWorkspaceEdit, refactoring = false): Promise<Uri[]> => {
     const c = client();
-    const converted = c && (await c.protocol2CodeConverter.asWorkspaceEdit(edit));
-    if (!converted || !(await workspace.applyEdit(converted, { isRefactoring: refactoring }))) return [];
-    return converted.entries().map(([u]) => u);
+    return (c && (await applyEdit(c, edit, refactoring))) ?? [];
   };
   const rename = async (e: Entry | undefined): Promise<void> => {
     const c = client();

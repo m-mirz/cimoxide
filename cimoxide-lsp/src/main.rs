@@ -112,6 +112,24 @@ const TREE_PATH_OF: &str = "cimoxide/treePathOf";
 /// ([`edit::referrers`]): `[{ "id", "label", "class", "key", "place", "location" }]`.
 const REFERRERS: &str = "cimoxide/referrers";
 
+/// `cimoxide/reroute` `{ "uri", "id", "layout" }`: substation `id`'s layout after its items
+/// moved ([`cimview::grid::Grid::reroute_json`]): busbars and routes anew; `null` for no substation.
+const REROUTE: &str = "cimoxide/reroute";
+
+/// `cimoxide/diagram` `{ "uri", "substation", "layout", "existing"?, "name" }`: the edit writing
+/// a substation's layout as a DL diagram ([`edit::diagram`]): `{ "edit", "id" }`.
+const DIAGRAM: &str = "cimoxide/diagram";
+
+/// `cimoxide/palette` `{ "uri", "level" }`: what can be added in voltage level `level`
+/// ([`cimview::topology::palette`]) and the bay templates: `{ "classes": [{ "group", "class" }],
+/// "templates": [{ "id", "label" }] }`.
+const PALETTE: &str = "cimoxide/palette";
+
+/// `cimoxide/topology` `{ "uri", "substation", "op", "diagram"?, "at"? }`: the edit of a topology
+/// operation inside a substation ([`edit::topology`]), the DL diagram `diagram` drawn anew with
+/// it: `{ "edit", "select" }`.
+const TOPOLOGY: &str = "cimoxide/topology";
+
 /// How long a burst of triggers is gathered before a set is validated.
 const DEBOUNCE: Duration = Duration::from_millis(300);
 
@@ -394,6 +412,78 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
             };
             match with_set_files(state, &p.uri, |set, files| edit::add(files, &set.tree, &p.parent, &p.class, p.name.as_deref())) {
                 Some(Ok(a)) => Ok(serde_json::json!({ "edit": a.edit, "uri": a.url, "select": a.select, "id": a.id })),
+                Some(Err(e)) => return error(id, ErrorCode::RequestFailed, e),
+                None => return error(id, ErrorCode::RequestFailed, "the model set has not been validated yet".into()),
+            }
+        }
+        REROUTE => {
+            #[derive(serde::Deserialize)]
+            struct Params {
+                uri: Url,
+                id: String,
+                layout: serde_json::Value,
+            }
+            let p: Params = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return error(id, ErrorCode::InvalidParams, e.to_string()),
+            };
+            let set = p.uri.to_file_path().ok().and_then(|f| {
+                let st = state.lock().unwrap();
+                f.parent().and_then(|d| st.sets.get(d)).cloned()
+            });
+            Ok(set.and_then(|s| s.grid.reroute_json(&p.id, &p.layout)).unwrap_or(serde_json::Value::Null))
+        }
+        DIAGRAM => {
+            #[derive(serde::Deserialize)]
+            struct Params {
+                uri: Url,
+                substation: String,
+                layout: serde_json::Value,
+                existing: Option<String>,
+                name: String,
+            }
+            let p: Params = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return error(id, ErrorCode::InvalidParams, e.to_string()),
+            };
+            match with_set_files(state, &p.uri, |set, files| edit::diagram(files, &set.grid, &p.substation, &p.layout, p.existing.as_deref(), &p.name)) {
+                Some(Ok((edit, diagram))) => Ok(serde_json::json!({ "edit": edit, "id": diagram })),
+                Some(Err(e)) => return error(id, ErrorCode::RequestFailed, e),
+                None => return error(id, ErrorCode::RequestFailed, "the model set has not been validated yet".into()),
+            }
+        }
+        PALETTE => {
+            #[derive(serde::Deserialize)]
+            struct Params {
+                uri: Url,
+                level: String,
+            }
+            let p: Params = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return error(id, ErrorCode::InvalidParams, e.to_string()),
+            };
+            let classes = with_set_files(state, &p.uri, |_, files| {
+                cimview::topology::palette(files, &p.level).into_iter().map(|(g, c)| serde_json::json!({ "group": g, "class": c })).collect::<Vec<_>>()
+            });
+            let templates: Vec<serde_json::Value> = cimview::topology::Template::ALL.iter().map(|(t, l)| serde_json::json!({ "id": t, "label": l })).collect();
+            Ok(serde_json::json!({ "classes": classes.unwrap_or_default(), "templates": templates }))
+        }
+        TOPOLOGY => {
+            #[derive(serde::Deserialize)]
+            struct Params {
+                uri: Url,
+                substation: String,
+                op: serde_json::Value,
+                diagram: Option<String>,
+                at: Option<(f64, f64)>,
+            }
+            let p: Params = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return error(id, ErrorCode::InvalidParams, e.to_string()),
+            };
+            let done = with_set_files(state, &p.uri, |set, files| edit::topology(files, &set.tree, &set.grid, &p.substation, &p.op, p.diagram.as_deref(), p.at));
+            match done {
+                Some(Ok((edit, select))) => Ok(serde_json::json!({ "edit": edit, "select": select })),
                 Some(Err(e)) => return error(id, ErrorCode::RequestFailed, e),
                 None => return error(id, ErrorCode::RequestFailed, "the model set has not been validated yet".into()),
             }
@@ -818,12 +908,14 @@ fn deletion(state: &Shared, p: &DeleteParams) -> Option<(edit::Deletion, String)
 }
 
 /// Run `f` over the files of `url`'s model set as they are now: an open
-/// document's buffer, else the file on disk with the set's index of it.
-/// `None` before the set's first validation.
+/// document's buffer, else the file on disk with the set's index of it, or
+/// one built now if the file changed on disk since it was indexed (VS Code
+/// keeps a file over 50 MB from the server, and an edit to one is written
+/// straight to disk). `None` before the set's first validation.
 fn with_set_files<R>(state: &Shared, url: &Url, f: impl FnOnce(&ModelSet, &[edit::File]) -> R) -> Option<R> {
     enum Source {
         Open(Built),
-        Disk(LineIndex),
+        Disk(LineIndex, Option<Index>),
     }
     let dir = url.to_file_path().ok()?.parent()?.to_path_buf();
     let (set, held) = {
@@ -841,10 +933,14 @@ fn with_set_files<R>(state: &Shared, url: &Url, f: impl FnOnce(&ModelSet, &[edit
     };
     let sources: Vec<(Arc<str>, Source)> = held
         .into_iter()
-        .map(|(text, built)| {
+        .zip(&set.files)
+        .map(|((text, built), file)| {
             let source = match built {
                 Some(b) => Source::Open(b),
-                None => Source::Disk(LineIndex::new(&text)),
+                None => {
+                    let again = (validate::text_hash(&text) != file.seen).then(|| Index::build(&text));
+                    Source::Disk(LineIndex::new(&text), again)
+                }
             };
             (text, source)
         })
@@ -858,7 +954,7 @@ fn with_set_files<R>(state: &Shared, url: &Url, f: impl FnOnce(&ModelSet, &[edit
                     let (l, i) = b.get_or_init(|| (LineIndex::new(text), Index::build(text)));
                     (l, i)
                 }
-                Source::Disk(l) => (l, &file.index),
+                Source::Disk(l, again) => (l, again.as_ref().unwrap_or(&file.index)),
             };
             edit::File { name: file.url.as_str(), text, lines, index }
         })

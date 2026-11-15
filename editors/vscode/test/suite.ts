@@ -213,10 +213,83 @@ test("rename changes an mRID in every file that names it", async () => {
   assert.ok(files.length >= 4, files.join(", "));
 });
 
+/** A server's workspace edit of plain changes, applied. */
+async function applyChanges(edit: { changes: Record<string, { range: { start: { line: number; character: number }; end: { line: number; character: number } }; newText: string }[]> }): Promise<void> {
+  const we = new WorkspaceEdit();
+  for (const [uri, edits] of Object.entries(edit.changes)) {
+    for (const e of edits) {
+      we.replace(Uri.parse(uri), new Range(e.range.start.line, e.range.start.character, e.range.end.line, e.range.end.character), e.newText);
+    }
+  }
+  assert.ok(await workspace.applyEdit(we), "the edit applied");
+}
+
+test("inside a substation, equipment is added and a layout saved as a diagram, through the server", async () => {
+  const anvers = (await api.request<Hit[]>("cimoxide/search", { uri: eq.toString(), query: "Anvers" })).find((h) => h.class === "Substation");
+  assert.ok(anvers, "no substation Anvers");
+  type Inside = { groups: { id: string }[]; items: { id: string; class: string }[]; auto: unknown };
+  const inside = await api.request<Inside>("cimoxide/substation", { uri: eq.toString(), id: anvers.id });
+  const palette = await api.request<{ classes: { class: string }[]; templates: unknown[] }>("cimoxide/palette", { uri: eq.toString(), level: inside.groups[0].id });
+  assert.ok(palette.classes.some((c) => c.class === "Breaker"), JSON.stringify(palette.classes));
+  assert.strictEqual(palette.templates.length, 4);
+  const added = await api.request<{ edit: Parameters<typeof applyChanges>[0]; select: string }>("cimoxide/topology", {
+    uri: eq.toString(), substation: anvers.id, op: { op: "add", class: "Breaker", level: inside.groups[0].id },
+  });
+  assert.ok(Object.keys(added.edit.changes).some((u) => u.includes("_SSH_")), "its state in SSH");
+  await applyChanges(added.edit);
+  await until("the breaker, in the substation", async () => {
+    const now = await api.request<Inside>("cimoxide/substation", { uri: eq.toString(), id: anvers.id });
+    return now.items.find((it) => it.id === added.select);
+  });
+  const saved = await api.request<{ edit: Parameters<typeof applyChanges>[0]; id: string }>("cimoxide/diagram", {
+    uri: eq.toString(), substation: anvers.id, layout: inside.auto, existing: null, name: "Anvers single-line",
+  });
+  assert.ok(Object.keys(saved.edit.changes).every((u) => u.includes("_DL_")), "into the set's DL file");
+  assert.ok(saved.id.startsWith("_"));
+});
+
 test("Show grid opens its panel", async () => {
   await commands.executeCommand("cimoxide.showGrid", eq);
   await until("the grid panel", () =>
     window.tabGroups.all.flatMap((g) => g.tabs).find((t) => t.input instanceof TabInputWebview && t.label.startsWith("Grid:")));
+});
+
+test("a file over 50 MB, which VS Code keeps from the server, takes topology edits one after another", async () => {
+  // NL's EQ file, padded past VS Code's limit for passing documents to extensions.
+  await commands.executeCommand("workbench.action.closeAllEditors");
+  const nl = file("_NL_EQ_");
+  const text = fs.readFileSync(nl.fsPath, "utf8");
+  const end = text.lastIndexOf("</rdf:RDF>");
+  const pad = `<!-- ${"padding ".repeat(Math.ceil((51 * 1024 * 1024) / 8))} -->\n`;
+  fs.writeFileSync(nl.fsPath, text.slice(0, end) + pad + text.slice(end));
+  assert.ok(fs.statSync(nl.fsPath).size > 50 * 1024 * 1024);
+  type Inside = { groups: { id: string }[]; items: { id: string; class: string }[] };
+  const amsterdam = await until("PP_Amsterdam, revalidated", async () =>
+    (await api.request<Hit[]>("cimoxide/search", { uri: nl.toString(), query: "PP_Amsterdam" })).find((h) => h.class === "Substation"));
+  const inside = await api.request<Inside>("cimoxide/substation", { uri: nl.toString(), id: amsterdam.id });
+  const level = inside.groups[0].id;
+  const add = async () => {
+    const added = await api.request<{ edit: Parameters<typeof applyChanges>[0]; select: string }>("cimoxide/topology", {
+      uri: nl.toString(), substation: amsterdam.id, op: { op: "add", class: "Breaker", level },
+    });
+    assert.ok(Object.keys(added.edit.changes).some((u) => u.includes("_NL_EQ_")), "into NL's EQ file");
+    assert.ok(await api.apply(added.edit), "the edit made");
+    return added.select;
+  };
+  // Two in a row, as one adds in the grid view, before anything is saved.
+  const first = await add();
+  const second = await add();
+  await workspace.saveAll(false);
+  const written = fs.readFileSync(nl.fsPath, "utf8");
+  const counts = [first, second].map((id) => written.split(`rdf:ID="${id}"`).length - 1);
+  const at = written.indexOf(`rdf:ID="${first}"`);
+  assert.deepStrictEqual(counts, [1, 1], `written ${counts} times; first ${first}, second ${second}; around the first: ${JSON.stringify(written.slice(Math.max(0, at - 300), at + 900))}`);
+  // And the server, reading it again, finds both in the substation.
+  await until("both breakers, read again", async () => {
+    const now = await api.request<Inside>("cimoxide/substation", { uri: nl.toString(), id: amsterdam.id });
+    const ids = new Set(now.items.map((it) => it.id));
+    return ids.has(first) && ids.has(second) ? true : undefined;
+  }, 30000);
 });
 
 export async function run(): Promise<void> {

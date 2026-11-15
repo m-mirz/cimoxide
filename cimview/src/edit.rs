@@ -38,7 +38,7 @@ impl File<'_> {
     }
 
     /// `r` widened to whole lines when nothing else is written on them.
-    fn lines_of(&self, r: Range) -> Range {
+    pub(crate) fn lines_of(&self, r: Range) -> Range {
         let (text, start, end) = (self.text, self.lines.offset(self.text, r.start), self.lines.offset(self.text, r.end));
         let line_start = text[..start].rfind('\n').map_or(0, |i| i + 1);
         let line_end = text[end..].find('\n').map_or(text.len(), |i| end + i + 1);
@@ -175,7 +175,7 @@ impl Addition {
 
 /// The profile codes `file`'s header declares (`md:Model.profile`,
 /// `dcterms:conformsTo`), by the schemas' profile tables.
-fn profiles(file: &File) -> Vec<&'static str> {
+pub(crate) fn profiles(file: &File) -> Vec<&'static str> {
     let reg = type_registry();
     let tables: Vec<&[(&str, &str)]> = ["cgmes", "nc"].iter().filter_map(|f| reg.schema(f)).map(|s| s.profiles).collect();
     let Some(header) = file.index.elements.iter().find(|e| matches!(local(&e.qname), "FullModel" | "Dataset" | "DifferenceModel")) else { return Vec::new() };
@@ -359,7 +359,7 @@ pub fn remove_field<'a>(files: &[File<'a>], id: &str, key: &str) -> Edits<'a> {
 }
 
 /// A field of `class` written as an element of `file`, its value as [`set_field`] takes it.
-fn field_element(file: &File, class: &'static cimmodel::base::ClassDef, key: &str, value: &str) -> Result<String, String> {
+pub(crate) fn field_element(file: &File, class: &'static cimmodel::base::ClassDef, key: &str, value: &str) -> Result<String, String> {
     let attr = type_registry().attr(class, key).ok_or_else(|| format!("{} has no field {key}", class.local))?;
     let prefix = file.index.prefix_of(attr.ns).ok_or_else(|| format!("{} binds no prefix to {}", file.name, attr.ns))?;
     let tag = format!("{prefix}:{}", attr.id);
@@ -372,7 +372,7 @@ fn field_element(file: &File, class: &'static cimmodel::base::ClassDef, key: &st
 
 /// `lines` (an element, unindented) inserted before the end tag of `file`'s root, indented as its
 /// elements are, in its line endings.
-fn at_end(file: &File, lines: &[String]) -> Result<TextEdit, String> {
+pub(crate) fn at_end(file: &File, lines: &[String]) -> Result<TextEdit, String> {
     let text = file.text;
     let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
     let root_end = text.rfind("</").ok_or("the file has no root end tag")?;
@@ -387,7 +387,7 @@ fn at_end(file: &File, lines: &[String]) -> Result<TextEdit, String> {
 }
 
 /// A fresh mRID, `_` and a UUID from `random`, that the set does not have yet nor `taken`.
-fn fresh(files: &[File], taken: &HashSet<String>, random: &mut dyn FnMut() -> [u8; 16]) -> String {
+pub(crate) fn fresh(files: &[File], taken: &HashSet<String>, random: &mut dyn FnMut() -> [u8; 16]) -> String {
     loop {
         let id = format!("_{}", uuid(random()));
         if !taken.contains(&id) && !files.iter().any(|f| f.index.elements.iter().any(|e| e.mrid == id)) {
@@ -584,7 +584,7 @@ fn number(x: f64) -> String {
 
 /// An object's element, unindented: its `rdf:ID`, its mRID as text where the class has a field for
 /// it, and `values` as [`set_field`] takes them.
-fn element(file: &File, class: &'static cimmodel::base::ClassDef, id: &str, values: &[(&str, &str)]) -> Result<Vec<String>, String> {
+pub(crate) fn element(file: &File, class: &'static cimmodel::base::ClassDef, id: &str, values: &[(&str, &str)]) -> Result<Vec<String>, String> {
     let prefix = file.index.prefix_of(class.ns).ok_or("no prefix")?;
     let mut lines = vec![format!("<{prefix}:{} rdf:ID=\"{id}\">", class.local)];
     let mrid_key = type_registry().attrs(class).map(|a| a.id).find(|k| k.ends_with(".mRID"));
@@ -949,7 +949,7 @@ pub fn add<'a>(
 /// else before the root's end tag; indented as the elements are, in the
 /// file's line endings. The edit with the indent's width, and the line the
 /// element starts on.
-fn insertion(file: &File, tree: &Tree, parent: &str, lines: &[String]) -> Result<((TextEdit, u32), u32), String> {
+pub(crate) fn insertion(file: &File, tree: &Tree, parent: &str, lines: &[String]) -> Result<((TextEdit, u32), u32), String> {
     let (text, li) = (file.text, file.lines);
     let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
     let siblings: HashSet<&str> = tree.children(parent).into_iter().collect();
