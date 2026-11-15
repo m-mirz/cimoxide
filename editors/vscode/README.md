@@ -94,9 +94,9 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
   busbar. What is added opens where it is written, with what it still needs as findings. Edits
   are left unsaved and undoable, as VS Code's refactorings are.
 
-  ![RealGrid's 4,875 substations laid out automatically, lines coloured by voltage, findings ringed](https://github.com/user-attachments/assets/6f6c1460-cb9d-472f-a663-a2829a21682d)
+  ![RealGrid's 4,875 substations as a schematic: lines along axes and diagonals, wider and brighter the higher their voltage, the 380 kV backbone standing out](https://github.com/user-attachments/assets/ea3ae615-2345-4e8f-a1d4-6b8fe4be2816)
 
-  ![Inside MicroGrid's PP_Brussels: voltage levels with equipment in single-line symbols](https://github.com/user-attachments/assets/2e5cabce-5dca-4e74-bebe-7d9e7001e2e2)
+  ![Inside MicroGrid's PP_Brussels: its single-line diagram, voltage levels stacked from 380 kV down, with the SV's voltages and loadings beside each item](https://github.com/user-attachments/assets/0c4ec6d8-de9f-4459-9d50-b364f3b61152)
 
 - **Chat** — an MCP server, `cimmcp`, offered to chat (Copilot agent mode): ask about the
   model sets of the workspace. Its tools list the model sets, summarise one (headers, object
