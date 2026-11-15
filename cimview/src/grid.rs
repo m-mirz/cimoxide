@@ -414,7 +414,7 @@ fn busbars(inside: &Inside, placed: &BTreeMap<usize, Vec<(f64, f64)>>, layout: &
 pub struct Model<'a> {
     pub(crate) objects: FastMap<&'a str, Vec<&'a Element>>,
     /// ConductingEquipment → its terminals, by sequence number.
-    terminals: FastMap<&'a str, Vec<&'a str>>,
+    pub(crate) terminals: FastMap<&'a str, Vec<&'a str>>,
 }
 
 impl<'a> Model<'a> {
@@ -455,7 +455,7 @@ impl<'a> Model<'a> {
         self.objects.get(mrid)?.iter().find_map(|el| el.get_str(key))
     }
 
-    fn number(&self, mrid: &str, key: &str) -> Option<f64> {
+    pub(crate) fn number(&self, mrid: &str, key: &str) -> Option<f64> {
         self.text(mrid, key)?.trim().parse().ok()
     }
 
@@ -464,7 +464,7 @@ impl<'a> Model<'a> {
     }
 
     /// The voltage level a container (VoltageLevel, Bay) is, or is in.
-    fn voltage_level(&self, container: &'a str) -> Option<&'a str> {
+    pub(crate) fn voltage_level(&self, container: &'a str) -> Option<&'a str> {
         match self.class(container)? {
             "VoltageLevel" => Some(container),
             "Bay" => self.reference(container, "Bay.VoltageLevel"),
@@ -516,7 +516,7 @@ impl<'a> Model<'a> {
         }
     }
 
-    fn node_container(&self, node: &str) -> Option<&'a str> {
+    pub(crate) fn node_container(&self, node: &str) -> Option<&'a str> {
         self.reference(node, "ConnectivityNode.ConnectivityNodeContainer")
             .or_else(|| self.reference(node, "TopologicalNode.ConnectivityNodeContainer"))
     }

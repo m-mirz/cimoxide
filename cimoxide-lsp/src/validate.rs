@@ -55,6 +55,8 @@ pub struct ModelSet {
     pub grid: cimview::grid::Grid,
     /// The set's objects by container, area and class, with their findings.
     pub tree: cimview::tree::Tree,
+    /// The state its SV publishes, over the grid ([`cimview::state::overlay`]), if it has one.
+    pub state: Option<serde_json::Value>,
     /// Each object's findings: (property, rule, message), for the tree's fixes.
     pub findings: HashMap<String, Vec<(String, String, String)>>,
 }
@@ -171,6 +173,7 @@ pub fn validate(files: &[(PathBuf, Arc<str>)], opts: &Options) -> (ModelSet, Vec
             let model = cimview::grid::Model::new(&datasets);
             set.grid = cimview::grid::build(&model);
             set.tree = cimview::tree::build(&model);
+            set.state = cimview::state::overlay(&model, &set.grid);
         }
         let violations = cimvalidation::validate_files_traced(datasets, &cfg);
         let violations: Vec<_> = violations.into_iter().map(|(d, v)| (d.map(|d| origin[d]), v)).collect();

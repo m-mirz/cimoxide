@@ -64,6 +64,18 @@ interface Grid {
   layouts: Layout[];
   /** The automatic layout, computed by the server. */
   auto: Layout | null;
+  /** The state the set's SV publishes, over the grid; `null` without one. */
+  state?: Overlay | null;
+}
+
+/** A state of the grid, by what the grid draws: as a power flow overlays it. */
+interface Overlay {
+  /** Each grid node's lowest and highest voltage, p.u. */
+  nodes: Record<string, { min: number; max: number }>;
+  /** By topological and connectivity node. */
+  voltages: Record<string, { pu: number; kV: number; deg: number }>;
+  /** By equipment: each terminal's flow into it (MW, Mvar), its current, and the highest loading against a PATL, %. */
+  flows: Record<string, { ends: { terminal: string; p: number; q: number; amps: number | null; loading: number | null }[]; loading: number | null }>;
 }
 
 /** Equipment, or a connectivity node (`junction`), inside a substation. */
@@ -108,6 +120,8 @@ let cy: Core | undefined;
 let grid: Grid | undefined;
 /** The substation shown, if any; else the grid. */
 let inside: Inside | undefined;
+/** What the scene is coloured by: voltage levels, or the SV's state where the set has one. */
+let colourBy: "voltage" | "state" = "state";
 /** The grid's viewport when a substation was opened, to return to. */
 let gridView: { zoom: number; pan: Point; selected: string } | undefined;
 
@@ -117,7 +131,7 @@ style.textContent = `
   body { display: flex; flex-direction: column; color: var(--vscode-foreground); background: var(--vscode-editor-background);
          font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); }
   #bar { display: flex; gap: 12px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--vscode-panel-border); }
-  #layout { color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background);
+  #layout, #colour { color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background);
             border: 1px solid var(--vscode-dropdown-border, transparent); padding: 2px 4px; }
   #search { width: 220px; color: var(--vscode-input-foreground); background: var(--vscode-input-background);
             border: 1px solid var(--vscode-input-border, transparent); padding: 3px 6px; }
@@ -181,10 +195,130 @@ function band(kV: number | null | undefined): string {
   return kV == null ? "none" : BANDS.find(([, min]) => kV >= min)?.[0] ?? "none";
 }
 
+/** A voltage's band: within 5 % of nominal, within 10 %, or beyond. */
+function voltageBand(min: number, max: number): "ok" | "warn" | "bad" {
+  const off = Math.max(Math.abs(min - 1), Math.abs(max - 1));
+  return off <= 0.05 ? "ok" : off <= 0.1 ? "warn" : "bad";
+}
+
+/** A loading's band: below 80 % of its PATL, up to it, or past it; `unknown` without a limit. */
+function loadingBand(loading: number | null): "ok" | "warn" | "bad" | "unknown" {
+  return loading === null ? "unknown" : loading < 80 ? "ok" : loading <= 100 ? "warn" : "bad";
+}
+
+const STATE_COLOURS: Record<string, [string, string]> = {
+  ok: ["--vscode-testing-iconPassed", "#73c991"],
+  warn: ["--vscode-editorWarning-foreground", "#cca700"],
+  bad: ["--vscode-errorForeground", "#f14c4c"],
+};
+
+/** How the state colours the scene: by `pf`, which only a state sets. */
+function stateBands(): cytoscape.StylesheetJson {
+  const fill = colour("--vscode-descriptionForeground", "#8b8b8b");
+  return [
+    ...Object.entries(STATE_COLOURS).flatMap(([b, [v, fb]]) => {
+      const c = colour(v, fb);
+      return [
+        { selector: `node[kind != "symbol"][kind != "group"][pf = "${b}"]`, style: { "background-color": c } },
+        { selector: `node[kind = "symbol"][pf = "${b}"]`, style: { "underlay-color": c, "underlay-opacity": 0.45, "underlay-padding": 4, "underlay-shape": "ellipse" } },
+        { selector: `edge[pf = "${b}"]`, style: { "line-color": c } },
+      ];
+    }),
+    { selector: '[pf = "none"], [pf = "unknown"]', style: { "background-color": fill, "line-color": fill } },
+    { selector: '[pf = "none"]', style: { opacity: 0.5 } },
+    {
+      selector: "edge[flowLabel]",
+      style: {
+        label: "data(flowLabel)", "font-size": 7, color: colour("--vscode-foreground", "#cccccc"), "text-rotation": "autorotate",
+        "text-outline-color": colour("--vscode-editor-background", "#1e1e1e"), "text-outline-width": 2, "min-zoomed-font-size": 6,
+      },
+    },
+  ] as cytoscape.StylesheetJson;
+}
+
+/** What a scene's element shows of a state: its band, and a line of text. `null` if nothing. */
+function stateOf(id: string, kind: string | undefined, o: Overlay): { band: string; text: string } | null {
+  const pu = (x: number) => x.toFixed(3);
+  const flow = (f: Overlay["flows"][string] | undefined) => {
+    if (!f) return null;
+    const p = Math.max(...f.ends.map((e) => Math.abs(e.p)));
+    return { band: loadingBand(f.loading), text: f.loading === null ? `${p.toFixed(0)} MW` : `${f.loading.toFixed(0)} %` };
+  };
+  if (id.startsWith("e:")) return flow(o.flows[id.slice(2).split("#")[0]]);
+  if (kind === "substation" || kind === "boundary") {
+    const v = o.nodes[id];
+    return v ? { band: voltageBand(v.min, v.max), text: v.min === v.max ? `${pu(v.min)} pu` : `${pu(v.min)}–${pu(v.max)} pu` } : null;
+  }
+  if (kind === "junction" || kind === "busbar") {
+    const v = o.voltages[id];
+    return v ? { band: voltageBand(v.pu, v.pu), text: `${pu(v.pu)} pu` } : null;
+  }
+  if (kind === "symbol") return flow(o.flows[id]);
+  return null;
+}
+
+/** An element's state, for the side panel. */
+function stateHtml(id: string): string {
+  const o = shownState();
+  if (!o) return "";
+  const lines: string[] = [];
+  const v = o.nodes[id] ?? (o.voltages[id] ? { min: o.voltages[id].pu, max: o.voltages[id].pu } : undefined);
+  if (v) lines.push(v.min === v.max ? `Voltage ${v.min.toFixed(4)} p.u.` : `Voltage ${v.min.toFixed(4)} to ${v.max.toFixed(4)} p.u.`);
+  const kv = o.voltages[id];
+  if (kv) lines.push(`${kv.kV.toFixed(2)} kV, ${kv.deg.toFixed(2)}°`);
+  for (const [i, e] of (o.flows[id]?.ends ?? []).entries()) {
+    const amps = e.amps === null ? "" : `, ${e.amps.toFixed(0)} A`;
+    const loading = e.loading === null ? "" : `, ${e.loading.toFixed(1)} % of its PATL`;
+    lines.push(`End ${i + 1}: ${e.p.toFixed(1)} MW, ${e.q.toFixed(1)} Mvar into it${amps}${loading}`);
+  }
+  return lines.length ? `<div class="sub" style="margin-top:8px">From the SV:</div>${lines.map((l) => `<div>${escape(l)}</div>`).join("")}` : "";
+}
+
+/** The legend of the state's colours, for the side panel. */
+function stateLegend(): string {
+  const swatch = (b: string) => `<span style="display:inline-block;width:10px;height:10px;border-radius:5px;margin:0 6px -1px 0;background:${colour(...STATE_COLOURS[b])}"></span>`;
+  return `<div class="sub" style="margin-top:12px">Coloured by the SV's state:` +
+    `<div>${swatch("ok")}within 5 % of nominal, loaded below 80 %</div>` +
+    `<div>${swatch("warn")}within 10 %, up to its PATL</div>` +
+    `<div>${swatch("bad")}beyond</div>` +
+    `<div>Grey: not in the SV, or no limit</div></div>`;
+}
+
+/** The state shown: the SV's, if the set has one and it is chosen. */
+function shownState(): Overlay | null {
+  return colourBy === "state" ? grid?.state ?? null : null;
+}
+
+/**
+ * Labels and colours the scene by the state shown, or as drawn: each element keeps its own label
+ * as `base`, and a state adds a line to it; on an edge, a label of its own.
+ */
+function paintState(): void {
+  if (!cy) return;
+  const on = shownState();
+  cy.batch(() => {
+    cy?.elements().forEach((el) => {
+      if (el.data("base") === undefined) el.data("base", el.data("label") ?? "");
+      const base = el.data("base") as string;
+      const found = on ? stateOf(el.id(), el.data("kind") as string | undefined, on) : null;
+      if (on && el.data("kind") !== "group" && !el.id().startsWith("t:")) el.data("pf", found?.band ?? "none");
+      else el.removeData("pf");
+      if (el.group() === "edges") {
+        if (found) el.data("flowLabel", found.text);
+        else el.removeData("flowLabel");
+      } else el.data("label", found ? (base ? `${base}\n${found.text}` : found.text) : base);
+    });
+  });
+  const pick = document.getElementById("colour") as HTMLSelectElement;
+  pick.style.display = grid?.state ? "" : "none";
+  pick.value = colourBy;
+}
+
 /** The legend of the bands, for the side panel. */
 function legend(): string {
   const swatch = (c: string) => `<span style="display:inline-block;width:14px;height:3px;margin:0 6px 3px 0;background:${c}"></span>`;
   const rows = BANDS.map(([, min, v, fb], i) => `<div>${swatch(colour(v, fb))}${i ? `${min}–${BANDS[i - 1][1]}` : `≥ ${min}`} kV</div>`);
+  if (shownState()) return stateLegend();
   return `<div class="sub" style="margin-top:12px">${rows.join("")}<div>${swatch(colour("--vscode-descriptionForeground", "#888"))}lower, or unknown</div></div>`;
 }
 
@@ -287,7 +421,7 @@ function stylesheet(): cytoscape.StylesheetJson {
     {
       selector: "node",
       style: {
-        label: "data(label)", color: fg, "font-size": 9, "text-valign": "bottom", "text-margin-y": 2,
+        label: "data(label)", color: fg, "font-size": 9, "text-valign": "bottom", "text-margin-y": 2, "text-wrap": "wrap",
         // Legible over the lines it sits on.
         "text-outline-color": bg, "text-outline-width": 2, "text-outline-opacity": 0.85,
         width: "data(size)", height: "data(size)", "background-color": fill, "border-width": "data(ring)",
@@ -353,6 +487,7 @@ function stylesheet(): cytoscape.StylesheetJson {
     { selector: 'node[kind = "group"]:selected', style: { "background-opacity": 0.15 } },
     { selector: 'node[kind = "symbol"]:selected', style: { "background-opacity": 0.3 } },
     { selector: "edge:selected", style: { "line-color": focus, opacity: 1 } },
+    ...stateBands(),
     // Where what is dragged would land, while editing: over findings' halos.
     { selector: ".target", style: { "overlay-color": focus, "overlay-opacity": 0.3, "overlay-padding": 6, "overlay-shape": "round-rectangle" } },
     { selector: 'node[kind = "group"].target', style: { "border-color": focus, "border-width": 2, "overlay-opacity": 0 } },
@@ -426,7 +561,7 @@ function showGrid(g: Grid, target: NodeSingular | EdgeSingular | undefined): voi
       .join("");
     panel(
       `<h3>${escape(n.label || n.id)}</h3><div class="sub">${escape(n.kind)}${n.region ? ` · ${escape(n.region)}` : ""}${kv ? ` · ${kv}` : ""}</div>` +
-        findingsHtml(n.findings) + (equipment ? `<table>${equipment}</table>` : ""),
+        findingsHtml(n.findings) + stateHtml(n.id) + (equipment ? `<table>${equipment}</table>` : ""),
       n.location,
       n.kind === "Substation" ? [["Show inside", () => enter(n.id)]] : [],
     );
@@ -436,7 +571,7 @@ function showGrid(g: Grid, target: NodeSingular | EdgeSingular | undefined): voi
     const end = (id: string) => escape(g.nodes.find((x) => x.id === id)?.label || id);
     panel(
       `<h3>${escape(e.label)}</h3><div class="sub">${escape(e.class)}${e.kV !== null ? ` · ${e.kV} kV` : ""}</div>` +
-        `<div>${end(e.source)} — ${end(e.target)}</div>` + findingsHtml(e.findings),
+        `<div>${end(e.source)} — ${end(e.target)}</div>` + findingsHtml(e.findings) + stateHtml(e.id.split("#")[0]),
       e.location,
     );
   }
@@ -475,7 +610,7 @@ function showInside(s: Inside, target: NodeSingular | EdgeSingular | undefined):
   const far = it.far.length ? `<div>To ${it.far.map((f) => escape(f.label || f.id)).join(", ")}</div>` : "";
   panel(
     `<h3>${escape(it.label)}</h3><div class="sub">${escape(it.class)}${level ? ` · ${escape(level)}` : ""}${state ? ` · ${state}` : ""}</div>` +
-      far + findingsHtml(it.findings),
+      far + findingsHtml(it.findings) + stateHtml(it.id),
     it.location,
     it.far.filter((f) => f.kind === "Substation").map((f): [string, () => void] => [`Show ${f.label || f.id}`, () => enter(f.id)]),
   );
@@ -744,7 +879,10 @@ function draw(previous?: Shown): void {
       const at = cy.getElementById(el.data.id as string);
       at.data(el.data);
       if (typeof el.classes === "string") at.classes(el.classes);
+      // Its own label, which the state adds to.
+      at.removeData("base");
     }
+    paintState();
     const selected = cy.$(":selected").first();
     show(selected.nonempty() ? (selected as NodeSingular | EdgeSingular) : undefined);
     return;
@@ -815,6 +953,7 @@ function draw(previous?: Shown): void {
     }
   });
   toolbar();
+  paintState();
   const selected = cy.$(":selected").first();
   show(selected.nonempty() ? (selected as NodeSingular | EdgeSingular) : undefined);
 }
@@ -827,6 +966,13 @@ new MutationObserver(() => cy?.style(stylesheet())).observe(document.body, { att
   if (inside) chosen.inside = value;
   else chosen.grid = value;
   arrange();
+});
+
+(document.getElementById("colour") as HTMLSelectElement).addEventListener("change", (e) => {
+  colourBy = (e.target as HTMLSelectElement).value as typeof colourBy;
+  paintState();
+  const selected = cy?.$(":selected").first();
+  show(selected?.nonempty() ? (selected as NodeSingular | EdgeSingular) : undefined);
 });
 
 (document.getElementById("back") as HTMLButtonElement).addEventListener("click", leave);

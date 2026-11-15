@@ -248,6 +248,15 @@ test("inside a substation, equipment is added and a layout saved as a diagram, t
   assert.ok(saved.id.startsWith("_"));
 });
 
+test("the grid comes with the state the set's SV publishes", async () => {
+  type State = { nodes: Record<string, { min: number; max: number }>; flows: Record<string, { ends: unknown[] }> };
+  const grid = await api.request<{ nodes: { id: string; label: string }[]; state: State | null }>("cimoxide/grid", { uri: eq.toString() });
+  assert.ok(grid.state, "MicroGrid has an SV");
+  const anvers = grid.nodes.find((n) => n.label === "Anvers");
+  assert.ok(anvers && grid.state.nodes[anvers.id], JSON.stringify(Object.keys(grid.state.nodes)));
+  assert.ok(Object.values(grid.state.flows).some((f) => f.ends.length === 2), "a branch's two ends");
+});
+
 test("Show grid opens its panel", async () => {
   await commands.executeCommand("cimoxide.showGrid", eq);
   await until("the grid panel", () =>
