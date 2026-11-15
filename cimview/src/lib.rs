@@ -18,6 +18,7 @@ pub mod index;
 pub mod layout;
 pub mod single_line;
 pub mod text;
+pub mod topology;
 pub mod tree;
 
 /// Where a set's objects are written, which only the caller of a view knows:

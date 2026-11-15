@@ -438,6 +438,82 @@ pub fn reroute(inside: &Inside, nodes: &BTreeMap<usize, (f64, f64)>, sizes: &BTr
     layout
 }
 
+/// `layout`, a diagram of `inside` as its data writes it, with what it does
+/// not place yet placed and every link routed anew; what it places stays.
+/// The first item placed goes `at` (where an editor dropped it, in the
+/// diagram's coordinates), a row below a busbar it is dropped onto; then each
+/// in turn, the one with most neighbours placed first: between them, or a row
+/// below the one, beside what is there already; what reaches nothing placed,
+/// below the rest. A new busbar section is a bar. In the diagram's
+/// coordinates, as `layout` is.
+pub fn complete(inside: &Inside, layout: &Layout, at: Option<(f64, f64)>) -> Layout {
+    let unit = layout.unit.unwrap_or(1.0);
+    let flip = if layout.flip_y { -1.0 } else { 1.0 };
+    let screen = |(x, y): (f64, f64)| (x * unit, y * flip * unit);
+    let back = |(x, y): (f64, f64)| (x / unit, y * flip / unit);
+    let mut placed: BTreeMap<usize, (f64, f64)> = layout.nodes.iter().filter(|(i, _)| **i < inside.items.len()).map(|(&i, &p)| (i, screen(p))).collect();
+    let mut sizes: BTreeMap<usize, (f64, f64)> = layout.sizes.iter().filter(|(i, _)| placed.contains_key(i)).map(|(&i, &(w, h))| (i, (w * unit, h * unit))).collect();
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); inside.items.len()];
+    for l in &inside.links {
+        adj[l.item].push(l.junction);
+        adj[l.junction].push(l.item);
+    }
+    let mut missing: BTreeSet<usize> = (0..inside.items.len()).filter(|i| !placed.contains_key(i)).collect();
+    let mut drop = at.map(screen);
+    let snap = |(x, y): (f64, f64)| ((x / 4.0).round() * 4.0, (y / 14.0).round() * 14.0);
+    while let Some(&next) = missing.iter().max_by_key(|&&i| (adj[i].iter().filter(|n| placed.contains_key(n)).count(), !inside.items[i].junction, Reverse(i))) {
+        missing.remove(&next);
+        let near: Vec<usize> = adj[next].iter().copied().filter(|n| placed.contains_key(n)).collect();
+        // Right of what is there, `rows` down from `p` clear.
+        let free_for = |mut p: (f64, f64), rows: f64, placed: &BTreeMap<usize, (f64, f64)>| {
+            for _ in 0..500 {
+                let taken = placed.iter().any(|(i, q)| !sizes.contains_key(i) && (q.0 - p.0).abs() < ROW / 2.0 && q.1 > p.1 - ROW / 2.0 && q.1 < p.1 + ROW * rows - ROW / 2.0);
+                if !taken {
+                    break;
+                }
+                p.0 += 2.0 * ROW;
+            }
+            p
+        };
+        let free = |p: (f64, f64), placed: &BTreeMap<usize, (f64, f64)>| free_for(p, 1.0, placed);
+        let rows = (missing.len() + 1) as f64;
+        let p = match (drop.take(), near.as_slice()) {
+            (Some(mut p), _) => {
+                // Onto a busbar: a row below it.
+                let on_bar = sizes.iter().any(|(i, &(w, _))| placed.get(i).is_some_and(|q| (q.1 - p.1).abs() < ROW / 2.0 && (q.0 - p.0).abs() <= w / 2.0));
+                if on_bar {
+                    p.1 += ROW;
+                    // A column of its own, clear of the bays there.
+                    free_for(snap(p), rows, &placed)
+                } else {
+                    snap(p)
+                }
+            }
+            (None, []) => {
+                let (left, bottom) = placed.values().fold((f64::INFINITY, f64::NEG_INFINITY), |(l, b), p| (l.min(p.0), b.max(p.1)));
+                let start = if left.is_finite() { (left, bottom + 2.0 * ROW) } else { (0.0, 0.0) };
+                free(snap(start), &placed)
+            }
+            (None, [one]) => free(snap((placed[one].0, placed[one].1 + ROW)), &placed),
+            (None, many) => {
+                let n = many.len() as f64;
+                let (x, y) = many.iter().fold((0.0, 0.0), |(x, y), m| (x + placed[m].0, y + placed[m].1));
+                snap((x / n, y / n))
+            }
+        };
+        placed.insert(next, p);
+        if inside.items[next].class == "BusbarSection" {
+            sizes.insert(next, (4.0 * ROW, BAR));
+        }
+    }
+    let mut out = reroute(inside, &placed, &sizes);
+    out.nodes = out.nodes.into_iter().map(|(i, p)| (i, back(p))).collect();
+    out.edges = out.edges.into_iter().map(|(k, ps)| (k, ps.into_iter().map(back).collect())).collect();
+    out.sizes = out.sizes.into_iter().map(|(i, (w, h))| (i, (w / unit, h / unit))).collect();
+    (out.id, out.name, out.unit, out.flip_y) = (layout.id.clone(), layout.name.clone(), layout.unit, layout.flip_y);
+    out
+}
+
 /// What DL writes for `layout` (positions in pixels, y down): each object
 /// it shows, by mRID, with its name and points. Equipment and a junction are
 /// a point, a busbar a line on its bus's junction (its sections, which it
