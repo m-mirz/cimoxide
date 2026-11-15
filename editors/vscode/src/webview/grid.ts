@@ -543,7 +543,7 @@ function choice(layouts: Layout[]): string {
 }
 
 /** Screen coordinates of a layout's positions and routes, scaled to the scene's size. */
-function place(ids: string[], pairs: [string, string][], l: Layout): { nodes: Map<string, Point>; routes: Map<string, Point[]> } {
+function place(ids: string[], pairs: [string, string][], l: Layout): { nodes: Map<string, Point>; routes: Map<string, Point[]>; scale: number } {
   const raw = Object.values(l.nodes);
   let project = (p: [number, number]): Point => ({ x: p[0], y: l.flipY ? -p[1] : p[1] });
   if (l.kind === "geographic") {
@@ -586,15 +586,14 @@ function place(ids: string[], pairs: [string, string][], l: Layout): { nodes: Ma
   }
   const bottom = Math.max(0, ...[...nodes.values()].map((p) => p.y)) + 80;
   missing.forEach((id, i) => nodes.set(id, { x: (i % 20) * 50, y: bottom + Math.floor(i / 20) * 50 }));
-  return { nodes, routes };
+  return { nodes, routes, scale };
 }
 
 /**
  * Bend an edge along its route: Cytoscape's segment points, relative to the line between its nodes.
- * With `ends`, the edge also starts and ends where the route does (on a busbar, say), not at its
- * nodes' centres.
+ * At a node of `bars` (a busbar), the edge ends where the route does, on the bar, not at its centre.
  */
-function route(edge: EdgeSingular, points: Point[], ends = false): void {
+function route(edge: EdgeSingular, points: Point[], bars: Set<string> = new Set()): void {
   const s = edge.source().position();
   const t = edge.target().position();
   const dx = t.x - s.x;
@@ -606,11 +605,9 @@ function route(edge: EdgeSingular, points: Point[], ends = false): void {
   // The route may run from the target's end.
   const ordered = d(points[0], t) < d(points[0], s) ? [...points].reverse() : points;
   const style: Record<string, string> = {};
-  if (ends) {
-    const [first, last] = [ordered[0], ordered[ordered.length - 1]];
-    if (d(first, s) > 0.5) style["source-endpoint"] = `${first.x - s.x}px ${first.y - s.y}px`;
-    if (d(last, t) > 0.5) style["target-endpoint"] = `${last.x - t.x}px ${last.y - t.y}px`;
-  }
+  const [first, last] = [ordered[0], ordered[ordered.length - 1]];
+  if (bars.has(edge.source().id()) && d(first, s) > 0.5) style["source-endpoint"] = `${first.x - s.x}px ${first.y - s.y}px`;
+  if (bars.has(edge.target().id()) && d(last, t) > 0.5) style["target-endpoint"] = `${last.x - t.x}px ${last.y - t.y}px`;
   const inner = ordered.slice(1, -1);
   if (!inner.length || length < 1e-6) {
     if (Object.keys(style).length) edge.style({ ...style, "curve-style": "straight" });
@@ -644,23 +641,31 @@ function arrange(): void {
     }).run();
     return;
   }
-  const { nodes, routes } = place(ids, pairs, layout);
+  const { nodes, routes, scale } = place(ids, pairs, layout);
   cy.layout({ name: "preset", positions: Object.fromEntries(nodes), fit: true, padding: 30 }).run();
   // Drawn as laid out: busbars as long as the layout makes them, labels beside the bays' columns.
   const drawn = !!layout.unit;
+  // The busbars, and the nodes they are drawn for: where routes end on a bar.
+  const bars = new Set<string>();
   if (drawn) {
     cy.nodes().addClass("drawn");
     for (const [id, [width, height]] of Object.entries(layout.sizes ?? {})) {
       const bar = cy.getElementById(id);
-      bar.style({ shape: "rectangle", width, height });
+      bar.style({ shape: "rectangle", width: width * scale, height: height * scale });
+      bars.add(id);
       // A busbar section's node is the bar drawn: its own name would only cross the next one.
-      if (bar.data("kind") === "busbar") bar.connectedEdges().connectedNodes('[kind = "junction"]').addClass("onbar");
+      if (bar.data("kind") === "busbar") {
+        bar.connectedEdges().connectedNodes('[kind = "junction"]').forEach((j) => {
+          j.addClass("onbar");
+          bars.add(j.id());
+        });
+      }
     }
   }
   for (const e of routed) {
     const points = routes.get(e.key);
     if (points) {
-      route(cy.getElementById(e.id) as EdgeSingular, points, drawn);
+      route(cy.getElementById(e.id) as EdgeSingular, points, bars);
     }
   }
   if (drawn) cy.fit(undefined, 30);
