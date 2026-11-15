@@ -435,6 +435,124 @@ pub fn create<'a>(
     Ok(Added { edits: vec![(file.name, vec![edit])], file: file.name.to_string(), select, id })
 }
 
+/// An object a diagram draws: the mRID it shows, its name, and its points.
+pub type Drawn<'a> = (&'a str, &'a str, Vec<(f64, f64)>);
+
+/// A DL diagram written into `into`: a new `Diagram` named `name` (y
+/// downwards), or the objects of `existing` replaced (in the file defining
+/// it, whatever `into` says). Each of `objects` (the mRID it shows, its name,
+/// its points) a `DiagramObject` with its `DiagramObjectPoint`s, numbered
+/// from 1. UUIDs from `random`. The diagram's mRID is the result's `id`.
+pub fn diagram<'a>(
+    files: &[File<'a>],
+    into: &str,
+    existing: Option<&str>,
+    name: &str,
+    objects: &[Drawn],
+    random: &mut dyn FnMut() -> [u8; 16],
+) -> Result<Added<'a>, String> {
+    let defines = |f: &&File, id: &str| f.index.elements.iter().any(|e| e.mrid == id && e.id_kind == Some(IdKind::Id));
+    let file = match existing {
+        Some(d) => files.iter().find(|f| defines(f, d)).ok_or_else(|| format!("no file defines the diagram {d}"))?,
+        None => files.iter().find(|f| f.name == into).ok_or_else(|| format!("no file {into}"))?,
+    };
+    let reg = type_registry();
+    let class = |local: &str| {
+        file.index
+            .namespaces
+            .iter()
+            .filter_map(|(_, ns)| reg.ns_table(ns)?.get(local).copied())
+            .next()
+            .ok_or_else(|| format!("{} binds no namespace with a class {local}", file.name))
+    };
+    let (diagram_class, object_class, point_class) = (class("Diagram")?, class("DiagramObject")?, class("DiagramObjectPoint")?);
+    let mut taken = HashSet::new();
+    let mut fresh_id = |random: &mut dyn FnMut() -> [u8; 16]| {
+        let id = fresh(files, &taken, random);
+        taken.insert(id.clone());
+        id
+    };
+    let mut edits: Edits<'a> = Vec::new();
+    let mut lines = Vec::new();
+    let diagram = match existing {
+        Some(d) => {
+            // Its objects and their points go; the diagram stays, with its name.
+            let shown: HashSet<&str> = file
+                .index
+                .elements
+                .iter()
+                .filter(|e| local(&e.qname) == "DiagramObject")
+                .filter(|e| e.fields.iter().any(|f| f.key() == "DiagramObject.Diagram" && f.resource.as_ref().is_some_and(|(m, _)| m == d)))
+                .map(|e| e.mrid.as_str())
+                .collect();
+            let mut gone: HashSet<&str> = shown.clone();
+            for e in files.iter().flat_map(|f| &f.index.elements) {
+                if local(&e.qname) == "DiagramObjectPoint"
+                    && e.fields.iter().any(|f| f.resource.as_ref().is_some_and(|(m, _)| shown.contains(m.as_str())))
+                {
+                    gone.insert(e.mrid.as_str());
+                }
+            }
+            edits = delete(files, &gone).edits;
+            d.to_string()
+        }
+        None => {
+            let id = fresh_id(random);
+            lines.extend(element(file, diagram_class, &id, &[("IdentifiedObject.name", name), ("Diagram.orientation", "negative")])?);
+            id
+        }
+    };
+    for (shown, label, points) in objects {
+        let id = fresh_id(random);
+        let mut values = vec![("DiagramObject.Diagram", diagram.as_str()), ("DiagramObject.IdentifiedObject", *shown), ("DiagramObject.rotation", "0")];
+        if !label.is_empty() {
+            values.insert(0, ("IdentifiedObject.name", *label));
+        }
+        lines.extend(element(file, object_class, &id, &values)?);
+        for (k, (x, y)) in points.iter().enumerate() {
+            let point = fresh_id(random);
+            let (k, x, y) = ((k + 1).to_string(), number(*x), number(*y));
+            lines.extend(element(
+                file,
+                point_class,
+                &point,
+                &[("DiagramObjectPoint.sequenceNumber", &k), ("DiagramObjectPoint.xPosition", &x), ("DiagramObjectPoint.yPosition", &y), ("DiagramObjectPoint.DiagramObject", &id)],
+            )?);
+        }
+    }
+    let edit = at_end(file, &lines)?;
+    let first = edit.range.start.line;
+    match edits.iter_mut().find(|(n, _)| *n == file.name) {
+        Some((_, es)) => es.push(edit),
+        None => edits.push((file.name, vec![edit])),
+    }
+    let select = Range::new(Position::new(first, 0), Position::new(first, 0));
+    Ok(Added { edits, file: file.name.to_string(), select, id: diagram })
+}
+
+/// A coordinate as DL writes it: to a hundredth, without trailing zeros.
+fn number(x: f64) -> String {
+    let s = format!("{:.2}", (x * 100.0).round() / 100.0);
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    if s == "-0" { "0".into() } else { s.into() }
+}
+
+/// An object's element, unindented: its `rdf:ID`, its mRID as text where the class has a field for
+/// it, and `values` as [`set_field`] takes them.
+fn element(file: &File, class: &'static cimmodel::base::ClassDef, id: &str, values: &[(&str, &str)]) -> Result<Vec<String>, String> {
+    let prefix = file.index.prefix_of(class.ns).ok_or("no prefix")?;
+    let mut lines = vec![format!("<{prefix}:{} rdf:ID=\"{id}\">", class.local)];
+    let mrid_key = type_registry().attrs(class).map(|a| a.id).find(|k| k.ends_with(".mRID"));
+    if let Some(key) = mrid_key.filter(|k| !values.iter().any(|(v, _)| v == k)) {
+        lines.push(format!("  {}", field_element(file, class, key, &id[1..])?));
+    }
+    for (key, value) in values {
+        lines.push(format!("  {}", field_element(file, class, key, value)?));
+    }
+    lines.push(format!("</{prefix}:{}>", class.local));
+    Ok(lines)
+}
+
 /// Objects copied: the edits, and each object's new mRID.
 pub struct Copied<'a> {
     pub edits: Edits<'a>,
