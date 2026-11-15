@@ -15,7 +15,7 @@ use cimmodel::CimDataset;
 use cimsparql::CimStore;
 use cimvalidation::Violation;
 
-/// What `cimcli validate` takes as flags.
+/// What `cimox validate` takes as flags.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Options {
     pub common: bool,
@@ -74,7 +74,7 @@ impl ModelSet {
         Ok((&self.dataset, self.origins.as_ref().expect("built above")))
     }
 
-    /// The findings of `cimcli validate` with `opts`, computed on first use,
+    /// The findings of `cimox validate` with `opts`, computed on first use,
     /// and the dataset they are about. Validation runs on each file decoded
     /// on its own, so the files are decoded again rather than every set
     /// holding them twice.

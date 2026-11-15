@@ -36,7 +36,7 @@ Data flow: RDFS/SHACL → `cimgen` → `cimmodel` (class tables) + `cimvalidatio
 | `cimvalidation/` | `cimoxide-validation` | shape-table interpreter plus hand-written `sh:sparql` rules |
 | `cimsparql/` | `cimoxide-sparql` | SPARQL 1.1 over an in-memory oxigraph store |
 | `cimoxide/` | `cimoxide` | facade re-exporting the above |
-| `cimoxide-cli/` | `cimoxide-cli` (binary `cimcli`) | CLI |
+| `cimoxide-cli/` | `cimoxide-cli` (binary `cimox`) | CLI |
 | `cimview/` | `cimoxide-view` | a model set's grid and tree, with findings, as JSON for whatever draws them; its files' index and text edits across them |
 | `cimoxide-lsp/` | `cimoxide-lsp` (binary `cimlsp`) | language server; VS Code extension in `editors/vscode/` |
 | `cimoxide-mcp/` | `cimoxide-mcp` (binary `cimmcp`) | MCP server for chat clients; bundled and registered by the extension |
@@ -139,7 +139,7 @@ audited against `application-profiles-library/validate/shacl-sparql/<rule>.rq`:
 `CimStore::from_dataset(&ds)` / `from_dataset_with(&ds, &GraphOptions)` / `.query(..)`;
 `quads(..)` streams without a store. oxigraph is used with `default-features = false` (no
 RocksDB / C++). Needs the CGMES schema table for IRIs, XSD types and enum namespaces.
-`cimcli` and `cimoxide-py` depend on it behind a default-on `sparql` feature.
+`cimox` and `cimoxide-py` depend on it behind a default-on `sparql` feature.
 
 ## Profile Families
 
@@ -161,7 +161,7 @@ bare-name fallback.
 
 Behind features `dynamic-schema` (`cimmodel::schema_source`) and `dynamic-shapes`
 (`cimvalidation::shape_source`, which enables `dynamic-schema`); both off by default, on for
-`cimcli` and `cimoxide-py`. Resolution: explicit `load_from` > `CIMOXIDE_RDFS_DIR` /
+`cimox` and `cimoxide-py`. Resolution: explicit `load_from` > `CIMOXIDE_RDFS_DIR` /
 `CIMOXIDE_SHACL_DIR` > generated. Each variable is a `PATH`-style list; `family_of_dir`
 assigns each directory to a family (CGMES's `61970-600-2_*` pattern is tried first). A
 SHACL load finds RDFS at `<dir>/../RDFS`. Bad paths warn and fall back.
@@ -205,12 +205,12 @@ Semantics to preserve:
   key, `^Field` when inverse. `sh:targetNode` + `[ sh:inversePath rdf:type ]` (instance
   counts) is hand-written in `sparql/`, labelled `^rdf:type`.
 - Resolution happens once at table build, never per element.
-- `sh:Info` is advisory and excluded from `cimcli validate`'s exit code.
+- `sh:Info` is advisory and excluded from `cimox validate`'s exit code.
 - Not covered (reported as skips): the 119 `cim16:`/`cim17:` NC target classes.
 
 Walks over ≥20,000 elements run on threads (`cimvalidation/src/par.rs`, `std::thread::scope`)
 in contiguous runs concatenated in order, so output is byte-identical to one thread. Unit
-tests on small fixtures don't exercise the split; compare `cimcli` output on real data. Threads
+tests on small fixtures don't exercise the split; compare `cimox` output on real data. Threads
 go through `par.rs`: wasm32-unknown-unknown compiles `std::thread` and panics when it is used, so
 there everything runs in turn (`HAS_THREADS`), and `cimoxide-model` and `cimoxide-validation` must keep
 running on it, not only compiling.
@@ -224,7 +224,7 @@ every class, so tests asserting a clean NC dataset filter `sh:Info`.
 
 ### Checking a validation change
 
-Compare `cimcli validate --common --quality --format json` before and after as multisets of
+Compare `cimox validate --common --quality --format json` before and after as multisets of
 `(object_id, rule_id, property)` across the CGMES test configurations, and on copies mutated
 to trigger the touched rules. Time with alternating before/after runs in one session; a
 difference under ~5% means nothing until an independent A/B reproduces it (cross-run drift
@@ -234,7 +234,7 @@ has been measured at 20% for identical code).
 
 `cimlsp` over stdio (`lsp-server`/`lsp-types`, no async runtime). A *model set* is every CIM
 XML file in a document's directory, open buffers taking precedence over disk; it is
-validated with `validate_files` + `combined_config`, as `cimcli validate` does, on a worker
+validated with `validate_files` + `combined_config`, as `cimox validate` does, on a worker
 thread with a 300 ms debounce, on open and save, and on `workspace/didChangeWatchedFiles` (the
 extension watches `**/*.xml`) for a set validated or open: VS Code hands no file over 50 MB to an
 extension, so the server sees neither its opening nor its saving, nor that of a file an edit
@@ -245,7 +245,7 @@ text after the last `#`, as in `decode.rs`), in `cimview::text`'s positions (UTF
 LSP's; `cimoxide-lsp/src/index.rs` converts). A per-file finding is placed only in the file it
 was found in (`validate_files_traced`). Each diagnostic's `data` carries `object_id`
 and `property`; its `code` is the `rule_id`. Diagnostics must stay equal to
-`cimcli validate --format json` as sets of `(object_id, rule_id, property)` per directory.
+`cimox validate --format json` as sets of `(object_id, rule_id, property)` per directory.
 
 The editor helps with the text (hover, completion, definition, references, outline, quick fixes,
 rename); the model tree is where the model is edited, in files of any size: deleting and adding are
@@ -345,7 +345,7 @@ cimoxide-py gives them. `edit` applies its changes to a fresh decode of the set,
 `CimDataset::element_from_json` as cimoxide-py's `__setitem__` does; edits never live in the session. `src/session.rs` caches each model set (a directory's CIM files, as for `cimlsp`, or the
 files and directories a tool's `files` lists) until a file's mtime changes; the SPARQL store, the
 files that wrote each object (`rdf:ID` or `rdf:about`, for `get_object` and `conflicts`) and each
-validation configuration's findings are built on first use. `validate` reports what `cimcli validate` does
+validation configuration's findings are built on first use. `validate` reports what `cimox validate` does
 (`tests/protocol.rs` compares them). `cimmodel::decode::is_cim` decides which files belong,
 shared with `cimlsp`. The extension registers it through
 `lm.registerMcpServerDefinitionProvider` with `--dir <first workspace folder>` (VS Code
@@ -365,7 +365,7 @@ For an intentional generator or schema change:
 
 Version, license and internal dependency versions live once in the root `Cargo.toml`
 (`[workspace.package]`, `[workspace.dependencies]`). Pushing a `v*` tag runs `release.yml`
-(cimcli binaries; cimlsp ships in the VS Code extension, cimmcp there and through PyPI and crates.io), `pypi.yml` (the `cimoxide` bindings, and the
+(cimox binaries; cimlsp ships in the VS Code extension, cimmcp there and through PyPI and crates.io), `pypi.yml` (the `cimoxide` bindings, and the
 `cimoxide-mcp` wheel: `cimmcp` as a maturin `bindings = "bin"` wheel for Linux x86_64 only, for
 `uvx --from cimoxide-mcp cimmcp`; its version comes from the workspace) and `crates-io.yml` (needs `CARGO_REGISTRY_TOKEN` in the
 `crates-release` environment; runs `make generate`, hence `--allow-dirty`; dry-runnable via

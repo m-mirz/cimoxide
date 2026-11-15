@@ -104,7 +104,7 @@ fi
 
 echo "Building cimoxide-cli (release)..."
 cargo build --release -p cimoxide-cli >/dev/null 2>&1
-cimcli="$repo_root/target/release/cimcli"
+cimox="$repo_root/target/release/cimox"
 
 now_ns() { date +%s%N; }
 
@@ -119,11 +119,11 @@ if [ -d "$cgmes_dir" ]; then
 	cg_ms=()
 	for ((i = 1; i <= repeat; i++)); do
 		start=$(now_ns)
-		"$cimcli" validate "$cgmes_dir"/*.xml >/dev/null 2>&1 || true
+		"$cimox" validate "$cgmes_dir"/*.xml >/dev/null 2>&1 || true
 		end=$(now_ns)
 		cg_ms+=($(((end - start) / 1000000)))
 	done
-	echo "  cimcli validate, 7 CGMES files : $(median "${cg_ms[@]}") ms  (runs: ${cg_ms[*]})"
+	echo "  cimox validate, 7 CGMES files : $(median "${cg_ms[@]}") ms  (runs: ${cg_ms[*]})"
 	echo "  (CGMES runs the same interpreter over cgmes_shapes.rs)"
 else
 	echo "  (CGMES-Test-Configurations not present, skipped)"
@@ -136,17 +136,17 @@ fixture="$repo_root/testdata/test_nc_CO_002.xml"
 
 # A four-element fixture is the point: it isolates the shape load from the
 # validation itself.
-echo "=== 3. startup wall clock — 'cimcli validate' on a 4-element NC file ==="
+echo "=== 3. startup wall clock — 'cimox validate' on a 4-element NC file ==="
 gen_ms=()
 dyn_ms=()
 for ((i = 1; i <= repeat; i++)); do
 	start=$(now_ns)
-	env -u CIMOXIDE_SHACL_DIR "$cimcli" validate "$fixture" >/dev/null 2>&1 || true
+	env -u CIMOXIDE_SHACL_DIR "$cimox" validate "$fixture" >/dev/null 2>&1 || true
 	end=$(now_ns)
 	gen_ms+=($(((end - start) / 1000000)))
 
 	start=$(now_ns)
-	CIMOXIDE_SHACL_DIR="$shacl_dir" "$cimcli" validate "$fixture" >/dev/null 2>&1 || true
+	CIMOXIDE_SHACL_DIR="$shacl_dir" "$cimox" validate "$fixture" >/dev/null 2>&1 || true
 	end=$(now_ns)
 	dyn_ms+=($(((end - start) / 1000000)))
 done
@@ -161,8 +161,8 @@ echo
 
 echo "=== 4. peak RSS ==="
 if command -v /usr/bin/time >/dev/null 2>&1; then
-	g_rss=$(env -u CIMOXIDE_SHACL_DIR /usr/bin/time -f '%M' "$cimcli" validate "$fixture" 2>&1 >/dev/null | tail -1)
-	d_rss=$(CIMOXIDE_SHACL_DIR="$shacl_dir" /usr/bin/time -f '%M' "$cimcli" validate "$fixture" 2>&1 >/dev/null | tail -1)
+	g_rss=$(env -u CIMOXIDE_SHACL_DIR /usr/bin/time -f '%M' "$cimox" validate "$fixture" 2>&1 >/dev/null | tail -1)
+	d_rss=$(CIMOXIDE_SHACL_DIR="$shacl_dir" /usr/bin/time -f '%M' "$cimox" validate "$fixture" 2>&1 >/dev/null | tail -1)
 	echo "  generated table : ${g_rss} KB"
 	echo "  SHACL-loaded    : ${d_rss} KB"
 	echo "  difference      : +$((d_rss - g_rss)) KB"
@@ -179,6 +179,6 @@ for f in cimvalidation/src/nc_shapes.rs cimvalidation/src/nc_profiles.rs cimvali
 		printf '  %-34s %s bytes\n' "$f" "$(stat -c '%s' "$f")"
 	fi
 done
-echo "  cimcli: $(stat -c '%s' "$cimcli") bytes"
+echo "  cimox: $(stat -c '%s' "$cimox") bytes"
 echo "  (the generated table stays compiled in as the fallback, so the binary is"
 echo "   expected to be unchanged by the dynamic-shapes feature)"

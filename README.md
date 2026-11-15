@@ -4,24 +4,26 @@ Rust tooling for CGMES CIM data: decoding, SHACL validation, conversion and SPAR
 
 ## Usage
 
-### `cimoxide-cli`
+### `cimox`
+
+The command-line tool: `cargo install cimoxide-cli`, or the binaries on each release.
 
 ```bash
 # Decode RDF/XML and print element counts (--json for machine-readable output)
-cimoxide-cli import [--json] <xml-files...>
+cimox import [--json] <xml-files...>
 
 # Convert RDF/XML <-> JSON; --profile splits XML output per CGMES profile into a directory
-cimoxide-cli convert --to json <xml-files...> [--out <output.json>]
-cimoxide-cli convert --to xml <input.json> [--profile EQ,SSH] [--out <output.xml|dir/>]
+cimox convert --to json <xml-files...> [--out <output.json>]
+cimox convert --to xml <input.json> [--profile EQ,SSH] [--out <output.xml|dir/>]
 
 # Run SHACL + SPARQL validation
-cimoxide-cli validate [--profiles EQ,SSH,...] [--solved] [--not-solved]
-                      [--common] [--quality] [--silence rule1,rule2]
-                      [--format text|json|sarif] <xml-files...>
+cimox validate [--profiles EQ,SSH,...] [--solved] [--not-solved]
+               [--common] [--quality] [--silence rule1,rule2]
+               [--format text|json|sarif] <xml-files...>
 
 # Run a SPARQL 1.1 query over the merged input files
-cimoxide-cli query --query "SELECT ..." | --file <query.rq>
-                   [--format text|json|csv|tsv] <xml-files...>
+cimox query --query "SELECT ..." | --file <query.rq>
+            [--format text|json|csv|tsv] <xml-files...>
 ```
 
 | `validate` flag | Effect |
@@ -43,7 +45,7 @@ as a physical location (`sh:Violation` → `error`, `sh:Warning` → `warning`, 
 
 `cimlsp` (crate `cimoxide-lsp`) is a language server over stdio for CGMES and NC RDF/XML:
 
-- **Diagnostics** — the findings of `cimcli validate`, over the *model set* a document
+- **Diagnostics** — the findings of `cimox validate`, over the *model set* a document
   belongs to: every CIM XML file in its directory, open buffers in place of the files on
   disk. A finding shows on every file that writes its object, at the field it is about.
   Runs on open and save, and while typing with `onType`.
@@ -53,7 +55,7 @@ as a physical location (`sh:Violation` → `error`, `sh:Warning` → `warning`, 
 
 Initialization options: `{"common": bool, "quality": bool, "silence": [rule ids],
 "onType": bool}`; schemas come from `CIMOXIDE_RDFS_DIR` / `CIMOXIDE_SHACL_DIR` as for
-`cimcli`. Any LSP client can run it (`cargo install cimoxide-lsp`, or the binaries on each
+`cimox`. Any LSP client can run it (`cargo install cimoxide-lsp`, or the binaries on each
 GitHub release).
 
 The VS Code extension in `editors/vscode/` bundles `cimlsp` per platform and is published to
@@ -82,7 +84,7 @@ read-only:
 | `summary` | a set's files, model headers and object counts by class |
 | `find_objects` | search by class (abstract classes included), name/mRID text and attribute value |
 | `get_object` | one object's fields, references resolved, and what references it |
-| `validate` | the findings of `cimcli validate`, by rule, filterable |
+| `validate` | the findings of `cimox validate`, by rule, filterable |
 | `sparql` | a SPARQL query over the merged CGMES data |
 | `describe_class` | a class's, attribute's, enumeration's or enumeration value's definition from the ENTSO-E vocabulary, and what a class carries |
 
@@ -112,7 +114,7 @@ see [`cimoxide-mcp/README.md`](cimoxide-mcp/README.md).
 | `cimvalidation` | SHACL validation through one interpreter (`bag.rs`) over **generated** shape tables; hand-written `sh:sparql` rules in `src/sparql/` |
 | `cimsparql` | SPARQL 1.1 over a decoded dataset, backed by in-memory oxigraph |
 | `cimoxide` | Facade re-exporting `cimmodel` (as `model`), `cimvalidation` and `cimsparql` |
-| `cimoxide-cli` | The command-line tool |
+| `cimoxide-cli` | The command-line tool, `cimox` |
 | `cimview` | A model set's grid and tree, with findings, as JSON for whatever draws them |
 | `cimoxide-lsp` | `cimlsp`, the language server; its VS Code extension is `editors/vscode/` |
 | `cimoxide-mcp` | `cimmcp`, the MCP server for chat clients |
@@ -158,18 +160,18 @@ let r: Option<f64> = line.get_f64("ACLineSegment.r");
 let terminals = line.get_refs("ACLineSegment.Terminals");
 ```
 
-On RealGrid (189,000 elements) `cimcli import` takes 0.78 s and 350 MB peak.
+On RealGrid (189,000 elements) `cimox import` takes 0.78 s and 350 MB peak.
 
 ### Loading schemas and shapes at runtime
 
-Class and shape tables are compiled in, but `cimcli` and the Python bindings can load either
+Class and shape tables are compiled in, but `cimox` and the Python bindings can load either
 from the ENTSO-E files instead, so a new profile version is a data load, not a recompile:
 
 ```bash
 CIMOXIDE_RDFS_DIR=application-profiles-library/CGMES/RDFS:application-profiles-library/NCP/RDFS \
-  cimcli validate model.xml
+  cimox validate model.xml
 CIMOXIDE_SHACL_DIR=application-profiles-library/NCP/SHACL:application-profiles-library/CGMES/SHACL \
-  cimcli validate model.xml
+  cimox validate model.xml
 ```
 
 Resolution is explicit `load_from` > environment variable > generated table. Each variable
@@ -192,7 +194,7 @@ under ~5% needs a second independent A/B before it means anything.
 
 `cimgen` resolves the SHACL Turtle files into shape tables (`cgmes_shapes.rs`: 849 shapes,
 18,681 checks; `nc_shapes.rs`: 2,014 shapes, 14,889 checks), which `cimvalidation/src/bag.rs`
-interprets element by element. On RealGrid `cimcli validate` takes about 1.4 s. Which file
+interprets element by element. On RealGrid `cimox validate` takes about 1.4 s. Which file
 applies to which profile comes from NCP's manifests for NC and from
 `cimschema/src/shacl/cgmes_manifest.rs` for CGMES, which ships none. Profiles are detected
 from the file header (`md:Model.profile`, or NC's `dcterms:conformsTo`); a file without one
@@ -353,7 +355,7 @@ rows = dataset.query("SELECT ?s WHERE { ?s a cim:ACLineSegment }")
 
 `cim:`, `eu:`, `md:`, `dm:`, `rdf:` and `xsd:` are pre-bound, so a `sh:select` body from the
 SHACL files can be pasted in unchanged; a query's own prefixes win, and `query_raw` binds
-nothing. oxigraph is built with `default-features = false` — pure Rust, no RocksDB. `cimcli`
+nothing. oxigraph is built with `default-features = false` — pure Rust, no RocksDB. `cimox`
 and `cimoxide-py` include SPARQL behind the default `sparql` feature.
 
 How data becomes RDF: the CGMES schema table restores what the decoder strips — each class's
@@ -363,14 +365,14 @@ and attribute's namespace (so `eu:` attributes stay out of `cim:`), a literal's 
 undeclared ones. Everything goes in the default graph; elements record no source file.
 
 **Cost.** The graph is held in addition to the elements. Merged RealGrid (117 MB RDF/XML,
-188,551 elements → 1.3 M quads): building the store takes 2.7 s, `cimcli query` peaks at
+188,551 elements → 1.3 M quads): building the store takes 2.7 s, `cimox query` peaks at
 900 MB against 350 MB for `import`; a two-hop join takes 80 ms. `GraphOptions::with_types`
 restricts materialisation to the classes a query touches.
 
 ## RDF/XML export
 
 `cimmodel::convert` writes CGMES RDF/XML as a flat dump (`dataset_to_xml`) or per profile
-(`dataset_to_xml_for_profile`, `cimcli convert --to xml --profile EQ,SSH`).
+(`dataset_to_xml_for_profile`, `cimox convert --to xml --profile EQ,SSH`).
 
 Prefixes come from the schema and are decided **per field**, since CGMES mixes them on one
 element (`eu:BoundaryPoint` with `eu:BoundaryPoint.toEndName` and

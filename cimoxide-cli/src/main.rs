@@ -13,17 +13,17 @@ fn or_die<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) -> T {
 
 fn usage() -> ! {
     eprintln!("Usage:");
-    eprintln!("  cimoxide-cli import [--json] <xml-files...>");
-    eprintln!("  cimoxide-cli convert --to json <xml-files...> [--out <output.json>]");
-    eprintln!("  cimoxide-cli convert --to xml  <input.json>   [--out <output.xml>]");
-    eprintln!("  cimoxide-cli convert --to xml  <input.json>   --profile EQ,SSH [--out <dir/>]");
-    eprintln!("  cimoxide-cli validate [--profiles EQ,SSH,...] [--solved] [--not-solved]");
-    eprintln!("                        [--common] [--quality] [--silence rule1,rule2]");
-    eprintln!("                        [--format text|json|sarif] <xml-files...>");
+    eprintln!("  cimox import [--json] <xml-files...>");
+    eprintln!("  cimox convert --to json <xml-files...> [--out <output.json>]");
+    eprintln!("  cimox convert --to xml  <input.json>   [--out <output.xml>]");
+    eprintln!("  cimox convert --to xml  <input.json>   --profile EQ,SSH [--out <dir/>]");
+    eprintln!("  cimox validate [--profiles EQ,SSH,...] [--solved] [--not-solved]");
+    eprintln!("                 [--common] [--quality] [--silence rule1,rule2]");
+    eprintln!("                 [--format text|json|sarif] <xml-files...>");
     #[cfg(feature = "sparql")]
     {
-        eprintln!("  cimoxide-cli query  --query \"SELECT ...\" | --file <query.rq>");
-        eprintln!("                      [--format text|json|csv|tsv] <xml-files...>");
+        eprintln!("  cimox query  --query \"SELECT ...\" | --file <query.rq>");
+        eprintln!("               [--format text|json|csv|tsv] <xml-files...>");
     }
     process::exit(1);
 }
@@ -381,7 +381,7 @@ fn cmd_validate(args: &[String]) {
     }
 }
 
-/// `cimoxide-cli query` — run a SPARQL query over the merged input files.
+/// `cimox query` — run a SPARQL query over the merged input files.
 #[cfg(feature = "sparql")]
 fn cmd_query(args: &[String]) {
     use cimsparql::format::Format;

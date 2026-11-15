@@ -149,10 +149,10 @@ fn queries_with_sparql() {
     assert!(err && bad.starts_with("query failed"), "{bad}");
 }
 
-/// The findings, by rule, are those `cimcli validate --common --quality`
+/// The findings, by rule, are those `cimox validate --common --quality`
 /// reports.
 #[test]
-fn validates_as_cimcli_does() {
+fn validates_as_cimox_does() {
     let dir = repo_root().join(MICROGRID);
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "xml")).collect();
     files.sort();
@@ -176,7 +176,7 @@ fn validates_as_cimcli_does() {
 
 /// A model set listed as files and directories that lie apart (BE's
 /// directory and the boundary's) is decoded and validated as those files
-/// together, as `cimcli validate` takes them.
+/// together, as `cimox validate` takes them.
 #[test]
 fn takes_a_model_set_as_a_file_list() {
     const BASE: &str = "CGMES-Test-Configurations/v3.0/MicroGrid/MicroGid-BaseCase";

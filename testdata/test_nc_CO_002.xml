@@ -4,7 +4,7 @@
 
   NC announces its profiles the way DCAT does, with a dcat:Dataset carrying
   dcterms:conformsTo, rather than the md:FullModel header CGMES uses. That
-  header is what makes `cimcli validate` pick the CO shapes; without it there
+  header is what makes `cimox validate` pick the CO shapes; without it there
   is nothing to say which profile applies. See test_nc_CO_001.xml for the
   decoder-focused fixture.
 

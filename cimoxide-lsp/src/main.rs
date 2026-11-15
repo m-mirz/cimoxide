@@ -1,6 +1,6 @@
 //! `cimlsp`: a language server for CGMES and NC RDF/XML over stdio.
 //!
-//! - Diagnostics: the SHACL shape tables and SPARQL rules `cimcli validate`
+//! - Diagnostics: the SHACL shape tables and SPARQL rules `cimox validate`
 //!   runs, over the model set a document belongs to (see [`validate`]), on
 //!   open and save, and while typing if `onType` is set.
 //! - Hover, go to definition, references, document outline and completion
@@ -17,7 +17,7 @@
 //! Initialization options (the VS Code extension sends its settings):
 //! `{ "common": bool, "quality": bool, "silence": [rule ids], "onType": bool }`.
 //! RDFS and SHACL directories come from `CIMOXIDE_RDFS_DIR` /
-//! `CIMOXIDE_SHACL_DIR` in the server's environment, as for `cimcli`.
+//! `CIMOXIDE_SHACL_DIR` in the server's environment, as for `cimox`.
 
 mod edit;
 mod features;

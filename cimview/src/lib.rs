@@ -87,7 +87,7 @@ pub(crate) mod testing {
         }
     }
 
-    /// `files` as one model set, under the configuration `cimcli validate
+    /// `files` as one model set, under the configuration `cimox validate
     /// --common --quality` uses.
     pub fn validate(files: &[(PathBuf, Arc<str>)]) -> Set {
         let datasets: Vec<CimDataset> = files.iter().map(|(_, t)| CimDataset::decode_str(t).unwrap()).collect();

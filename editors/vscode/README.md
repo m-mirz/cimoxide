@@ -4,7 +4,7 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
 [cimoxide](https://github.com/m-mirz/cimoxide).
 
 - **Validation** — the CGMES and NC SHACL rules (shape tables plus the hand-written
-  `sh:sparql` rules) as diagnostics, the same findings as `cimcli validate`. A model is
+  `sh:sparql` rules) as diagnostics, the same findings as `cimox validate`. A model is
   usually several files (EQ, SSH, SV, TP, …), so the unit of validation is a *model set*:
   every CIM XML file in the document's directory. Cross-profile findings appear on every
   file that writes the object.

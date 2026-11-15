@@ -1,6 +1,6 @@
 [package]
 name = "cimoxide-cli"
-description = "cimcli: command-line tool to decode, validate, convert and query ENTSO-E CGMES data"
+description = "cimox: command-line tool to decode, validate, convert and query ENTSO-E CGMES data"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,7 +10,7 @@ keywords.workspace = true
 categories = ["command-line-utilities", "science"]
 
 [[bin]]
-name = "cimcli"
+name = "cimox"
 path = "src/main.rs"
 
 [dependencies]
