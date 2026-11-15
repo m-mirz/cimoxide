@@ -712,6 +712,47 @@ pub fn apply<'a>(files: &[File<'a>], tree: &Tree, inside: &Inside, op: &Value, r
     }
 }
 
+/// The texts of `files` after `edits`, every file, by name.
+pub fn after(files: &[File], edits: &Edits) -> Vec<(String, String)> {
+    files
+        .iter()
+        .map(|f| {
+            let mine: Vec<TextEdit> = edits.iter().filter(|(n, _)| *n == f.name).flat_map(|(_, e)| e.iter().cloned()).collect();
+            let text = if mine.is_empty() { f.text.to_string() } else { crate::text::apply(f.text, &mine) };
+            (f.name.to_string(), text)
+        })
+        .collect()
+}
+
+/// Edits by file name, owned.
+pub type Owned = Vec<(String, Vec<TextEdit>)>;
+
+/// The DL diagram `diagram` drawn anew for substation `substation` of the set `texts` (its
+/// files by name, as an edit left them): what it draws where it is, what it does not draw yet
+/// placed ([`crate::single_line::complete`], the first `at`), every terminal routed anew; the
+/// lines leaving the substation as the diagram draws them. The edits to `texts`, by name; none
+/// if the diagram does not draw the substation.
+pub fn redraw(texts: &[(String, String)], substation: &str, diagram: &str, at: Option<(f64, f64)>, random: &mut dyn FnMut() -> [u8; 16]) -> Result<Owned, String> {
+    let datasets: Vec<cimmodel::CimDataset> = texts.iter().filter_map(|(_, t)| cimmodel::CimDataset::decode_str(t).ok()).collect();
+    let grid = crate::grid::build(&crate::grid::Model::new(&datasets));
+    let Some(inside) = grid.inside_of(substation) else { return Ok(Vec::new()) };
+    let id = format!("dl:{diagram}");
+    let Some(shown) = inside.layouts.iter().find(|l| l.id == id) else { return Ok(Vec::new()) };
+    let done = crate::single_line::complete(inside, shown, at);
+    let objects: Vec<edit::Drawn> = crate::single_line::diagram_objects(inside, &done)
+        .into_iter()
+        .filter(|(m, _, _)| !inside.items.iter().any(|it| it.id == *m && !it.far.is_empty()))
+        .collect();
+    if objects.is_empty() {
+        return Ok(Vec::new());
+    }
+    let lines: Vec<crate::text::LineIndex> = texts.iter().map(|(_, t)| crate::text::LineIndex::new(t)).collect();
+    let indexes: Vec<crate::index::Index> = texts.iter().map(|(_, t)| crate::index::Index::build(t)).collect();
+    let files: Vec<File> = texts.iter().zip(&lines).zip(&indexes).map(|(((n, t), l), i)| File { name: n, text: t, lines: l, index: i }).collect();
+    let written = edit::diagram(&files, "", Some(diagram), "", &objects, random)?;
+    Ok(written.edits.into_iter().map(|(n, e)| (n.to_string(), e)).collect())
+}
+
 /// The voltage level of `inside` nearest in voltage to `level`, other than it: a lower one first.
 pub fn other_level<'i>(inside: &'i Inside, level: &str) -> Option<&'i str> {
     let kv = inside.groups.iter().find(|g| g.id == level).and_then(|g| g.kv).unwrap_or(0.0);
@@ -1052,5 +1093,36 @@ mod tests {
         }
         let xs: BTreeSet<i64> = new.iter().map(|i| done.nodes[i].0.round() as i64).collect();
         assert_eq!(xs.len(), 1, "in one column: {xs:?}");
+    }
+
+    #[test]
+    fn a_diagram_is_redrawn_with_the_edit() {
+        let read = micro_grid();
+        let set = validate(&read);
+        let names: Vec<String> = read.iter().map(|(p, _)| p.to_string_lossy().into_owned()).collect();
+        let lines: Vec<LineIndex> = read.iter().map(|(_, t)| LineIndex::new(t)).collect();
+        let indexes: Vec<Index> = read.iter().map(|(_, t)| Index::build(t)).collect();
+        let files: Vec<File> = (0..read.len()).map(|i| File { name: &names[i], text: &read[i].1, lines: &lines[i], index: &indexes[i] }).collect();
+        let inside = inside_of(&set, "Anvers");
+        let substation = set.grid.nodes.iter().find(|n| n.label == "Anvers").unwrap().id.clone();
+        let diagram = inside.layouts.iter().find(|l| l.kind == "diagram").unwrap().id.trim_start_matches("dl:").to_string();
+        let bus = inside.items.iter().find(|it| it.class == "BusbarSection").unwrap();
+        let mut random = random();
+        let done = apply(&files, &set.tree, inside, &serde_json::json!({ "op": "bay", "template": "feeder", "bus": bus.id }), &mut random).unwrap();
+        let texts = after(&files, &done.edits);
+        let drawn = redraw(&texts, &substation, &diagram, None, &mut random).unwrap();
+        assert_eq!(drawn.len(), 1, "the DL file alone");
+        let edited: Read = texts
+            .iter()
+            .map(|(n, t)| {
+                let e: Vec<TextEdit> = drawn.iter().filter(|(m, _)| m == n).flat_map(|(_, e)| e.clone()).collect();
+                (PathBuf::from(n), Arc::from(crate::text::apply(t, &e)))
+            })
+            .collect();
+        let again = validate(&edited);
+        let now = inside_of(&again, "Anvers");
+        let shown = now.layouts.iter().find(|l| l.id == format!("dl:{diagram}")).unwrap();
+        assert_eq!(shown.nodes.len(), now.items.len(), "the bay drawn too");
+        none_more(&read, &edited, &[]);
     }
 }
