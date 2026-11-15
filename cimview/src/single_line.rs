@@ -687,10 +687,12 @@ mod tests {
         let indexes: Vec<Index> = read.iter().map(|(_, t)| Index::build(t)).collect();
         let files: Vec<File> = (0..read.len()).map(|i| File { name: &names[i], text: &read[i].1, lines: &lines[i], index: &indexes[i] }).collect();
         let dl = names.iter().find(|n| n.contains("_DL_")).unwrap();
-        let mut counter = 0u8;
+        let mut counter = 0u64;
         let mut random = || {
-            counter = counter.wrapping_add(1);
-            [counter; 16]
+            counter += 1;
+            let mut b = [0u8; 16];
+            b[..8].copy_from_slice(&counter.to_le_bytes());
+            b
         };
         let written = diagram(&files, dl, None, "Anvers single-line", &super::diagram_objects(inside, &auto), &mut random).unwrap();
         let edited: Vec<(std::path::PathBuf, std::sync::Arc<str>)> = read
@@ -727,5 +729,33 @@ mod tests {
         let after = crate::text::apply(&text, &rewritten.edits[0].1);
         assert_eq!(objects(&after), objects(&text));
         assert_eq!(after.matches("Anvers single-line").count(), 1);
+
+        // Into MicroGrid's own diagram of Belgium: Anvers' drawing replaced,
+        // the rest of the country kept.
+        let mas = set.grid.layouts.iter().find(|l| l.name == "Diagram: MAS BE").unwrap().id.trim_start_matches("dl:").to_string();
+        let shown: Vec<_> = super::diagram_objects(inside, &auto);
+        let anew: std::collections::HashSet<&str> = shown.iter().map(|(m, _, _)| *m).collect();
+        // MAS BE's objects: of what Anvers' diagram draws, and of the rest.
+        let in_mas = |t: &str| {
+            let ix = Index::build(t);
+            let mut counts = (0, 0);
+            for e in ix.elements.iter().filter(|e| crate::index::local(&e.qname) == "DiagramObject") {
+                let of = |key: &str| e.fields.iter().find(|f| f.key() == key).and_then(|f| f.resource.as_ref()).map(|(m, _)| m.as_str());
+                if of("DiagramObject.Diagram") == Some(mas.as_str()) {
+                    if of("DiagramObject.IdentifiedObject").is_some_and(|m| anew.contains(m)) { counts.0 += 1 } else { counts.1 += 1 }
+                }
+            }
+            counts
+        };
+        let (anvers_before, rest_before) = in_mas(&text);
+        assert!(anvers_before > 0 && rest_before > 0);
+        let mut t = text.clone();
+        for _ in 0..2 {
+            let (l2, i2) = (LineIndex::new(&t), Index::build(&t));
+            let f2 = vec![File { name: dl, text: &t, lines: &l2, index: &i2 }];
+            let w = diagram(&f2, dl, Some(&mas), "", &shown, &mut random).unwrap();
+            t = crate::text::apply(&t, &w.edits[0].1);
+            assert_eq!(in_mas(&t), (shown.len(), rest_before));
+        }
     }
 }

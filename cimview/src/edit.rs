@@ -478,8 +478,8 @@ pub fn companion(like: &File, code: &str, id: &str) -> Result<String, String> {
 pub type Drawn<'a> = (&'a str, &'a str, Vec<(f64, f64)>);
 
 /// A DL diagram written into `into`: a new `Diagram` named `name` (y
-/// downwards), or the objects of `existing` replaced (in the file defining
-/// it, whatever `into` says). Each of `objects` (the mRID it shows, its name,
+/// downwards), or in `existing` (in the file defining it, whatever `into`
+/// says), its drawing of what `objects` show replaced and the rest kept. Each of `objects` (the mRID it shows, its name,
 /// its points) a `DiagramObject` with its `DiagramObjectPoint`s, numbered
 /// from 1. UUIDs from `random`. The diagram's mRID is the result's `id`.
 pub fn diagram<'a>(
@@ -515,13 +515,19 @@ pub fn diagram<'a>(
     let mut lines = Vec::new();
     let diagram = match existing {
         Some(d) => {
-            // Its objects and their points go; the diagram stays, with its name.
+            // Its objects of what is drawn anew go, with their points; the
+            // diagram stays, with its name and the rest.
+            let anew: HashSet<&str> = objects.iter().map(|(m, _, _)| *m).collect();
+            let shows = |e: &crate::index::Element| {
+                e.fields.iter().any(|f| f.key() == "DiagramObject.IdentifiedObject" && f.resource.as_ref().is_some_and(|(m, _)| anew.contains(m.as_str())))
+            };
             let shown: HashSet<&str> = file
                 .index
                 .elements
                 .iter()
                 .filter(|e| local(&e.qname) == "DiagramObject")
                 .filter(|e| e.fields.iter().any(|f| f.key() == "DiagramObject.Diagram" && f.resource.as_ref().is_some_and(|(m, _)| m == d)))
+                .filter(|e| shows(e))
                 .map(|e| e.mrid.as_str())
                 .collect();
             let mut gone: HashSet<&str> = shown.clone();
