@@ -176,6 +176,9 @@ pub struct Layout {
     /// Pixels per unit, where the positions are to be drawn as they are;
     /// `None`, to be scaled to fit.
     pub unit: Option<f64>,
+    /// Edge index → how many line spacings aside it runs from its route, to
+    /// the left of its way (negative: right); the views space them in pixels.
+    pub tracks: BTreeMap<usize, i32>,
 }
 
 /// Points gathered for a layout: a node's own, and those it takes from the
@@ -414,7 +417,7 @@ fn busbars(inside: &Inside, placed: &BTreeMap<usize, Vec<(f64, f64)>>, layout: &
 pub struct Model<'a> {
     pub(crate) objects: FastMap<&'a str, Vec<&'a Element>>,
     /// ConductingEquipment → its terminals, by sequence number.
-    terminals: FastMap<&'a str, Vec<&'a str>>,
+    pub(crate) terminals: FastMap<&'a str, Vec<&'a str>>,
 }
 
 impl<'a> Model<'a> {
@@ -455,7 +458,7 @@ impl<'a> Model<'a> {
         self.objects.get(mrid)?.iter().find_map(|el| el.get_str(key))
     }
 
-    fn number(&self, mrid: &str, key: &str) -> Option<f64> {
+    pub(crate) fn number(&self, mrid: &str, key: &str) -> Option<f64> {
         self.text(mrid, key)?.trim().parse().ok()
     }
 
@@ -464,7 +467,7 @@ impl<'a> Model<'a> {
     }
 
     /// The voltage level a container (VoltageLevel, Bay) is, or is in.
-    fn voltage_level(&self, container: &'a str) -> Option<&'a str> {
+    pub(crate) fn voltage_level(&self, container: &'a str) -> Option<&'a str> {
         match self.class(container)? {
             "VoltageLevel" => Some(container),
             "Bay" => self.reference(container, "Bay.VoltageLevel"),
@@ -516,7 +519,7 @@ impl<'a> Model<'a> {
         }
     }
 
-    fn node_container(&self, node: &str) -> Option<&'a str> {
+    pub(crate) fn node_container(&self, node: &str) -> Option<&'a str> {
         self.reference(node, "ConnectivityNode.ConnectivityNodeContainer")
             .or_else(|| self.reference(node, "TopologicalNode.ConnectivityNodeContainer"))
     }
@@ -606,9 +609,14 @@ pub fn build(m: &Model<'_>) -> Grid {
     if !grid.nodes.is_empty() {
         let edges: Vec<(usize, usize)> = grid.edges.iter().map(|e| (e.source, e.target)).collect();
         let pos = crate::layout::force(grid.nodes.len(), &edges);
+        // Drawn as a schematic: lines along axes and diagonals only, side by side where they share a stretch.
+        let s = crate::schematic::octilinear(&pos, &edges);
         grid.auto = Some(Layout {
             id: "auto".into(), name: "Automatic".into(), kind: "diagram",
-            nodes: pos.into_iter().enumerate().collect(), ..Default::default()
+            nodes: s.nodes.into_iter().enumerate().collect(),
+            edges: s.routes.into_iter().enumerate().filter(|(_, r)| !r.is_empty()).collect(),
+            tracks: s.tracks.into_iter().enumerate().filter(|(_, t)| *t != 0).collect(),
+            ..Default::default()
         });
     }
     for (n, l) in inside {
@@ -796,7 +804,11 @@ impl Grid {
                     .iter()
                     .map(|(&e, ps)| (self.edges[e].id.clone(), json!(ps.iter().map(|&(x, y)| [x, y]).collect::<Vec<_>>())))
                     .collect();
-                json!({ "id": l.id, "name": l.name, "kind": l.kind, "flipY": l.flip_y, "unit": l.unit, "nodes": nodes, "edges": edges })
+                let mut out = json!({ "id": l.id, "name": l.name, "kind": l.kind, "flipY": l.flip_y, "unit": l.unit, "nodes": nodes, "edges": edges });
+                if !l.tracks.is_empty() {
+                    out["tracks"] = l.tracks.iter().map(|(&e, &t)| (self.edges[e].id.clone(), json!(t))).collect::<serde_json::Map<_, _>>().into();
+                }
+                out
         };
         json!({
             "files": set.files(),
@@ -901,6 +913,7 @@ impl Inside {
             edges,
             sizes: by_item("sizes"),
             unit: v["unit"].as_f64(),
+            tracks: BTreeMap::new(),
         }
     }
 }

@@ -54,7 +54,8 @@ use validate::{ModelSet, Options};
 const REVALIDATE: &str = "cimoxide.revalidate";
 
 /// `cimoxide/grid` `{ "uri" }`: the grid of the document's model set as last
-/// validated ([`cimview::grid::Grid::json`]), or `null` before its first validation.
+/// validated ([`cimview::grid::Grid::json`]), with the state its SV publishes under `state`
+/// ([`cimview::state::overlay`], `null` without one); `null` before its first validation.
 const GRID: &str = "cimoxide/grid";
 
 /// `cimoxide/substation` `{ "uri", "id" }`: what substation `id` of the
@@ -597,7 +598,11 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
                 let st = state.lock().unwrap();
                 f.parent().and_then(|d| st.sets.get(d)).cloned()
             });
-            Ok(set.map_or(serde_json::Value::Null, |s| s.grid.json(&*s)))
+            Ok(set.map_or(serde_json::Value::Null, |s| {
+                let mut grid = s.grid.json(&*s);
+                grid["state"] = s.state.clone().unwrap_or_default();
+                grid
+            }))
         }
         SUBSTATION => {
             #[derive(serde::Deserialize)]

@@ -4,8 +4,11 @@
 
 import cytoscape, { Core, ElementDefinition, NodeSingular, EdgeSingular } from "cytoscape";
 import { Symbol, symbolOf, symbolSvg } from "../symbols";
+import { keepDecluttered } from "./declutter";
+import { panFromNodes, panWithOtherButtons } from "./pan";
 
-declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
+type ValuesShown = "all" | "exceptions" | "off";
+declare function acquireVsCodeApi(): { postMessage(msg: unknown): void; getState(): { valuesShown?: ValuesShown } | undefined; setState(state: { valuesShown?: ValuesShown }): void };
 const vscode = acquireVsCodeApi();
 
 interface Findings {
@@ -54,6 +57,30 @@ interface Layout {
   sizes?: Record<string, [number, number]>;
   /** Pixels per unit, for positions drawn as they are; else they are scaled to the scene's size. */
   unit?: number | null;
+  /** Edge id → how many line spacings aside it runs from its route, left of its way (negative: right). */
+  tracks?: Record<string, number>;
+}
+
+/** How far apart, in pixels, lines sharing a stretch run: the widest line and a gap. */
+const TRACK = 5;
+
+/**
+ * `points` (on the screen) drawn `by` pixels to the left of their way (negative: right), corners
+ * mitred so that each piece stays parallel to its own; the ends joined back to where they were.
+ */
+function aside(points: Point[], by: number): Point[] {
+  if (!by || points.length < 2) return points;
+  const normals = points.slice(1).map((p, i) => {
+    const [dx, dy] = [p.x - points[i].x, p.y - points[i].y];
+    const l = Math.hypot(dx, dy) || 1;
+    return { x: -dy / l, y: dx / l };
+  });
+  const shifted = points.map((p, i) => {
+    const [a, b] = [normals[Math.max(0, i - 1)], normals[Math.min(normals.length - 1, i)]];
+    const k = by / (1 + a.x * b.x + a.y * b.y);
+    return { x: p.x + (a.x + b.x) * k, y: p.y + (a.y + b.y) * k };
+  });
+  return [points[0], ...shifted, points[points.length - 1]];
 }
 
 interface Grid {
@@ -64,6 +91,18 @@ interface Grid {
   layouts: Layout[];
   /** The automatic layout, computed by the server. */
   auto: Layout | null;
+  /** The state the set's SV publishes, over the grid; `null` without one. */
+  state?: Overlay | null;
+}
+
+/** A state of the grid, by what the grid draws: as a power flow overlays it. */
+interface Overlay {
+  /** Each grid node's lowest and highest voltage, p.u. */
+  nodes: Record<string, { min: number; max: number }>;
+  /** By topological and connectivity node. */
+  voltages: Record<string, { pu: number; kV: number; deg: number }>;
+  /** By equipment: each terminal's flow into it (MW, Mvar), its current, and the highest loading against a PATL, %. */
+  flows: Record<string, { ends: { terminal: string; p: number; q: number; amps: number | null; loading: number | null }[]; loading: number | null; towards?: string | null }>;
 }
 
 /** Equipment, or a connectivity node (`junction`), inside a substation. */
@@ -108,6 +147,11 @@ let cy: Core | undefined;
 let grid: Grid | undefined;
 /** The substation shown, if any; else the grid. */
 let inside: Inside | undefined;
+/** What the scene is coloured by: voltage levels, or the SV's state where the set has one. */
+let colourBy: "voltage" | "state" = "voltage";
+/** The SV's values beside what they describe, on or off apart from the colouring. */
+/** The SV's values beside what they describe: all, only those that need attention (loaded from 80 %, 5 % off nominal), or none. */
+let valuesShown: ValuesShown = vscode.getState()?.valuesShown ?? "exceptions";
 /** The grid's viewport when a substation was opened, to return to. */
 let gridView: { zoom: number; pan: Point; selected: string } | undefined;
 
@@ -117,7 +161,11 @@ style.textContent = `
   body { display: flex; flex-direction: column; color: var(--vscode-foreground); background: var(--vscode-editor-background);
          font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); }
   #bar { display: flex; gap: 12px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--vscode-panel-border); }
-  #layout { color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background);
+  #hover { position: fixed; z-index: 5; max-width: 280px; padding: 4px 8px; pointer-events: none; display: none;
+           color: var(--vscode-editorHoverWidget-foreground); background: var(--vscode-editorHoverWidget-background);
+           border: 1px solid var(--vscode-editorHoverWidget-border); }
+  #hover div { color: var(--vscode-descriptionForeground); }
+  #layout, #colour, #values { color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background);
             border: 1px solid var(--vscode-dropdown-border, transparent); padding: 2px 4px; }
   #search { width: 220px; color: var(--vscode-input-foreground); background: var(--vscode-input-background);
             border: 1px solid var(--vscode-input-border, transparent); padding: 3px 6px; }
@@ -181,21 +229,172 @@ function band(kV: number | null | undefined): string {
   return kV == null ? "none" : BANDS.find(([, min]) => kV >= min)?.[0] ?? "none";
 }
 
+/** A voltage's band: within 5 % of nominal, within 10 %, or beyond. */
+function voltageBand(min: number, max: number): "ok" | "warn" | "bad" {
+  const off = Math.max(Math.abs(min - 1), Math.abs(max - 1));
+  return off <= 0.05 ? "ok" : off <= 0.1 ? "warn" : "bad";
+}
+
+/** A loading's band: below 80 % of its PATL, up to it, or past it; `unknown` without a limit. */
+function loadingBand(loading: number | null): "ok" | "warn" | "bad" | "unknown" {
+  return loading === null ? "unknown" : loading < 80 ? "ok" : loading <= 100 ? "warn" : "bad";
+}
+
+const STATE_COLOURS: Record<string, [string, string]> = {
+  ok: ["--vscode-testing-iconPassed", "#73c991"],
+  warn: ["--vscode-editorWarning-foreground", "#cca700"],
+  bad: ["--vscode-errorForeground", "#f14c4c"],
+};
+
+/** How the state colours the scene: by `pf`, which only a state sets. */
+function stateBands(): cytoscape.StylesheetJson {
+  const fill = colour("--vscode-descriptionForeground", "#8b8b8b");
+  return [
+    ...Object.entries(STATE_COLOURS).flatMap(([b, [v, fb]]) => {
+      const c = colour(v, fb);
+      return [
+        { selector: `node[kind != "symbol"][kind != "group"][pf = "${b}"]`, style: { "background-color": c } },
+        { selector: `node[kind = "symbol"][pf = "${b}"]`, style: { "underlay-color": c, "underlay-opacity": 0.45, "underlay-padding": 4, "underlay-shape": "ellipse" } },
+        { selector: `edge[pf = "${b}"]`, style: { "line-color": c, "mid-target-arrow-color": c, "mid-source-arrow-color": c } },
+      ];
+    }),
+    { selector: '[pf = "none"], [pf = "unknown"]', style: { "background-color": fill, "line-color": fill } },
+    { selector: '[pf = "none"]', style: { opacity: 0.5 } },
+    {
+      selector: "edge[flowLabel]",
+      style: {
+        label: "data(flowLabel)", "font-size": 7, color: colour("--vscode-foreground", "#cccccc"), "text-rotation": "autorotate",
+        "text-outline-color": colour("--vscode-editor-background", "#1e1e1e"), "text-outline-width": 2, "min-zoomed-font-size": 6,
+      },
+    },
+  ] as cytoscape.StylesheetJson;
+}
+
+/** What a scene's element shows of a state: its band, and a line of text. `null` if nothing. */
+function stateOf(id: string, kind: string | undefined, o: Overlay): { band: string; text: string } | null {
+  const pu = (x: number) => x.toFixed(3);
+  const flow = (f: Overlay["flows"][string] | undefined) => {
+    if (!f) return null;
+    const p = Math.max(...f.ends.map((e) => Math.abs(e.p)));
+    return { band: loadingBand(f.loading), text: f.loading === null ? `${p.toFixed(0)} MW` : `${f.loading.toFixed(0)} %` };
+  };
+  if (id.startsWith("e:")) return flow(o.flows[id.slice(2).split("#")[0]]);
+  if (kind === "substation" || kind === "boundary") {
+    const v = o.nodes[id];
+    return v ? { band: voltageBand(v.min, v.max), text: v.min === v.max ? `${pu(v.min)} pu` : `${pu(v.min)}–${pu(v.max)} pu` } : null;
+  }
+  if (kind === "junction" || kind === "busbar") {
+    const v = o.voltages[id];
+    return v ? { band: voltageBand(v.pu, v.pu), text: `${pu(v.pu)} pu` } : null;
+  }
+  if (kind === "symbol") return flow(o.flows[id]);
+  return null;
+}
+
+/** An element's state, for the side panel. */
+function stateHtml(id: string): string {
+  const lines = stateLines(id);
+  return lines.length ? `<div class="sub" style="margin-top:8px">From the SV:</div>${lines.map((l) => `<div>${escape(l)}</div>`).join("")}` : "";
+}
+
+/** An element's state, as lines of text. */
+function stateLines(id: string): string[] {
+  const o = grid?.state;
+  if (!o) return [];
+  const lines: string[] = [];
+  const v = o.nodes[id] ?? (o.voltages[id] ? { min: o.voltages[id].pu, max: o.voltages[id].pu } : undefined);
+  if (v) lines.push(v.min === v.max ? `Voltage ${v.min.toFixed(4)} p.u.` : `Voltage ${v.min.toFixed(4)} to ${v.max.toFixed(4)} p.u.`);
+  const kv = o.voltages[id];
+  if (kv) lines.push(`${kv.kV.toFixed(2)} kV, ${kv.deg.toFixed(2)}°`);
+  for (const [i, e] of (o.flows[id]?.ends ?? []).entries()) {
+    const amps = e.amps === null ? "" : `, ${e.amps.toFixed(0)} A`;
+    const loading = e.loading === null ? "" : `, ${e.loading.toFixed(1)} % of its PATL`;
+    lines.push(`End ${i + 1}: ${e.p.toFixed(1)} MW, ${e.q.toFixed(1)} Mvar into it${amps}${loading}`);
+  }
+  return lines;
+}
+
+/** The legend of the state's colours, for the side panel. */
+function stateLegend(): string {
+  const swatch = (b: string) => `<span style="display:inline-block;width:10px;height:10px;border-radius:5px;margin:0 6px -1px 0;background:${colour(...STATE_COLOURS[b])}"></span>`;
+  return `<div class="sub" style="margin-top:12px">Coloured by the SV's state:` +
+    `<div>${swatch("ok")}within 5 % of nominal, loaded below 80 %</div>` +
+    `<div>${swatch("warn")}within 10 %, up to its PATL</div>` +
+    `<div>${swatch("bad")}beyond</div>` +
+    `<div>Grey: not in the SV, or no limit</div></div>`;
+}
+
+/** The state shown: the SV's, if the set has one and it is chosen. */
+function shownState(): Overlay | null {
+  return colourBy === "state" ? grid?.state ?? null : null;
+}
+
+/**
+ * Colours the scene by the SV's state, or as drawn; and, apart from that, adds its values to the
+ * labels: each element keeps its own label as `base`, a value adds a line to it; on an edge, a
+ * label of its own.
+ */
+function paintState(): void {
+  if (!cy) return;
+  const on = shownState();
+  const values = valuesShown === "off" ? null : grid?.state ?? null;
+  cy.batch(() => {
+    cy?.elements().forEach((el) => {
+      if (el.data("base") === undefined) el.data("base", el.data("label") ?? "");
+      const base = el.data("base") as string;
+      const kind = el.data("kind") as string | undefined;
+      const band = on ? stateOf(el.id(), kind, on) : null;
+      if (on && kind !== "group" && !el.id().startsWith("t:")) el.data("pf", band?.band ?? "none");
+      else el.removeData("pf");
+      const value = values ? stateOf(el.id(), kind, values) : null;
+      const found = value && (valuesShown === "all" || value.band === "warn" || value.band === "bad") ? value : null;
+      if (el.group() === "edges") {
+        if (found) el.data("flowLabel", found.text);
+        else el.removeData("flowLabel");
+        // With its value, which way its power flows.
+        const arrow = found && values && el.id().startsWith("e:") ? arrowOf(el.id(), el.data("source"), el.data("target"), values) : null;
+        if (arrow) el.data("arrow", arrow);
+        else el.removeData("arrow");
+      } else el.data("label", found ? (base ? `${base}\n${found.text}` : found.text) : base);
+    });
+  });
+  // Data removed does not restyle what was matched on it (`edge[flowLabel]`, `[pf]`).
+  cy.style().update();
+  const pick = document.getElementById("colour") as HTMLSelectElement;
+  pick.style.display = grid?.state ? "" : "none";
+  pick.value = colourBy;
+  const shown = document.getElementById("values") as HTMLSelectElement;
+  shown.style.display = grid?.state ? "" : "none";
+  shown.value = valuesShown;
+}
+
 /** The legend of the bands, for the side panel. */
 function legend(): string {
   const swatch = (c: string) => `<span style="display:inline-block;width:14px;height:3px;margin:0 6px 3px 0;background:${c}"></span>`;
   const rows = BANDS.map(([, min, v, fb], i) => `<div>${swatch(colour(v, fb))}${i ? `${min}–${BANDS[i - 1][1]}` : `≥ ${min}`} kV</div>`);
+  if (shownState()) return stateLegend();
   return `<div class="sub" style="margin-top:12px">${rows.join("")}<div>${swatch(colour("--vscode-descriptionForeground", "#888"))}lower, or unknown</div></div>`;
+}
+
+/** A line's width by its voltage band: the backbone stands out, the distribution recedes. */
+const LINE_WIDTH: Record<string, number> = { v300: 3.2, v200: 2.2, v100: 1.4, v30: 0.9, none: 0.8 };
+
+/** Where a state's arrow on grid edge `id` (`e:…`) points: to its `target`, its `source`, or nowhere. */
+function arrowOf(id: string, source: string, target: string, o: Overlay): "source" | "target" | null {
+  const towards = o.flows[id.slice(2).split("#")[0]]?.towards;
+  return towards === target ? "target" : towards === source ? "source" : null;
 }
 
 function gridElements(g: Grid): ElementDefinition[] {
   const nodes = g.nodes.map((n) => {
     const size = Object.values(n.equipment).reduce((a, b) => a + b, 0);
+    // A substation as a box, as tall as it holds, a little wider for each voltage level more.
+    const height = Math.min(16, 7 + 1.1 * Math.sqrt(size));
     return {
       group: "nodes" as const,
       data: {
         id: n.id, label: n.label, kind: n.kind === "Substation" ? "substation" : "boundary", sev: worst(n.findings),
-        size: Math.min(26, 10 + 2 * Math.sqrt(size)), ring: ring(n.findings), band: band(n.kV[0]),
+        size: height, width: height + 5 * Math.max(0, Math.min(3, n.kV.length - 1)), ring: ring(n.findings), band: band(n.kV[0]),
       },
     };
   });
@@ -203,13 +402,24 @@ function gridElements(g: Grid): ElementDefinition[] {
     group: "edges" as const,
     data: {
       id: `e:${e.id}`, source: e.source, target: e.target, label: e.label, sev: worst(e.findings), band: band(e.kV),
-      width: e.kV === null ? 1.2 : e.kV >= 300 ? 2.4 : e.kV >= 200 ? 1.8 : 1.2,
+      width: LINE_WIDTH[band(e.kV)],
     },
   }));
   return [...nodes, ...edges];
 }
 
 /** How an item is drawn: a connectivity node as a dot, a busbar as a bar, the rest as a symbol. */
+/**
+ * How much an item's name matters inside its substation, so that the more it does, the sooner it
+ * is named as one zooms in: a busbar, a line or a transformer (`main`), other equipment, a switch,
+ * a connectivity node.
+ */
+function roleOf(it: Item, symbol: string): "main" | "equipment" | "switch" | "node" {
+  if (it.junction) return "node";
+  if (it.class === "BusbarSection" || it.far.length || /^transformer/.test(symbol)) return "main";
+  return it.open !== null ? "switch" : "equipment";
+}
+
 function kindOf(it: Item): string {
   if (it.junction) return "junction";
   if (!it.far.length && it.class === "BusbarSection") return "busbar";
@@ -251,6 +461,7 @@ function insideElements(s: Inside): ElementDefinition[] {
       // A transformer joins levels: no one level's colour.
       band: /^transformer/.test(symbolFor(it, terminals.get(it.id) ?? 0)) ? "none" : bandOf.get(it.id),
       ring: ring(it.findings),
+      role: roleOf(it, symbolFor(it, terminals.get(it.id) ?? 0)),
     },
     classes: [it.open ? "open" : "", it.inService === false ? "out" : ""].join(" ").trim(),
   }));
@@ -287,15 +498,24 @@ function stylesheet(): cytoscape.StylesheetJson {
     {
       selector: "node",
       style: {
-        label: "data(label)", color: fg, "font-size": 9, "text-valign": "bottom", "text-margin-y": 2,
+        label: "data(label)", color: fg, "font-size": 9, "text-valign": "bottom", "text-margin-y": 2, "text-wrap": "wrap",
         // Legible over the lines it sits on.
         "text-outline-color": bg, "text-outline-width": 2, "text-outline-opacity": 0.85,
         width: "data(size)", height: "data(size)", "background-color": fill, "border-width": "data(ring)",
         "min-zoomed-font-size": 7,
       },
     },
+    // The grid: a substation as a rounded box in its highest voltage's colour; its name the larger
+    // the higher its voltage, a lower one's quieter.
+    {
+      selector: 'node[kind = "substation"]',
+      style: { shape: "round-rectangle", width: "data(width)", "font-size": 7, "text-opacity": 0.75 },
+    },
+    { selector: 'node[kind = "substation"][band = "v300"]', style: { "font-size": 10, "font-weight": "bold", "text-opacity": 1 } },
+    { selector: 'node[kind = "substation"][band = "v200"]', style: { "font-size": 9, "text-opacity": 1 } },
+    { selector: 'node[kind = "substation"][band = "v100"]', style: { "font-size": 8, "text-opacity": 0.9 } },
     ...byBand('node[kind = "substation"]', "background-color"),
-    { selector: 'node[kind = "boundary"]', style: { shape: "diamond", width: 8, height: 8, "font-size": 7 } },
+    { selector: 'node[kind = "boundary"]', style: { shape: "diamond", width: 7, height: 7, "font-size": 6, "text-opacity": 0.7 } },
     // Inside a substation: voltage levels as boxes, and a shape for each kind of equipment.
     {
       selector: 'node[kind = "group"]',
@@ -308,6 +528,11 @@ function stylesheet(): cytoscape.StylesheetJson {
     shape("junction", "ellipse", 4),
     shape("busbar", "rectangle", 36, 4),
     { selector: 'node[kind = "junction"]', style: { "font-size": 6, "text-opacity": 0.7 } },
+    // Named as one zooms in, what matters most first: a busbar, line or transformer from the
+    // start, other equipment soon, a switch or a node close up.
+    { selector: 'node[role = "main"]', style: { "font-size": 8, "min-zoomed-font-size": 6 } },
+    { selector: 'node[role = "switch"]', style: { "font-size": 6.5, "min-zoomed-font-size": 9 } },
+    { selector: 'node[role = "node"]', style: { "min-zoomed-font-size": 10 } },
     ...byBand('node[kind = "junction"]', "background-color"),
     ...byBand('node[kind = "busbar"]', "background-color"),
     // Equipment: its symbol, in its voltage's colour, on a transparent disc
@@ -331,6 +556,12 @@ function stylesheet(): cytoscape.StylesheetJson {
       style: { "text-halign": "right", "text-valign": "center", "text-margin-x": 3, "text-margin-y": 0 },
     },
     { selector: 'node.drawn[kind = "busbar"]', style: { "text-valign": "top", "text-margin-y": -2 } },
+    // Bays in rows beside upright busbars: names below, clear of the next one in the row.
+    {
+      selector: 'node.drawn.across[kind = "symbol"], node.drawn.across[kind = "junction"]',
+      style: { "text-halign": "center", "text-valign": "bottom", "text-margin-x": 0, "text-margin-y": 2 },
+    },
+    { selector: 'node.drawn.across[kind = "busbar"]', style: { "text-valign": "top", "text-halign": "center" } },
     { selector: "node.onbar", style: { "text-opacity": 0 } },
     ...bySeverity("border-color").map((s) => ({ ...s, selector: `node[kind != "group"]${s.selector}` })),
     // And a halo, which reads apart from a voltage colour of the same hue.
@@ -339,12 +570,19 @@ function stylesheet(): cytoscape.StylesheetJson {
       style: { ...s.style, "underlay-opacity": 0.35, "underlay-padding": 4, "underlay-shape": "ellipse" },
     })),
 
+    // Without findings, set off from the lines it joins.
+    { selector: 'node[kind = "substation"][sev = "none"]', style: { "border-width": 1.5, "border-color": bg } },
     { selector: "node.out", style: { opacity: 0.45, "border-style": "dashed" } },
     {
       selector: "edge",
       style: { width: "data(width)", "curve-style": "bezier", "line-color": fill, opacity: 0.9 },
     },
-    ...byBand("edge", "line-color"),
+    ...byBand("edge", "line-color", "mid-target-arrow-color", "mid-source-arrow-color"),
+    // Distribution recedes behind the backbone.
+    { selector: 'edge[band = "v30"], edge[band = "none"]', style: { opacity: 0.6 } },
+    // Which way active power flows, where its values are shown.
+    { selector: 'edge[arrow = "target"]', style: { "mid-target-arrow-shape": "triangle", "arrow-scale": 1.1 } },
+    { selector: 'edge[arrow = "source"]', style: { "mid-source-arrow-shape": "triangle", "arrow-scale": 1.1 } },
     // Findings on a line: a halo in the worst one's colour, apart from its voltage colour.
     ...bySeverity("underlay-color").filter((s) => !s.selector.includes('"none"'))
       .map((s) => ({ ...s, selector: `edge${s.selector}`, style: { ...s.style, "underlay-opacity": 0.4, "underlay-padding": 5 } })),
@@ -353,9 +591,12 @@ function stylesheet(): cytoscape.StylesheetJson {
     { selector: 'node[kind = "group"]:selected', style: { "background-opacity": 0.15 } },
     { selector: 'node[kind = "symbol"]:selected', style: { "background-opacity": 0.3 } },
     { selector: "edge:selected", style: { "line-color": focus, opacity: 1 } },
+    ...stateBands(),
     // Where what is dragged would land, while editing: over findings' halos.
     { selector: ".target", style: { "overlay-color": focus, "overlay-opacity": 0.3, "overlay-padding": 6, "overlay-shape": "round-rectangle" } },
     { selector: 'node[kind = "group"].target', style: { "border-color": focus, "border-width": 2, "overlay-opacity": 0 } },
+    // A label that would crowd one that matters more (declutter.ts).
+    { selector: ".crowded", style: { "text-opacity": 0 } },
     { selector: ".dim", style: { opacity: 0.15 } },
   ] as cytoscape.StylesheetJson;
 }
@@ -426,7 +667,7 @@ function showGrid(g: Grid, target: NodeSingular | EdgeSingular | undefined): voi
       .join("");
     panel(
       `<h3>${escape(n.label || n.id)}</h3><div class="sub">${escape(n.kind)}${n.region ? ` · ${escape(n.region)}` : ""}${kv ? ` · ${kv}` : ""}</div>` +
-        findingsHtml(n.findings) + (equipment ? `<table>${equipment}</table>` : ""),
+        findingsHtml(n.findings) + stateHtml(n.id) + (equipment ? `<table>${equipment}</table>` : ""),
       n.location,
       n.kind === "Substation" ? [["Show inside", () => enter(n.id)]] : [],
     );
@@ -436,7 +677,7 @@ function showGrid(g: Grid, target: NodeSingular | EdgeSingular | undefined): voi
     const end = (id: string) => escape(g.nodes.find((x) => x.id === id)?.label || id);
     panel(
       `<h3>${escape(e.label)}</h3><div class="sub">${escape(e.class)}${e.kV !== null ? ` · ${e.kV} kV` : ""}</div>` +
-        `<div>${end(e.source)} — ${end(e.target)}</div>` + findingsHtml(e.findings),
+        `<div>${end(e.source)} — ${end(e.target)}</div>` + findingsHtml(e.findings) + stateHtml(e.id.split("#")[0]),
       e.location,
     );
   }
@@ -475,7 +716,7 @@ function showInside(s: Inside, target: NodeSingular | EdgeSingular | undefined):
   const far = it.far.length ? `<div>To ${it.far.map((f) => escape(f.label || f.id)).join(", ")}</div>` : "";
   panel(
     `<h3>${escape(it.label)}</h3><div class="sub">${escape(it.class)}${level ? ` · ${escape(level)}` : ""}${state ? ` · ${state}` : ""}</div>` +
-      far + findingsHtml(it.findings),
+      far + findingsHtml(it.findings) + stateHtml(it.id),
     it.location,
     it.far.filter((f) => f.kind === "Substation").map((f): [string, () => void] => [`Show ${f.label || f.id}`, () => enter(f.id)]),
   );
@@ -579,7 +820,8 @@ function place(
     return { x: (q.x - minX) * scale, y: (q.y - minY) * scale };
   };
   const nodes = new Map(Object.entries(l.nodes).map(([id, p]) => [id, screen(p)]));
-  const routes = new Map(Object.entries(l.edges).map(([id, ps]) => [id, ps.map(screen)]));
+  // Lines sharing a stretch, each on its own track: a line width and a gap apart, whatever the scale.
+  const routes = new Map(Object.entries(l.edges).map(([id, ps]) => [id, aside(ps.map(screen), (l.tracks?.[id] ?? 0) * TRACK)]));
 
   // A node the layout does not place goes among its placed neighbours, else below the rest.
   const neighbours = new Map<string, string[]>();
@@ -626,10 +868,16 @@ function route(edge: EdgeSingular, points: Point[], bars: Set<string> = new Set(
   // The route may run from the target's end.
   const ordered = d(points[0], t) < d(points[0], s) ? [...points].reverse() : points;
   const style: Record<string, string> = {};
-  const [first, last] = [ordered[0], ordered[ordered.length - 1]];
-  if (bars.has(edge.source().id()) && d(first, s) > 0.5) style["source-endpoint"] = `${first.x - s.x}px ${first.y - s.y}px`;
-  if (bars.has(edge.target().id()) && d(last, t) > 0.5) style["target-endpoint"] = `${last.x - t.x}px ${last.y - t.y}px`;
-  const inner = ordered.slice(1, -1);
+  let [first, last] = [ordered[0], ordered[ordered.length - 1]];
+  let inner = ordered.slice(1, -1);
+  // A bend within its node's shape (parallel lines stepping aside as they leave it) is where the
+  // line starts: Cytoscape draws no edge with a bend inside its end.
+  const within = (p: Point, n: NodeSingular) => Math.abs(p.x - n.position().x) <= n.width() / 2 + 1 && Math.abs(p.y - n.position().y) <= n.height() / 2 + 1;
+  while (inner.length && within(inner[0], edge.source())) [first, inner] = [inner[0], inner.slice(1)];
+  while (inner.length && within(inner[inner.length - 1], edge.target())) [last, inner] = [inner[inner.length - 1], inner.slice(0, -1)];
+  const moved = (p: Point, end: Point) => p !== end;
+  if ((bars.has(edge.source().id()) || moved(first, ordered[0])) && d(first, s) > 0.5) style["source-endpoint"] = `${first.x - s.x}px ${first.y - s.y}px`;
+  if ((bars.has(edge.target().id()) || moved(last, ordered[ordered.length - 1])) && d(last, t) > 0.5) style["target-endpoint"] = `${last.x - t.x}px ${last.y - t.y}px`;
   if (!inner.length || length < 1e-6) {
     if (Object.keys(style).length) edge.style({ ...style, "curve-style": "straight" });
     return;
@@ -653,7 +901,7 @@ function arrange(): void {
   // Cytoscape's where it has none.
   const layout = layouts.find((l) => l.id === picked) ?? (picked === "auto" ? auto : undefined);
   cy.elements().removeStyle();
-  cy.nodes().removeClass("drawn onbar");
+  cy.nodes().removeClass("drawn onbar across");
   if (!layout) {
     // `cose` is quadratic per iteration: past a few hundred nodes, a plain grid rather than a hang.
     cy.layout(ids.length > 1000 ? { name: "grid", animate: false } : {
@@ -691,6 +939,9 @@ function paint(l: Layout, routed: { id: string; key: string }[], drawn: boolean,
     const bars = new Set<string>();
     if (drawn) {
       core.nodes().addClass("drawn");
+      // Upright busbars: bays in rows.
+      const sizes = Object.values(l.sizes ?? {});
+      if (sizes.filter(([w, h]) => h > w).length * 2 > sizes.length) core.nodes().addClass("across");
       for (const [id, [width, height]] of Object.entries(l.sizes ?? {})) {
         const bar = core.getElementById(id);
         bar.style({ shape: "rectangle", width, height });
@@ -744,7 +995,10 @@ function draw(previous?: Shown): void {
       const at = cy.getElementById(el.data.id as string);
       at.data(el.data);
       if (typeof el.classes === "string") at.classes(el.classes);
+      // Its own label, which the state adds to.
+      at.removeData("base");
     }
+    paintState();
     const selected = cy.$(":selected").first();
     show(selected.nonempty() ? (selected as NodeSingular | EdgeSingular) : undefined);
     return;
@@ -763,6 +1017,22 @@ function draw(previous?: Shown): void {
   });
   picker(scene().layouts);
   arrange();
+  // Only editing moves things: else a drag that starts on one pans, as on the background.
+  cy.autoungrabify(!editing);
+  panFromNodes(cy, () => !editing);
+  keepDecluttered(cy);
+  hover(undefined);
+  cy.on("mouseover", "node, edge", (e) => hover(e.target as NodeSingular | EdgeSingular));
+  // Only its own: leaving the voltage level around it comes after entering it.
+  cy.on("mouseout", "node, edge", (e) => {
+    if (hovered === (e.target as NodeSingular).id()) hover(undefined);
+  });
+  // The view moved under it: beside it still.
+  cy.on("viewport", () => {
+    const el = hovered ? cy?.getElementById(hovered) : undefined;
+    if (el?.nonempty()) hoverAt(el as NodeSingular | EdgeSingular);
+  });
+  cy.on("grab tapstart", () => hover(undefined));
   if (!inside && gridView) {
     // Back from a substation: the grid as it was, with that substation selected.
     cy.zoom(gridView.zoom);
@@ -815,6 +1085,7 @@ function draw(previous?: Shown): void {
     }
   });
   toolbar();
+  paintState();
   const selected = cy.$(":selected").first();
   show(selected.nonempty() ? (selected as NodeSingular | EdgeSingular) : undefined);
 }
@@ -828,6 +1099,47 @@ new MutationObserver(() => cy?.style(stylesheet())).observe(document.body, { att
   else chosen.grid = value;
   arrange();
 });
+
+(document.getElementById("colour") as HTMLSelectElement).addEventListener("change", (e) => {
+  colourBy = (e.target as HTMLSelectElement).value as typeof colourBy;
+  paintState();
+  const selected = cy?.$(":selected").first();
+  show(selected?.nonempty() ? (selected as NodeSingular | EdgeSingular) : undefined);
+});
+
+(document.getElementById("values") as HTMLSelectElement).addEventListener("change", (e) => {
+  valuesShown = (e.target as HTMLSelectElement).value as ValuesShown;
+  vscode.setState({ ...(vscode.getState() ?? {}), valuesShown });
+  paintState();
+});
+
+/** Hovered: what it is and its state, beside the pointer. */
+const hoverBox = document.createElement("div");
+hoverBox.id = "hover";
+hoverBox.setAttribute("role", "tooltip");
+document.body.append(hoverBox);
+let hovered: string | undefined;
+
+function hoverAt(el: NodeSingular | EdgeSingular): void {
+  const box = (document.getElementById("graph") as HTMLElement).getBoundingClientRect();
+  const p = el.isNode() ? el.renderedPosition() : el.renderedMidpoint();
+  hoverBox.style.left = `${box.left + p.x + 14}px`;
+  hoverBox.style.top = `${box.top + p.y + 14}px`;
+}
+
+function hover(el: NodeSingular | EdgeSingular | undefined): void {
+  const id = el?.id().replace(/^e:/, "").split("#")[0];
+  const heading = el ? String(el.data("base") ?? el.data("label") ?? "") : "";
+  if (!el || !id || !heading || el.data("kind") === "group" || el.id().startsWith("t:")) {
+    hovered = undefined;
+    hoverBox.style.display = "none";
+    return;
+  }
+  hovered = el.id();
+  hoverBox.innerHTML = `<strong>${escape(heading)}</strong>` + stateLines(id).slice(0, 4).map((l) => `<div>${escape(l)}</div>`).join("");
+  hoverAt(el);
+  hoverBox.style.display = "block";
+}
 
 (document.getElementById("back") as HTMLButtonElement).addEventListener("click", leave);
 window.addEventListener("keydown", (e) => {
@@ -1030,6 +1342,7 @@ function toolbar(): void {
 
 async function startEditing(): Promise<void> {
   editing = true;
+  cy?.autoungrabify(false);
   failed = "";
   toolbar();
   const level = inside?.groups[0]?.id;
@@ -1040,6 +1353,7 @@ async function startEditing(): Promise<void> {
 function stopEditing(rearrange: boolean): void {
   const moved = changed;
   editing = false;
+  cy?.autoungrabify(true);
   changed = false;
   armed = undefined;
   failed = "";
@@ -1267,6 +1581,8 @@ function released(node: NodeSingular): void {
 }
 
 const graphBox = document.getElementById("graph") as HTMLElement;
+// The middle or right button pans, over anything.
+panWithOtherButtons(graphBox, () => cy);
 /** The scene's coordinates of a point on the screen. */
 function sceneAt(clientX: number, clientY: number): Point {
   const core = cy as Core;
