@@ -148,6 +148,7 @@ pub struct Item {
 #[derive(Debug)]
 pub struct Link {
     pub id: String,
+    pub label: String,
     pub item: usize,
     pub junction: usize,
     /// `ACDCTerminal.connected`.
@@ -256,6 +257,8 @@ fn layouts(m: &Model, grid: &Grid) -> (Vec<Layout>, Vec<(usize, Layout)>) {
     // (diagram, node) → item → its points.
     type Items = BTreeMap<usize, Vec<(f64, f64)>>;
     let mut insides: BTreeMap<(&str, usize), Items> = BTreeMap::new();
+    // (diagram, node) → link → its route: a terminal drawn.
+    let mut wires: BTreeMap<(&str, usize), Items> = BTreeMap::new();
     let mut objects: Vec<&&str> = diagram_points.keys().collect();
     objects.sort();
     for &object in objects {
@@ -268,8 +271,11 @@ fn layouts(m: &Model, grid: &Grid) -> (Vec<Layout>, Vec<(usize, Layout)>) {
             None => vec![],
         };
         for n in ns {
-            if let Some(i) = grid.inside.get(&n).and_then(|inside| inside.items.iter().position(|it| it.id == shown)) {
+            let Some(inside) = grid.inside.get(&n) else { continue };
+            if let Some(i) = inside.items.iter().position(|it| it.id == shown) {
                 insides.entry((diagram, n)).or_default().entry(i).or_default().extend(&diagram_points[object]);
+            } else if let Some(k) = inside.links.iter().position(|l| l.id == shown) {
+                wires.entry((diagram, n)).or_default().insert(k, diagram_points[object].clone());
             }
         }
     }
@@ -313,7 +319,10 @@ fn layouts(m: &Model, grid: &Grid) -> (Vec<Layout>, Vec<(usize, Layout)>) {
             })
             .collect();
         let (flip_y, name) = diagram_flip(m, diagram);
-        inside.push((n, Layout { id: format!("dl:{diagram}"), name, kind: "diagram", flip_y, nodes, ..Default::default() }));
+        let mut layout = Layout { id: format!("dl:{diagram}"), name, kind: "diagram", flip_y, nodes, ..Default::default() };
+        layout.edges = wires.remove(&(diagram, n)).unwrap_or_default();
+        busbars(&grid.inside[&n], &placed, &mut layout);
+        inside.push((n, layout));
     }
 
     // GL: each Location's points, on the resources it locates, by coordinate system.
@@ -339,6 +348,65 @@ fn layouts(m: &Model, grid: &Grid) -> (Vec<Layout>, Vec<(usize, Layout)>) {
         out.extend(gather.layout(format!("gl:{crs}"), format!("Geographic (EPSG:{short})"), "geographic", false));
     }
     (out, inside)
+}
+
+/// A substation's diagram drawn as its single-line diagram is: to the
+/// scale that sets its items a row apart (half its wires, else its links
+/// from item to junction, are shorter); a bus drawn as a line a busbar of
+/// that length, a busbar section not drawn itself that bar, its junction at
+/// the bar's end; any other junction drawn as a line, a line as thin as a
+/// wire (a diagram may draw every junction as one).
+fn busbars(inside: &Inside, placed: &BTreeMap<usize, Vec<(f64, f64)>>, layout: &mut Layout) {
+    // The wires drawn, else from item to junction.
+    let wires: Vec<f64> = layout.edges.values().map(|ps| ps.windows(2).map(|w| (w[0].0 - w[1].0).hypot(w[0].1 - w[1].1)).sum()).collect();
+    let ends = || {
+        inside
+            .links
+            .iter()
+            .filter_map(|l| Some((layout.nodes.get(&l.item)?, layout.nodes.get(&l.junction)?)))
+            .map(|(a, b)| (a.0 - b.0).hypot(a.1 - b.1))
+            .collect::<Vec<f64>>()
+    };
+    let mut lengths: Vec<f64> = if wires.iter().any(|&d| d > 1e-9) { wires } else { ends() };
+    lengths.retain(|&d| d > 1e-9);
+    if lengths.is_empty() {
+        return;
+    }
+    lengths.sort_by(f64::total_cmp);
+    let typical = lengths[lengths.len() / 2];
+    let unit = crate::single_line::ROW / typical;
+    layout.unit = Some(unit);
+    let bus = crate::single_line::buses(inside);
+    for (&j, ps) in placed {
+        if !inside.items[j].junction || ps.len() < 2 {
+            continue;
+        }
+        let (x0, x1) = ps.iter().fold((f64::MAX, f64::MIN), |a, p| (a.0.min(p.0), a.1.max(p.0)));
+        let (y0, y1) = ps.iter().fold((f64::MAX, f64::MIN), |a, p| (a.0.min(p.1), a.1.max(p.1)));
+        let (w, h) = (x1 - x0, y1 - y0);
+        if w.max(h) < 1e-9 || !bus[j] && w.max(h) < typical {
+            continue;
+        }
+        let thick = if bus[j] { crate::single_line::BAR } else { crate::single_line::WIRE } / unit;
+        let (size, end) = if w >= h { ((w, thick), (x1, (y0 + y1) / 2.0)) } else { ((thick, h), ((x0 + x1) / 2.0, y1)) };
+        let centre = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+        let sections: Vec<usize> = inside
+            .links
+            .iter()
+            .filter(|l| bus[j] && l.junction == j && inside.items[l.item].class == "BusbarSection" && !placed.contains_key(&l.item))
+            .map(|l| l.item)
+            .collect();
+        if sections.is_empty() {
+            layout.nodes.insert(j, centre);
+            layout.sizes.insert(j, size);
+        } else {
+            for s in sections {
+                layout.nodes.insert(s, centre);
+                layout.sizes.insert(s, size);
+            }
+            layout.nodes.insert(j, end);
+        }
+    }
 }
 
 /// The set's files read as one model: each object's elements, the defining
@@ -501,7 +569,7 @@ pub fn build(m: &Model<'_>) -> Grid {
             let far: Vec<usize> = reached.iter().copied().filter(|&r| r != n).collect();
             let item = item_for(m, &mut grid, &mut items, &mut groups, n, ce, false, far);
             let junction = item_for(m, &mut grid, &mut items, &mut groups, n, node, true, vec![]);
-            grid.inside.entry(n).or_default().links.push(Link { id: t.to_string(), item, junction, connected: m.flag(t, "ACDCTerminal.connected") });
+            grid.inside.entry(n).or_default().links.push(Link { id: t.to_string(), label: m.name(t), item, junction, connected: m.flag(t, "ACDCTerminal.connected") });
         }
     }
 
@@ -737,6 +805,23 @@ impl Grid {
         })
     }
 
+    /// What the substation `id` holds; `None` if no substation of the set
+    /// has that mRID.
+    pub fn inside_of(&self, id: &str) -> Option<&Inside> {
+        let n = self.nodes.iter().position(|x| x.id == id && x.kind == "Substation")?;
+        self.inside.get(&n)
+    }
+
+    /// The substation `id`'s layout `layout` (the view's JSON) after its
+    /// items moved: busbars across what hangs from them, routes anew.
+    pub fn reroute_json(&self, id: &str, layout: &Value) -> Option<Value> {
+        let inside = self.inside_of(id)?;
+        let l = inside.layout_from_json(layout);
+        let mut moved = crate::single_line::reroute(inside, &l.nodes, &l.sizes);
+        (moved.id, moved.name) = (l.id, l.name);
+        Some(inside.layout_json(&moved))
+    }
+
     /// What the substation `id` holds, for the view's drill-down; `None` if
     /// no substation of the set has that mRID.
     pub fn inside_json(&self, set: &impl Locations, id: &str) -> Option<Value> {
@@ -766,24 +851,57 @@ impl Grid {
         let layouts: Vec<Value> = inside
             .layouts
             .iter()
-            .map(|l| {
-                let nodes: serde_json::Map<String, Value> = l.nodes.iter().map(|(&i, &(x, y))| (inside.items[i].id.clone(), json!([x, y]))).collect();
-                json!({ "id": l.id, "name": l.name, "kind": l.kind, "flipY": l.flip_y, "nodes": nodes, "edges": {} })
-            })
+            .map(|l| inside.layout_json(l))
             .collect();
         // Laid out when asked for: a few substations are opened, of thousands.
-        let auto = crate::single_line::single_line(inside);
-        let id_of = |i: &usize| inside.items[*i].id.clone();
-        let auto = json!({
-            "id": auto.id, "name": auto.name, "kind": auto.kind, "flipY": auto.flip_y, "unit": auto.unit,
-            "nodes": auto.nodes.iter().map(|(i, &(x, y))| (id_of(i), json!([x, y]))).collect::<serde_json::Map<_, _>>(),
-            "edges": auto.edges.iter().map(|(&k, ps)| (inside.links[k].id.clone(), json!(ps.iter().map(|&(x, y)| [x, y]).collect::<Vec<_>>()))).collect::<serde_json::Map<_, _>>(),
-            "sizes": auto.sizes.iter().map(|(i, &(w, h))| (id_of(i), json!([w, h]))).collect::<serde_json::Map<_, _>>(),
-        });
+        let auto = inside.layout_json(&crate::single_line::single_line(inside));
         Some(json!({
             "id": node.id, "label": node.label, "region": node.region, "kV": node.kv, "findings": inside.findings.json(),
             "location": location(&node.id), "groups": groups, "items": items, "links": links, "layouts": layouts, "auto": auto,
         }))
+    }
+}
+
+impl Inside {
+    /// A layout of its items, as the view takes it: positions and sizes by
+    /// item, routes by terminal.
+    pub fn layout_json(&self, l: &Layout) -> Value {
+        let id_of = |i: &usize| self.items[*i].id.clone();
+        json!({
+            "id": l.id, "name": l.name, "kind": l.kind, "flipY": l.flip_y, "unit": l.unit,
+            "nodes": l.nodes.iter().map(|(i, &(x, y))| (id_of(i), json!([x, y]))).collect::<serde_json::Map<_, _>>(),
+            "edges": l.edges.iter().map(|(&k, ps)| (self.links[k].id.clone(), json!(ps.iter().map(|&(x, y)| [x, y]).collect::<Vec<_>>()))).collect::<serde_json::Map<_, _>>(),
+            "sizes": l.sizes.iter().map(|(i, &(w, h))| (id_of(i), json!([w, h]))).collect::<serde_json::Map<_, _>>(),
+        })
+    }
+
+    /// A layout of its items from the view's JSON (as [`Inside::layout_json`]
+    /// writes it); what names no item or terminal of it is left out.
+    pub fn layout_from_json(&self, v: &Value) -> Layout {
+        let item = |id: &str| self.items.iter().position(|it| it.id == id);
+        let pair = |p: &Value| Some((p.get(0)?.as_f64()?, p.get(1)?.as_f64()?));
+        let by_item = |key: &str| -> BTreeMap<usize, (f64, f64)> {
+            v[key].as_object().into_iter().flatten().filter_map(|(id, p)| Some((item(id)?, pair(p)?))).collect()
+        };
+        let edges = v["edges"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter_map(|(id, ps)| {
+                let k = self.links.iter().position(|l| &l.id == id)?;
+                Some((k, ps.as_array()?.iter().filter_map(pair).collect()))
+            })
+            .collect();
+        Layout {
+            id: v["id"].as_str().unwrap_or("auto").into(),
+            name: v["name"].as_str().unwrap_or_default().into(),
+            kind: "diagram",
+            flip_y: false,
+            nodes: by_item("nodes"),
+            edges,
+            sizes: by_item("sizes"),
+            unit: v["unit"].as_f64(),
+        }
     }
 }
 
@@ -918,6 +1036,21 @@ mod tests {
         let names: Vec<&str> = anvers.layouts.iter().map(|l| l.name.as_str()).collect();
         assert_eq!(names, ["Diagram: MAS BE", "Diagram: Assembled"]);
         assert!(anvers.layouts.iter().all(|l| l.nodes.len() > 10), "{:?}", anvers.layouts.iter().map(|l| l.nodes.len()).collect::<Vec<_>>());
+
+        // MAS BE draws every junction as a line: its busbars as bars (BE-Busbar_2, and the
+        // sections the couplers join it to), the junctions inside bays as thin as a wire.
+        let mas = anvers.layouts.iter().find(|l| l.name == "Diagram: MAS BE").unwrap();
+        let unit = mas.unit.unwrap();
+        let thickness = |class: &str, label: &str| {
+            let i = anvers.items.iter().position(|it| it.class == class && it.label == label).unwrap();
+            mas.sizes.get(&i).map(|&(w, h)| (w.min(h) * unit * 100.0).round() / 100.0)
+        };
+        for section in ["BE-Busbar_2", "N1230992411", "N1230992414"] {
+            assert_eq!(thickness("BusbarSection", section), Some(crate::single_line::BAR), "{section}");
+        }
+        for node in ["N1230991550", "N1230991529", "Series Compensator"] {
+            assert_eq!(thickness("ConnectivityNode", node), Some(crate::single_line::WIRE), "{node}");
+        }
 
         let json = g.inside_json(&set, &g.nodes[index("Anvers")].id).unwrap();
         assert_eq!(json["items"].as_array().unwrap().len(), 20);

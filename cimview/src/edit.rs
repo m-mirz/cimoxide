@@ -435,6 +435,169 @@ pub fn create<'a>(
     Ok(Added { edits: vec![(file.name, vec![edit])], file: file.name.to_string(), select, id })
 }
 
+/// The text of a new file of profile `code` (`DL`) beside `like`: its
+/// prolog and root, with their namespaces, and a FullModel header under the
+/// model id `urn:uuid:{id}` dependent on `like`'s model, with its times,
+/// version and modelling authority set.
+pub fn companion(like: &File, code: &str, id: &str) -> Result<String, String> {
+    let profile = type_registry()
+        .schema("cgmes")
+        .and_then(|s| s.profiles.iter().find(|(c, _)| *c == code))
+        .map(|(_, uri)| *uri)
+        .ok_or_else(|| format!("no profile {code}"))?;
+    let text = like.text;
+    let root_end = text
+        .find("<rdf:RDF")
+        .and_then(|s| text[s..].find('>').map(|e| s + e + 1))
+        .ok_or_else(|| format!("{} has no rdf:RDF root", like.name))?;
+    let header = like
+        .index
+        .elements
+        .iter()
+        .find(|e| local(&e.qname) == "FullModel")
+        .ok_or_else(|| format!("{} has no FullModel header", like.name))?;
+    let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let start = like.lines.offset(text, header.full.start);
+    let indent = text[..start].rsplit_once('\n').map_or("", |(_, i)| i);
+    let prefix = header.qname.split_once(':').map_or("md", |(p, _)| p);
+    let model = if header.mrid.contains(':') { header.mrid.clone() } else { format!("#{}", header.mrid) };
+    let mut lines = vec![format!("<{prefix}:FullModel rdf:about=\"urn:uuid:{id}\">")];
+    for f in &header.fields {
+        if matches!(f.key(), "Model.created" | "Model.scenarioTime" | "Model.version" | "Model.modelingAuthoritySet") {
+            lines.push(format!("  {}", &text[like.lines.offset(text, f.full.start)..like.lines.offset(text, f.full.end)]));
+        }
+    }
+    lines.push(format!("  <{prefix}:Model.profile>{profile}</{prefix}:Model.profile>"));
+    lines.push(format!("  <{prefix}:Model.DependentOn rdf:resource=\"{model}\" />"));
+    lines.push(format!("</{prefix}:FullModel>"));
+    let body: String = lines.iter().map(|l| format!("{indent}{l}{eol}")).collect();
+    Ok(format!("{}{eol}{body}</rdf:RDF>{eol}", &text[..root_end]))
+}
+
+/// An object a diagram draws: the mRID it shows, its name, and its points.
+pub type Drawn<'a> = (&'a str, &'a str, Vec<(f64, f64)>);
+
+/// A DL diagram written into `into`: a new `Diagram` named `name` (y
+/// downwards), or in `existing` (in the file defining it, whatever `into`
+/// says), its drawing of what `objects` show replaced and the rest kept. Each of `objects` (the mRID it shows, its name,
+/// its points) a `DiagramObject` with its `DiagramObjectPoint`s, numbered
+/// from 1. UUIDs from `random`. The diagram's mRID is the result's `id`.
+pub fn diagram<'a>(
+    files: &[File<'a>],
+    into: &str,
+    existing: Option<&str>,
+    name: &str,
+    objects: &[Drawn],
+    random: &mut dyn FnMut() -> [u8; 16],
+) -> Result<Added<'a>, String> {
+    let defines = |f: &&File, id: &str| f.index.elements.iter().any(|e| e.mrid == id && e.id_kind == Some(IdKind::Id));
+    let file = match existing {
+        Some(d) => files.iter().find(|f| defines(f, d)).ok_or_else(|| format!("no file defines the diagram {d}"))?,
+        None => files.iter().find(|f| f.name == into).ok_or_else(|| format!("no file {into}"))?,
+    };
+    let reg = type_registry();
+    let class = |local: &str| {
+        file.index
+            .namespaces
+            .iter()
+            .filter_map(|(_, ns)| reg.ns_table(ns)?.get(local).copied())
+            .next()
+            .ok_or_else(|| format!("{} binds no namespace with a class {local}", file.name))
+    };
+    let (diagram_class, object_class, point_class) = (class("Diagram")?, class("DiagramObject")?, class("DiagramObjectPoint")?);
+    let mut taken = HashSet::new();
+    let mut fresh_id = |random: &mut dyn FnMut() -> [u8; 16]| {
+        let id = fresh(files, &taken, random);
+        taken.insert(id.clone());
+        id
+    };
+    let mut edits: Edits<'a> = Vec::new();
+    let mut lines = Vec::new();
+    let diagram = match existing {
+        Some(d) => {
+            // Its objects of what is drawn anew go, with their points; the
+            // diagram stays, with its name and the rest.
+            let anew: HashSet<&str> = objects.iter().map(|(m, _, _)| *m).collect();
+            let shows = |e: &crate::index::Element| {
+                e.fields.iter().any(|f| f.key() == "DiagramObject.IdentifiedObject" && f.resource.as_ref().is_some_and(|(m, _)| anew.contains(m.as_str())))
+            };
+            let shown: HashSet<&str> = file
+                .index
+                .elements
+                .iter()
+                .filter(|e| local(&e.qname) == "DiagramObject")
+                .filter(|e| e.fields.iter().any(|f| f.key() == "DiagramObject.Diagram" && f.resource.as_ref().is_some_and(|(m, _)| m == d)))
+                .filter(|e| shows(e))
+                .map(|e| e.mrid.as_str())
+                .collect();
+            let mut gone: HashSet<&str> = shown.clone();
+            for e in files.iter().flat_map(|f| &f.index.elements) {
+                if local(&e.qname) == "DiagramObjectPoint"
+                    && e.fields.iter().any(|f| f.resource.as_ref().is_some_and(|(m, _)| shown.contains(m.as_str())))
+                {
+                    gone.insert(e.mrid.as_str());
+                }
+            }
+            edits = delete(files, &gone).edits;
+            d.to_string()
+        }
+        None => {
+            let id = fresh_id(random);
+            lines.extend(element(file, diagram_class, &id, &[("IdentifiedObject.name", name), ("Diagram.orientation", "negative")])?);
+            id
+        }
+    };
+    for (shown, label, points) in objects {
+        let id = fresh_id(random);
+        let mut values = vec![("DiagramObject.Diagram", diagram.as_str()), ("DiagramObject.IdentifiedObject", *shown), ("DiagramObject.rotation", "0")];
+        if !label.is_empty() {
+            values.insert(0, ("IdentifiedObject.name", *label));
+        }
+        lines.extend(element(file, object_class, &id, &values)?);
+        for (k, (x, y)) in points.iter().enumerate() {
+            let point = fresh_id(random);
+            let (k, x, y) = ((k + 1).to_string(), number(*x), number(*y));
+            lines.extend(element(
+                file,
+                point_class,
+                &point,
+                &[("DiagramObjectPoint.sequenceNumber", &k), ("DiagramObjectPoint.xPosition", &x), ("DiagramObjectPoint.yPosition", &y), ("DiagramObjectPoint.DiagramObject", &id)],
+            )?);
+        }
+    }
+    let edit = at_end(file, &lines)?;
+    let first = edit.range.start.line;
+    match edits.iter_mut().find(|(n, _)| *n == file.name) {
+        Some((_, es)) => es.push(edit),
+        None => edits.push((file.name, vec![edit])),
+    }
+    let select = Range::new(Position::new(first, 0), Position::new(first, 0));
+    Ok(Added { edits, file: file.name.to_string(), select, id: diagram })
+}
+
+/// A coordinate as DL writes it: to a hundredth, without trailing zeros.
+fn number(x: f64) -> String {
+    let s = format!("{:.2}", (x * 100.0).round() / 100.0);
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    if s == "-0" { "0".into() } else { s.into() }
+}
+
+/// An object's element, unindented: its `rdf:ID`, its mRID as text where the class has a field for
+/// it, and `values` as [`set_field`] takes them.
+fn element(file: &File, class: &'static cimmodel::base::ClassDef, id: &str, values: &[(&str, &str)]) -> Result<Vec<String>, String> {
+    let prefix = file.index.prefix_of(class.ns).ok_or("no prefix")?;
+    let mut lines = vec![format!("<{prefix}:{} rdf:ID=\"{id}\">", class.local)];
+    let mrid_key = type_registry().attrs(class).map(|a| a.id).find(|k| k.ends_with(".mRID"));
+    if let Some(key) = mrid_key.filter(|k| !values.iter().any(|(v, _)| v == k)) {
+        lines.push(format!("  {}", field_element(file, class, key, &id[1..])?));
+    }
+    for (key, value) in values {
+        lines.push(format!("  {}", field_element(file, class, key, value)?));
+    }
+    lines.push(format!("</{prefix}:{}>", class.local));
+    Ok(lines)
+}
+
 /// Objects copied: the edits, and each object's new mRID.
 pub struct Copied<'a> {
     pub edits: Edits<'a>,
@@ -1173,6 +1336,36 @@ mod tests {
         assert_eq!(set2.tree.containers(&added.id), ["PP_Brussels", "110.0"]);
         let ssh = edited.iter().find(|(p, _)| p.to_string_lossy().contains("_BE_SSH_")).unwrap();
         assert!(ssh.1.contains(&format!("rdf:about=\"#{}\"", added.id)));
+    }
+
+    /// A DL file beside MicroGrid's EQ: its namespaces, a header of its own
+    /// dependent on EQ's, and room for a diagram, which validates.
+    #[test]
+    fn a_companion_file_takes_a_diagram() {
+        let read = crate::testing::collect(&micro_grid());
+        let names: Vec<String> = read.iter().map(|(p, _)| p.to_string_lossy().into_owned()).collect();
+        let at = names.iter().position(|n| n.contains("_BE_EQ_")).unwrap();
+        let (lines, index) = (LineIndex::new(&read[at].1), Index::build(&read[at].1));
+        let eq = File { name: &names[at], text: &read[at].1, lines: &lines, index: &index };
+        let text = companion(&eq, "DL", "0d1e2f30-0000-4000-8000-000000000000").unwrap();
+        assert!(text.contains("<md:Model.profile>http://iec.ch/TC57/ns/CIM/DiagramLayout-EU/3.0</md:Model.profile>"), "{text}");
+        assert!(text.contains(&format!("<md:Model.DependentOn rdf:resource=\"{}\" />", index.elements[0].mrid)), "{text}");
+        assert!(!text.contains("CoreEquipment"), "{text}");
+        let (dl_lines, dl_index) = (LineIndex::new(&text), Index::build(&text));
+        let dl = File { name: "new_DL.xml", text: &text, lines: &dl_lines, index: &dl_index };
+        let mut counter = 0u8;
+        let mut random = || {
+            counter += 1;
+            [counter; 16]
+        };
+        let breaker = index.elements.iter().find(|e| local(&e.qname) == "Breaker").map(|e| e.mrid.clone());
+        let shown = breaker.as_deref().unwrap_or("_x");
+        let added = diagram(&[dl], "new_DL.xml", None, "One", &[(shown, "B", vec![(1.0, 2.5)])], &mut random).unwrap();
+        let written = crate::text::apply(&text, &added.edits[0].1);
+        assert!(written.contains("<cim:DiagramObjectPoint.xPosition>1</cim:DiagramObjectPoint.xPosition>"), "{written}");
+        assert!(written.contains("<cim:DiagramObjectPoint.yPosition>2.5</cim:DiagramObjectPoint.yPosition>"), "{written}");
+        assert!(written.contains("OrientationKind.negative"), "{written}");
+        cimmodel::CimDataset::decode_str(&written).unwrap();
     }
 }
 
