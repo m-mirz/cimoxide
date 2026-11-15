@@ -1,7 +1,7 @@
 {
   "name": "cimoxide",
   "displayName": "cimoxide — CGMES & NC",
-  "description": "SHACL validation, hover, go to definition and completion for ENTSO-E CGMES and Network Code RDF/XML — and an MCP server to ask a chat about your model",
+  "description": "SHACL validation, hover, go to definition and completion for ENTSO-E CGMES and Network Code RDF/XML; a grid view with single-line diagrams to edit substations and see the SV's state; and an MCP server to ask a chat about your model",
   "version": "0.6.2",
   "publisher": "m-mirz",
   "icon": "icon.png",
