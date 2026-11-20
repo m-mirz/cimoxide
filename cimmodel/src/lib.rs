@@ -11,11 +11,13 @@ pub mod base;
 pub mod convert;
 pub mod convert_nc;
 pub mod decode;
+pub mod difference;
 pub mod registry;
 pub mod schema_source;
 
 mod generated;
 pub use generated::*;
 
-pub use base::{Element, FieldValue};
+pub use base::{Element, FieldValue, Value};
+pub use difference::{Applied, Block, Changed, Differences, FieldChange, Statement, Unmatched};
 pub use decode::{CimDataset, FieldForm};

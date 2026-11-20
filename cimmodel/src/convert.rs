@@ -150,15 +150,13 @@ fn is_foreign_family(type_name: &str) -> bool {
     type_name.contains(':')
 }
 
-/// The whole dataset as RDF/XML: every CGMES element under the CGMES
-/// prefixes, then every NC element and every object of a class no table knows
-/// ([`CimDataset::foreign`]) as it was read ([`crate::convert_nc`]), under
-/// prefixes that do not clash with CGMES's (NC's `cim:` is another namespace).
-pub fn dataset_to_xml(ds: &CimDataset) -> Result<String, Box<dyn Error>> {
-    let mut body = String::new();
-    let cgmes = tables().schema.namespaces;
-    let mut prefixes = crate::convert_nc::Prefixes::seeded(ds, cgmes);
-
+/// Every object of `ds` into `body`: the CGMES ones, a difference header with
+/// its statements, then the NC and foreign ones as read.
+pub(crate) fn write_objects(
+    body: &mut String,
+    prefixes: &mut crate::convert_nc::Prefixes,
+    ds: &CimDataset,
+) -> Result<(), Box<dyn Error>> {
     let mut mrids: Vec<&str> = ds.entries.keys().map(String::as_str).collect();
     mrids.sort();
 
@@ -186,6 +184,11 @@ pub fn dataset_to_xml(ds: &CimDataset) -> Result<String, Box<dyn Error>> {
             write_field_as(&mut children, key, val, type_name, "#", ds, written.as_deref())?;
         }
 
+        // A difference header's statements, inside it.
+        if let Some(d) = ds.differences.iter().find(|d| d.header == mrid) {
+            crate::difference::write_blocks(&mut children, prefixes, d, crate::difference::DM)?;
+        }
+
         if children.is_empty() {
             write!(body, "/>\n")?;
         } else {
@@ -193,7 +196,20 @@ pub fn dataset_to_xml(ds: &CimDataset) -> Result<String, Box<dyn Error>> {
         }
     }
 
-    crate::convert_nc::write_as_read(&mut body, &mut prefixes, ds)?;
+    crate::convert_nc::write_as_read(body, prefixes, ds)?;
+    Ok(())
+}
+
+/// The whole dataset as RDF/XML: every CGMES element under the CGMES
+/// prefixes, then every NC element and every object of a class no table knows
+/// ([`CimDataset::foreign`]) as it was read ([`crate::convert_nc`]), under
+/// prefixes that do not clash with CGMES's (NC's `cim:` is another namespace).
+pub fn dataset_to_xml(ds: &CimDataset) -> Result<String, Box<dyn Error>> {
+    let mut body = String::new();
+    let cgmes = tables().schema.namespaces;
+    let mut prefixes = crate::convert_nc::Prefixes::seeded(ds, cgmes);
+
+    write_objects(&mut body, &mut prefixes, ds)?;
 
     let mut out = String::new();
     out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");

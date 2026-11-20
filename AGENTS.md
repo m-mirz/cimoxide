@@ -78,7 +78,19 @@ file-name order wins; `cimlsp` hover and `cimmcp describe_class` show it); both
   tracking stays per file. An object typed differently by different files keeps every type
   (`Element::types`); its class and `by_type` bucket are the most specific one.
   `CimDataset::type_conflicts` lists objects whose types are unrelated (neither an ancestor of the
-  other).
+  other). A difference header's statement blocks (`rdf:parseType="Statements"` on a CGMES
+  `dm:DifferenceModel`'s `forwardDifferences`/`reverseDifferences`/`preconditions` or an NC
+  `dcatcim:DifferenceSet`'s `forwardDifference`/`reverseDifference`) are read by the same loop
+  one level down (`parse_events` recursing), each into a dataset of its own in
+  `CimDataset::differences`; never into `entries`.
+- `difference.rs` — `Differences` (a header's blocks: typed statements as objects of their class,
+  an `rdf:Description` among the block's `foreign` with `Class.attr` keys). `CimDataset::apply`
+  applies one statement by statement (IEC 61970-552: preconditions checked, reverse removed,
+  forward added; an object left with no type and no values removed, one given a type created)
+  and returns `Applied` (added, removed as they were, changed fields before and after, statements
+  that did not hold, reported rather than fatal). `Differences::between(before, after)` is its
+  inverse: applied to `before` it gives `after`. The encoder writes a header's blocks back inside
+  it, in the order read.
 - `convert.rs` — RDF/XML export (`dataset_to_xml`, `dataset_to_xml_for_profile`) and JSON
   (`{mrid: {"_type", "id", "Class.attr": "value" | [...], "_lang"?: {key: [tags]}}}`).
   JSON cannot say whether a string is a reference; `CimDataset::element_from_json` (used by
