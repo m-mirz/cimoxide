@@ -39,6 +39,7 @@ pub enum Block {
 }
 
 /// The statements of one difference header ([`CimDataset::differences`]).
+#[derive(Clone)]
 pub struct Differences {
     /// The header's identifier (`urn:uuid:…`); empty for differences computed
     /// ([`Differences::between`]) until the caller gives them one.

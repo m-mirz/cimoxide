@@ -51,6 +51,7 @@ impl FieldForm {
     }
 }
 
+#[derive(Clone)]
 pub struct CimDataset {
     pub entries: FastMap<String, Element>,
     /// Maps `type_name()` → list of MRIDs of that type. Populated on insert, maintained on merge.
