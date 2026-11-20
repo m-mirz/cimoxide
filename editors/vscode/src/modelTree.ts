@@ -26,6 +26,7 @@ import {
 } from "vscode";
 import { LanguageClient, WorkspaceEdit as LspWorkspaceEdit } from "vscode-languageclient/node";
 import { applyEdit, SYNC_LIMIT } from "./applyEdit";
+import { ChosenSet } from "./modelSet";
 import { Reveal, revealInGrid } from "./gridView";
 import { activeFile, isXmlLanguage, openAt, openEdited, validateSet } from "./open";
 import { symbolOf } from "./symbols";
@@ -158,10 +159,13 @@ export class ModelTree implements TreeDataProvider<Entry> {
   uri: Uri | undefined;
   onlyFindings = false;
 
-  constructor(private readonly client: () => LanguageClient | undefined) {}
+  constructor(
+    private readonly client: () => LanguageClient | undefined,
+    readonly chosen: ChosenSet,
+  ) {}
 
-  /** The directories whose sets the tree asked the server to validate. */
-  private readonly asked = new Set<string>();
+  /** The sets the tree asked the server to validate ([`ChosenSet::keyOf`]). */
+  readonly asked = new Set<string>();
   /** The node listing each node fetched, by key, for `reveal`. */
   private readonly parents = new Map<string, Entry | undefined>();
 
@@ -187,9 +191,9 @@ export class ModelTree implements TreeDataProvider<Entry> {
       this.parents.set(child.key, entry);
     }
     // Not validated yet: perhaps a file VS Code keeps from the server (over 50 MB).
-    const dir = path.dirname(this.uri.fsPath);
-    if (!result && !entry && !this.asked.has(dir)) {
-      this.asked.add(dir);
+    const set = this.chosen.keyOf(this.uri);
+    if (!result && !entry && !this.asked.has(set)) {
+      this.asked.add(set);
       await validateSet(client, this.uri);
     }
     return result ?? [];
@@ -272,18 +276,24 @@ function isCim(uri: Uri, languageId: string): boolean {
   return uri.scheme === "file" && isXmlLanguage(languageId);
 }
 
-export function registerModelTree(context: ExtensionContext, client: () => LanguageClient | undefined): ModelTree {
+/** What the tree calls the set of `uri`: the files chosen, or its folder. */
+function setName(chosen: ChosenSet, uri: Uri): string {
+  const n = chosen.files.length;
+  return chosen.has(uri) ? `chosen, ${n} file${n === 1 ? "" : "s"}` : path.basename(path.dirname(uri.fsPath));
+}
+
+export function registerModelTree(context: ExtensionContext, client: () => LanguageClient | undefined, chosen: ChosenSet): ModelTree {
   symbolDir = Uri.joinPath(context.extensionUri, "dist", "symbols");
-  const tree = new ModelTree(client);
+  const tree = new ModelTree(client, chosen);
   const view: TreeView<Entry> = window.createTreeView(VIEW, { treeDataProvider: tree, showCollapseAll: true });
   let refresh: NodeJS.Timeout | undefined;
 
   const follow = (uri: Uri | undefined, languageId: string | undefined): void => {
     // A tab with no text editor (a file over 50 MB): an XML file by its name.
     if (!uri || !(languageId ? isCim(uri, languageId) : activeFile()?.toString() === uri.toString())) return;
-    if (tree.uri && path.dirname(tree.uri.fsPath) === path.dirname(uri.fsPath)) return;
+    if (tree.uri && chosen.keyOf(tree.uri) === chosen.keyOf(uri)) return;
     tree.uri = uri;
-    view.description = path.basename(path.dirname(uri.fsPath));
+    view.description = setName(chosen, uri);
     commands.executeCommand("setContext", "cimoxide.model.active", true);
     tree.refresh();
   };
@@ -365,7 +375,7 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
     }
     type Hit = { id: string; label: string; class: string; place: string; location: Location | null };
     const pick = window.createQuickPick<{ label: string; description: string; detail?: string; alwaysShow: boolean; hit: Hit }>();
-    pick.placeholder = `Find an object of ${path.basename(path.dirname(uri.fsPath))} by name or mRID`;
+    pick.placeholder = `Find an object of ${setName(chosen, uri)} by name or mRID`;
     let typing: NodeJS.Timeout | undefined;
     pick.onDidChangeValue((value) => {
       clearTimeout(typing);
@@ -482,6 +492,18 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
   context.subscriptions.push(
     view,
     { dispose: () => (clearTimeout(refresh), clearTimeout(cursor)) } as Disposable,
+    // Files chosen: the tree shows their set; none, the active file's folder again.
+    chosen.onDidChange(() => {
+      tree.asked.clear();
+      tree.uri = undefined;
+      const active = activeFile();
+      const shown = chosen.files[0] ?? active;
+      if (!shown) return;
+      tree.uri = shown;
+      view.description = setName(chosen, shown);
+      commands.executeCommand("setContext", "cimoxide.model.active", true);
+      tree.refresh();
+    }),
     // With `cimoxide.model.followCursor`, the tree follows the cursor while it is visible.
     window.onDidChangeTextEditorSelection((e) => {
       if (!view.visible || !workspace.getConfiguration("cimoxide").get<boolean>("model.followCursor")) return;

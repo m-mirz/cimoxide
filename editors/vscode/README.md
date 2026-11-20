@@ -8,6 +8,12 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
   usually several files (EQ, SSH, SV, TP, …), so the unit of validation is a *model set*:
   every CIM XML file in the document's directory. Cross-profile findings appear on every
   file that writes the object.
+- **Choosing a model set** — *Choose model set files…* (in the *CIM Model* view's title, or
+  the command palette), or *Use as CIM model set* on files selected in the Explorer, makes
+  those files one model set, from any folders: an IGM with its boundary kept elsewhere, say,
+  or some of a folder's files. They leave their folders' sets; the rest of each folder stays
+  a set of its own. The status bar shows the set chosen; from there it can be changed, added
+  to, or given up for folders again. The workspace remembers it, and chat reads it too.
 
   ![A finding on a MicroGrid file: its squiggle, its message and rule id on hover, and the Problems panel](https://github.com/user-attachments/assets/2b9ca5b0-3331-44a4-95fb-2846f532d841)
 - **Hover** — a class's definition from the ENTSO-E vocabulary, inheritance chain and
@@ -101,7 +107,8 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
 - **Chat** — an MCP server, `cimmcp`, offered to chat (Copilot agent mode): ask about the
   model sets of the workspace. Its tools list the model sets, summarise one (headers, object
   counts), find objects by class, name or attribute value, show an object with its references
-  resolved, validate, run SPARQL and describe a CIM class. They only read. Turn it off with
+  resolved, validate, run SPARQL and describe a CIM class. They only read. Asked about no
+  set in particular, they read the model set chosen, if any. Turn it off with
   `cimoxide.mcp.enabled`.
 
 **Files over 50 MB** (a large EQ file): VS Code does not pass them to extensions, so their editor

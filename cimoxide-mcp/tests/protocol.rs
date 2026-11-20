@@ -22,11 +22,17 @@ struct Server {
 
 impl Server {
     fn start() -> Self {
+        Self::start_with(&[])
+    }
+
+    /// Started with `args` besides `--dir`.
+    fn start_with(args: &[&str]) -> Self {
         let dir = repo_root().join(MICROGRID);
         assert!(dir.is_dir(), "missing test data {} — run `git submodule update --init`", dir.display());
         let mut child = Command::new(env!("CARGO_BIN_EXE_cimmcp"))
             .arg("--dir")
             .arg(repo_root())
+            .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -216,6 +222,34 @@ fn takes_a_model_set_as_a_file_list() {
     assert!(err && missing.contains("does not exist"), "{missing}");
     let (not_cim, err) = s.call("summary", json!({ "files": [be, "Cargo.toml"] }));
     assert!(err && not_cim.contains("is not a CGMES or NC RDF/XML file"), "{not_cim}");
+}
+
+/// A tool given neither `path` nor `files` reads the set the editor chose,
+/// as `--set-file` lists it now; with none listed, the workspace.
+#[test]
+fn reads_the_set_chosen_in_the_editor_by_default() {
+    const BASE: &str = "CGMES-Test-Configurations/v3.0/MicroGrid/MicroGid-BaseCase";
+    let be = repo_root().join(format!("{BASE}/MicroGrid-BE-MAS"));
+    let boundary = repo_root().join(format!("{BASE}/MicroGrid-BD-MAS/20171002T0930Z_ENTSO-E_EQ_BD_2.xml"));
+    let set_file = std::env::temp_dir().join(format!("cimmcp-set-{}.json", std::process::id()));
+    let write = |files: &[&Path]| std::fs::write(&set_file, json!({ "files": files }).to_string()).unwrap();
+    write(&[&be, &boundary]);
+    let mut s = Server::start_with(&["--set-file", set_file.to_str().unwrap()]);
+    let chosen = s.ok("summary", json!({}));
+    assert!(chosen.contains("— 8 file(s)"), "{chosen}");
+    assert!(chosen.contains("20171002T0930Z_ENTSO-E_EQ_BD_2.xml [EQBD]"), "{chosen}");
+    // Chosen again, without a restart.
+    write(&[&boundary]);
+    let again = s.ok("summary", json!({}));
+    assert!(again.contains("— 1 file(s)"), "{again}");
+    // A path given wins over it.
+    let named = s.ok("summary", json!({ "path": format!("{BASE}/MicroGrid-BE-MAS") }));
+    assert!(named.contains("— 7 file(s)"), "{named}");
+    // None chosen: the workspace, which holds no CIM file itself.
+    write(&[]);
+    let (none, _) = s.call("summary", json!({}));
+    assert!(!none.contains("EQBD"), "{none}");
+    std::fs::remove_file(&set_file).ok();
 }
 
 /// An export is what `cimmodel::convert` writes for the same files: returned

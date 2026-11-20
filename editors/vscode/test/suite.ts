@@ -301,6 +301,28 @@ test("a file over 50 MB, which VS Code keeps from the server, takes topology edi
   }, 30000);
 });
 
+test("files chosen form a set of their own, from which their folder's set gives them up", async () => {
+  type Hit = { label: string };
+  const finds = async (uri: Uri, name: string) =>
+    (await api.request<Hit[]>("cimoxide/search", { uri: uri.toString(), query: name })).some((h) => h.label === name);
+  const be = ["_BE_EQ_", "_BE_SSH_", "_EQ_BD_"].map(file);
+  const nl = file("_NL_EQ_");
+  await api.chosen.set(be);
+  // The BE files and the boundary alone: Brussels, not Amsterdam.
+  await until("the set chosen, validated", async () => ((await finds(be[0], "PP_Brussels")) && !(await finds(be[0], "PP_Amsterdam")) ? true : undefined));
+  // The rest of the folder: Amsterdam, not Brussels.
+  await commands.executeCommand("cimoxide.revalidate", nl.toString());
+  await until("the folder's set without them", async () => ((await finds(nl, "PP_Amsterdam")) && !(await finds(nl, "PP_Brussels")) ? true : undefined));
+  // The tree shows the set chosen; chat reads the same files.
+  assert.strictEqual(api.chosen.keyOf(api.modelTree.uri!), "chosen");
+  const listed = JSON.parse(fs.readFileSync(api.chosen.setFile, "utf8")).files as string[];
+  assert.deepStrictEqual([...listed].sort(), be.map((u) => u.fsPath).sort());
+  // Folders again: the whole folder, one set.
+  await api.chosen.set([]);
+  await until("the folder's set again", async () => ((await finds(be[0], "PP_Amsterdam")) ? true : undefined));
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(api.chosen.setFile, "utf8")).files, []);
+});
+
 export async function run(): Promise<void> {
   let failed = 0;
   for (const [name, f] of tests) {

@@ -4,7 +4,9 @@
 //
 // Also offers `cimmcp` to chat as an MCP server, reading the model sets of
 // the first workspace folder, draws a model set's grid ([`gridView`]) and
-// lists its objects in a tree ([`modelTree`]).
+// lists its objects in a tree ([`modelTree`]). A model set is a folder's CIM
+// files, or the files the user chose ([`modelSet`]), for the server and chat
+// alike.
 
 import * as fs from "fs";
 import * as path from "path";
@@ -23,11 +25,13 @@ import {
 import { LanguageClient, LanguageClientOptions, ServerOptions, WorkspaceEdit as LspWorkspaceEdit } from "vscode-languageclient/node";
 import { registerClaim } from "./claim";
 import { showGrid } from "./gridView";
+import { ChosenSet, registerModelSet } from "./modelSet";
 import { ModelTree, registerModelTree } from "./modelTree";
 import { applyEdit } from "./applyEdit";
 import { CIM_XML, openAt, openEdited } from "./open";
 
 let client: LanguageClient | undefined;
+let chosen: ChosenSet | undefined;
 
 /** The `cimoxide.<setting>` path, else the bundled `name` binary, else `PATH`. */
 function serverCommand(context: ExtensionContext, name: string, setting: string): string {
@@ -89,6 +93,7 @@ async function start(context: ExtensionContext): Promise<void> {
   client = new LanguageClient("cimoxide", "cimoxide", serverOptions, clientOptions);
   try {
     await client.start();
+    await chosen?.send();
   } catch (e) {
     client = undefined;
     window.showErrorMessage(`cimoxide: could not start the language server (${command}): ${e}`);
@@ -117,6 +122,8 @@ function registerMcp(context: ExtensionContext): void {
         const folder = workspace.workspaceFolders?.[0]?.uri.fsPath;
         const command = serverCommand(context, "cimmcp", "mcp.path");
         const args = folder ? ["--dir", folder] : [];
+        // The model set chosen, which the file lists as it changes.
+        if (chosen) args.push("--set-file", chosen.setFile);
         const version = context.extension.packageJSON.version as string;
         return [new McpStdioServerDefinition("cimoxide", command, args, schemaEnv(), version)];
       },
@@ -133,15 +140,19 @@ function registerMcp(context: ExtensionContext): void {
 /** What `activate` returns, for the extension's tests (test/suite.ts): the model tree, and the server's requests. */
 export interface Api {
   modelTree: ModelTree;
+  /** The model set chosen ([`modelSet`]). */
+  chosen: ChosenSet;
   request<R>(method: string, params: unknown): Promise<R>;
   /** Makes one of the server's workspace edits as the views do ([`applyEdit`]). */
   apply(edit: unknown): Promise<Uri[] | undefined>;
 }
 
 export async function activate(context: ExtensionContext): Promise<Api> {
+  const set = registerModelSet(context, () => client);
+  chosen = set;
   registerMcp(context);
   registerClaim(context);
-  const modelTree = registerModelTree(context, () => client);
+  const modelTree = registerModelTree(context, () => client, set);
   context.subscriptions.push(
     commands.registerCommand("cimoxide.showGrid", (uri?: Uri) => showGrid(context, client, uri)),
     // After a deletion: the files it changed, open for review.
@@ -174,6 +185,7 @@ export async function activate(context: ExtensionContext): Promise<Api> {
   await start(context);
   return {
     modelTree,
+    chosen: set,
     request: <R>(method: string, params: unknown) => {
       if (!client) throw new Error("no language server");
       return client.sendRequest<R>(method, params);

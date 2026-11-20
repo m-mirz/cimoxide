@@ -233,7 +233,9 @@ has been measured at 20% for identical code).
 ### `cimoxide-lsp`
 
 `cimlsp` over stdio (`lsp-server`/`lsp-types`, no async runtime). A *model set* is every CIM
-XML file in a document's directory, open buffers taking precedence over disk; it is
+XML file in a document's directory, or the files the user chose (`cimoxide/setFiles`, from the
+extension's `src/modelSet.ts`; `validate::SetKey`), which then leave their directories' sets;
+open buffers take precedence over disk; it is
 validated with `validate_files` + `combined_config`, as `cimox validate` does, on a worker
 thread with a 300 ms debounce, on open and save, and on `workspace/didChangeWatchedFiles` (the
 extension watches `**/*.xml`) for a set validated or open: VS Code hands no file over 50 MB to an
@@ -349,7 +351,9 @@ validation configuration's findings are built on first use. `validate` reports w
 (`tests/protocol.rs` compares them). `cimmodel::decode::is_cim` decides which files belong,
 shared with `cimlsp`. The extension registers it through
 `lm.registerMcpServerDefinitionProvider` with `--dir <first workspace folder>` (VS Code
-≥ 1.101).
+≥ 1.101) and `--set-file <workspace storage>/model-set.json`, which the extension keeps listing
+the model set chosen; a tool given neither `path` nor `files` reads that set, the file read on
+every call, so a change needs no restart.
 
 ## Codegen Stability Tests
 

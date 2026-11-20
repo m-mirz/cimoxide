@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 use crate::session::{self, ModelSet, Options, Session};
 
 const PATH_DOC: &str = "Model set: a directory of CIM RDF/XML files (or one file), relative to the workspace. \
-Default: the workspace directory itself.";
+Default: the files chosen in the editor as its model set, if any, else the workspace directory itself.";
 
 const FORMAT_DOC: &str = "`rdfxml` (default), or `json`: every decoded object, CIM and foreign (reference data's SKOS, PROV, DCAT), \
 as `{id: {\"_type\", \"id\", \"Class.attr\": value | [values], \"_lang\"?}}`, as cimoxide-py's `entries()` and `foreign()` give them. \
