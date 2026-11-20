@@ -296,6 +296,10 @@ fn write_element(
             }
         }
     }
+    // An NC difference header's statements, inside it.
+    if let Some(d) = ds.differences.iter().find(|d| d.header == element.mrid()) {
+        crate::difference::write_blocks(out, prefixes, d, crate::difference::DCATCIM)?;
+    }
     writeln!(out, "\n  </{tag}>")?;
     Ok(())
 }

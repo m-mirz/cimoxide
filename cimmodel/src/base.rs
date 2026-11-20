@@ -128,7 +128,7 @@ pub fn foreign_class(ns: &str, local: &str) -> &'static ClassDef {
     class
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldValue {
     Text(String),
     /// Repeated text element within one parsed element (e.g. the multiple
@@ -136,6 +136,46 @@ pub enum FieldValue {
     TextList(Vec<String>),
     Resource(String),
     ResourceList(Vec<String>),
+}
+
+/// One value of a field, as a statement holds it: a text or a reference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Value<'a> {
+    Text(&'a str),
+    Resource(&'a str),
+}
+
+impl Value<'_> {
+    /// As a field's single value.
+    pub fn owned(&self) -> FieldValue {
+        match *self {
+            Value::Text(t) => FieldValue::Text(t.to_string()),
+            Value::Resource(r) => FieldValue::Resource(r.to_string()),
+        }
+    }
+}
+
+impl PartialEq<FieldValue> for Value<'_> {
+    fn eq(&self, other: &FieldValue) -> bool {
+        match (self, other) {
+            (Value::Text(a), FieldValue::Text(b)) => *a == b,
+            (Value::Resource(a), FieldValue::Resource(b)) => *a == b,
+            _ => false,
+        }
+    }
+}
+
+impl FieldValue {
+    /// Its values one by one: a list's each, a single one alone.
+    pub fn values(&self) -> impl Iterator<Item = Value<'_>> {
+        let (texts, refs): (&[String], &[String]) = match self {
+            FieldValue::Text(t) => (std::slice::from_ref(t), &[]),
+            FieldValue::TextList(l) => (l.as_slice(), &[]),
+            FieldValue::Resource(r) => (&[], std::slice::from_ref(r)),
+            FieldValue::ResourceList(l) => (&[], l.as_slice()),
+        };
+        texts.iter().map(|t| Value::Text(t)).chain(refs.iter().map(|r| Value::Resource(r)))
+    }
 }
 
 // --- Elements ----------------------------------------------------------------
@@ -360,6 +400,51 @@ impl Element {
             }
         }
         self.fields.insert(key, val);
+    }
+
+    /// Whether `key` holds `value` (a [`FieldValue::Text`] or
+    /// [`FieldValue::Resource`]) among its values.
+    pub fn has_value(&self, key: &str, value: &FieldValue) -> bool {
+        self.fields.get(key).is_some_and(|held| held.values().any(|v| v == *value))
+    }
+
+    /// Remove one of `key`'s values (a [`FieldValue::Text`] or
+    /// [`FieldValue::Resource`]), as a difference model's reverse statement
+    /// does. A list left with one value holds it alone; a field left with none
+    /// is gone. Returns whether the field held the value.
+    pub fn remove_value(&mut self, key: &str, value: &FieldValue) -> bool {
+        let Some(held) = self.fields.get_mut(key) else { return false };
+        let left: Vec<FieldValue> = held.values().filter(|v| *v != *value).map(|v| v.owned()).collect();
+        if left.len() == held.values().count() {
+            return false;
+        }
+        let (k, _) = self.fields.remove_entry(key).expect("just held");
+        if let Some(langs) = self.langs.as_mut() {
+            langs.retain(|(l, _)| *l != k);
+        }
+        match left.len() {
+            0 => {
+                self.duplicate_fields.remove(k);
+            }
+            1 => {
+                self.duplicate_fields.remove(k);
+                self.fields.insert(k, left.into_iter().next().expect("one"));
+            }
+            _ => {
+                for v in left {
+                    self.add_field(k, v);
+                }
+            }
+        }
+        true
+    }
+
+    /// Make the object's types `types`: the first its class, the others kept
+    /// beside it ([`Element::types`]). Nothing for none.
+    pub(crate) fn set_types(&mut self, types: &[&'static ClassDef]) {
+        let Some((&first, rest)) = types.split_first() else { return };
+        self.class = first;
+        self.also = (!rest.is_empty()).then(|| Box::new(rest.to_vec()));
     }
 
     /// Combine another file's view of the same object: a later scalar wins,

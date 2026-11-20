@@ -4,6 +4,7 @@ use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 
 use crate::base::{intern, AttrDef, AttrKind, ClassDef, Element, FastMap, FastSet, FieldValue, TypeRegistry};
+use crate::difference::{Block, Differences};
 use crate::registry;
 
 /// Whether `text` looks like CGMES or NC RDF/XML: near the top it names one
@@ -78,6 +79,12 @@ pub struct CimDataset {
     /// them back ([`crate::convert::dataset_to_xml`]). Their classes come from
     /// [`crate::base::foreign_class`].
     pub foreign: FastMap<String, Element>,
+    /// The statements of the difference headers read: a CGMES
+    /// `dm:DifferenceModel`'s forward and reverse differences and
+    /// preconditions, an NC `dcatcim:DifferenceSet`'s forward and reverse
+    /// differences, each read into a dataset of its own. The decoder applies
+    /// none of them; [`CimDataset::apply`] does.
+    pub differences: Vec<Differences>,
 }
 
 impl Default for CimDataset {
@@ -95,6 +102,7 @@ impl CimDataset {
             type_ns: FastMap::default(),
             prefixes: FastMap::default(),
             foreign: FastMap::default(),
+            differences: Vec::new(),
         }
     }
 
@@ -165,6 +173,7 @@ impl CimDataset {
     /// and its class (and `by_type` bucket) is the most specific, whichever
     /// file came first. Of unrelated classes the first stays the class.
     pub fn merge(&mut self, other: CimDataset) {
+        self.differences.extend(other.differences);
         for (key, form) in other.field_forms {
             self.field_forms.entry(key).or_default().fill_from(form);
         }
@@ -320,7 +329,7 @@ type Table = FastMap<&'static str, &'static ClassDef>;
 /// Resolving a prefix per element rather than a namespace IRI is what keeps
 /// this cheap: prefixes are two to four bytes, IRIs are thirty-odd, and a
 /// document binds a handful of them and then repeats them on every element.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct Scope {
     /// Prefix → its namespace IRI (interned) and that namespace's table.
     prefixes: Vec<(Vec<u8>, &'static str, Option<&'static Table>)>,
@@ -507,10 +516,37 @@ fn parse_rdf(
     ds: &mut CimDataset,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut reader = Reader::from_str(content);
+    parse_events(&mut reader, reg, ds, Scope::default(), false)
+}
+
+/// Which statements of a difference header a field holds: the key of a
+/// CGMES `dm:DifferenceModel`'s or an NC `dcatcim:DifferenceSet`'s field.
+fn block_of(key: &str) -> Option<Block> {
+    match key.rsplit('.').next()? {
+        "forwardDifferences" | "forwardDifference" => Some(Block::Forward),
+        "reverseDifferences" | "reverseDifference" => Some(Block::Reverse),
+        "preconditions" => Some(Block::Preconditions),
+        _ => None,
+    }
+}
+
+/// Read objects into `ds` from `reader`: a whole document, or, with `block`,
+/// the statements of one difference block (`rdf:parseType="Statements"`),
+/// whose start tag was just read, up to its end tag. A block's objects are
+/// one level deeper than a document's, so it is read as if it were the
+/// document's root, in the namespaces its document declared.
+fn parse_events(
+    reader: &mut Reader<&[u8]>,
+    reg: &'static TypeRegistry,
+    ds: &mut CimDataset,
+    mut scope: Scope,
+    block: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = Vec::new();
 
-    let mut depth: u32 = 0;
-    let mut scope = Scope::default();
+    let mut depth: u32 = u32::from(block);
+    // The differences of the header being read, once one of its fields holds statements.
+    let mut differences: Option<Differences> = None;
     // Outer scope parked while a nested `xmlns` override is in effect.
     let mut nested: Option<Scope> = None;
     // Resolved at the element's start tag, so an unregistered element never
@@ -598,6 +634,17 @@ fn parse_rdf(
                     3 => {
                         if let Some(element) = current.as_mut() {
                             let (key, attrs) = field(declared, element.type_name(), e, &scope, &mut ds.field_forms)?;
+                            if attrs.nodes
+                                && let Some(which) = block_of(key)
+                            {
+                                // A difference header's statements: objects of their own,
+                                // read up to the block's end tag, which closes this field.
+                                let found = differences.get_or_insert_with(|| Differences::new(element.mrid()));
+                                parse_events(reader, reg, found.block_mut(which), scope.clone(), true)?;
+                                depth -= 1;
+                                buf.clear();
+                                continue;
+                            }
                             if let Some(res) = attrs.resource {
                                 element.add_field(key, FieldValue::Resource(res));
                             } else if !attrs.nodes {
@@ -642,7 +689,12 @@ fn parse_rdf(
                         // block: a reference, or else an empty literal.
                         if let Some(element) = current.as_mut() {
                             let (key, attrs) = field(declared, element.type_name(), e, &scope, &mut ds.field_forms)?;
-                            if let Some(res) = attrs.resource {
+                            if attrs.nodes
+                                && let Some(which) = block_of(key)
+                            {
+                                // An empty statements block: no statements, but the block is there.
+                                differences.get_or_insert_with(|| Differences::new(element.mrid())).block_mut(which);
+                            } else if let Some(res) = attrs.resource {
                                 element.add_field(key, FieldValue::Resource(res));
                             } else if !attrs.nodes {
                                 element.add_field(key, FieldValue::Text(String::new()));
@@ -678,13 +730,21 @@ fn parse_rdf(
                     if let Some(element) = current.take() {
                         store(ds, element, current_foreign, current_ns.take());
                     }
+                    if let Some(found) = differences.take() {
+                        ds.differences.push(found);
+                    }
                     if let Some(outer) = nested.take() {
                         scope = outer;
                     }
                 }
                 depth = depth.saturating_sub(1);
+                // A difference block's end tag: its statements are read.
+                if block && depth == 0 {
+                    break;
+                }
             }
 
+            Ok(Event::Eof) if block => return Err("a difference block is not closed".into()),
             Ok(Event::Eof) => break,
             Err(e) => return Err(Box::new(e)),
             _ => {}
