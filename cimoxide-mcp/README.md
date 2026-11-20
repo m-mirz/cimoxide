@@ -26,6 +26,9 @@ A model set is every CIM XML file in one directory (`path`), or the files and di
 listed in `files`, for a model whose files lie apart (an IGM with its boundary and common
 data). `--dir <path>` (else
 `CIMOXIDE_MODEL_DIR`, else the working directory) is where relative paths resolve.
+`--set-file <path>` names a JSON file, `{ "files": [path] }`, listing the set a tool reads when
+given neither `path` nor `files`; it is read on every call. VS Code's extension keeps the model
+set chosen there.
 
 ## Install
 

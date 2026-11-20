@@ -25,7 +25,7 @@ mod index;
 mod validate;
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -49,7 +49,7 @@ use lsp_types::{
 
 use features::View;
 use index::{Index, LineIndex};
-use validate::{ModelSet, Options};
+use validate::{ModelSet, Options, SetKey};
 
 const REVALIDATE: &str = "cimoxide.revalidate";
 
@@ -131,6 +131,11 @@ const PALETTE: &str = "cimoxide/palette";
 /// it: `{ "edit", "select" }`.
 const TOPOLOGY: &str = "cimoxide/topology";
 
+/// `cimoxide/setFiles` `{ "files": [uri] }` (a notification): the files the
+/// user chose form one model set, taking them out of their directories' sets;
+/// none, every directory's set holds all its files again.
+const SET_FILES: &str = "cimoxide/setFiles";
+
 /// How long a burst of triggers is gathered before a set is validated.
 const DEBOUNCE: Duration = Duration::from_millis(300);
 
@@ -160,8 +165,22 @@ impl Doc {
 #[derive(Default)]
 struct State {
     docs: HashMap<Url, Doc>,
-    /// The last validation of each model set, by directory.
-    sets: HashMap<PathBuf, Arc<ModelSet>>,
+    /// The last validation of each model set.
+    sets: HashMap<SetKey, Arc<ModelSet>>,
+    /// The files the user chose as one model set ([`SET_FILES`]), sorted.
+    chosen: Vec<PathBuf>,
+}
+
+impl State {
+    /// The set file `path` belongs to.
+    fn key_of(&self, path: &Path) -> Option<SetKey> {
+        SetKey::of(path, &self.chosen)
+    }
+
+    /// The last validation of the set file `path` belongs to.
+    fn set_of(&self, path: &Path) -> Option<Arc<ModelSet>> {
+        self.sets.get(&self.key_of(path)?).cloned()
+    }
 }
 
 type Shared = Arc<Mutex<State>>;
@@ -210,7 +229,7 @@ fn run(connection: Connection) -> Result<(), Box<dyn std::error::Error + Send + 
         .unwrap_or_default();
 
     let state: Shared = Arc::default();
-    let (jobs, queue) = crossbeam_channel::unbounded::<PathBuf>();
+    let (jobs, queue) = crossbeam_channel::unbounded::<SetKey>();
     let worker = {
         let (state, sender, validation) = (state.clone(), connection.sender.clone(), opts.validation.clone());
         std::thread::spawn(move || validate_loop(&queue, &state, &sender, &validation))
@@ -234,20 +253,20 @@ fn run(connection: Connection) -> Result<(), Box<dyn std::error::Error + Send + 
     Ok(())
 }
 
-/// The directory of a `file:` document, if it is a CIM document.
-fn set_dir(url: &Url, text: &str) -> Option<PathBuf> {
+/// The set of a `file:` document, if it is a CIM document.
+fn set_key(st: &State, url: &Url, text: &str) -> Option<SetKey> {
     let path = url.to_file_path().ok()?;
-    index::is_cim(text).then(|| path.parent().map(PathBuf::from)).flatten()
+    index::is_cim(text).then(|| st.key_of(&path)).flatten()
 }
 
-fn handle_notification(state: &Shared, jobs: &Sender<PathBuf>, opts: &InitOptions, n: Notification) {
+fn handle_notification(state: &Shared, jobs: &Sender<SetKey>, opts: &InitOptions, n: Notification) {
     let mut st = state.lock().unwrap();
     match n.method.as_str() {
         DidOpenTextDocument::METHOD => {
             let Ok(p) = serde_json::from_value::<lsp_types::DidOpenTextDocumentParams>(n.params) else { return };
             let text: Arc<str> = Arc::from(p.text_document.text);
-            if let Some(dir) = set_dir(&p.text_document.uri, &text) {
-                jobs.send(dir).ok();
+            if let Some(key) = set_key(&st, &p.text_document.uri, &text) {
+                jobs.send(key).ok();
             }
             st.docs.insert(p.text_document.uri, Doc::new(text));
         }
@@ -259,16 +278,17 @@ fn handle_notification(state: &Shared, jobs: &Sender<PathBuf>, opts: &InitOption
                 apply_change(&mut text, change);
             }
             *doc = Doc::new(Arc::from(text));
+            let text = doc.text.clone();
             if opts.on_type
-                && let Some(dir) = set_dir(&p.text_document.uri, &doc.text)
+                && let Some(key) = set_key(&st, &p.text_document.uri, &text)
             {
-                jobs.send(dir).ok();
+                jobs.send(key).ok();
             }
         }
         DidSaveTextDocument::METHOD => {
             let Ok(p) = serde_json::from_value::<lsp_types::DidSaveTextDocumentParams>(n.params) else { return };
-            if let Some(dir) = st.docs.get(&p.text_document.uri).and_then(|d| set_dir(&p.text_document.uri, &d.text)) {
-                jobs.send(dir).ok();
+            if let Some(key) = st.docs.get(&p.text_document.uri).and_then(|d| set_key(&st, &p.text_document.uri, &d.text)) {
+                jobs.send(key).ok();
             }
         }
         DidCloseTextDocument::METHOD => {
@@ -281,15 +301,36 @@ fn handle_notification(state: &Shared, jobs: &Sender<PathBuf>, opts: &InitOption
         // another tool, a checkout. Its set, if validated or open, again.
         DidChangeWatchedFiles::METHOD => {
             let Ok(p) = serde_json::from_value::<lsp_types::DidChangeWatchedFilesParams>(n.params) else { return };
-            let dirs: HashSet<PathBuf> = p
+            let keys: HashSet<SetKey> = p
                 .changes
                 .iter()
-                .filter_map(|c| c.uri.to_file_path().ok()?.parent().map(PathBuf::from))
-                .filter(|d| st.sets.contains_key(d) || st.docs.keys().any(|u| u.to_file_path().ok().and_then(|p| p.parent().map(PathBuf::from)).as_ref() == Some(d)))
+                .filter_map(|c| st.key_of(&c.uri.to_file_path().ok()?))
+                .filter(|k| st.sets.contains_key(k) || st.docs.keys().any(|u| u.to_file_path().ok().and_then(|p| st.key_of(&p)).as_ref() == Some(k)))
                 .collect();
-            for dir in dirs {
-                jobs.send(dir).ok();
+            for key in keys {
+                jobs.send(key).ok();
             }
+        }
+        // The files chosen as one set: it, and every directory they left or
+        // joined it from, validated anew; with none, the chosen set dropped.
+        SET_FILES => {
+            #[derive(serde::Deserialize)]
+            struct Params {
+                files: Vec<Url>,
+            }
+            let Ok(p) = serde_json::from_value::<Params>(n.params) else { return };
+            let mut chosen: Vec<PathBuf> = p.files.iter().filter_map(|u| u.to_file_path().ok()).collect();
+            chosen.sort();
+            chosen.dedup();
+            if chosen == st.chosen {
+                return;
+            }
+            let dirs: HashSet<PathBuf> = st.chosen.iter().chain(&chosen).filter_map(|f| f.parent().map(PathBuf::from)).collect();
+            st.chosen = chosen;
+            for dir in dirs {
+                jobs.send(SetKey::Dir(dir)).ok();
+            }
+            jobs.send(SetKey::Chosen).ok();
         }
         _ => {}
     }
@@ -308,7 +349,7 @@ fn apply_change(text: &mut String, change: TextDocumentContentChangeEvent) {
     }
 }
 
-fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Response {
+fn handle_request(state: &Shared, jobs: &Sender<SetKey>, req: Request) -> Response {
     let id = req.id.clone();
     let result = match req.method.as_str() {
         HoverRequest::METHOD => with_params::<lsp_types::HoverParams, _>(req, state, |p| {
@@ -430,7 +471,7 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
             };
             let set = p.uri.to_file_path().ok().and_then(|f| {
                 let st = state.lock().unwrap();
-                f.parent().and_then(|d| st.sets.get(d)).cloned()
+                st.set_of(&f)
             });
             Ok(set.and_then(|s| s.grid.reroute_json(&p.id, &p.layout)).unwrap_or(serde_json::Value::Null))
         }
@@ -596,7 +637,7 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
             };
             let set = p.uri.to_file_path().ok().and_then(|f| {
                 let st = state.lock().unwrap();
-                f.parent().and_then(|d| st.sets.get(d)).cloned()
+                st.set_of(&f)
             });
             Ok(set.map_or(serde_json::Value::Null, |s| {
                 let mut grid = s.grid.json(&*s);
@@ -616,7 +657,7 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
             };
             let set = p.uri.to_file_path().ok().and_then(|f| {
                 let st = state.lock().unwrap();
-                f.parent().and_then(|d| st.sets.get(d)).cloned()
+                st.set_of(&f)
             });
             Ok(set.and_then(|s| s.grid.inside_json(&*s, &p.id)).unwrap_or(serde_json::Value::Null))
         }
@@ -635,7 +676,7 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
             };
             let set = p.uri.to_file_path().ok().and_then(|f| {
                 let st = state.lock().unwrap();
-                f.parent().and_then(|d| st.sets.get(d)).cloned()
+                st.set_of(&f)
             });
             Ok(set.and_then(|s| s.tree.children_json(&*s, &s.grid, p.key.as_deref(), p.only_findings)).unwrap_or(serde_json::Value::Null))
         }
@@ -651,7 +692,7 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
             };
             let set = p.uri.to_file_path().ok().and_then(|f| {
                 let st = state.lock().unwrap();
-                f.parent().and_then(|d| st.sets.get(d)).cloned()
+                st.set_of(&f)
             });
             let hits = set.map(|s| {
                 s.tree
@@ -680,7 +721,7 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
             };
             let set = p.uri.to_file_path().ok().and_then(|f| {
                 let st = state.lock().unwrap();
-                f.parent().and_then(|d| st.sets.get(d)).cloned()
+                st.set_of(&f)
             });
             let found = set.and_then(|s| s.tree.path(&p.id, p.only_findings)).map(|keys| serde_json::json!({ "id": p.id, "keys": keys }));
             Ok(found.unwrap_or(serde_json::Value::Null))
@@ -716,24 +757,24 @@ fn handle_request(state: &Shared, jobs: &Sender<PathBuf>, req: Request) -> Respo
 /// `cimoxide.revalidate [uri]`: the set of the given document, else of
 /// every open CIM document. The given one need not be open: VS Code hands no
 /// file over 50 MB to an extension, so the client asks for its set by name.
-fn revalidate(state: &Shared, jobs: &Sender<PathBuf>, args: &[serde_json::Value]) {
+fn revalidate(state: &Shared, jobs: &Sender<SetKey>, args: &[serde_json::Value]) {
     let st = state.lock().unwrap();
     let wanted: Option<Url> = args.first().and_then(|a| a.as_str()).and_then(|s| Url::parse(s).ok());
     if let Some(w) = &wanted
         && !st.docs.contains_key(w)
-        && let Some(dir) = w.to_file_path().ok().and_then(|p| p.parent().map(PathBuf::from))
+        && let Some(key) = w.to_file_path().ok().and_then(|p| st.key_of(&p))
     {
-        jobs.send(dir).ok();
+        jobs.send(key).ok();
         return;
     }
-    let dirs: HashSet<PathBuf> = st
+    let keys: HashSet<SetKey> = st
         .docs
         .iter()
         .filter(|(url, _)| wanted.as_ref().is_none_or(|w| w == *url))
-        .filter_map(|(url, doc)| set_dir(url, &doc.text))
+        .filter_map(|(url, doc)| set_key(&st, url, &doc.text))
         .collect();
-    for dir in dirs {
-        jobs.send(dir).ok();
+    for key in keys {
+        jobs.send(key).ok();
     }
 }
 
@@ -760,7 +801,7 @@ where
         let set = url
             .to_file_path()
             .ok()
-            .and_then(|p| p.parent().and_then(|d| st.sets.get(d)).cloned());
+            .and_then(|p| st.set_of(&p));
         (doc.text.clone(), doc.built.clone(), set)
     };
     if !index::is_cim(&text) {
@@ -922,10 +963,10 @@ fn with_set_files<R>(state: &Shared, url: &Url, f: impl FnOnce(&ModelSet, &[edit
         Open(Built),
         Disk(LineIndex, Option<Index>),
     }
-    let dir = url.to_file_path().ok()?.parent()?.to_path_buf();
+    let path = url.to_file_path().ok()?;
     let (set, held) = {
         let st = state.lock().unwrap();
-        let set = st.sets.get(&dir)?.clone();
+        let set = st.set_of(&path)?;
         let held: Vec<(Arc<str>, Option<Built>)> = set
             .files
             .iter()
@@ -969,45 +1010,58 @@ fn with_set_files<R>(state: &Shared, url: &Url, f: impl FnOnce(&ModelSet, &[edit
 
 /// Validate model sets as they are asked for. Requests arriving within
 /// [`DEBOUNCE`] of each other are gathered, and each set runs once.
-fn validate_loop(queue: &Receiver<PathBuf>, state: &Shared, sender: &Sender<Message>, opts: &Options) {
+fn validate_loop(queue: &Receiver<SetKey>, state: &Shared, sender: &Sender<Message>, opts: &Options) {
     // What was last published for each set, to clear files that left it.
-    let mut published: HashMap<PathBuf, Vec<Url>> = HashMap::new();
+    let mut published: HashMap<SetKey, Vec<Url>> = HashMap::new();
     while let Ok(first) = queue.recv() {
-        let mut dirs = vec![first];
+        let mut keys = vec![first];
         loop {
             match queue.recv_timeout(DEBOUNCE) {
-                Ok(d) => {
-                    if !dirs.contains(&d) {
-                        dirs.push(d);
+                Ok(k) => {
+                    if !keys.contains(&k) {
+                        keys.push(k);
                     }
                 }
                 Err(RecvTimeoutError::Timeout) => break,
                 Err(RecvTimeoutError::Disconnected) => return,
             }
         }
-        for dir in dirs {
-            let open: HashMap<PathBuf, Arc<str>> = {
+        for key in keys {
+            let (open, chosen) = {
                 let st = state.lock().unwrap();
-                st.docs.iter().filter_map(|(u, d)| Some((u.to_file_path().ok()?, d.text.clone()))).collect()
+                let open: HashMap<PathBuf, Arc<str>> = st.docs.iter().filter_map(|(u, d)| Some((u.to_file_path().ok()?, d.text.clone()))).collect();
+                (open, st.chosen.clone())
             };
             let started = Instant::now();
-            let files = validate::collect(&dir, &open);
+            let files = validate::collect(&key, &chosen, &open);
+            // A file that left this set for another keeps what that set publishes.
+            let elsewhere = |url: &Url| url.to_file_path().ok().and_then(|p| SetKey::of(&p, &chosen)).is_some_and(|k| k != key);
+            if key == SetKey::Chosen && chosen.is_empty() {
+                for stale in published.remove(&key).unwrap_or_default().into_iter().filter(|u| !elsewhere(u)) {
+                    publish(sender, stale, Vec::new());
+                }
+                state.lock().unwrap().sets.remove(&key);
+                continue;
+            }
             let (set, diags) = validate::validate(&files, opts);
             let findings: usize = diags.iter().map(|(_, d)| d.len()).sum();
 
             let urls: Vec<Url> = diags.iter().map(|(u, _)| u.clone()).collect();
-            for stale in published.remove(&dir).unwrap_or_default().into_iter().filter(|u| !urls.contains(u)) {
+            for stale in published.remove(&key).unwrap_or_default().into_iter().filter(|u| !urls.contains(u) && !elsewhere(u)) {
                 publish(sender, stale, Vec::new());
             }
             for (url, d) in diags {
                 publish(sender, url, d);
             }
-            published.insert(dir.clone(), urls);
+            published.insert(key.clone(), urls);
             log(sender, format!(
                 "validated {} file(s) in {} in {:.1?}: {findings} finding(s)",
-                files.len(), dir.display(), started.elapsed(),
+                files.len(), key.name(), started.elapsed(),
             ));
-            state.lock().unwrap().sets.insert(dir, Arc::new(set));
+            if key == SetKey::Chosen && files.len() < chosen.len() {
+                log(sender, format!("{} of the files chosen could not be read or are not CIM", chosen.len() - files.len()));
+            }
+            state.lock().unwrap().sets.insert(key, Arc::new(set));
         }
     }
 }

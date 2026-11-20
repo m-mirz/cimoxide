@@ -3,7 +3,9 @@
 //! A CGMES model is several files — EQ, SSH, SV, TP, … — and cross-profile
 //! rules need all of them, so the unit of validation is a *model set*: every
 //! CIM RDF/XML file in one directory, which is how the CGMES test
-//! configurations and most exchanges are laid out. The set runs through
+//! configurations and most exchanges are laid out; or the files the user
+//! chose, from any directories ([`SetKey::Chosen`]), which then belong to no
+//! directory's set. The set runs through
 //! [`cimvalidation::validate_files`], exactly as `cimox validate` does, and
 //! each finding is placed on the file it was found in, or for one found on
 //! the merged set, on every file that writes its object.
@@ -81,23 +83,60 @@ impl cimview::Locations for ModelSet {
     }
 }
 
-/// The CIM files of `dir`, in name order, with open buffers in place of
-/// what is on disk.
-pub fn collect(dir: &Path, open: &HashMap<PathBuf, Arc<str>>) -> Vec<(PathBuf, Arc<str>)> {
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("xml")) && p.is_file())
-        .collect();
-    // An open buffer not yet saved to this directory still belongs to it.
-    for p in open.keys() {
-        if p.parent() == Some(dir) && !paths.contains(p) {
-            paths.push(p.clone());
+/// Which model set a file belongs to.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SetKey {
+    /// The CIM files of a directory, less those chosen.
+    Dir(PathBuf),
+    /// The files the user chose, wherever they are.
+    Chosen,
+}
+
+impl SetKey {
+    /// The set of file `path`: the chosen one if it is among `chosen`, else its directory's.
+    pub fn of(path: &Path, chosen: &[PathBuf]) -> Option<SetKey> {
+        if chosen.iter().any(|c| c == path) {
+            Some(SetKey::Chosen)
+        } else {
+            path.parent().map(|d| SetKey::Dir(d.to_path_buf()))
         }
     }
+
+    /// What the set is called in the log: its directory, or the files chosen.
+    pub fn name(&self) -> String {
+        match self {
+            SetKey::Dir(d) => d.display().to_string(),
+            SetKey::Chosen => "the files chosen".into(),
+        }
+    }
+}
+
+/// The CIM files of set `key`, in name order, with open buffers in place of
+/// what is on disk: a directory's, less those `chosen`; or the chosen ones,
+/// those that cannot be read or are not CIM left out.
+pub fn collect(key: &SetKey, chosen: &[PathBuf], open: &HashMap<PathBuf, Arc<str>>) -> Vec<(PathBuf, Arc<str>)> {
+    let mut paths: Vec<PathBuf> = match key {
+        SetKey::Chosen => chosen.to_vec(),
+        SetKey::Dir(dir) => {
+            let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("xml")) && p.is_file())
+                .collect();
+            // An open buffer not yet saved to this directory still belongs to it.
+            for p in open.keys() {
+                if p.parent() == Some(dir.as_path()) && !paths.contains(p) {
+                    paths.push(p.clone());
+                }
+            }
+            paths.retain(|p| !chosen.contains(p));
+            paths
+        }
+    };
     paths.sort();
+    paths.dedup();
     paths
         .into_iter()
         .filter_map(|p| {
@@ -277,6 +316,42 @@ mod tests {
 {body}
 </rdf:RDF>"##
         ))
+    }
+
+    /// A file chosen belongs to the chosen set; the rest of its directory, and
+    /// every other file, to its directory's.
+    #[test]
+    fn a_file_chosen_leaves_its_directorys_set() {
+        let chosen = [PathBuf::from("/a/eq.xml"), PathBuf::from("/b/bd.xml")];
+        assert_eq!(SetKey::of(Path::new("/a/eq.xml"), &chosen), Some(SetKey::Chosen));
+        assert_eq!(SetKey::of(Path::new("/b/bd.xml"), &chosen), Some(SetKey::Chosen));
+        assert_eq!(SetKey::of(Path::new("/a/ssh.xml"), &chosen), Some(SetKey::Dir(PathBuf::from("/a"))));
+        assert_eq!(SetKey::of(Path::new("/a/eq.xml"), &[]), Some(SetKey::Dir(PathBuf::from("/a"))));
+    }
+
+    /// The chosen set holds the files chosen, from any directory, open buffers
+    /// first; a directory's set its other files.
+    #[test]
+    fn the_chosen_set_and_a_directorys_set_split_its_files() {
+        let root = std::env::temp_dir().join(format!("cimlsp-sets-{}", std::process::id()));
+        let (a, b) = (root.join("a"), root.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let eq = doc("CoreEquipment-EU", "");
+        for p in [a.join("eq.xml"), a.join("ssh.xml"), b.join("bd.xml")] {
+            std::fs::write(&p, &*eq).unwrap();
+        }
+        std::fs::write(a.join("notes.xml"), "<notes/>").unwrap();
+        let chosen = vec![b.join("bd.xml"), a.join("eq.xml"), root.join("gone.xml")];
+        let open = HashMap::from([(a.join("eq.xml"), Arc::from(&*doc("Open", "")))]);
+        let names = |files: Vec<(PathBuf, Arc<str>)>| files.into_iter().map(|(p, t)| (p, t.contains("Open"))).collect::<Vec<_>>();
+        // Chosen: in name order, the open buffer's text, what is missing left out.
+        assert_eq!(names(collect(&SetKey::Chosen, &chosen, &open)), [(a.join("eq.xml"), true), (b.join("bd.xml"), false)]);
+        // Its directory: what is left, not CIM left out.
+        assert_eq!(names(collect(&SetKey::Dir(a.clone()), &chosen, &open)), [(a.join("ssh.xml"), false)]);
+        // Nothing chosen: the whole directory again.
+        assert_eq!(collect(&SetKey::Dir(a.clone()), &[], &HashMap::new()).len(), 2);
+        std::fs::remove_dir_all(&root).ok();
     }
 
     /// The views' locations: the file of an object's `rdf:ID`, with its range.

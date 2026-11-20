@@ -7,9 +7,12 @@
 //! ignores notifications. Requests are handled one at a time, in order. The
 //! tools ([`tools`]) read; `export` and `edit` write a file, inside the workspace.
 //!
-//! `cimmcp [--dir <path>]`: `--dir` (else `CIMOXIDE_MODEL_DIR`, else the
-//! working directory) is where relative `path` arguments resolve and what a
-//! tool reads when given none. RDFS and SHACL directories come from
+//! `cimmcp [--dir <path>] [--set-file <path>]`: `--dir` (else
+//! `CIMOXIDE_MODEL_DIR`, else the working directory) is where relative `path`
+//! arguments resolve and what a tool reads when given none. `--set-file`
+//! names a JSON file, `{ "files": [path] }`, listing the set a tool reads
+//! instead when given neither `path` nor `files`: the model set chosen in an
+//! editor, which VS Code's extension keeps there. It is read on every call. RDFS and SHACL directories come from
 //! `CIMOXIDE_RDFS_DIR` / `CIMOXIDE_SHACL_DIR`, as for `cimox`.
 
 mod session;
@@ -49,16 +52,18 @@ then `summary`.
 
 fn main() {
     let mut dir: Option<PathBuf> = None;
+    let mut set_file: Option<PathBuf> = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--dir" => dir = args.next().map(PathBuf::from),
+            "--set-file" => set_file = args.next().map(PathBuf::from),
             "--version" | "-V" => {
                 println!("cimmcp {}", env!("CARGO_PKG_VERSION"));
                 return;
             }
             _ => {
-                eprintln!("usage: cimmcp [--dir <model directory>]");
+                eprintln!("usage: cimmcp [--dir <model directory>] [--set-file <JSON file listing the default set>]");
                 eprintln!("An MCP server over stdio; an MCP client starts it.");
                 std::process::exit(1);
             }
@@ -68,7 +73,7 @@ fn main() {
         .or_else(|| std::env::var_os("CIMOXIDE_MODEL_DIR").filter(|v| !v.is_empty()).map(PathBuf::from))
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| PathBuf::from("."));
-    let mut session = Session::new(dir);
+    let mut session = Session::new(dir, set_file);
 
     let stdin = std::io::stdin();
     let mut out = std::io::stdout().lock();

@@ -47,6 +47,32 @@
         "icon": "$(type-hierarchy)"
       },
       {
+        "command": "cimoxide.modelSet.choose",
+        "title": "Choose model set files…",
+        "category": "cimoxide",
+        "icon": "$(files)"
+      },
+      {
+        "command": "cimoxide.modelSet.add",
+        "title": "Add files to the model set…",
+        "category": "cimoxide"
+      },
+      {
+        "command": "cimoxide.modelSet.clear",
+        "title": "Use folders as model sets again",
+        "category": "cimoxide"
+      },
+      {
+        "command": "cimoxide.modelSet.use",
+        "title": "Use as CIM model set",
+        "category": "cimoxide"
+      },
+      {
+        "command": "cimoxide.modelSet.menu",
+        "title": "Model set chosen…",
+        "category": "cimoxide"
+      },
+      {
         "command": "cimoxide.restartServer",
         "title": "Restart language server",
         "category": "cimoxide"
@@ -153,7 +179,7 @@
     "viewsWelcome": [
       {
         "view": "cimoxide.model",
-        "contents": "No model set yet: open a CGMES or NC file. Its model set (every CIM file in its directory) is listed here once validated: by region, substation and voltage level, by area and by class, each object with its findings."
+        "contents": "No model set yet: open a CGMES or NC file. Its model set (every CIM file in its directory) is listed here once validated: by region, substation and voltage level, by area and by class, each object with its findings.\n[Choose model set files](command:cimoxide.modelSet.choose) to make a set of files from any folders instead."
       }
     ],
     "menus": {
@@ -164,7 +190,19 @@
           "group": "navigation"
         }
       ],
+      "explorer/context": [
+        {
+          "command": "cimoxide.modelSet.use",
+          "when": "resourceExtname == .xml",
+          "group": "cimoxide@1"
+        }
+      ],
       "view/title": [
+        {
+          "command": "cimoxide.modelSet.choose",
+          "when": "view == cimoxide.model",
+          "group": "navigation@1"
+        },
         {
           "command": "cimoxide.model.search",
           "when": "view == cimoxide.model",
@@ -239,6 +277,10 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "cimoxide.modelSet.use",
+          "when": "false"
+        },
         {
           "command": "cimoxide.model.onlyFindings",
           "when": "false"

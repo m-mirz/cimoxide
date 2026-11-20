@@ -104,16 +104,36 @@ impl ModelSet {
 }
 
 pub struct Session {
-    /// Where relative paths resolve; the set a tool reads when given none.
+    /// Where relative paths resolve; the set a tool reads when given none,
+    /// unless `set_file` lists one.
     pub base: PathBuf,
+    /// A JSON file, `{ "files": [path] }`, listing the set a tool reads when
+    /// given neither `path` nor `files`: the model set an editor's user
+    /// chose. Read on every call, so a change applies without a restart; an
+    /// absent file, or an empty list, leaves `base`.
+    set_file: Option<PathBuf>,
     /// Keyed by the paths named, resolved.
     sets: HashMap<Vec<PathBuf>, ModelSet>,
 }
 
 impl Session {
-    pub fn new(base: PathBuf) -> Self {
+    pub fn new(base: PathBuf, set_file: Option<PathBuf>) -> Self {
         let base = base.canonicalize().unwrap_or(base);
-        Self { base, sets: HashMap::new() }
+        Self { base, set_file, sets: HashMap::new() }
+    }
+
+    /// The files `set_file` lists now; none without one.
+    fn chosen(&self) -> Vec<String> {
+        let listed = self
+            .set_file
+            .as_ref()
+            .and_then(|f| std::fs::read_to_string(f).ok())
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
+        listed
+            .as_ref()
+            .and_then(|v| v["files"].as_array())
+            .map(|files| files.iter().filter_map(|f| f.as_str().map(str::to_string)).collect())
+            .unwrap_or_default()
     }
 
     /// `path` against the base directory.
@@ -141,6 +161,9 @@ impl Session {
     /// directory standing for its CIM files, merged in the order given),
     /// decoded if new or changed since.
     pub fn model_set(&mut self, path: Option<&str>, files: &[String]) -> Result<&mut ModelSet, String> {
+        // Given neither, the set the editor's user chose, if any.
+        let chosen = if files.is_empty() && path.is_none_or(|p| p.trim().is_empty()) { self.chosen() } else { Vec::new() };
+        let files = if chosen.is_empty() { files } else { &chosen };
         let listed: Vec<&str> = files.iter().map(|f| f.trim()).filter(|f| !f.is_empty()).collect();
         let (key, root, name, files) = if listed.is_empty() {
             let root = self.resolve(path);
