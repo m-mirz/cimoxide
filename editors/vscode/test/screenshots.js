@@ -1,6 +1,6 @@
 // Takes the README's screenshots: `npm run screenshots`. Runs
 // test/screenshots.ts in VS Code with this extension, on a copy of MicroGrid
-// (the tree, a finding, a hover, a deletion previewed, inside a substation, a
+// (the tree, a finding, a hover, inside a substation, a
 // quick fix) and of RealGrid (the grid), and writes 2x PNGs into screenshots/,
 // reduced to 256 colours. On Linux VS Code renders headless; elsewhere a window
 // opens. CIMOXIDE_SHOTS_TAKE names the shots to retake
@@ -35,7 +35,7 @@ const settings = {
 
 /** Each session: a model set, named as the grid's title shows it, its file to open, the shots taken on it. */
 const sessions = [
-  { name: "MicroGrid", data: "MicroGrid/MicroGid-BaseCase/MicroGrid-BaseCase-Merged", main: "_BE_EQ_", shots: "model-tree,validation,hover,delete-preview,grid-substation,quick-fix" },
+  { name: "MicroGrid", data: "MicroGrid/MicroGid-BaseCase/MicroGrid-BaseCase-Merged", main: "_BE_EQ_", shots: "model-tree,validation,hover,grid-substation,quick-fix" },
   // Its EQ file is over 50 MB, which VS Code keeps from extensions: the SSH file is opened.
   { name: "RealGrid", data: "RealGrid/RealGrid-Merged", main: "RealGrid_SSH", shots: "grid-realgrid" },
 ];

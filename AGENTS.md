@@ -268,8 +268,9 @@ the tree's alone (`cimoxide/delete`, `cimoxide/add`), *Fix…*, *Rename mRID…*
 deleting are text edits over the set's files as they are now: an open
 buffer, else the file on disk with the set's index of it (`cimview::edit`, files named by their URLs,
 which `src/edit.rs` makes LSP workspace edits of). An mRID is the end of
-the value written, so only that suffix is replaced; a deletion takes whole lines and is annotated
-`needsConfirmation`, so the client previews it. The tree's *Fix…* and *Rename mRID…* go through
+the value written, so only that suffix is replaced; a deletion takes whole lines; the extension asks once
+(a modal with the counts), makes it and saves every file it changed, as one left unsaved would
+leave references to what is gone. The tree's *Fix…* and *Rename mRID…* go through
 `cimoxide/fixes` (the quick fixes' core, `fixes` in `main.rs`, for an object's findings, kept per
 object in `ModelSet::findings`, and `edit::reference_fixes` for references to nothing or to what the
 set lacks, which no finding reports) and `cimoxide/rename`, from the files on disk, so they work where

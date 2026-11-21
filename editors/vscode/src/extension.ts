@@ -155,7 +155,7 @@ export async function activate(context: ExtensionContext): Promise<Api> {
   const modelTree = registerModelTree(context, () => client, set);
   context.subscriptions.push(
     commands.registerCommand("cimoxide.showGrid", (uri?: Uri) => showGrid(context, client, uri)),
-    // After a deletion: the files it changed, open for review.
+    // After an edit across files (a rename): the files it changed, open for review.
     commands.registerCommand("cimoxide.openEdited", (uris: string[]) => openEdited(uris.map((u) => Uri.parse(u)))),
     // After a quick fix adds a field: select its value, to type over; for a
     // reference, list what it can name.
