@@ -24,23 +24,29 @@ fn file(profile: &str, body: &str) -> CimDataset {
 const RULE: &str = "sshn456:RotatingMachine.p-limits";
 
 fn eq() -> CimDataset {
-    file("CoreEquipment-EU", r##"
+    file(
+        "CoreEquipment-EU",
+        r##"
   <cim:ThermalGeneratingUnit rdf:ID="_gu">
     <cim:GeneratingUnit.minOperatingP>0</cim:GeneratingUnit.minOperatingP>
     <cim:GeneratingUnit.maxOperatingP>100</cim:GeneratingUnit.maxOperatingP>
   </cim:ThermalGeneratingUnit>
   <cim:SynchronousMachine rdf:ID="_sm">
     <cim:RotatingMachine.GeneratingUnit rdf:resource="#_gu"/>
-  </cim:SynchronousMachine>"##)
+  </cim:SynchronousMachine>"##,
+    )
 }
 
 fn ssh() -> CimDataset {
     // p = 50 in the load convention: the unit consumes 50 MW, below its minimum of 0.
-    file("SteadyStateHypothesis-EU", r##"
+    file(
+        "SteadyStateHypothesis-EU",
+        r##"
   <cim:SynchronousMachine rdf:about="#_sm">
     <cim:Equipment.inService>true</cim:Equipment.inService>
     <cim:RotatingMachine.p>50</cim:RotatingMachine.p>
-  </cim:SynchronousMachine>"##)
+  </cim:SynchronousMachine>"##,
+    )
 }
 
 #[test]
@@ -50,10 +56,18 @@ fn a_rule_reading_eq_and_ssh_sees_both_files() {
     assert!(cfg.not_solved);
 
     let ssh_alone = cimvalidation::validate_profile_local(&files[1], "SSH", &cfg);
-    assert_eq!(ssh_alone.iter().filter(|v| v.rule_id == RULE).count(), 0, "the SSH file holds no limits");
+    assert_eq!(
+        ssh_alone.iter().filter(|v| v.rule_id == RULE).count(),
+        0,
+        "the SSH file holds no limits"
+    );
 
     let all = cimvalidation::validate_files(files, &cfg);
-    assert_eq!(all.iter().filter(|v| v.rule_id == RULE).count(), 1, "{all:#?}");
+    assert_eq!(
+        all.iter().filter(|v| v.rule_id == RULE).count(),
+        1,
+        "{all:#?}"
+    );
 }
 
 /// Merged, the equipment is typed both `ACLineSegment` (EQ) and `Equipment`
@@ -61,23 +75,40 @@ fn a_rule_reading_eq_and_ssh_sees_both_files() {
 /// holds: one of its types is one.
 #[test]
 fn a_merged_object_carries_every_type_it_was_written_under() {
-    let eq = file("CoreEquipment-EU", r##"
-  <cim:ACLineSegment rdf:ID="_line"/>"##);
-    let ssh = file("SteadyStateHypothesis-EU", r##"
+    let eq = file(
+        "CoreEquipment-EU",
+        r##"
+  <cim:ACLineSegment rdf:ID="_line"/>"##,
+    );
+    let ssh = file(
+        "SteadyStateHypothesis-EU",
+        r##"
   <cim:Equipment rdf:about="#_line">
     <cim:Equipment.inService>true</cim:Equipment.inService>
-  </cim:Equipment>"##);
-    let sv = file("StateVariables-EU", r##"
+  </cim:Equipment>"##,
+    );
+    let sv = file(
+        "StateVariables-EU",
+        r##"
   <cim:SvStatus rdf:ID="_status">
     <cim:SvStatus.ConductingEquipment rdf:resource="#_line"/>
     <cim:SvStatus.inService>true</cim:SvStatus.inService>
-  </cim:SvStatus>"##);
+  </cim:SvStatus>"##,
+    );
     let mut merged = CimDataset::new();
     for ds in [ssh, eq, sv] {
         merged.merge(ds);
     }
-    let cfg = cimvalidation::Config { profiles: vec!["SV".into()], solved: true, ..Default::default() };
+    let cfg = cimvalidation::Config {
+        profiles: vec!["SV".into()],
+        solved: true,
+        ..Default::default()
+    };
     let v = cimvalidation::validate_crossprofile_shacl(&merged, &cfg);
     let class_rule = "sv456cpi:SvStatus.ConductingEquipment-valueType";
-    assert_eq!(v.iter().filter(|v| v.rule_id == class_rule).count(), 0, "{v:#?}");
+    assert_eq!(
+        v.iter().filter(|v| v.rule_id == class_rule).count(),
+        0,
+        "{v:#?}"
+    );
 }

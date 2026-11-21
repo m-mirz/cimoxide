@@ -1,6 +1,6 @@
-use cimmodel::CimDataset;
 use super::Fields;
 use crate::Violation;
+use cimmodel::CimDataset;
 
 /// The rules of this profile's constraint files that read another profile's
 /// data, run on the merged dataset (`super::across_groups`).
@@ -18,41 +18,54 @@ pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
 fn check_cs_converter_state_value_range(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     const RECTIFIER: &str = "CsOperatingModeKind.rectifier";
-    const INVERTER:  &str = "CsOperatingModeKind.inverter";
+    const INVERTER: &str = "CsOperatingModeKind.inverter";
 
     for mrid in dataset.by_type.get("CsConverter").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         let obj = match Fields::of_class(entry, "CsConverter") {
-            Some(o) => o, None => continue,
+            Some(o) => o,
+            None => continue,
         };
-        let mode = match obj.enumeration("CsConverter.operatingMode") { Some(r) => r, None => continue };
+        let mode = match obj.enumeration("CsConverter.operatingMode") {
+            Some(r) => r,
+            None => continue,
+        };
 
         if mode == RECTIFIER {
             // The SPARQL binds `$this $PATH ?value`: an absent value is not
             // a violation.
-            if obj.f64("CsConverter.alpha").is_some_and(|alpha| !(10.0..=18.0).contains(&alpha)) {
+            if obj
+                .f64("CsConverter.alpha")
+                .is_some_and(|alpha| !(10.0..=18.0).contains(&alpha))
+            {
                 v.push(Violation {
-                    object_id:   mrid.clone(),
-                    rule_id:     "svu:CsConverter.alpha-valueRangeTypical".into(),
-                    name:        "C:301:SV:CsConverter.alpha:valueRangeTypical".into(),
-                    class:       "CsConverter".into(),
-                    property:    "CsConverter.alpha".into(),
-                    message:     "The alpha value is outside typical range (10-18 degrees) for a rectifier.".into(),
-                    severity:    "sh:Warning".into(),
+                    object_id: mrid.clone(),
+                    rule_id: "svu:CsConverter.alpha-valueRangeTypical".into(),
+                    name: "C:301:SV:CsConverter.alpha:valueRangeTypical".into(),
+                    class: "CsConverter".into(),
+                    property: "CsConverter.alpha".into(),
+                    message:
+                        "The alpha value is outside typical range (10-18 degrees) for a rectifier."
+                            .into(),
+                    severity: "sh:Warning".into(),
                     description: String::new(),
                 });
             }
         } else if mode == INVERTER
-            && obj.f64("CsConverter.gamma").is_some_and(|gamma| !(17.0..=20.0).contains(&gamma))
+            && obj
+                .f64("CsConverter.gamma")
+                .is_some_and(|gamma| !(17.0..=20.0).contains(&gamma))
         {
             v.push(Violation {
-                object_id:   mrid.clone(),
-                rule_id:     "svu:CsConverter.gamma-valueRangeTypical".into(),
-                name:        "C:301:SV:CsConverter.gamma:valueRangeTypical".into(),
-                class:       "CsConverter".into(),
-                property:    "CsConverter.gamma".into(),
-                message:     "The gamma value is outside typical range (17-20 degrees) for an inverter.".into(),
-                severity:    "sh:Warning".into(),
+                object_id: mrid.clone(),
+                rule_id: "svu:CsConverter.gamma-valueRangeTypical".into(),
+                name: "C:301:SV:CsConverter.gamma:valueRangeTypical".into(),
+                class: "CsConverter".into(),
+                property: "CsConverter.gamma".into(),
+                message:
+                    "The gamma value is outside typical range (17-20 degrees) for an inverter."
+                        .into(),
+                severity: "sh:Warning".into(),
                 description: String::new(),
             });
         }
@@ -61,16 +74,19 @@ fn check_cs_converter_state_value_range(dataset: &CimDataset) -> Vec<Violation> 
 }
 
 fn check_topological_island_count(dataset: &CimDataset) -> Vec<Violation> {
-    let count = dataset.by_type.get("TopologicalIsland").map_or(0, |v| v.len());
+    let count = dataset
+        .by_type
+        .get("TopologicalIsland")
+        .map_or(0, |v| v.len());
     if count == 0 {
         vec![Violation {
-            object_id:   "global".into(),
-            rule_id:     "sv456:TopologicalIsland-instance".into(),
-            name:        "C:456:SV:TopologicalIsland:instance".into(),
-            class:       "TopologicalIsland".into(),
-            property:    "^rdf:type".into(),
-            message:     "No TopologicalIsland instantiated.".into(),
-            severity:    "sh:Violation".into(),
+            object_id: "global".into(),
+            rule_id: "sv456:TopologicalIsland-instance".into(),
+            name: "C:456:SV:TopologicalIsland:instance".into(),
+            class: "TopologicalIsland".into(),
+            property: "^rdf:type".into(),
+            message: "No TopologicalIsland instantiated.".into(),
+            severity: "sh:Violation".into(),
             description: String::new(),
         }]
     } else {

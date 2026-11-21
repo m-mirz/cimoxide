@@ -63,14 +63,20 @@ fn main() {
                 return;
             }
             _ => {
-                eprintln!("usage: cimmcp [--dir <model directory>] [--set-file <JSON file listing the default set>]");
+                eprintln!(
+                    "usage: cimmcp [--dir <model directory>] [--set-file <JSON file listing the default set>]"
+                );
                 eprintln!("An MCP server over stdio; an MCP client starts it.");
                 std::process::exit(1);
             }
         }
     }
     let dir = dir
-        .or_else(|| std::env::var_os("CIMOXIDE_MODEL_DIR").filter(|v| !v.is_empty()).map(PathBuf::from))
+        .or_else(|| {
+            std::env::var_os("CIMOXIDE_MODEL_DIR")
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from)
+        })
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| PathBuf::from("."));
     let mut session = Session::new(dir, set_file);
@@ -88,7 +94,9 @@ fn main() {
         };
         if let Some(reply) = reply {
             // serde_json writes no newlines inside a value, so one line is one message.
-            let ok = serde_json::to_writer(&mut out, &reply).is_ok() && writeln!(out).is_ok() && out.flush().is_ok();
+            let ok = serde_json::to_writer(&mut out, &reply).is_ok()
+                && writeln!(out).is_ok()
+                && out.flush().is_ok();
             if !ok {
                 break;
             }
@@ -107,7 +115,9 @@ fn handle(session: &mut Session, msg: &Value) -> Option<Value> {
     let result = match method {
         "initialize" => {
             let asked = params.get("protocolVersion").and_then(Value::as_str);
-            let version = asked.filter(|v| PROTOCOL_VERSIONS.contains(v)).unwrap_or(PROTOCOL_VERSIONS[0]);
+            let version = asked
+                .filter(|v| PROTOCOL_VERSIONS.contains(v))
+                .unwrap_or(PROTOCOL_VERSIONS[0]);
             json!({
                 "protocolVersion": version,
                 "capabilities": { "tools": { "listChanged": false } },
@@ -121,12 +131,19 @@ fn handle(session: &mut Session, msg: &Value) -> Option<Value> {
             let Some(name) = params.get("name").and_then(Value::as_str) else {
                 return Some(error(id, -32602, "tools/call needs a tool name"));
             };
-            let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+            let args = params
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
             match tools::call(session, name, &args) {
                 None => return Some(error(id, -32602, &format!("unknown tool: {name}"))),
                 // A failing tool is a result the model reads, not a protocol error.
-                Some(Ok(text)) => json!({ "content": [{ "type": "text", "text": text }], "isError": false }),
-                Some(Err(text)) => json!({ "content": [{ "type": "text", "text": text }], "isError": true }),
+                Some(Ok(text)) => {
+                    json!({ "content": [{ "type": "text", "text": text }], "isError": false })
+                }
+                Some(Err(text)) => {
+                    json!({ "content": [{ "type": "text", "text": text }], "isError": true })
+                }
             }
         }
         "resources/list" => json!({ "resources": [] }),

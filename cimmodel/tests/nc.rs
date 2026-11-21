@@ -22,7 +22,11 @@ fn nc_elements_bucket_under_qualified_names() {
     keys.sort();
     assert_eq!(
         keys,
-        ["nc:ContingencyEquipment", "nc:Equipment", "nc:OrdinaryContingency"]
+        [
+            "nc:ContingencyEquipment",
+            "nc:Equipment",
+            "nc:OrdinaryContingency"
+        ]
     );
     // The bare CGMES keys must not appear: a consumer looking for CGMES
     // `Equipment` must not see NC's.
@@ -66,7 +70,9 @@ fn nc_inherits_across_namespaces() {
     // nc:OrdinaryContingency extends cim:Contingency, declared in the other
     // NCP namespace.
     let def = bag(&ds, CONTINGENCY).class();
-    let super_idx = def.super_class.expect("OrdinaryContingency has a super class");
+    let super_idx = def
+        .super_class
+        .expect("OrdinaryContingency has a super class");
     let parent = &cimmodel::nc_classes::CLASSES[super_idx];
     assert_eq!(parent.local, "Contingency");
     assert_eq!(parent.ns, "https://cim.ucaiug.io/ns#");
@@ -82,7 +88,9 @@ fn nc_equipment_is_not_cgmes_equipment() {
 
     // ...and the CGMES class of the same bare name is a different class with a
     // different namespace.
-    let cgmes = cimmodel::registry::type_registry().by_type_name("Equipment").expect("CGMES Equipment");
+    let cgmes = cimmodel::registry::type_registry()
+        .by_type_name("Equipment")
+        .expect("CGMES Equipment");
     assert_eq!(cgmes.qualified, "Equipment");
     assert_eq!(cgmes.ns, "http://iec.ch/TC57/CIM100#");
 }

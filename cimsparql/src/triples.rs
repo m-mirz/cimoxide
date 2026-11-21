@@ -28,7 +28,10 @@ pub struct GraphOptions {
 // off `rdf:type` for anyone reaching for `GraphOptions::default()`.
 impl Default for GraphOptions {
     fn default() -> Self {
-        Self { include_types: None, emit_rdf_type: true }
+        Self {
+            include_types: None,
+            emit_rdf_type: true,
+        }
     }
 }
 
@@ -87,7 +90,12 @@ pub fn quads<'a>(
         if opts.emit_rdf_type
             && let Ok(class) = NamedNode::new(iri::type_iri(type_name))
         {
-            out.push(Quad::new(subject.clone(), RDF_TYPE, class, GraphName::DefaultGraph));
+            out.push(Quad::new(
+                subject.clone(),
+                RDF_TYPE,
+                class,
+                GraphName::DefaultGraph,
+            ));
         }
 
         for (key, value) in entry.fields() {
@@ -132,10 +140,12 @@ fn object_term(meta: Option<iri::AttrRdf>, text: &str, ds: &CimDataset) -> Optio
             Literal::new_typed_literal(text, NamedNode::new(m.range).ok()?).into()
         }),
         // The decoder stripped the fragment off enum values; the enum namespace rebuilds it.
-        Some(m) if m.kind == iri::Kind::Enum => {
-            NamedNode::new(format!("{}{text}", m.range)).ok().map(Into::into)
-        }
-        Some(_) => NamedNode::new(iri::reference_iri(text, ds)).ok().map(Into::into),
+        Some(m) if m.kind == iri::Kind::Enum => NamedNode::new(format!("{}{text}", m.range))
+            .ok()
+            .map(Into::into),
+        Some(_) => NamedNode::new(iri::reference_iri(text, ds))
+            .ok()
+            .map(Into::into),
         // Unknown predicate: keep the value rather than dropping it.
         None => Some(Literal::new_simple_literal(text).into()),
     }

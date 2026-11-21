@@ -8,7 +8,7 @@
 //! case is the baseline and every other test names the rule it expects.
 
 use cimmodel::CimDataset;
-use cimvalidation::{validate_nc_profile, Config, Violation};
+use cimvalidation::{Config, Violation, validate_nc_profile};
 
 /// A conforming Contingency dataset: a contingency, the contingency element
 /// that points at it (an `sh:inversePath` rule requires at least one), and the
@@ -73,7 +73,9 @@ fn a_conforming_dataset_reports_nothing() {
 #[test]
 fn closed_shapes_flag_a_property_outside_the_profile() {
     let v = check(
-        &format!("{CONTINGENCY}\n    <nc:Contingency.notInThisProfile>7</nc:Contingency.notInThisProfile>"),
+        &format!(
+            "{CONTINGENCY}\n    <nc:Contingency.notInThisProfile>7</nc:Contingency.notInThisProfile>"
+        ),
         ELEMENT,
     );
     let flagged = by_name(&v, "PropertyNotInProfile");
@@ -94,14 +96,25 @@ fn datatype_is_checked_because_a_bag_holds_text() {
         ELEMENT,
     );
     let flagged = by_name(&v, "Contingency.normalMustStudy-datatype");
-    assert_eq!(flagged.len(), 1, "expected a boolean datatype violation, got {v:#?}");
+    assert_eq!(
+        flagged.len(),
+        1,
+        "expected a boolean datatype violation, got {v:#?}"
+    );
     assert_eq!(flagged[0].severity, "sh:Violation");
 }
 
 #[test]
 fn min_count_flags_a_missing_required_property() {
-    let v = check(r#"    <cim:IdentifiedObject.name>N-1</cim:IdentifiedObject.name>"#, ELEMENT);
-    assert_eq!(by_name(&v, "Contingency.normalMustStudy-cardinality").len(), 1, "{v:#?}");
+    let v = check(
+        r#"    <cim:IdentifiedObject.name>N-1</cim:IdentifiedObject.name>"#,
+        ELEMENT,
+    );
+    assert_eq!(
+        by_name(&v, "Contingency.normalMustStudy-cardinality").len(),
+        1,
+        "{v:#?}"
+    );
 }
 
 /// A bag keeps repeated elements as a `TextList`, so the count is directly
@@ -114,7 +127,11 @@ fn max_count_flags_a_repeated_property() {
     <nc:Contingency.normalMustStudy>true</nc:Contingency.normalMustStudy>"#,
         ELEMENT,
     );
-    assert_eq!(by_name(&v, "IdentifiedObject.name-cardinality").len(), 1, "{v:#?}");
+    assert_eq!(
+        by_name(&v, "IdentifiedObject.name-cardinality").len(),
+        1,
+        "{v:#?}"
+    );
 }
 
 /// An `sh:inversePath` rule: a contingency needs at least one element pointing
@@ -133,10 +150,20 @@ fn inverse_path_counts_what_points_at_an_element() {
     let ds = CimDataset::decode_str(xml).unwrap();
     let v = validate_nc_profile(&ds, "CO", &Config::default());
     let flagged = by_name(&v, "Contingency.ContingencyElement-cardinality");
-    assert_eq!(flagged.len(), 1, "a lone contingency should be flagged, got {v:#?}");
+    assert_eq!(
+        flagged.len(),
+        1,
+        "a lone contingency should be flagged, got {v:#?}"
+    );
 
     // And the same contingency *with* an element is not flagged.
-    assert!(by_name(&check(CONTINGENCY, ELEMENT), "Contingency.ContingencyElement-cardinality").is_empty());
+    assert!(
+        by_name(
+            &check(CONTINGENCY, ELEMENT),
+            "Contingency.ContingencyElement-cardinality"
+        )
+        .is_empty()
+    );
 }
 
 #[test]
@@ -154,8 +181,11 @@ fn enum_values_outside_the_allowed_set_are_flagged() {
         "{v:#?}"
     );
     assert!(
-        by_name(&check(CONTINGENCY, ELEMENT), "ContingencyEquipment.contingentStatus-datatype")
-            .is_empty(),
+        by_name(
+            &check(CONTINGENCY, ELEMENT),
+            "ContingencyEquipment.contingentStatus-datatype"
+        )
+        .is_empty(),
         "the allowed enum value must not be flagged"
     );
 }
@@ -188,10 +218,20 @@ fn ref_type_checks_the_class_of_the_referenced_element() {
 </rdf:RDF>"#;
     let ds = CimDataset::decode_str(xml).unwrap();
     let v = validate_nc_profile(&ds, "CO", &Config::default());
-    assert_eq!(by_name(&v, "ContingencyEquipment.Equipment-valueType").len(), 1, "{v:#?}");
+    assert_eq!(
+        by_name(&v, "ContingencyEquipment.Equipment-valueType").len(),
+        1,
+        "{v:#?}"
+    );
 
     // The conforming dataset points at a CGMES Breaker, which *is* allowed.
-    assert!(by_name(&check(CONTINGENCY, ELEMENT), "ContingencyEquipment.Equipment-valueType").is_empty());
+    assert!(
+        by_name(
+            &check(CONTINGENCY, ELEMENT),
+            "ContingencyEquipment.Equipment-valueType"
+        )
+        .is_empty()
+    );
 }
 
 /// Phase 1 validates one file at a time, so an association pointing out of the
@@ -204,7 +244,10 @@ fn a_reference_outside_the_dataset_is_not_a_value_type_violation() {
         r#"    <cim:ContingencyEquipment.Equipment rdf:resource="urn:uuid:99999999-9999-9999-9999-999999999999"/>
     <cim:ContingencyEquipment.contingentStatus rdf:resource="https://cim.ucaiug.io/ns#ContingencyEquipmentStatusKind.outOfService"/>"#,
     );
-    assert!(by_name(&v, "ContingencyEquipment.Equipment-valueType").is_empty(), "{v:#?}");
+    assert!(
+        by_name(&v, "ContingencyEquipment.Equipment-valueType").is_empty(),
+        "{v:#?}"
+    );
 }
 
 /// A profile that does not import a constraint file must not run its shapes,
@@ -233,7 +276,10 @@ fn cgmes_elements_are_not_validated_as_bags() {
   </cim:Breaker>
 </rdf:RDF>"#;
     let ds = CimDataset::decode_str(xml).unwrap();
-    assert!(ds.by_type.contains_key("Breaker"), "fixture should decode as CGMES");
+    assert!(
+        ds.by_type.contains_key("Breaker"),
+        "fixture should decode as CGMES"
+    );
     for profile in ["CO", "ER", "RA"] {
         assert!(
             validate_nc_profile(&ds, profile, &Config::default()).is_empty(),
@@ -250,7 +296,11 @@ fn the_shape_table_is_populated() {
     assert!(shapes.len() > 1500, "only {} shapes", shapes.len());
     let closed = shapes.iter().filter(|s| s.closed.is_some()).count();
     assert!(closed > 600, "only {closed} closed shapes");
-    let checks: usize = shapes.iter().flat_map(|s| s.props.iter()).map(|p| p.checks.len()).sum();
+    let checks: usize = shapes
+        .iter()
+        .flat_map(|s| s.props.iter())
+        .map(|p| p.checks.len())
+        .sum();
     assert!(checks > 10_000, "only {checks} checks");
 }
 
@@ -276,7 +326,10 @@ fn a_closed_shape_leaves_subclasses_with_their_own_to_them() {
             .collect()
     };
     let gate = classes_of("er:GateInputPin-AllowedProperties");
-    assert!(!gate.contains(&"nc:PinTerminal") && !gate.contains(&"nc:PinDCTerminal"), "{gate:?}");
+    assert!(
+        !gate.contains(&"nc:PinTerminal") && !gate.contains(&"nc:PinDCTerminal"),
+        "{gate:?}"
+    );
     assert!(classes_of("er:PinTerminal-AllowedProperties").contains(&"nc:PinTerminal"));
 }
 
@@ -323,9 +376,18 @@ fn an_unknown_conforms_to_iri_selects_nothing() {
 #[test]
 fn base_and_version_iris_map_to_the_same_code() {
     use cimvalidation::detect::nc_profile_code;
-    assert_eq!(nc_profile_code("https://ap.cim4.eu/Contingency"), Some("CO"));
-    assert_eq!(nc_profile_code("https://ap.cim4.eu/Contingency/2.3"), Some("CO"));
-    assert_eq!(nc_profile_code("https://ap.cim4.eu/RemedialAction/2.5"), Some("RA"));
+    assert_eq!(
+        nc_profile_code("https://ap.cim4.eu/Contingency"),
+        Some("CO")
+    );
+    assert_eq!(
+        nc_profile_code("https://ap.cim4.eu/Contingency/2.3"),
+        Some("CO")
+    );
+    assert_eq!(
+        nc_profile_code("https://ap.cim4.eu/RemedialAction/2.5"),
+        Some("RA")
+    );
     assert_eq!(nc_profile_code("https://example.invalid/x"), None);
 }
 
@@ -350,7 +412,10 @@ fn findings(v: Vec<Violation>) -> Vec<Violation> {
 /// — a dataset declaring conformance to an NC profile must carry P.
 fn fixture_without(property: &str) -> String {
     let xml = std::fs::read_to_string("../testdata/test_nc_CO_002.xml").expect("fixture");
-    xml.lines().filter(|l| !l.contains(property)).collect::<Vec<_>>().join("\n")
+    xml.lines()
+        .filter(|l| !l.contains(property))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[test]
@@ -359,7 +424,11 @@ fn an_nc_dataset_missing_a_required_metadata_property_is_flagged() {
     let v = findings(validate_nc_profile(&ds, "CO", &Config::default()));
     // Both dcat:Dataset elements lost it.
     assert_eq!(by_name(&v, "spatial-NC-cardinality").len(), 2, "{v:#?}");
-    assert_eq!(v.len(), 2, "only the removed property should be reported: {v:#?}");
+    assert_eq!(
+        v.len(),
+        2,
+        "only the removed property should be reported: {v:#?}"
+    );
 }
 
 /// The other branch of the implication: without conformance to an NC profile
@@ -367,8 +436,10 @@ fn an_nc_dataset_missing_a_required_metadata_property_is_flagged() {
 /// detection, so the CO shapes are run explicitly.
 #[test]
 fn the_requirement_applies_only_to_nc_profiles() {
-    let xml = fixture_without("dcterms:spatial")
-        .replace("https://ap.cim4.eu/Contingency/2.3", "https://example.invalid/NotAProfile/1.0");
+    let xml = fixture_without("dcterms:spatial").replace(
+        "https://ap.cim4.eu/Contingency/2.3",
+        "https://example.invalid/NotAProfile/1.0",
+    );
     let ds = CimDataset::decode_str(&xml).expect("decode");
     let v = validate_nc_profile(&ds, "CO", &Config::default());
     assert!(by_name(&v, "spatial-NC-cardinality").is_empty(), "{v:#?}");

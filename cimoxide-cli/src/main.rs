@@ -129,9 +129,15 @@ fn main() {
 
 fn cmd_to_json(xml_files: &[PathBuf], out: Option<&std::path::Path>) {
     let paths: Vec<&std::path::Path> = xml_files.iter().map(PathBuf::as_path).collect();
-    let ds = or_die(cimmodel::CimDataset::decode_files_parallel(&paths), "error decoding XML");
+    let ds = or_die(
+        cimmodel::CimDataset::decode_files_parallel(&paths),
+        "error decoding XML",
+    );
     let json = cimmodel::convert::dataset_to_json(&ds);
-    let text = or_die(serde_json::to_string_pretty(&json), "error serializing JSON");
+    let text = or_die(
+        serde_json::to_string_pretty(&json),
+        "error serializing JSON",
+    );
     write_output(&text, out);
 }
 
@@ -140,10 +146,16 @@ fn cmd_to_xml(json_file: &std::path::Path, out: Option<&std::path::Path>, profil
         std::fs::read_to_string(json_file),
         &format!("error reading {}", json_file.display()),
     );
-    let ds = or_die(cimmodel::convert::dataset_from_json(&src), "error parsing JSON");
+    let ds = or_die(
+        cimmodel::convert::dataset_from_json(&src),
+        "error parsing JSON",
+    );
 
     if profiles.is_empty() {
-        let xml = or_die(cimmodel::convert::dataset_to_xml(&ds), "error generating XML");
+        let xml = or_die(
+            cimmodel::convert::dataset_to_xml(&ds),
+            "error generating XML",
+        );
         write_output(&xml, out);
         return;
     }
@@ -165,7 +177,10 @@ fn cmd_to_xml(json_file: &std::path::Path, out: Option<&std::path::Path>, profil
                 &format!("error generating XML for profile {code}"),
             );
             let path = dir.join(format!("{code}.xml"));
-            or_die(std::fs::write(&path, &xml), &format!("error writing {}", path.display()));
+            or_die(
+                std::fs::write(&path, &xml),
+                &format!("error writing {}", path.display()),
+            );
         }
     } else {
         let code = profiles[0];
@@ -179,7 +194,10 @@ fn cmd_to_xml(json_file: &std::path::Path, out: Option<&std::path::Path>, profil
 
 fn write_output(text: &str, out: Option<&std::path::Path>) {
     match out {
-        Some(path) => or_die(std::fs::write(path, text), &format!("error writing {}", path.display())),
+        Some(path) => or_die(
+            std::fs::write(path, text),
+            &format!("error writing {}", path.display()),
+        ),
         None => print!("{text}"),
     }
 }
@@ -191,7 +209,9 @@ fn cmd_import(args: &[String]) {
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
-            "--json" => { output_json = true; }
+            "--json" => {
+                output_json = true;
+            }
             arg if !arg.starts_with('-') => {
                 input_files.push(PathBuf::from(arg));
             }
@@ -208,7 +228,10 @@ fn cmd_import(args: &[String]) {
         usage();
     }
 
-    struct FileResult { name: String, count: usize }
+    struct FileResult {
+        name: String,
+        count: usize,
+    }
 
     // Decode all files in parallel, collecting per-file counts before merging.
     let paths: Vec<&std::path::Path> = input_files.iter().map(PathBuf::as_path).collect();
@@ -220,34 +243,49 @@ fn cmd_import(args: &[String]) {
     let mut per_file: Vec<FileResult> = Vec::new();
     let mut combined = cimmodel::CimDataset::new();
     for (path, ds) in input_files.iter().zip(datasets) {
-        let name = path.file_name()
+        let name = path
+            .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.display().to_string());
-        per_file.push(FileResult { name, count: ds.entries.len() });
+        per_file.push(FileResult {
+            name,
+            count: ds.entries.len(),
+        });
         combined.merge(ds);
     }
 
     let total = combined.entries.len();
-    let mut type_counts: Vec<(String, usize)> = combined.by_type
+    let mut type_counts: Vec<(String, usize)> = combined
+        .by_type
         .iter()
         .map(|(t, v)| (t.clone(), v.len()))
         .collect();
     type_counts.sort_by(|a, b| a.0.cmp(&b.0));
 
     if output_json {
-        let files_json: Vec<serde_json::Value> = per_file.iter()
+        let files_json: Vec<serde_json::Value> = per_file
+            .iter()
             .map(|f| serde_json::json!({ "file": f.name, "count": f.count }))
             .collect();
-        let type_map: serde_json::Map<String, serde_json::Value> = type_counts.iter()
+        let type_map: serde_json::Map<String, serde_json::Value> = type_counts
+            .iter()
             .map(|(t, n)| (t.clone(), serde_json::Value::from(*n)))
             .collect();
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "total": total,
-            "files": files_json,
-            "type_counts": type_map,
-        })).unwrap());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "total": total,
+                "files": files_json,
+                "type_counts": type_map,
+            }))
+            .unwrap()
+        );
     } else {
-        println!("Total elements: {} (from {} file(s))\n", total, per_file.len());
+        println!(
+            "Total elements: {} (from {} file(s))\n",
+            total,
+            per_file.len()
+        );
         for f in &per_file {
             println!("  {}: {} elements", f.name, f.count);
         }
@@ -275,26 +313,48 @@ fn cmd_validate(args: &[String]) {
         match args[i].as_str() {
             "--profiles" => {
                 i += 1;
-                if i >= args.len() { eprintln!("error: --profiles requires an argument"); usage(); }
+                if i >= args.len() {
+                    eprintln!("error: --profiles requires an argument");
+                    usage();
+                }
                 profiles_override = Some(args[i].split(',').map(str::to_string).collect());
             }
-            "--solved" => { force_solved = true; }
-            "--not-solved" => { force_not_solved = true; }
-            "--common" => { enable_common = true; }
-            "--quality" => { enable_quality = true; }
+            "--solved" => {
+                force_solved = true;
+            }
+            "--not-solved" => {
+                force_not_solved = true;
+            }
+            "--common" => {
+                enable_common = true;
+            }
+            "--quality" => {
+                enable_quality = true;
+            }
             "--silence" => {
                 i += 1;
-                if i >= args.len() { eprintln!("error: --silence requires an argument"); usage(); }
+                if i >= args.len() {
+                    eprintln!("error: --silence requires an argument");
+                    usage();
+                }
                 silenced.extend(args[i].split(',').map(str::to_string));
             }
             "--format" => {
                 i += 1;
-                if i >= args.len() { eprintln!("error: --format requires an argument"); usage(); }
+                if i >= args.len() {
+                    eprintln!("error: --format requires an argument");
+                    usage();
+                }
                 format = match args[i].as_str() {
                     "json" => "json",
                     "text" => "text",
                     "sarif" => "sarif",
-                    other => { eprintln!("error: unknown format '{other}', expected 'text', 'json' or 'sarif'"); usage(); }
+                    other => {
+                        eprintln!(
+                            "error: unknown format '{other}', expected 'text', 'json' or 'sarif'"
+                        );
+                        usage();
+                    }
                 };
             }
             arg if !arg.starts_with('-') => {
@@ -343,32 +403,47 @@ fn cmd_validate(args: &[String]) {
     if format == "sarif" {
         let log = sarif::render(&violations, &input_files);
         let mut out = std::io::BufWriter::new(std::io::stdout().lock());
-        or_die(serde_json::to_writer_pretty(&mut out, &log), "error writing SARIF");
-        or_die(std::io::Write::write_all(&mut out, b"\n"), "error writing SARIF");
+        or_die(
+            serde_json::to_writer_pretty(&mut out, &log),
+            "error writing SARIF",
+        );
+        or_die(
+            std::io::Write::write_all(&mut out, b"\n"),
+            "error writing SARIF",
+        );
     } else if format == "json" {
-        let arr: Vec<serde_json::Value> = violations.iter().map(|v| {
-            serde_json::json!({
-                "object_id": v.object_id,
-                "rule_id":   v.rule_id,
-                "name":      v.name,
-                "class":     v.class,
-                "property":  v.property,
-                "message":   v.message,
-                "severity":  v.severity,
+        let arr: Vec<serde_json::Value> = violations
+            .iter()
+            .map(|v| {
+                serde_json::json!({
+                    "object_id": v.object_id,
+                    "rule_id":   v.rule_id,
+                    "name":      v.name,
+                    "class":     v.class,
+                    "property":  v.property,
+                    "message":   v.message,
+                    "severity":  v.severity,
+                })
             })
-        }).collect();
+            .collect();
         println!("{}", serde_json::to_string_pretty(&arr).unwrap());
     } else if violations.is_empty() {
         println!("No violations found.");
     } else {
         for v in &violations {
-            println!("[{}] {} — {} ({})", v.severity, v.rule_id, v.message, v.object_id);
+            println!(
+                "[{}] {} — {} ({})",
+                v.severity, v.rule_id, v.message, v.object_id
+            );
         }
         // sh:Info is advisory and does not fail the run. NC leans on it
         // heavily — 842 occurrences against CGMES's 7, nearly all of them the
         // sh:closed "property not in profile" rule — so treating every finding
         // as a failure would fail almost every real NC dataset.
-        let failures = violations.iter().filter(|v| v.severity != "sh:Info").count();
+        let failures = violations
+            .iter()
+            .filter(|v| v.severity != "sh:Info")
+            .count();
         let advisory = violations.len() - failures;
         if advisory > 0 {
             eprintln!("{failures} violation(s), {advisory} advisory (sh:Info).");
@@ -419,7 +494,10 @@ fn cmd_query(args: &[String]) {
                 format = match Format::parse(&args[i]) {
                     Some(f) => f,
                     None => {
-                        eprintln!("error: unknown format: {} (want text|json|csv|tsv)", args[i]);
+                        eprintln!(
+                            "error: unknown format: {} (want text|json|csv|tsv)",
+                            args[i]
+                        );
                         process::exit(1);
                     }
                 };
@@ -456,10 +534,16 @@ fn cmd_query(args: &[String]) {
         cimmodel::CimDataset::decode_files_parallel(&paths),
         "error decoding input",
     );
-    let store = or_die(cimsparql::CimStore::from_dataset(&dataset), "error building RDF graph");
+    let store = or_die(
+        cimsparql::CimStore::from_dataset(&dataset),
+        "error building RDF graph",
+    );
     let results = or_die(store.query(&sparql), "query failed");
 
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
-    or_die(cimsparql::format::write(results, format, &mut out), "error writing results");
+    or_die(
+        cimsparql::format::write(results, format, &mut out),
+        "error writing results",
+    );
 }

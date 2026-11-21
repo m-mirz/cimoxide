@@ -1,7 +1,9 @@
 use std::path::Path;
 
 use cimmodel::CimDataset;
-use cimmodel::convert::{dataset_from_json, dataset_to_json, dataset_to_xml, dataset_to_xml_for_profile};
+use cimmodel::convert::{
+    dataset_from_json, dataset_to_json, dataset_to_xml, dataset_to_xml_for_profile,
+};
 
 fn test_xml_path() -> &'static Path {
     Path::new("../testdata/test_003.xml")
@@ -178,7 +180,8 @@ fn profile_sv_does_not_define_topological_node() {
 /// keep them references: SSH does not define that equipment.
 #[test]
 fn smallgrid_ssh_equipment_stays_a_reference() {
-    let ssh = Path::new("../CGMES-Test-Configurations/v3.0/SmallGrid/SmallGrid-Merged/SmallGrid_SSH.xml");
+    let ssh =
+        Path::new("../CGMES-Test-Configurations/v3.0/SmallGrid/SmallGrid-Merged/SmallGrid_SSH.xml");
     if !ssh.exists() {
         return; // skip if the submodule is not checked out
     }
@@ -237,7 +240,8 @@ fn profile_sv_xml_parses_back() {
 #[test]
 fn an_unknown_profile_is_an_error() {
     let ds = CimDataset::decode_file(test_xml_path()).expect("decode failed");
-    let err = dataset_to_xml_for_profile(&ds, "UNKNOWN_PROFILE").expect_err("an unknown code must not export");
+    let err = dataset_to_xml_for_profile(&ds, "UNKNOWN_PROFILE")
+        .expect_err("an unknown code must not export");
     assert!(err.to_string().contains("UNKNOWN_PROFILE"), "{err}");
 }
 
@@ -248,7 +252,9 @@ fn an_unknown_profile_is_an_error() {
 // Model.* fields, whose Model.profile matches PROFILE_URIS["EQ"] exactly.
 
 fn pst_eq_path() -> &'static Path {
-    Path::new("../CGMES-Test-Configurations/v3.0/PST/PST_PhaseTapChangerTable_Type3/PST_Type3_EQ.xml")
+    Path::new(
+        "../CGMES-Test-Configurations/v3.0/PST/PST_PhaseTapChangerTable_Type3/PST_Type3_EQ.xml",
+    )
 }
 
 #[test]
@@ -280,12 +286,21 @@ fn full_model_header_preserved_when_present() {
 }
 
 /// Every property the Header profile makes mandatory (IEC 61970-552, 1..1 or 1..n).
-const MANDATORY_HEADER_FIELDS: [&str; 6] =
-    ["created", "description", "modelingAuthoritySet", "profile", "scenarioTime", "version"];
+const MANDATORY_HEADER_FIELDS: [&str; 6] = [
+    "created",
+    "description",
+    "modelingAuthoritySet",
+    "profile",
+    "scenarioTime",
+    "version",
+];
 
 fn header_of(xml: &str) -> &str {
     let start = xml.find("<md:FullModel").expect("no FullModel header");
-    let end = xml[start..].find("</md:FullModel>").expect("unterminated header") + start;
+    let end = xml[start..]
+        .find("</md:FullModel>")
+        .expect("unterminated header")
+        + start;
     &xml[start..end]
 }
 
@@ -297,11 +312,24 @@ fn assert_valid_header(xml: &str) {
             "header must carry mandatory Model.{field}, got:\n{header}"
         );
     }
-    let urn = header.split("rdf:about=\"").nth(1).and_then(|s| s.split('"').next()).unwrap();
-    let uuid = urn.strip_prefix("urn:uuid:").expect("model id must be a urn:uuid");
+    let urn = header
+        .split("rdf:about=\"")
+        .nth(1)
+        .and_then(|s| s.split('"').next())
+        .unwrap();
+    let uuid = urn
+        .strip_prefix("urn:uuid:")
+        .expect("model id must be a urn:uuid");
     let groups: Vec<usize> = uuid.split('-').map(str::len).collect();
-    assert_eq!(groups, [8, 4, 4, 4, 12], "model id must be a UUID, got {urn}");
-    assert!(uuid.chars().all(|c| c == '-' || c.is_ascii_hexdigit()), "model id must be a UUID, got {urn}");
+    assert_eq!(
+        groups,
+        [8, 4, 4, 4, 12],
+        "model id must be a UUID, got {urn}"
+    );
+    assert!(
+        uuid.chars().all(|c| c == '-' || c.is_ascii_hexdigit()),
+        "model id must be a UUID, got {urn}"
+    );
 }
 
 #[test]
@@ -355,8 +383,16 @@ fn synthesized_header_id_is_deterministic_and_per_profile() {
         let xml = dataset_to_xml_for_profile(&ds, profile).expect("to_xml_for_profile failed");
         header_of(&xml).split('"').nth(1).unwrap().to_string()
     };
-    assert_eq!(id("TP"), id("TP"), "same dataset and profile must give the same model id");
-    assert_ne!(id("TP"), id("SV"), "each profile of a dataset is its own model");
+    assert_eq!(
+        id("TP"),
+        id("TP"),
+        "same dataset and profile must give the same model id"
+    );
+    assert_ne!(
+        id("TP"),
+        id("SV"),
+        "each profile of a dataset is its own model"
+    );
 }
 
 // ── Namespace prefixes and the EQBD profile ──────────────────────────────────
@@ -387,8 +423,14 @@ fn eu_namespace_is_preserved() {
     let ds = decode_eqbd();
     let xml = dataset_to_xml_for_profile(&ds, "EQBD").expect("to_xml_for_profile failed");
 
-    assert!(xml.contains("<eu:BoundaryPoint "), "eu: class prefix lost:\n{xml}");
-    assert!(!xml.contains("<cim:BoundaryPoint "), "eu: class written as cim:");
+    assert!(
+        xml.contains("<eu:BoundaryPoint "),
+        "eu: class prefix lost:\n{xml}"
+    );
+    assert!(
+        !xml.contains("<cim:BoundaryPoint "),
+        "eu: class written as cim:"
+    );
 
     assert!(
         xml.contains("<eu:BoundaryPoint.toEndName>"),
@@ -428,7 +470,10 @@ fn enum_values_are_absolute_iris() {
         "enum value still written as a local fragment"
     );
     // Ordinary MRID references keep the local fragment form.
-    assert!(xml.contains("rdf:resource=\"#"), "MRID references should stay local");
+    assert!(
+        xml.contains("rdf:resource=\"#"),
+        "MRID references should stay local"
+    );
 }
 
 /// EQBD is the dominant origin of no attribute, so the secondary-element rule selected
@@ -451,8 +496,14 @@ fn eqbd_exports_its_elements() {
         ds.by_type.get("BoundaryPoint").map_or(0, Vec::len),
     );
     // Real boundary files define their objects outright — all rdf:ID, no rdf:about.
-    assert!(xml.contains("rdf:ID="), "EQBD elements should be definitions");
-    assert!(!xml.contains("rdf:about=\"#"), "EQBD should not emit references");
+    assert!(
+        xml.contains("rdf:ID="),
+        "EQBD elements should be definitions"
+    );
+    assert!(
+        !xml.contains("rdf:about=\"#"),
+        "EQBD should not emit references"
+    );
 }
 
 /// The EQBD fallback must stay inert for every other profile: they are each the dominant
@@ -461,7 +512,10 @@ fn eqbd_exports_its_elements() {
 fn every_profile_round_trips_its_own_file() {
     let base = Path::new("../CGMES-Test-Configurations/v3.0/FullGrid/FullGrid-Merged");
     if !base.exists() {
-        panic!("missing {} — run `git submodule update --init`", base.display());
+        panic!(
+            "missing {} — run `git submodule update --init`",
+            base.display()
+        );
     }
     for profile in ["EQ", "SSH", "TP", "SV", "OP", "SC", "EQBD"] {
         let path = base.join(format!("FullGrid_{profile}.xml"));
@@ -499,7 +553,8 @@ fn json_hop_exports_identically() {
 // busbar sections, ... SmallGrid has 314 such statements, 5 of them `false`.
 
 fn smallgrid(profile: &str) -> std::path::PathBuf {
-    Path::new("../CGMES-Test-Configurations/v3.0/SmallGrid/SmallGrid-Merged").join(format!("SmallGrid_{profile}.xml"))
+    Path::new("../CGMES-Test-Configurations/v3.0/SmallGrid/SmallGrid-Merged")
+        .join(format!("SmallGrid_{profile}.xml"))
 }
 
 fn in_service_statements(xml: &str) -> Vec<(String, String)> {
@@ -507,7 +562,9 @@ fn in_service_statements(xml: &str) -> Vec<(String, String)> {
         .split("<cim:Equipment rdf:about=\"")
         .skip(1)
         .map(|b| {
-            let id = b[..b.find('"').unwrap()].trim_start_matches('#').to_string();
+            let id = b[..b.find('"').unwrap()]
+                .trim_start_matches('#')
+                .to_string();
             let v = b.split("<cim:Equipment.inService>").nth(1).unwrap();
             (id, v[..v.find('<').unwrap()].to_string())
         })
@@ -529,7 +586,11 @@ fn ssh_keeps_equipment_in_service_of_eq_equipment() {
     let ssh = smallgrid("SSH");
     let ds = CimDataset::decode_files(&[eq.as_path(), ssh.as_path()]).expect("decode failed");
     let xml = dataset_to_xml_for_profile(&ds, "SSH").expect("to_xml_for_profile failed");
-    assert_eq!(in_service_statements(&xml), source, "every statement, with its value, must survive");
+    assert_eq!(
+        in_service_statements(&xml),
+        source,
+        "every statement, with its value, must survive"
+    );
     CimDataset::decode_str(&xml).expect("SSH output must parse");
 }
 

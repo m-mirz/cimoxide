@@ -18,7 +18,9 @@ pub fn generate_rust(
     output_dir: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(output_dir)?;
-    let families: Vec<&CimSpecification> = std::iter::once(spec).chain(others.iter().copied()).collect();
+    let families: Vec<&CimSpecification> = std::iter::once(spec)
+        .chain(others.iter().copied())
+        .collect();
     for f in &families {
         let file = output_dir.join(format!("{}_classes.rs", f.family.id));
         fs::write(file, super::classes_gen::render_classes(f))?;

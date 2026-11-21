@@ -74,7 +74,11 @@ pub fn octilinear(pos: &[(f64, f64)], edges: &[(usize, usize)]) -> Schematic {
         drawn.add(&path);
         for &k in &pairs[&pair] {
             // From the edge's own source to its target.
-            paths[k] = if edges[k].0 == a { path.clone() } else { path.iter().rev().copied().collect() };
+            paths[k] = if edges[k].0 == a {
+                path.clone()
+            } else {
+                path.iter().rev().copied().collect()
+            };
             walked.push(k);
         }
     }
@@ -91,8 +95,15 @@ pub fn octilinear(pos: &[(f64, f64)], edges: &[(usize, usize)]) -> Schematic {
                 (piece(p, q), if p <= q { 1 } else { -1 })
             })
             .collect();
-        let free = |t: i32| pieces.iter().all(|(key, sign)| !sides.get(key).is_some_and(|s| s.contains(&(t * sign))));
-        let track = (0..).flat_map(|i: i32| if i == 0 { vec![0] } else { vec![i, -i] }).find(|&t| free(t)).expect("a free track");
+        let free = |t: i32| {
+            pieces
+                .iter()
+                .all(|(key, sign)| !sides.get(key).is_some_and(|s| s.contains(&(t * sign))))
+        };
+        let track = (0..)
+            .flat_map(|i: i32| if i == 0 { vec![0] } else { vec![i, -i] })
+            .find(|&t| free(t))
+            .expect("a free track");
         for (key, sign) in pieces {
             sides.entry(key).or_default().insert(track * sign);
         }
@@ -100,7 +111,10 @@ pub fn octilinear(pos: &[(f64, f64)], edges: &[(usize, usize)]) -> Schematic {
     }
     Schematic {
         nodes: at.into_iter().map(unit).collect(),
-        routes: paths.into_iter().map(|p| p.into_iter().map(unit).collect()).collect(),
+        routes: paths
+            .into_iter()
+            .map(|p| p.into_iter().map(unit).collect())
+            .collect(),
         tracks,
     }
 }
@@ -125,7 +139,14 @@ fn snap(pos: &[(f64, f64)], edges: &[(usize, usize)]) -> Vec<Point> {
             // The ring around it, then the next, until one has a free point: its nearest.
             'rings: for r in 1i64.. {
                 let mut ring: Vec<Point> = (-r..=r)
-                    .flat_map(|i| [(home.0 + i, home.1 - r), (home.0 + i, home.1 + r), (home.0 - r, home.1 + i), (home.0 + r, home.1 + i)])
+                    .flat_map(|i| {
+                        [
+                            (home.0 + i, home.1 - r),
+                            (home.0 + i, home.1 + r),
+                            (home.0 - r, home.1 + i),
+                            (home.0 + r, home.1 + i),
+                        ]
+                    })
                     .filter(|p| !taken.contains(p))
                     .collect();
                 if ring.is_empty() {
@@ -157,9 +178,16 @@ fn shapes(a: Point, b: Point) -> Vec<Vec<Point>> {
     let m = ax.min(ay);
     let r = ax.max(ay) - m;
     let diagonal = (dx.signum(), dy.signum());
-    let straight = if ax > ay { (dx.signum(), 0) } else { (0, dy.signum()) };
+    let straight = if ax > ay {
+        (dx.signum(), 0)
+    } else {
+        (0, dy.signum())
+    };
     let go = |p: Point, d: Point, n: i64| (p.0 + d.0 * n, p.1 + d.1 * n);
-    let mut out = vec![vec![a, go(a, diagonal, m), b], vec![a, go(a, straight, r), b]];
+    let mut out = vec![
+        vec![a, go(a, diagonal, m), b],
+        vec![a, go(a, straight, r), b],
+    ];
     if r >= 2 {
         let h = go(a, straight, r / 2);
         out.push(vec![a, h, go(h, diagonal, m), b]);
@@ -201,7 +229,12 @@ impl Drawn {
                 cost += SHARED;
             }
             // A diagonal crosses the other diagonal of its square.
-            if d.0 != 0 && d.1 != 0 && self.pieces.contains(&piece((p.0 + d.0, p.1), (p.0, p.1 + d.1))) {
+            if d.0 != 0
+                && d.1 != 0
+                && self
+                    .pieces
+                    .contains(&piece((p.0 + d.0, p.1), (p.0, p.1 + d.1)))
+            {
                 cost += CROSSING;
             }
         }
@@ -227,7 +260,12 @@ fn crossings(routes: &[Vec<(f64, f64)>]) -> usize {
         let mut path = path;
         path.dedup();
         for (p, d) in steps(&path) {
-            if d.0 != 0 && d.1 != 0 && drawn.get(&piece((p.0 + d.0, p.1), (p.0, p.1 + d.1))).is_some_and(|&o| o != k) {
+            if d.0 != 0
+                && d.1 != 0
+                && drawn
+                    .get(&piece((p.0 + d.0, p.1), (p.0, p.1 + d.1)))
+                    .is_some_and(|&o| o != k)
+            {
                 count += 1;
             }
         }
@@ -259,7 +297,11 @@ mod tests {
         let Schematic { nodes, routes, .. } = octilinear(&pos, &edges);
         assert!(octilinear_pieces(&routes), "{routes:?}");
         for (k, &(a, b)) in edges.iter().enumerate() {
-            assert_eq!(routes[k].first(), Some(&nodes[a]), "edge {k} from its source");
+            assert_eq!(
+                routes[k].first(),
+                Some(&nodes[a]),
+                "edge {k} from its source"
+            );
             assert_eq!(routes[k].last(), Some(&nodes[b]), "edge {k} to its target");
             assert!(routes[k].len() <= 4, "at most two bends: {:?}", routes[k]);
         }
@@ -270,9 +312,17 @@ mod tests {
         // Three on top of each other: each its own point, the nearest free ones.
         let pos = [(0.0, 0.0), (0.01, 0.0), (0.0, 0.02), (3.0, 3.0)];
         let Schematic { nodes, .. } = octilinear(&pos, &[(0, 3), (1, 3), (2, 3)]);
-        let distinct: HashSet<(i64, i64)> = nodes.iter().map(|p| ((p.0 * 100.0).round() as i64, (p.1 * 100.0).round() as i64)).collect();
+        let distinct: HashSet<(i64, i64)> = nodes
+            .iter()
+            .map(|p| ((p.0 * 100.0).round() as i64, (p.1 * 100.0).round() as i64))
+            .collect();
         assert_eq!(distinct.len(), 4);
-        assert!(nodes.iter().zip(&pos).all(|(p, q)| (p.0 - q.0).abs() <= 2.0 * STEP && (p.1 - q.1).abs() <= 2.0 * STEP));
+        assert!(
+            nodes
+                .iter()
+                .zip(&pos)
+                .all(|(p, q)| (p.0 - q.0).abs() <= 2.0 * STEP && (p.1 - q.1).abs() <= 2.0 * STEP)
+        );
     }
 
     #[test]
@@ -288,18 +338,33 @@ mod tests {
                 cross.abs() < 1e-9 && within && p != a && p != b
             })
         };
-        assert!(!through(&routes[0], nodes[1]), "{:?} through {:?}", routes[0], nodes[1]);
+        assert!(
+            !through(&routes[0], nodes[1]),
+            "{:?} through {:?}",
+            routes[0],
+            nodes[1]
+        );
     }
 
     #[test]
     fn double_circuits_run_side_by_side() {
         let pos = [(0.0, 0.0), (2.0, 1.0)];
-        let Schematic { nodes, routes, tracks } = octilinear(&pos, &[(0, 1), (1, 0), (0, 1)]);
+        let Schematic {
+            nodes,
+            routes,
+            tracks,
+        } = octilinear(&pos, &[(0, 1), (1, 0), (0, 1)]);
         assert!(octilinear_pieces(&routes), "{routes:?}");
         // One route, three tracks: one each side of the middle one.
         assert_eq!(routes[0], routes[2]);
-        assert_eq!(routes[1], routes[0].iter().rev().copied().collect::<Vec<_>>());
-        assert_eq!(routes[1][0], nodes[1], "the one written the other way round, from its own source");
+        assert_eq!(
+            routes[1],
+            routes[0].iter().rev().copied().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            routes[1][0], nodes[1],
+            "the one written the other way round, from its own source"
+        );
         // The second, walked the other way, on its own left: the first's right; the third on the
         // first's left.
         assert_eq!(tracks, vec![0, 1, 1]);
@@ -310,7 +375,9 @@ mod tests {
         // 0 and 1 both reach 2 along the same diagonal from the left.
         let pos = [(0.0, 0.0), (-1.0, 0.0), (1.5, 1.5)];
         let Schematic { routes, tracks, .. } = octilinear(&pos, &[(0, 2), (1, 2)]);
-        let shared = routes[0].windows(2).any(|w| routes[1].windows(2).any(|v| v == w));
+        let shared = routes[0]
+            .windows(2)
+            .any(|w| routes[1].windows(2).any(|v| v == w));
         if shared {
             assert_ne!(tracks[0], tracks[1], "{routes:?} {tracks:?}");
         }
@@ -319,7 +386,9 @@ mod tests {
 
     #[test]
     fn the_same_grid_the_same_schematic() {
-        let pos: Vec<(f64, f64)> = (0..60).map(|i| (((i * 37) % 23) as f64 * 0.7, ((i * 53) % 19) as f64 * 0.6)).collect();
+        let pos: Vec<(f64, f64)> = (0..60)
+            .map(|i| (((i * 37) % 23) as f64 * 0.7, ((i * 53) % 19) as f64 * 0.6))
+            .collect();
         let edges: Vec<(usize, usize)> = (0..59).map(|i| (i, (i * 7 + 3) % 60)).collect();
         assert_eq!(octilinear(&pos, &edges), octilinear(&pos, &edges));
         let Schematic { routes, .. } = octilinear(&pos, &edges);
@@ -351,19 +420,33 @@ mod shared_count {
     #[ignore]
     fn shared_pieces() {
         for dir in ["SmallGrid/SmallGrid-Merged", "RealGrid/RealGrid-Merged"] {
-            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../CGMES-Test-Configurations/v3.0").join(dir);
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../CGMES-Test-Configurations/v3.0")
+                .join(dir);
             let read = crate::testing::collect(&path);
-            let datasets: Vec<cimmodel::CimDataset> = read.iter().map(|(_, t)| cimmodel::CimDataset::decode_str(t).unwrap()).collect();
+            let datasets: Vec<cimmodel::CimDataset> = read
+                .iter()
+                .map(|(_, t)| cimmodel::CimDataset::decode_str(t).unwrap())
+                .collect();
             let m = crate::grid::Model::new(&datasets);
             let g = crate::grid::build(&m);
             let auto = g.auto.as_ref().unwrap();
-            let mut seen: std::collections::HashMap<((i64, i64), (i64, i64)), (usize, usize)> = std::collections::HashMap::new();
+            let mut seen: std::collections::HashMap<((i64, i64), (i64, i64)), (usize, usize)> =
+                std::collections::HashMap::new();
             let (mut shared, mut total) = (0, 0);
             let mut high = 0;
             for (&k, r) in &auto.edges {
                 let e = &g.edges[k];
                 let pair = (e.source.min(e.target), e.source.max(e.target));
-                let lattice: Vec<(i64, i64)> = r.iter().map(|p| ((p.0 / super::STEP).round() as i64, (p.1 / super::STEP).round() as i64)).collect();
+                let lattice: Vec<(i64, i64)> = r
+                    .iter()
+                    .map(|p| {
+                        (
+                            (p.0 / super::STEP).round() as i64,
+                            (p.1 / super::STEP).round() as i64,
+                        )
+                    })
+                    .collect();
                 for (p, d) in super::steps(&lattice) {
                     let q = (p.0 + d.0, p.1 + d.1);
                     let key = if p <= q { (p, q) } else { (q, p) };
@@ -380,7 +463,9 @@ mod shared_count {
                     }
                 }
             }
-            eprintln!("{dir}: {shared} of {total} unit pieces shared between different pairs, {high} on ≥300 kV lines");
+            eprintln!(
+                "{dir}: {shared} of {total} unit pieces shared between different pairs, {high} on ≥300 kV lines"
+            );
         }
     }
 }

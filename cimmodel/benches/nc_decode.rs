@@ -13,7 +13,7 @@ use std::fmt::Write;
 
 use cimmodel::CimDataset;
 use cimmodel::base::{AttrKind, ClassDef};
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
 const ELEMENTS: usize = 50_000;
 
@@ -86,7 +86,11 @@ fn bench(c: &mut Criterion) {
     // Fail loudly rather than silently measuring a document that decodes to
     // nothing, which is what a prefix or class-name mistake would produce.
     let probe = CimDataset::decode_str(&doc).unwrap();
-    assert_eq!(probe.entries.len(), ELEMENTS, "synthetic NC document did not fully decode");
+    assert_eq!(
+        probe.entries.len(),
+        ELEMENTS,
+        "synthetic NC document did not fully decode"
+    );
 
     let mut group = c.benchmark_group("nc_decode");
     group.throughput(Throughput::Bytes(doc.len() as u64));

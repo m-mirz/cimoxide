@@ -15,10 +15,13 @@ use std::path::{Path, PathBuf};
 use cimschema::family;
 use cimschema::shacl::skip::SkipCollector;
 use cimschema::shacl::{resolve, ttl_import};
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf()
 }
 
 fn shacl_dir() -> PathBuf {
@@ -38,7 +41,11 @@ fn ttl_paths() -> Vec<PathBuf> {
 
 fn bench(c: &mut Criterion) {
     let paths = ttl_paths();
-    let bytes: u64 = paths.iter().filter_map(|p| p.metadata().ok()).map(|m| m.len()).sum();
+    let bytes: u64 = paths
+        .iter()
+        .filter_map(|p| p.metadata().ok())
+        .map(|m| m.len())
+        .sum();
     eprintln!("{} SHACL files, {bytes} bytes", paths.len());
 
     // 1. Turtle parse alone — expected to dominate.
@@ -48,7 +55,10 @@ fn bench(c: &mut Criterion) {
         b.iter(|| {
             let mut n = 0;
             for p in &paths {
-                n += ttl_import::import_ttl_file(p).expect("parse failed").shapes.len();
+                n += ttl_import::import_ttl_file(p)
+                    .expect("parse failed")
+                    .shapes
+                    .len();
             }
             n
         })

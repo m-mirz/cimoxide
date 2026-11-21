@@ -1,5 +1,5 @@
-use std::path::Path;
 use cimmodel::CimDataset;
+use std::path::Path;
 
 const BASE: &str = "../CGMES-Test-Configurations/v3.0/RealGrid/RealGrid-Merged";
 
@@ -13,10 +13,15 @@ fn decode_eq_counts() {
 
 #[test]
 fn decode_and_merge_all() {
-    let files: Vec<std::path::PathBuf> = ["RealGrid_EQ.xml", "RealGrid_SSH.xml", "RealGrid_TP.xml", "RealGrid_SV.xml"]
-        .iter()
-        .map(|f| Path::new(BASE).join(f))
-        .collect();
+    let files: Vec<std::path::PathBuf> = [
+        "RealGrid_EQ.xml",
+        "RealGrid_SSH.xml",
+        "RealGrid_TP.xml",
+        "RealGrid_SV.xml",
+    ]
+    .iter()
+    .map(|f| Path::new(BASE).join(f))
+    .collect();
     let paths: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
     let ds = CimDataset::decode_files(&paths).expect("decode_files failed");
     eprintln!("Merged: {} objects", ds.entries.len());

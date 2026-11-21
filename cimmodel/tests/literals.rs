@@ -49,7 +49,9 @@ fn a_self_closing_reference_is_still_a_reference() {
 
 #[test]
 fn text_split_by_a_comment_or_cdata_is_one_value() {
-    let ds = decode("    <cim:IdentifiedObject.name>Li<!-- x -->ne <![CDATA[<1>]]> &amp; 2</cim:IdentifiedObject.name>");
+    let ds = decode(
+        "    <cim:IdentifiedObject.name>Li<!-- x -->ne <![CDATA[<1>]]> &amp; 2</cim:IdentifiedObject.name>",
+    );
     assert_eq!(text(&ds, "IdentifiedObject.name"), Some("Line <1> & 2"));
 }
 
@@ -57,7 +59,12 @@ fn text_split_by_a_comment_or_cdata_is_one_value() {
 fn a_language_tag_stays_with_an_empty_value() {
     let ds = decode(r#"    <cim:IdentifiedObject.description xml:lang="en"/>"#);
     assert_eq!(text(&ds, "IdentifiedObject.description"), Some(""));
-    assert_eq!(ds.entries["_line"].langs("IdentifiedObject.description").collect::<Vec<_>>(), ["en"]);
+    assert_eq!(
+        ds.entries["_line"]
+            .langs("IdentifiedObject.description")
+            .collect::<Vec<_>>(),
+        ["en"]
+    );
 }
 
 #[test]

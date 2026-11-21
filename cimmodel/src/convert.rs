@@ -4,8 +4,8 @@ use std::fmt::Write as FmtWrite;
 use std::sync::OnceLock;
 
 use crate::CimDataset;
-use crate::base::{Element, FieldValue};
 use crate::base::{AttrKind, Schema};
+use crate::base::{Element, FieldValue};
 use crate::registry::type_registry;
 
 /// Prefix for a class or attribute absent from the generated tables — a third-party
@@ -38,7 +38,9 @@ struct Tables {
 fn tables() -> &'static Tables {
     static T: OnceLock<Tables> = OnceLock::new();
     T.get_or_init(|| {
-        let schema = type_registry().schema("cgmes").expect("the CGMES family is registered");
+        let schema = type_registry()
+            .schema("cgmes")
+            .expect("the CGMES family is registered");
         // The decoder throws namespaces away, so the schema is the only runtime source of
         // them; its classes and attributes draw on exactly the namespaces it binds, so this
         // reverse map is total over them.
@@ -49,7 +51,12 @@ fn tables() -> &'static Tables {
         // An attribute's profiles over every class that declares it, the export's dominant
         // profile first: EQ, then the rest alphabetically.
         let mut attr_origins: HashMap<&'static str, Vec<&'static str>> = HashMap::new();
-        for a in schema.classes.iter().flat_map(|c| c.attrs).filter(|a| a.used) {
+        for a in schema
+            .classes
+            .iter()
+            .flat_map(|c| c.attrs)
+            .filter(|a| a.used)
+        {
             let merged = attr_origins.entry(a.id).or_default();
             for o in a.origins {
                 if !merged.contains(o) {
@@ -67,7 +74,12 @@ fn tables() -> &'static Tables {
             .collect();
 
         let mut attrs: HashMap<&'static str, AttrMeta> = HashMap::new();
-        for a in schema.classes.iter().flat_map(|c| c.attrs).filter(|a| !a.ns.is_empty()) {
+        for a in schema
+            .classes
+            .iter()
+            .flat_map(|c| c.attrs)
+            .filter(|a| !a.ns.is_empty())
+        {
             attrs.entry(a.id).or_insert(AttrMeta {
                 prefix: lookup(a.ns),
                 range: a.value_ns,
@@ -90,8 +102,17 @@ fn tables() -> &'static Tables {
                 .filter(|code| !attr_origins.values().any(|o| o.first() == Some(code)))
                 .collect(),
             attr_origins,
-            type_prefix: schema.classes.iter().map(|c| (c.local, lookup(c.ns))).collect(),
-            type_ns: schema.classes.iter().filter(|c| !c.ns.is_empty()).map(|c| (c.local, c.ns)).collect(),
+            type_prefix: schema
+                .classes
+                .iter()
+                .map(|c| (c.local, lookup(c.ns)))
+                .collect(),
+            type_ns: schema
+                .classes
+                .iter()
+                .filter(|c| !c.ns.is_empty())
+                .map(|c| (c.local, c.ns))
+                .collect(),
             attrs,
         }
     })
@@ -99,7 +120,11 @@ fn tables() -> &'static Tables {
 
 /// XML prefix for a CIM class, e.g. `eu` for `BoundaryPoint`.
 fn prefix_for_type(type_name: &str) -> &'static str {
-    tables().type_prefix.get(type_name).copied().unwrap_or(FALLBACK_PREFIX)
+    tables()
+        .type_prefix
+        .get(type_name)
+        .copied()
+        .unwrap_or(FALLBACK_PREFIX)
 }
 
 /// Namespace IRI of a CIM class, for rebuilding a stripped enum value.
@@ -123,7 +148,11 @@ fn attr_meta(key: &str, type_name: &str) -> Option<AttrMeta> {
 pub fn dataset_to_json(ds: &CimDataset) -> serde_json::Value {
     let mut map = serde_json::Map::new();
     for (mrid, entry) in &ds.entries {
-        let mut obj = entry.to_json_value().as_object().cloned().unwrap_or_default();
+        let mut obj = entry
+            .to_json_value()
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
         obj.insert("_type".into(), entry.type_name().into());
         map.insert(mrid.clone(), serde_json::Value::Object(obj));
     }
@@ -180,8 +209,20 @@ pub(crate) fn write_objects(
 
         let mut children = String::new();
         for (key, val) in fields {
-            let written = ds.field_forms.get(&(type_name, *key)).and_then(|f| f.ns).map(|n| prefixes.of(n));
-            write_field_as(&mut children, key, val, type_name, "#", ds, written.as_deref())?;
+            let written = ds
+                .field_forms
+                .get(&(type_name, *key))
+                .and_then(|f| f.ns)
+                .map(|n| prefixes.of(n));
+            write_field_as(
+                &mut children,
+                key,
+                val,
+                type_name,
+                "#",
+                ds,
+                written.as_deref(),
+            )?;
         }
 
         // A difference header's statements, inside it.
@@ -243,11 +284,19 @@ pub fn dataset_to_xml_for_profile(
     profile_code: &str,
 ) -> Result<String, Box<dyn Error>> {
     let tables = tables();
-    if !tables.schema.profiles.iter().any(|(k, _)| *k == profile_code) {
+    if !tables
+        .schema
+        .profiles
+        .iter()
+        .any(|(k, _)| *k == profile_code)
+    {
         if crate::convert_nc::nc_profile_uri(profile_code).is_some() {
             return crate::convert_nc::dataset_to_xml_for_nc_profile(ds, profile_code);
         }
-        return Err(format!("unknown profile code {profile_code:?}: neither a CGMES nor an NC profile").into());
+        return Err(format!(
+            "unknown profile code {profile_code:?}: neither a CGMES nor an NC profile"
+        )
+        .into());
     }
     let type_map = &tables.type_origins;
     let attr_map = &tables.attr_origins;
@@ -273,14 +322,23 @@ pub fn dataset_to_xml_for_profile(
     // decoded FullModel entry for this profile if the dataset has one (preserves
     // scenarioTime/modelingAuthoritySet/DependentOn/version/etc.), else fall back
     // to a minimal synthetic header.
-    if let Some(&(_, uri)) = tables.schema.profiles.iter().find(|(k, _)| *k == profile_code) {
+    if let Some(&(_, uri)) = tables
+        .schema
+        .profiles
+        .iter()
+        .find(|(k, _)| *k == profile_code)
+    {
         // `md` via the same tables the body uses: the schema puts FullModel and every
         // Model.* field in the ModelDescription namespace. The header keeps only its
         // genuinely different behaviour — `rdf:about` with no `#`, and no fragment on
         // resource references.
         let hdr = prefix_for_type("FullModel");
         if let Some((mrid, block)) = find_full_model_header(ds, uri) {
-            write!(out, "  <{hdr}:FullModel rdf:about=\"{}\">", escape_attr(mrid))?;
+            write!(
+                out,
+                "  <{hdr}:FullModel rdf:about=\"{}\">",
+                escape_attr(mrid)
+            )?;
 
             let mut fields: Vec<(&&'static str, &FieldValue)> = block.fields().iter().collect();
             fields.sort_by_key(|(k, _)| **k);
@@ -333,8 +391,11 @@ pub fn dataset_to_xml_for_profile(
             }
         };
 
-        let mut fields: Vec<(&&'static str, &FieldValue)> =
-            block.fields().iter().filter(|(k, _)| include_field(k)).collect();
+        let mut fields: Vec<(&&'static str, &FieldValue)> = block
+            .fields()
+            .iter()
+            .filter(|(k, _)| include_field(k))
+            .collect();
 
         if fields.is_empty() {
             continue;
@@ -408,22 +469,37 @@ fn write_synthesized_header(
             .filter(|(_, e)| e.type_name() == "FullModel")
             .collect();
         headers.sort_by_key(|(m, _)| m.as_str());
-        headers.into_iter().find_map(|(_, b)| match b.fields().get(format!("Model.{field}").as_str()) {
-            Some(FieldValue::Text(v)) if !v.is_empty() => Some(v.clone()),
-            _ => None,
+        headers.into_iter().find_map(|(_, b)| {
+            match b.fields().get(format!("Model.{field}").as_str()) {
+                Some(FieldValue::Text(v)) if !v.is_empty() => Some(v.clone()),
+                _ => None,
+            }
         })
     };
     let scenario_time = inherited("scenarioTime").unwrap_or_else(|| UNKNOWN_TIME.to_string());
     let created = inherited("created").unwrap_or_else(|| scenario_time.clone());
-    let authority = inherited("modelingAuthoritySet").unwrap_or_else(|| UNKNOWN_AUTHORITY.to_string());
+    let authority =
+        inherited("modelingAuthoritySet").unwrap_or_else(|| UNKNOWN_AUTHORITY.to_string());
 
-    writeln!(out, "  <{hdr}:FullModel rdf:about=\"{}\">", header_urn(ds, profile_code))?;
+    writeln!(
+        out,
+        "  <{hdr}:FullModel rdf:about=\"{}\">",
+        header_urn(ds, profile_code)
+    )?;
     let text = |out: &mut String, field: &str, value: &str| -> std::fmt::Result {
         let p = md(field);
-        writeln!(out, "    <{p}:Model.{field}>{}</{p}:Model.{field}>", escape_text(value))
+        writeln!(
+            out,
+            "    <{p}:Model.{field}>{}</{p}:Model.{field}>",
+            escape_text(value)
+        )
     };
     text(out, "created", &created)?;
-    text(out, "description", &format!("{profile_code} profile, header synthesized by cimoxide"))?;
+    text(
+        out,
+        "description",
+        &format!("{profile_code} profile, header synthesized by cimoxide"),
+    )?;
     text(out, "modelingAuthoritySet", &authority)?;
     text(out, "profile", profile_uri)?;
     text(out, "scenarioTime", &scenario_time)?;
@@ -451,13 +527,23 @@ pub(crate) fn header_urn(ds: &CimDataset, profile_code: &str) -> String {
     b[6] = (b[6] & 0x0f) | 0x50; // version 5
     b[8] = (b[8] & 0x3f) | 0x80; // RFC 4122 variant
     let hex: String = b.iter().map(|x| format!("{x:02x}")).collect();
-    format!("urn:uuid:{}-{}-{}-{}-{}", &hex[0..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..32])
+    format!(
+        "urn:uuid:{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
 }
 
 /// Find the decoded `FullModel` entry (if any) whose `Model.profile` field names
 /// `profile_uri`. If more than one matches, the lexicographically smallest MRID
 /// wins, for deterministic output.
-fn find_full_model_header<'a>(ds: &'a CimDataset, profile_uri: &str) -> Option<(&'a str, &'a Element)> {
+fn find_full_model_header<'a>(
+    ds: &'a CimDataset,
+    profile_uri: &str,
+) -> Option<(&'a str, &'a Element)> {
     let mut best: Option<(&str, &Element)> = None;
     for (mrid, entry) in &ds.entries {
         if entry.type_name() != "FullModel" {
@@ -506,8 +592,12 @@ fn write_carried_fields(
         std::collections::BTreeMap::new();
     for (key, val) in block.fields() {
         let only_here = attr_map.get(*key).is_some_and(|o| *o == [profile_code]);
-        let Some((class, _)) = key.split_once('.') else { continue };
-        let class_in_profile = type_map.get(class).is_some_and(|o| o.contains(&profile_code));
+        let Some((class, _)) = key.split_once('.') else {
+            continue;
+        };
+        let class_in_profile = type_map
+            .get(class)
+            .is_some_and(|o| o.contains(&profile_code));
         if only_here && class_in_profile {
             by_class.entry(class).or_default().push((key, val));
         }
@@ -587,19 +677,35 @@ fn write_field_as(
 
     match val {
         FieldValue::Text(s) => {
-            write!(children, "\n    <{ns}:{key}>{}</{ns}:{key}>", escape_text(s))?;
+            write!(
+                children,
+                "\n    <{ns}:{key}>{}</{ns}:{key}>",
+                escape_text(s)
+            )?;
         }
         FieldValue::TextList(ss) => {
             for s in ss {
-                write!(children, "\n    <{ns}:{key}>{}</{ns}:{key}>", escape_text(s))?;
+                write!(
+                    children,
+                    "\n    <{ns}:{key}>{}</{ns}:{key}>",
+                    escape_text(s)
+                )?;
             }
         }
         FieldValue::Resource(r) => {
-            write!(children, "\n    <{ns}:{key} rdf:resource=\"{}\"/>", resource(r))?;
+            write!(
+                children,
+                "\n    <{ns}:{key} rdf:resource=\"{}\"/>",
+                resource(r)
+            )?;
         }
         FieldValue::ResourceList(rs) => {
             for r in rs {
-                write!(children, "\n    <{ns}:{key} rdf:resource=\"{}\"/>", resource(r))?;
+                write!(
+                    children,
+                    "\n    <{ns}:{key} rdf:resource=\"{}\"/>",
+                    resource(r)
+                )?;
             }
         }
     }

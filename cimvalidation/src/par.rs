@@ -20,7 +20,9 @@ pub(crate) fn threads_for(total: usize) -> usize {
     if total < PARALLEL_MIN || !HAS_THREADS {
         1
     } else {
-        std::thread::available_parallelism().map_or(1, |n| n.get()).min(MAX_THREADS)
+        std::thread::available_parallelism()
+            .map_or(1, |n| n.get())
+            .min(MAX_THREADS)
     }
 }
 
@@ -50,13 +52,19 @@ pub(crate) fn par_map<T: Sync, R: Send>(runs: &[&[T]], f: impl Fn(&[T]) -> R + S
         _ if !HAS_THREADS => runs.iter().map(|run| f(run)).collect(),
         _ => std::thread::scope(|s| {
             let handles: Vec<_> = runs.iter().map(|run| s.spawn(|| f(run))).collect();
-            handles.into_iter().map(|h| h.join().expect("validation thread panicked")).collect()
+            handles
+                .into_iter()
+                .map(|h| h.join().expect("validation thread panicked"))
+                .collect()
         }),
     }
 }
 
 /// [`par_map`], concatenating the results.
-pub(crate) fn par_concat<T: Sync, R: Send>(runs: &[&[T]], f: impl Fn(&[T]) -> Vec<R> + Sync) -> Vec<R> {
+pub(crate) fn par_concat<T: Sync, R: Send>(
+    runs: &[&[T]],
+    f: impl Fn(&[T]) -> Vec<R> + Sync,
+) -> Vec<R> {
     par_map(runs, f).into_iter().flatten().collect()
 }
 
@@ -67,12 +75,18 @@ pub(crate) fn par_each<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync
     }
     std::thread::scope(|s| {
         let handles: Vec<_> = items.iter().map(|item| s.spawn(|| f(item))).collect();
-        handles.into_iter().map(|h| h.join().expect("validation thread panicked")).collect()
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("validation thread panicked"))
+            .collect()
     })
 }
 
 /// Run `first` on a thread of its own and `second` on this one, and return both.
-pub(crate) fn par_two<A: Send, B: Send>(first: impl FnOnce() -> A + Send, second: impl FnOnce() -> B) -> (A, B) {
+pub(crate) fn par_two<A: Send, B: Send>(
+    first: impl FnOnce() -> A + Send,
+    second: impl FnOnce() -> B,
+) -> (A, B) {
     if !HAS_THREADS {
         let a = first();
         return (a, second());
@@ -113,7 +127,11 @@ mod tests {
         let items: Vec<usize> = (0..1000).collect();
         for threads in [1, 2, 3, 7, 8, 16, 2000] {
             let rs = runs(&items, threads, |_| 1);
-            assert!(rs.len() <= threads.max(1), "{threads} threads gave {} runs", rs.len());
+            assert!(
+                rs.len() <= threads.max(1),
+                "{threads} threads gave {} runs",
+                rs.len()
+            );
             assert!(rs.iter().all(|r| !r.is_empty()));
             let joined: Vec<usize> = rs.concat();
             assert_eq!(joined, items, "{threads} threads");
@@ -123,7 +141,9 @@ mod tests {
     #[test]
     fn runs_balance_by_weight() {
         // One heavy item and many light ones: the heavy one gets a run of its own.
-        let items = [100, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+        let items = [
+            100, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        ];
         let rs = runs(&items, 2, |w| *w);
         assert_eq!(rs.concat(), items);
         assert_eq!(rs[0], &[100]);

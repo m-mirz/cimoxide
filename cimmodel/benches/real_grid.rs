@@ -2,21 +2,26 @@
 //! cimgo/validation/cgmes_config_test.go: files are pre-loaded into memory
 //! before the timed loop so only parse/decode time is measured, not I/O.
 
-use std::path::Path;
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use cimmodel::CimDataset;
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use std::path::Path;
 
 const BASE: &str = "../CGMES-Test-Configurations/v3.0/RealGrid/RealGrid-Merged";
 
 fn load_files() -> Vec<(String, String)> {
-    ["RealGrid_EQ.xml", "RealGrid_SSH.xml", "RealGrid_TP.xml", "RealGrid_SV.xml"]
-        .iter()
-        .map(|name| {
-            let content = std::fs::read_to_string(Path::new(BASE).join(name))
-                .unwrap_or_else(|e| panic!("cannot read {name}: {e}"));
-            (name.to_string(), content)
-        })
-        .collect()
+    [
+        "RealGrid_EQ.xml",
+        "RealGrid_SSH.xml",
+        "RealGrid_TP.xml",
+        "RealGrid_SV.xml",
+    ]
+    .iter()
+    .map(|name| {
+        let content = std::fs::read_to_string(Path::new(BASE).join(name))
+            .unwrap_or_else(|e| panic!("cannot read {name}: {e}"));
+        (name.to_string(), content)
+    })
+    .collect()
 }
 
 /// Decode all four files in parallel using one thread per file, then merge sequentially.
@@ -58,14 +63,14 @@ fn bench_per_profile(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode_single");
 
     for (name, content) in &blobs {
-        let label = name.trim_end_matches(".xml").trim_start_matches("RealGrid_");
+        let label = name
+            .trim_end_matches(".xml")
+            .trim_start_matches("RealGrid_");
         let bytes = content.len() as u64;
         group.throughput(Throughput::Bytes(bytes));
-        group.bench_with_input(
-            BenchmarkId::new("profile", label),
-            content,
-            |b, c| b.iter(|| CimDataset::decode_str(c).unwrap()),
-        );
+        group.bench_with_input(BenchmarkId::new("profile", label), content, |b, c| {
+            b.iter(|| CimDataset::decode_str(c).unwrap())
+        });
     }
 
     group.finish();
@@ -77,9 +82,15 @@ fn bench_per_profile(c: &mut Criterion) {
 /// the full decode-from-disk path (open, BufRead, parse, instantiate) is exercised.
 fn bench_import(c: &mut Criterion) {
     let base = Path::new("../CGMES-Test-Configurations/v3.0/RealGrid/RealGrid-Merged");
-    let names = ["RealGrid_EQ.xml", "RealGrid_SSH.xml", "RealGrid_TP.xml", "RealGrid_SV.xml"];
+    let names = [
+        "RealGrid_EQ.xml",
+        "RealGrid_SSH.xml",
+        "RealGrid_TP.xml",
+        "RealGrid_SV.xml",
+    ];
     let paths: Vec<std::path::PathBuf> = names.iter().map(|n| base.join(n)).collect();
-    let total_bytes: u64 = paths.iter()
+    let total_bytes: u64 = paths
+        .iter()
         .map(|p| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0))
         .sum();
 

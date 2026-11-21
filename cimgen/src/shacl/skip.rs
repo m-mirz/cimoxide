@@ -36,7 +36,9 @@ static SKIP_CATEGORIES: &[SkipCategory] = &[
     SkipCategory {
         label: "SPARQL-derived constraints (hand-written in cimvalidation/src/sparql)",
         section: "sparql",
-        match_fn: |e| e.component == "sh:SPARQLConstraintComponent" || e.component == "sparqlTarget",
+        match_fn: |e| {
+            e.component == "sh:SPARQLConstraintComponent" || e.component == "sparqlTarget"
+        },
     },
     SkipCategory {
         label: "instance count of a class, `[ sh:inversePath rdf:type ]` (hand-written in cimvalidation/src/sparql)",
@@ -47,22 +49,30 @@ static SKIP_CATEGORIES: &[SkipCategory] = &[
     SkipCategory {
         label: "target class not defined by the schema (upstream defect)",
         section: "upstream",
-        match_fn: |e| e.reason.contains("target class is not in this family's schema"),
+        match_fn: |e| {
+            e.reason
+                .contains("target class is not in this family's schema")
+        },
     },
     SkipCategory {
         label: "value list or class that does not resolve (upstream defect)",
         section: "upstream",
         match_fn: |e| {
-            matches!(e.component.as_str(),
-                "sh:InConstraintComponent" | "sh:HasValueConstraintComponent" | "sh:ClassConstraintComponent")
-                && e.reason.contains("not supported")
+            matches!(
+                e.component.as_str(),
+                "sh:InConstraintComponent"
+                    | "sh:HasValueConstraintComponent"
+                    | "sh:ClassConstraintComponent"
+            ) && e.reason.contains("not supported")
         },
     },
     // Constraints the table cannot express.
     SkipCategory {
         label: "`sh:nodeKind` on a compound-datatype or `rdf:type` path",
         section: "unsupported",
-        match_fn: |e| e.component == "sh:NodeKindConstraintComponent" && e.reason.contains("not supported"),
+        match_fn: |e| {
+            e.component == "sh:NodeKindConstraintComponent" && e.reason.contains("not supported")
+        },
     },
     SkipCategory {
         label: "path or logical-combination form not supported",
@@ -79,7 +89,9 @@ static SKIP_CATEGORY_OTHER: SkipCategory = SkipCategory {
 
 pub fn classify(e: &SkipEntry) -> &'static SkipCategory {
     for cat in SKIP_CATEGORIES {
-        if (cat.match_fn)(e) { return cat; }
+        if (cat.match_fn)(e) {
+            return cat;
+        }
     }
     &SKIP_CATEGORY_OTHER
 }
@@ -95,11 +107,20 @@ pub fn accumulate_counts(counts: &mut HashMap<&str, usize>, entries: &[SkipEntry
 }
 
 pub fn print_file_summary(file_name: &str, checks: usize, entries: &[SkipEntry]) {
-    eprintln!("-- {} ({} checks, {} skipped) --", file_name, checks, entries.len());
-    if entries.is_empty() { return; }
+    eprintln!(
+        "-- {} ({} checks, {} skipped) --",
+        file_name,
+        checks,
+        entries.len()
+    );
+    if entries.is_empty() {
+        return;
+    }
     let mut counts: HashMap<&str, usize> = HashMap::new();
     accumulate_counts(&mut counts, entries);
-    let all_cats = SKIP_CATEGORIES.iter().chain(std::iter::once(&SKIP_CATEGORY_OTHER));
+    let all_cats = SKIP_CATEGORIES
+        .iter()
+        .chain(std::iter::once(&SKIP_CATEGORY_OTHER));
     for cat in all_cats {
         let n = counts.get(cat.label).copied().unwrap_or(0);
         if n > 0 {
@@ -118,26 +139,37 @@ pub fn print_file_summary(file_name: &str, checks: usize, entries: &[SkipEntry])
 pub fn print_global_summary(counts: &HashMap<&str, usize>) {
     let sections = [
         ("Simplified (type-system guarantees)", "simplified"),
-        ("SPARQL (see SPARQL Check Coverage below -- not directly comparable, see print_global_summary's doc comment)", "sparql"),
+        (
+            "SPARQL (see SPARQL Check Coverage below -- not directly comparable, see print_global_summary's doc comment)",
+            "sparql",
+        ),
         ("Upstream schema defects", "upstream"),
         ("Not expressible in the shape table", "unsupported"),
         ("Other", "other"),
     ];
     for (title, key) in &sections {
-        let all_cats = SKIP_CATEGORIES.iter().chain(std::iter::once(&SKIP_CATEGORY_OTHER));
+        let all_cats = SKIP_CATEGORIES
+            .iter()
+            .chain(std::iter::once(&SKIP_CATEGORY_OTHER));
         let mut total = 0usize;
         let mut lines: Vec<String> = Vec::new();
         for cat in all_cats {
-            if cat.section != *key { continue; }
+            if cat.section != *key {
+                continue;
+            }
             let n = counts.get(cat.label).copied().unwrap_or(0);
             if n > 0 {
                 lines.push(format!("  {:5}  {}", n, cat.label));
                 total += n;
             }
         }
-        if total == 0 { continue; }
+        if total == 0 {
+            continue;
+        }
         eprintln!("\n=== {} ===", title);
-        for l in &lines { eprintln!("{}", l); }
+        for l in &lines {
+            eprintln!("{}", l);
+        }
         eprintln!("  -----\n  {:5}  total", total);
     }
 }

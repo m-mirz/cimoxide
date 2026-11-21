@@ -12,7 +12,8 @@ use cimschema::shacl::{simplify, ttl_import};
 
 fn ncp_shacl(name: &str) -> PathBuf {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    root.join("application-profiles-library/NCP/SHACL").join(name)
+    root.join("application-profiles-library/NCP/SHACL")
+        .join(name)
 }
 
 fn parse(name: &str) -> FileResults {
@@ -63,7 +64,10 @@ fn closed_shape_collects_its_allowed_properties() {
         ]
     );
     assert_eq!(
-        s.targets.iter().map(|t| t.value.as_str()).collect::<Vec<_>>(),
+        s.targets
+            .iter()
+            .map(|t| t.value.as_str())
+            .collect::<Vec<_>>(),
         ["nc:OrdinaryContingency"]
     );
 }
@@ -154,7 +158,9 @@ ex:conformsToOneOf
         .expect("no sh:qualifiedMinCount constraint");
 
     assert_eq!(c.payload["qualifiedMinCount"].as_int(), Some(1));
-    let branch = c.payload["shape"].as_shapes().expect("nested shape missing");
+    let branch = c.payload["shape"]
+        .as_shapes()
+        .expect("nested shape missing");
     let values = branch[0]
         .iter()
         .find(|b| b.component == "sh:InConstraintComponent")
@@ -248,7 +254,10 @@ fn node_kind_and_datatype_are_kept() {
     };
     let mut results = vec![parse("Contingency-AP-Con-Simple-SHACL.ttl")];
     let before = count(&results);
-    assert!(before > 0, "fixture no longer has nodeKind/datatype constraints");
+    assert!(
+        before > 0,
+        "fixture no longer has nodeKind/datatype constraints"
+    );
     simplify::simplify(&mut results);
     assert_eq!(count(&results), before);
 }
@@ -288,9 +297,16 @@ fn manifests_map_profiles_to_constraint_files() {
     // The shared files are why a shape belongs to many profiles, not one.
     let shared = manifests
         .iter()
-        .filter(|m| m.imports.iter().any(|i| i == "DatasetMetadata-AP-Con-SHACL"))
+        .filter(|m| {
+            m.imports
+                .iter()
+                .any(|i| i == "DatasetMetadata-AP-Con-SHACL")
+        })
         .count();
-    assert!(shared >= 17, "expected DatasetMetadata to be near-universal, got {shared}");
+    assert!(
+        shared >= 17,
+        "expected DatasetMetadata to be near-universal, got {shared}"
+    );
 }
 
 /// `NCP/PROF` is the authority on profile identity: a dataset declares
@@ -310,8 +326,14 @@ fn profile_descriptors_map_iris_to_codes() {
         .iter()
         .find(|p| p.keyword == "CO")
         .expect("no Contingency descriptor");
-    assert!(co.iris.contains(&"https://ap.cim4.eu/Contingency".to_string()));
-    assert!(co.iris.contains(&"https://ap.cim4.eu/Contingency/2.3".to_string()));
+    assert!(
+        co.iris
+            .contains(&"https://ap.cim4.eu/Contingency".to_string())
+    );
+    assert!(
+        co.iris
+            .contains(&"https://ap.cim4.eu/Contingency/2.3".to_string())
+    );
 
     // Codes must be unique, or a conformsTo IRI would map ambiguously.
     let mut codes: Vec<&str> = profiles.iter().map(|p| p.keyword.as_str()).collect();

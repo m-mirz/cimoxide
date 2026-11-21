@@ -104,9 +104,16 @@ impl Index {
                     // The root: keep its namespace bindings.
                     for a in e.attributes().flatten() {
                         let key = String::from_utf8_lossy(a.key.as_ref());
-                        let prefix = if key == "xmlns" { Some("") } else { key.strip_prefix("xmlns:") };
+                        let prefix = if key == "xmlns" {
+                            Some("")
+                        } else {
+                            key.strip_prefix("xmlns:")
+                        };
                         if let Some(p) = prefix {
-                            ix.namespaces.push((p.to_string(), String::from_utf8_lossy(&a.value).into_owned()));
+                            ix.namespaces.push((
+                                p.to_string(),
+                                String::from_utf8_lossy(&a.value).into_owned(),
+                            ));
                         }
                     }
                     if !empty {
@@ -146,7 +153,10 @@ impl Index {
                 Event::Start(e) | Event::Empty(e) if depth == 2 => {
                     let tag = &text[start..end];
                     let resource = attr_value(tag, "rdf:resource").map(|(vs, ve)| {
-                        (mrid_of(&tag[vs..ve]).to_string(), lines.range(text, start + vs, start + ve))
+                        (
+                            mrid_of(&tag[vs..ve]).to_string(),
+                            lines.range(text, start + vs, start + ve),
+                        )
                     });
                     let f = Field {
                         qname: String::from_utf8_lossy(e.name().as_ref()).into_owned(),
@@ -218,12 +228,18 @@ impl Index {
 
     /// The namespace IRI `prefix` is bound to at the root.
     pub fn namespace(&self, prefix: &str) -> Option<&str> {
-        self.namespaces.iter().find(|(p, _)| p == prefix).map(|(_, ns)| ns.as_str())
+        self.namespaces
+            .iter()
+            .find(|(p, _)| p == prefix)
+            .map(|(_, ns)| ns.as_str())
     }
 
     /// The prefix bound to `ns` at the root.
     pub fn prefix_of(&self, ns: &str) -> Option<&str> {
-        self.namespaces.iter().find(|(_, n)| n == ns).map(|(p, _)| p.as_str())
+        self.namespaces
+            .iter()
+            .find(|(_, n)| n == ns)
+            .map(|(p, _)| p.as_str())
     }
 
     /// The class of an element written `qname` here: by its prefix's namespace, else by its
@@ -256,7 +272,9 @@ fn attr_value(tag: &str, name: &str) -> Option<(usize, usize)> {
             continue;
         }
         let rest = tag[from..].trim_start();
-        let Some(rest) = rest.strip_prefix('=') else { continue };
+        let Some(rest) = rest.strip_prefix('=') else {
+            continue;
+        };
         let rest = rest.trim_start();
         let quote = rest.chars().next()?;
         if quote != '"' && quote != '\'' {
@@ -296,23 +314,60 @@ mod tests {
         assert_eq!(ix.elements.len(), 2);
 
         let line = &ix.elements[0];
-        assert_eq!((line.qname.as_str(), line.mrid.as_str(), line.id_kind), ("cim:ACLineSegment", "_line", Some(IdKind::Id)));
-        assert_eq!(line.id_range, Some(Range { start: pos(2, 29), end: pos(2, 34) }));
+        assert_eq!(
+            (line.qname.as_str(), line.mrid.as_str(), line.id_kind),
+            ("cim:ACLineSegment", "_line", Some(IdKind::Id))
+        );
+        assert_eq!(
+            line.id_range,
+            Some(Range {
+                start: pos(2, 29),
+                end: pos(2, 34)
+            })
+        );
         assert_eq!(line.full.start, pos(2, 2));
         assert_eq!(line.full.end, pos(6, 22));
         assert_eq!(line.name.as_deref(), Some("Line & 1"));
         let keys: Vec<&str> = line.fields.iter().map(Field::key).collect();
-        assert_eq!(keys, ["IdentifiedObject.name", "ACLineSegment.r", "ConductingEquipment.BaseVoltage"]);
-        assert_eq!(line.fields[1].full, Range { start: pos(4, 4), end: pos(4, 50) });
+        assert_eq!(
+            keys,
+            [
+                "IdentifiedObject.name",
+                "ACLineSegment.r",
+                "ConductingEquipment.BaseVoltage"
+            ]
+        );
+        assert_eq!(
+            line.fields[1].full,
+            Range {
+                start: pos(4, 4),
+                end: pos(4, 50)
+            }
+        );
         let (target, at) = line.fields[2].resource.clone().unwrap();
         assert_eq!(target, "_bv");
-        assert_eq!(at, Range { start: pos(5, 55), end: pos(5, 59) });
+        assert_eq!(
+            at,
+            Range {
+                start: pos(5, 55),
+                end: pos(5, 59)
+            }
+        );
 
         let bv = &ix.elements[1];
         assert_eq!((bv.mrid.as_str(), bv.id_kind), ("_bv", Some(IdKind::About)));
-        assert_eq!(bv.head, Range { start: pos(7, 2), end: pos(8, 35) });
+        assert_eq!(
+            bv.head,
+            Range {
+                start: pos(7, 2),
+                end: pos(8, 35)
+            }
+        );
 
-        assert_eq!(ix.element_at(pos(4, 10)).map(|e| e.mrid.as_str()), Some("_line"));
+        assert_eq!(
+            ix.element_at(pos(4, 10)).map(|e| e.mrid.as_str()),
+            Some("_line")
+        );
         assert!(ix.element_at(pos(1, 3)).is_none());
     }
 
@@ -322,6 +377,9 @@ mod tests {
         let ix = Index::build(cut);
         assert_eq!(ix.elements.len(), 1);
         assert_eq!(ix.elements[0].mrid, "_line");
-        assert_eq!(ix.elements[0].full.end, LineIndex::new(cut).position(cut, cut.len()));
+        assert_eq!(
+            ix.elements[0].full.end,
+            LineIndex::new(cut).position(cut, cut.len())
+        );
     }
 }

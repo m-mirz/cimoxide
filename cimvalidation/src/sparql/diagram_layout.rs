@@ -1,14 +1,18 @@
-use cimmodel::CimDataset;
 use super::Fields;
 use crate::Violation;
+use cimmodel::CimDataset;
 
 pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
     check_diagram_object_identified_object_type(dataset)
 }
 
 const DISALLOWED_TYPES: &[&str] = &[
-    "Diagram", "DiagramObject", "VisibilityLayer",
-    "DiagramStyle", "DiagramObjectStyle", "TextDiagramObject",
+    "Diagram",
+    "DiagramObject",
+    "VisibilityLayer",
+    "DiagramStyle",
+    "DiagramObjectStyle",
+    "TextDiagramObject",
 ];
 
 fn check_diagram_object_identified_object_type(dataset: &CimDataset) -> Vec<Violation> {
@@ -17,11 +21,16 @@ fn check_diagram_object_identified_object_type(dataset: &CimDataset) -> Vec<Viol
     for type_name in &["DiagramObject", "TextDiagramObject"] {
         for mrid in dataset.by_type.get(*type_name).into_iter().flatten() {
             let entry = &dataset.entries[mrid];
-            let Some(o) = Fields::of_class(entry, type_name) else { continue };
-            let Some(id_obj_ref) = o.reference("DiagramObject.IdentifiedObject") else { continue };
+            let Some(o) = Fields::of_class(entry, type_name) else {
+                continue;
+            };
+            let Some(id_obj_ref) = o.reference("DiagramObject.IdentifiedObject") else {
+                continue;
+            };
             let target_id = id_obj_ref.trim_start_matches('#');
             let target_type = match dataset.entries.get(target_id).map(|e| e.type_name()) {
-                Some(t) => t, None => continue,
+                Some(t) => t,
+                None => continue,
             };
             if DISALLOWED_TYPES.contains(&target_type) {
                 v.push(Violation {

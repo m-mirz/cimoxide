@@ -15,7 +15,7 @@
 
 use std::path::{Path, PathBuf};
 
-use cimvalidation::shape_source::{load_table, ShapeError, SHACL_DIR_ENV};
+use cimvalidation::shape_source::{SHACL_DIR_ENV, ShapeError, load_table};
 use cimvalidation::shapes::ShapeDef;
 
 fn shacl_dir() -> PathBuf {
@@ -65,7 +65,13 @@ fn the_cgmes_table_matches_its_runtime_load() {
     let loaded = load_table("cgmes", &dir).expect("could not load CGMES shapes");
     let generated = cimvalidation::cgmes_shapes::SHAPES;
 
-    assert_eq!(loaded.len(), generated.len(), "loaded {} shapes, generated has {}", loaded.len(), generated.len());
+    assert_eq!(
+        loaded.len(),
+        generated.len(),
+        "loaded {} shapes, generated has {}",
+        loaded.len(),
+        generated.len()
+    );
     for (i, (a, b)) in loaded.iter().zip(generated.iter()).enumerate() {
         assert_eq!(describe(a), describe(b), "shape {i} differs");
     }
@@ -77,9 +83,18 @@ fn the_cgmes_table_matches_its_runtime_load() {
 #[test]
 fn a_directory_is_matched_to_its_family() {
     use cimvalidation::shape_source::family_of_dir;
-    let lib = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("application-profiles-library");
-    assert_eq!(family_of_dir(&lib.join("NCP/SHACL")).map(|f| f.id), Some("nc"));
-    assert_eq!(family_of_dir(&lib.join("CGMES/SHACL")).map(|f| f.id), Some("cgmes"));
+    let lib = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("application-profiles-library");
+    assert_eq!(
+        family_of_dir(&lib.join("NCP/SHACL")).map(|f| f.id),
+        Some("nc")
+    );
+    assert_eq!(
+        family_of_dir(&lib.join("CGMES/SHACL")).map(|f| f.id),
+        Some("cgmes")
+    );
     assert_eq!(family_of_dir(&lib.join("CGMES/RDFS")).map(|f| f.id), None);
 }
 
@@ -98,7 +113,10 @@ fn an_unknown_family_is_rejected() {
 fn a_missing_directory_is_an_error_not_a_panic() {
     let err = load_table("nc", Path::new("/definitely/not/here"))
         .expect_err("a missing directory should not succeed");
-    assert!(matches!(err, ShapeError::Parse(_)), "unexpected error: {err}");
+    assert!(
+        matches!(err, ShapeError::Parse(_)),
+        "unexpected error: {err}"
+    );
 }
 
 /// A directory of the wrong thing parses to nothing rather than to a partial
@@ -134,5 +152,8 @@ fn loading_after_the_table_is_resolved_is_reported() {
 
     let err = cimvalidation::shape_source::load_from("nc", &shacl_dir())
         .expect_err("a load after resolution should not silently succeed");
-    assert!(matches!(err, ShapeError::TooLate), "unexpected error: {err}");
+    assert!(
+        matches!(err, ShapeError::TooLate),
+        "unexpected error: {err}"
+    );
 }

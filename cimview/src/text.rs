@@ -4,7 +4,9 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 pub struct Position {
     pub line: u32,
     pub character: u32,
@@ -55,24 +57,43 @@ pub struct LineIndex {
 impl LineIndex {
     pub fn new(text: &str) -> Self {
         let mut starts = vec![0];
-        starts.extend(text.bytes().enumerate().filter(|(_, b)| *b == b'\n').map(|(i, _)| i + 1));
+        starts.extend(
+            text.bytes()
+                .enumerate()
+                .filter(|(_, b)| *b == b'\n')
+                .map(|(i, _)| i + 1),
+        );
         Self { starts }
     }
 
     pub fn position(&self, text: &str, offset: usize) -> Position {
         let line = self.starts.partition_point(|s| *s <= offset) - 1;
         let start = self.starts[line];
-        let character = text.get(start..offset).map_or(0, |s| s.encode_utf16().count());
-        Position { line: line as u32, character: character as u32 }
+        let character = text
+            .get(start..offset)
+            .map_or(0, |s| s.encode_utf16().count());
+        Position {
+            line: line as u32,
+            character: character as u32,
+        }
     }
 
     pub fn range(&self, text: &str, start: usize, end: usize) -> Range {
-        Range { start: self.position(text, start), end: self.position(text, end) }
+        Range {
+            start: self.position(text, start),
+            end: self.position(text, end),
+        }
     }
 
     pub fn offset(&self, text: &str, pos: Position) -> usize {
-        let Some(&start) = self.starts.get(pos.line as usize) else { return text.len() };
-        let end = self.starts.get(pos.line as usize + 1).copied().unwrap_or(text.len());
+        let Some(&start) = self.starts.get(pos.line as usize) else {
+            return text.len();
+        };
+        let end = self
+            .starts
+            .get(pos.line as usize + 1)
+            .copied()
+            .unwrap_or(text.len());
         let mut units = 0u32;
         for (i, c) in text[start..end].char_indices() {
             if units >= pos.character {
@@ -89,7 +110,13 @@ pub fn apply(text: &str, edits: &[TextEdit]) -> String {
     let lines = LineIndex::new(text);
     let mut spans: Vec<(usize, usize, &str)> = edits
         .iter()
-        .map(|e| (lines.offset(text, e.range.start), lines.offset(text, e.range.end), e.new_text.as_str()))
+        .map(|e| {
+            (
+                lines.offset(text, e.range.start),
+                lines.offset(text, e.range.end),
+                e.new_text.as_str(),
+            )
+        })
         .collect();
     // From the end, so each offset still holds; at one place, in the order given.
     spans.sort_by_key(|s| std::cmp::Reverse(s.0));
@@ -137,7 +164,10 @@ mod tests {
 
     #[test]
     fn positions_serialize_as_lsp_does() {
-        let edit = TextEdit::new(Range::new(Position::new(1, 2), Position::new(3, 4)), "x".into());
+        let edit = TextEdit::new(
+            Range::new(Position::new(1, 2), Position::new(3, 4)),
+            "x".into(),
+        );
         assert_eq!(
             serde_json::to_value(&edit).unwrap(),
             serde_json::json!({ "range": { "start": { "line": 1, "character": 2 }, "end": { "line": 3, "character": 4 } }, "newText": "x" })

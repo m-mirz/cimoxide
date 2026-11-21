@@ -121,7 +121,10 @@ pub enum Constraint {
     /// `sh:qualifiedValueShape [ sh:in (..) ]` with `sh:qualifiedMinCount` —
     /// at least `min` values must be among `allowed`. NCP uses it to ask
     /// whether a dataset declares conformance to one of a set of profiles.
-    QualifiedIn { allowed: &'static [&'static str], min: u32 },
+    QualifiedIn {
+        allowed: &'static [&'static str],
+        min: u32,
+    },
     /// `sh:length` — exactly this many characters, e.g. the 16 of an EIC code.
     Length(u32),
 }

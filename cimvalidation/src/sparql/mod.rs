@@ -2,26 +2,25 @@ pub mod common;
 mod fields;
 pub(crate) use fields::Fields;
 pub mod common_solved_mas;
-pub mod equipment;
-pub mod equipment_not_solved_mas;
-pub mod ssh;
-pub mod ssh_not_solved_mas;
-pub mod shortcircuit;
-pub mod shortcircuit_not_solved_mas;
-pub mod state_variables;
-pub mod state_variables_solved_mas;
-pub mod topology_not_solved_mas;
-pub mod dynamics;
 pub mod diagram_layout;
+pub mod dynamics;
+pub mod equipment;
 pub mod equipment_boundary;
+pub mod equipment_not_solved_mas;
+pub mod nc;
 pub mod operation;
 pub mod prof10;
 pub mod quality;
-pub mod nc;
+pub mod shortcircuit;
+pub mod shortcircuit_not_solved_mas;
+pub mod ssh;
+pub mod ssh_not_solved_mas;
+pub mod state_variables;
+pub mod state_variables_solved_mas;
+pub mod topology_not_solved_mas;
 
-use cimmodel::CimDataset;
 use crate::{Config, Violation};
-
+use cimmodel::CimDataset;
 
 /// Per-profile SPARQL checks that only need data from a single profile's file.
 pub fn validate_profile_local(dataset: &CimDataset, profile: &str, cfg: &Config) -> Vec<Violation> {
@@ -48,7 +47,10 @@ pub fn validate_profile_local(dataset: &CimDataset, profile: &str, cfg: &Config)
         }
         "EQBD" => {
             if let Some(ref eqbd_bv_ids) = cfg.eqbd_base_voltage_ids {
-                violations.extend(quality::check_base_voltage_in_eqbd_impl(dataset, eqbd_bv_ids));
+                violations.extend(quality::check_base_voltage_in_eqbd_impl(
+                    dataset,
+                    eqbd_bv_ids,
+                ));
             }
         }
         _ => {}
@@ -100,7 +102,11 @@ pub fn across_groups(cfg: &Config) -> Vec<fn(&CimDataset) -> Vec<Violation>> {
         ("OP", operation::validate_across),
     ];
     let has = |p: &str| cfg.profiles.is_empty() || cfg.profiles.iter().any(|x| x == p);
-    ACROSS.iter().filter(|(profile, _)| has(profile)).map(|(_, group)| *group).collect()
+    ACROSS
+        .iter()
+        .filter(|(profile, _)| has(profile))
+        .map(|(_, group)| *group)
+        .collect()
 }
 
 /// The rules of the `*SolvedMAS` and `*NotSolvedMAS` files whose profile is in
@@ -124,7 +130,9 @@ pub fn mas_groups(cfg: &Config) -> Vec<fn(&CimDataset) -> Vec<Violation>> {
     ];
     let has = |p: &str| cfg.profiles.is_empty() || cfg.profiles.iter().any(|x| x == p);
     MAS.iter()
-        .filter(|(profile, solved, _)| has(profile) && if *solved { cfg.solved } else { cfg.not_solved })
+        .filter(|(profile, solved, _)| {
+            has(profile) && if *solved { cfg.solved } else { cfg.not_solved }
+        })
         .map(|(_, _, group)| *group)
         .collect()
 }

@@ -9,15 +9,14 @@
 //! family's elements. Every element holds every field the XML carried, which
 //! is what lets one interpreter serve both.
 
-
-use cimmodel::{CimDataset, Element};
 use cimmodel::base::{FastMap, FastSet, FieldMap, FieldValue};
+use cimmodel::{CimDataset, Element};
 
 use crate::helpers;
 use crate::par::{par_concat, par_map, runs, threads_for};
 use crate::shapes::{
-    AltBranch, Branch, Check, ClosedShape, Constraint, Logic, LogicOp, NodeKind, Path, PropShape, ShapeDef, Step,
-    Target,
+    AltBranch, Branch, Check, ClosedShape, Constraint, Logic, LogicOp, NodeKind, Path, PropShape,
+    ShapeDef, Step, Target,
 };
 use crate::{Config, Violation};
 
@@ -231,7 +230,9 @@ fn chain<'a>(ctx: &Ctx<'a>, focus: &'a Fields, mrid: &'a str, steps: &[Step]) ->
                         Some(FieldValue::Text(s)) => texts.push(s),
                         Some(FieldValue::TextList(v)) => texts.extend(v.iter().map(String::as_str)),
                         Some(FieldValue::Resource(r)) => next.push(r),
-                        Some(FieldValue::ResourceList(v)) => next.extend(v.iter().map(String::as_str)),
+                        Some(FieldValue::ResourceList(v)) => {
+                            next.extend(v.iter().map(String::as_str))
+                        }
                         None => {}
                     }
                 }
@@ -247,8 +248,10 @@ fn chain<'a>(ctx: &Ctx<'a>, focus: &'a Fields, mrid: &'a str, steps: &[Step]) ->
                 nodes = next;
             }
             Step::Inverse(field) => {
-                let next: Vec<&'a str> =
-                    nodes.iter().flat_map(|n| ctx.reverse.sources(n, field).iter().copied()).collect();
+                let next: Vec<&'a str> = nodes
+                    .iter()
+                    .flat_map(|n| ctx.reverse.sources(n, field).iter().copied())
+                    .collect();
                 if last {
                     return Values::Chain(Kind::Refs, next);
                 }
@@ -342,7 +345,11 @@ fn path_label(path: &Path) -> std::borrow::Cow<'static, str> {
 /// the set, the CGMES ones failed some 31,000 times on the ENTSO-E test
 /// configurations, every association into EQ. An object no file holds is a
 /// dangling reference, which a cross-profile rule reports.
-fn any_type(ctx: &Ctx<'_>, mrid: &str, test: impl Fn(&cimmodel::base::ClassDef) -> bool) -> Option<bool> {
+fn any_type(
+    ctx: &Ctx<'_>,
+    mrid: &str,
+    test: impl Fn(&cimmodel::base::ClassDef) -> bool,
+) -> Option<bool> {
     if let Some(e) = ctx.ds.entries.get(mrid) {
         return Some(e.types().any(test));
     }
@@ -384,7 +391,8 @@ fn fails(ctx: &Ctx<'_>, el: &Fields, values: &Values<'_>, constraint: &Constrain
         },
 
         Constraint::In(allowed) => {
-            values.any_text(|v| !allowed.contains(&v.trim())) || values.any_ref(|r| !allowed.contains(&r))
+            values.any_text(|v| !allowed.contains(&v.trim()))
+                || values.any_ref(|r| !allowed.contains(&r))
         }
         Constraint::HasValue(want) => match values {
             v if v.is_text() => !v.any_text(|t| t.trim() == *want),
@@ -472,14 +480,23 @@ fn check_prop<'a>(
 
 /// Does a [`Logic`] branch conform? `None` when a path in it left the
 /// dataset, so its conformance is not known.
-fn branch_conforms<'a>(ctx: &Ctx<'a>, el: &'a Fields, mrid: &'a str, branch: &Branch) -> Option<bool> {
+fn branch_conforms<'a>(
+    ctx: &Ctx<'a>,
+    el: &'a Fields,
+    mrid: &'a str,
+    branch: &Branch,
+) -> Option<bool> {
     let mut holds = true;
     for prop in branch.props {
         let values = resolve(ctx, el, mrid, &prop.path);
         if matches!(values, Values::Unknown) {
             return None;
         }
-        if prop.checks.iter().any(|c| fails(ctx, el, &values, &c.constraint)) {
+        if prop
+            .checks
+            .iter()
+            .any(|c| fails(ctx, el, &values, &c.constraint))
+        {
             holds = false;
             break;
         }
@@ -534,7 +551,13 @@ fn pair(values: &Values, el: &Fields, other: &str, holds: impl Fn(f64, f64) -> b
 }
 
 /// `sh:closed` — report every field the profile does not allow on this class.
-fn check_closed(el: &Fields, class: &str, mrid: &str, closed: &ClosedShape, out: &mut Vec<Violation>) {
+fn check_closed(
+    el: &Fields,
+    class: &str,
+    mrid: &str,
+    closed: &ClosedShape,
+    out: &mut Vec<Violation>,
+) {
     let mut extra: Vec<&str> = el
         .keys()
         .copied()
@@ -572,14 +595,23 @@ struct Resolved<'a> {
 impl<'a> Resolved<'a> {
     fn new(source: Source, mrid: &'a String, entry: &'a Element, fields: &'a Fields) -> Self {
         let described = source == Source::Cgmes && !entry.defined();
-        Resolved { mrid, class: entry.type_name(), fields, described }
+        Resolved {
+            mrid,
+            class: entry.type_name(),
+            fields,
+            described,
+        }
     }
 }
 
 /// Resolve `mrid` for `source`: `None` when it is missing or another family's
 /// element — e.g. a CGMES element under an NC shape, whose attributes that
 /// family does not define and would report as absent.
-fn resolve_target<'a>(ds: &'a CimDataset, source: Source, mrid: &'a String) -> Option<Resolved<'a>> {
+fn resolve_target<'a>(
+    ds: &'a CimDataset,
+    source: Source,
+    mrid: &'a String,
+) -> Option<Resolved<'a>> {
     let entry = ds.entries.get(mrid)?;
     let fields = source.fields(entry)?;
     Some(Resolved::new(source, mrid, entry, fields))
@@ -611,7 +643,9 @@ fn build_indexes<'a>(
         let mut subjects: FastMap<&'static str, Vec<Resolved<'a>>> =
             subject_fields.iter().map(|f| (*f, Vec::new())).collect();
         for (mrid, entry) in entries {
-            let Some(f) = source.fields(entry) else { continue };
+            let Some(f) = source.fields(entry) else {
+                continue;
+            };
             for field in count_fields {
                 for target in refs_of(f, field) {
                     *reverse.counts.entry((target.as_str(), *field)).or_insert(0) += 1;
@@ -619,7 +653,11 @@ fn build_indexes<'a>(
             }
             for field in list_fields {
                 for target in refs_of(f, field) {
-                    reverse.sources.entry((target.as_str(), *field)).or_default().push(mrid);
+                    reverse
+                        .sources
+                        .entry((target.as_str(), *field))
+                        .or_default()
+                        .push(mrid);
                 }
             }
             for field in subject_fields {
@@ -640,7 +678,9 @@ fn build_indexes<'a>(
     // on its own thread, then merged in run order: the lists come out exactly
     // as the single pass builds them.
     let all: Vec<(&'a String, &'a Element)> = ds.entries.iter().collect();
-    let parts: Vec<Partial<'a>> = par_map(&runs(&all, threads, |_| 1), |run| index(&mut run.iter().copied()));
+    let parts: Vec<Partial<'a>> = par_map(&runs(&all, threads, |_| 1), |run| {
+        index(&mut run.iter().copied())
+    });
     let mut parts = parts.into_iter();
     let (mut reverse, mut subjects) = parts.next().expect("at least one run");
     for (r, subj) in parts {
@@ -703,7 +743,15 @@ fn targets_of<'a>(
 /// Every check of one shape against one target.
 fn run_shape<'a>(ctx: &Ctx<'a>, shape: &ShapeDef, t: &Resolved<'a>, out: &mut Vec<Violation>) {
     for prop in shape.props {
-        check_prop(ctx, t.fields, t.class, t.mrid, prop, mrid_exempt(t, prop), out);
+        check_prop(
+            ctx,
+            t.fields,
+            t.class,
+            t.mrid,
+            prop,
+            mrid_exempt(t, prop),
+            out,
+        );
     }
     for logic in shape.logic {
         check_logic(ctx, t.fields, t.class, t.mrid, logic, out);
@@ -762,7 +810,12 @@ pub fn validate_shapes(ds: &CimDataset, source: Source, active: &[&ShapeDef]) ->
 /// together. Only NC's class checks (`sh:class`, `sh:in` on a type, `sh:not`)
 /// read the set, for the type of a referenced object `ds` does not hold;
 /// every other check sees `ds` alone, as a per-file rule must.
-pub fn validate_shapes_in(ds: &CimDataset, set: &[CimDataset], source: Source, active: &[&ShapeDef]) -> Vec<Violation> {
+pub fn validate_shapes_in(
+    ds: &CimDataset,
+    set: &[CimDataset],
+    source: Source,
+    active: &[&ShapeDef],
+) -> Vec<Violation> {
     if active.is_empty() {
         return Vec::new();
     }
@@ -775,15 +828,21 @@ pub fn validate_shapes_in(ds: &CimDataset, set: &[CimDataset], source: Source, a
         s.props
             .iter()
             .map(|p| &p.path)
-            .chain(s.logic.iter().flat_map(|l| l.branches.iter().flat_map(|b| b.props.iter().map(|p| &p.path))))
+            .chain(s.logic.iter().flat_map(|l| {
+                l.branches
+                    .iter()
+                    .flat_map(|b| b.props.iter().map(|p| &p.path))
+            }))
     });
     for path in paths {
         match path {
             Path::Inverse(f) => count_fields.push(f),
-            Path::Alternative(branches) => count_fields.extend(branches.iter().filter_map(|b| match b {
-                AltBranch::Inverse(f) => Some(*f),
-                AltBranch::Forward(_) => None,
-            })),
+            Path::Alternative(branches) => {
+                count_fields.extend(branches.iter().filter_map(|b| match b {
+                    AltBranch::Inverse(f) => Some(*f),
+                    AltBranch::Forward(_) => None,
+                }))
+            }
             Path::Chain(steps) => list_fields.extend(steps.iter().filter_map(|s| match s {
                 Step::Inverse(f) => Some(*f),
                 _ => None,
@@ -807,8 +866,14 @@ pub fn validate_shapes_in(ds: &CimDataset, set: &[CimDataset], source: Source, a
     subject_fields.sort_unstable();
     subject_fields.dedup();
 
-    let (reverse, subjects) = build_indexes(ds, source, &count_fields, &list_fields, &subject_fields);
-    let ctx = Ctx { ds, set, source, reverse };
+    let (reverse, subjects) =
+        build_indexes(ds, source, &count_fields, &list_fields, &subject_fields);
+    let ctx = Ctx {
+        ds,
+        set,
+        source,
+        reverse,
+    };
 
     // Element-major: visit each target once and apply every shape that
     // targets it, rather than walking a class's elements once per shape. The
@@ -863,17 +928,23 @@ pub fn validate_shapes_in(ds: &CimDataset, set: &[CimDataset], source: Source, a
         })
         .collect();
     let total: usize = work.iter().map(|(_, m)| m.len()).sum();
-    let mut out = par_concat(&runs(&work, threads_for(total), |(_, m)| m.len()), |items| {
-        let mut out = Vec::new();
-        for (shapes, mrids) in items {
-            for t in mrids.iter().filter_map(|mrid| resolve_target(ds, source, mrid)) {
-                for shape in *shapes {
-                    run_shape(&ctx, shape, &t, &mut out);
+    let mut out = par_concat(
+        &runs(&work, threads_for(total), |(_, m)| m.len()),
+        |items| {
+            let mut out = Vec::new();
+            for (shapes, mrids) in items {
+                for t in mrids
+                    .iter()
+                    .filter_map(|mrid| resolve_target(ds, source, mrid))
+                {
+                    for shape in *shapes {
+                        run_shape(&ctx, shape, &t, &mut out);
+                    }
                 }
             }
-        }
-        out
-    });
+            out
+        },
+    );
 
     // The same for `sh:targetSubjectsOf`, whose targets the index pass found.
     let work: Vec<(&[&ShapeDef], &[Resolved])> = by_subject_shapes
@@ -887,17 +958,20 @@ pub fn validate_shapes_in(ds: &CimDataset, set: &[CimDataset], source: Source, a
         })
         .collect();
     let total: usize = work.iter().map(|(_, t)| t.len()).sum();
-    out.extend(par_concat(&runs(&work, threads_for(total), |(_, t)| t.len()), |items| {
-        let mut out = Vec::new();
-        for (shapes, targets) in items {
-            for t in *targets {
-                for shape in *shapes {
-                    run_shape(&ctx, shape, t, &mut out);
+    out.extend(par_concat(
+        &runs(&work, threads_for(total), |(_, t)| t.len()),
+        |items| {
+            let mut out = Vec::new();
+            for (shapes, targets) in items {
+                for t in *targets {
+                    for shape in *shapes {
+                        run_shape(&ctx, shape, t, &mut out);
+                    }
                 }
             }
-        }
-        out
-    }));
+            out
+        },
+    ));
     let mut by_class: FastMap<&'static str, Vec<Resolved>> = FastMap::default();
     for shape in mixed {
         for t in targets_of(ds, source, shape, &subjects, &mut by_class) {
@@ -912,7 +986,14 @@ pub fn validate_shapes_in(ds: &CimDataset, set: &[CimDataset], source: Source, a
     let mut seen = FastSet::default();
     let keep: Vec<bool> = out
         .iter()
-        .map(|v| seen.insert((v.object_id.as_str(), v.rule_id.as_str(), v.property.as_str(), v.message.as_str())))
+        .map(|v| {
+            seen.insert((
+                v.object_id.as_str(),
+                v.rule_id.as_str(),
+                v.property.as_str(),
+                v.message.as_str(),
+            ))
+        })
         .collect();
     drop(seen);
     let mut keep = keep.into_iter();

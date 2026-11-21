@@ -35,7 +35,7 @@ pub fn resolve(family: &'static str, generated: &'static Schema) -> &'static Sch
 }
 
 #[cfg(feature = "dynamic-schema")]
-pub use dynamic::{family_of_dir, load_from, load_table, SchemaError, RDFS_DIR_ENV};
+pub use dynamic::{RDFS_DIR_ENV, SchemaError, family_of_dir, load_from, load_table};
 
 #[cfg(feature = "dynamic-schema")]
 mod dynamic {
@@ -96,7 +96,6 @@ mod dynamic {
     /// [`SchemaError::TooLate`] rather than being quietly ignored.
     pub fn load_from(family_id: &str, dir: &Path) -> Result<(), SchemaError> {
         let family = family::by_id(family_id)
-            
             .ok_or_else(|| SchemaError::UnknownFamily(family_id.to_string()))?;
         if RESOLVED.load(Ordering::SeqCst) {
             return Err(SchemaError::TooLate);
@@ -110,10 +109,7 @@ mod dynamic {
         Ok(())
     }
 
-    pub(super) fn resolve(
-        family_id: &'static str,
-        generated: &'static Schema,
-    ) -> &'static Schema {
+    pub(super) fn resolve(family_id: &'static str, generated: &'static Schema) -> &'static Schema {
         RESOLVED.store(true, Ordering::SeqCst);
 
         if let Some(classes) = explicit().lock().unwrap().get(family_id) {
@@ -126,7 +122,10 @@ mod dynamic {
         let Some(family) = family::by_id(family_id) else {
             return generated;
         };
-        let Some(dir) = dirs.iter().find(|d| family_of_dir(d).is_some_and(|f| f.id == family.id)) else {
+        let Some(dir) = dirs
+            .iter()
+            .find(|d| family_of_dir(d).is_some_and(|f| f.id == family.id))
+        else {
             return generated;
         };
         match load_family(family, dir) {
@@ -177,9 +176,13 @@ mod dynamic {
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
             let (prefix, suffix) = pattern.split_once('*').unwrap_or((&pattern, ""));
-            names.iter().any(|n| n.starts_with(prefix) && n.ends_with(suffix))
+            names
+                .iter()
+                .any(|n| n.starts_with(prefix) && n.ends_with(suffix))
         };
-        [&family::CGMES, &family::NC].into_iter().find(|f| matches(f))
+        [&family::CGMES, &family::NC]
+            .into_iter()
+            .find(|f| matches(f))
     }
 
     /// Build a family's class table from RDFS without installing it.
@@ -188,15 +191,11 @@ mod dynamic {
     /// checking it against the generated table.
     pub fn load_table(family_id: &str, dir: &Path) -> Result<&'static Schema, SchemaError> {
         let family = family::by_id(family_id)
-            
             .ok_or_else(|| SchemaError::UnknownFamily(family_id.to_string()))?;
         load_family(family, dir)
     }
 
-    fn load_family(
-        family: &'static Family,
-        dir: &Path,
-    ) -> Result<&'static Schema, SchemaError> {
+    fn load_family(family: &'static Family, dir: &Path) -> Result<&'static Schema, SchemaError> {
         // Reuse the family's own filename pattern so a directory of mixed
         // artefacts selects the same files cimgen would.
         let file_pattern = Path::new(family.default_schema)
@@ -205,8 +204,9 @@ mod dynamic {
             .unwrap_or_else(|| "*.rdf".to_string());
         let pattern = dir.join(file_pattern);
 
-        let spec = cimschema::import::import_schema_files(&pattern.to_string_lossy(), family, false)
-            .map_err(|e| SchemaError::Parse(e.to_string()))?;
+        let spec =
+            cimschema::import::import_schema_files(&pattern.to_string_lossy(), family, false)
+                .map_err(|e| SchemaError::Parse(e.to_string()))?;
         Ok(build(&spec))
     }
 
@@ -291,8 +291,14 @@ mod dynamic {
             });
         }
 
-        let pairs = |interner: &mut Interner, v: Vec<(&str, &str)>| -> &'static [(&'static str, &'static str)] {
-            Vec::leak(v.into_iter().map(|(a, b)| (interner.intern(a), interner.intern(b))).collect())
+        let pairs = |interner: &mut Interner,
+                     v: Vec<(&str, &str)>|
+         -> &'static [(&'static str, &'static str)] {
+            Vec::leak(
+                v.into_iter()
+                    .map(|(a, b)| (interner.intern(a), interner.intern(b)))
+                    .collect(),
+            )
         };
         let profiles = pairs(&mut interner, cimschema::table::profile_uris(spec));
         let namespaces = pairs(&mut interner, cimschema::table::namespaces(spec));
@@ -305,11 +311,19 @@ mod dynamic {
                 values: Vec::leak(
                     e.values
                         .iter()
-                        .map(|v| EnumValueDef { id: interner.intern(&v.id), comment: interner.intern(&v.comment) })
+                        .map(|v| EnumValueDef {
+                            id: interner.intern(&v.id),
+                            comment: interner.intern(&v.comment),
+                        })
                         .collect(),
                 ),
             })
             .collect();
-        Box::leak(Box::new(Schema { classes: Vec::leak(out), profiles, namespaces, enums: Vec::leak(enums) }))
+        Box::leak(Box::new(Schema {
+            classes: Vec::leak(out),
+            profiles,
+            namespaces,
+            enums: Vec::leak(enums),
+        }))
     }
 }

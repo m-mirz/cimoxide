@@ -23,12 +23,21 @@ pub struct SkipEntry {
 impl fmt::Display for SkipEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.class_names.len() == 1 {
-            write!(f, "{}{} [{}] {:?}: {}",
-                self.class_names[0], self.prop, self.component, self.name, self.reason)
+            write!(
+                f,
+                "{}{} [{}] {:?}: {}",
+                self.class_names[0], self.prop, self.component, self.name, self.reason
+            )
         } else {
-            write!(f, "{} [{}] {:?} ({}): {}",
-                self.prop, self.component, self.name,
-                self.class_names.join(", "), self.reason)
+            write!(
+                f,
+                "{} [{}] {:?} ({}): {}",
+                self.prop,
+                self.component,
+                self.name,
+                self.class_names.join(", "),
+                self.reason
+            )
         }
     }
 }
@@ -41,10 +50,20 @@ pub struct SkipCollector {
 
 impl SkipCollector {
     pub fn new() -> Self {
-        Self { entries: Vec::new(), index: HashMap::new() }
+        Self {
+            entries: Vec::new(),
+            index: HashMap::new(),
+        }
     }
 
-    pub fn push(&mut self, class_name: &str, prop: &str, component: &str, name: &str, reason: &str) {
+    pub fn push(
+        &mut self,
+        class_name: &str,
+        prop: &str,
+        component: &str,
+        name: &str,
+        reason: &str,
+    ) {
         let key = format!("{}\x00{}\x00{}", prop, component, name);
         if let Some(&idx) = self.index.get(&key) {
             let class = class_name.to_string();

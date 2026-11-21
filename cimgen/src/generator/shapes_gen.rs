@@ -13,15 +13,18 @@ use std::collections::HashMap;
 use std::fmt::Write;
 
 use cimschema::shacl::resolve::{
-    AltBranch, Check, ClosedShape, Constraint, Logic, LogicOp, NodeKind, Path, PropShape,
-    ShapeDef, Step, Target,
+    AltBranch, Check, ClosedShape, Constraint, Logic, LogicOp, NodeKind, Path, PropShape, ShapeDef,
+    Step, Target,
 };
 
 /// Escape for a Rust string literal. Line breaks are kept as `\n` rather than
 /// flattened: the runtime loader interns the text as written, and the two
 /// tables must agree (`tests/dynamic_shapes.rs`).
 fn esc(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r")
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
 }
 
 /// Interns the strings that repeat across shapes, and whole property shapes.
@@ -141,7 +144,10 @@ fn render_constraint(c: &Constraint, pool: &mut Pool) -> String {
         }
         Constraint::NotClass(v) => format!("Constraint::NotClass({})", pool.intern_list(v)),
         Constraint::QualifiedIn { allowed, min } => {
-            format!("Constraint::QualifiedIn {{ allowed: {}, min: {min} }}", pool.intern_list(allowed))
+            format!(
+                "Constraint::QualifiedIn {{ allowed: {}, min: {min} }}",
+                pool.intern_list(allowed)
+            )
         }
     }
 }
@@ -161,7 +167,10 @@ fn render_check(c: &Check, pool: &mut Pool) -> String {
 fn render_prop(p: &PropShape, pool: &mut Pool) -> String {
     let path = render_path(&p.path, pool);
     let checks: Vec<String> = p.checks.iter().map(|c| render_check(c, pool)).collect();
-    format!("PropShape {{ path: {path}, checks: &[{}] }}", checks.join(", "))
+    format!(
+        "PropShape {{ path: {path}, checks: &[{}] }}",
+        checks.join(", ")
+    )
 }
 
 fn render_logic(l: &Logic, pool: &mut Pool) -> String {
@@ -175,7 +184,11 @@ fn render_logic(l: &Logic, pool: &mut Pool) -> String {
         .iter()
         .map(|b| {
             let props: Vec<String> = b.props.iter().map(|p| render_prop(p, pool)).collect();
-            format!("Branch {{ props: &[{}], negate: {} }}", props.join(", "), b.negate)
+            format!(
+                "Branch {{ props: &[{}], negate: {} }}",
+                props.join(", "),
+                b.negate
+            )
         })
         .collect();
     format!(
@@ -231,7 +244,11 @@ pub fn render_shapes(family_id: &str, shapes: &[ShapeDef]) -> String {
             .map(|c| format!("Some({})", render_closed(c, &mut pool)))
             .unwrap_or_else(|| "None".to_string());
 
-        let logic: Vec<String> = shape.logic.iter().map(|l| render_logic(l, &mut pool)).collect();
+        let logic: Vec<String> = shape
+            .logic
+            .iter()
+            .map(|l| render_logic(l, &mut pool))
+            .collect();
         let profiles = pool.intern_list(&shape.profiles);
         let file = pool.intern(&shape.file);
 
@@ -255,7 +272,11 @@ pub fn render_shapes(family_id: &str, shapes: &[ShapeDef]) -> String {
     )
     .unwrap();
     writeln!(s).unwrap();
-    writeln!(s, "// Repeated messages, descriptions and severities, interned.").unwrap();
+    writeln!(
+        s,
+        "// Repeated messages, descriptions and severities, interned."
+    )
+    .unwrap();
     s.push_str(&pool.render_strings());
     writeln!(s).unwrap();
     writeln!(
@@ -299,7 +320,11 @@ pub fn render_profiles_from(rows: &[(String, String)], codes: &[String]) -> Stri
     writeln!(
         s,
         "pub static PROFILES: &[&str] = &[{}];",
-        codes.iter().map(|c| format!("\"{}\"", esc(c))).collect::<Vec<_>>().join(", ")
+        codes
+            .iter()
+            .map(|c| format!("\"{}\"", esc(c)))
+            .collect::<Vec<_>>()
+            .join(", ")
     )
     .unwrap();
     s

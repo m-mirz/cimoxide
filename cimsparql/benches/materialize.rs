@@ -15,7 +15,12 @@ use cimsparql::{CimStore, GraphOptions, Stats, quads};
 const BASE: &str = "../CGMES-Test-Configurations/v3.0/RealGrid/RealGrid-Merged";
 
 fn load() -> CimDataset {
-    let names = ["RealGrid_EQ.xml", "RealGrid_SSH.xml", "RealGrid_TP.xml", "RealGrid_SV.xml"];
+    let names = [
+        "RealGrid_EQ.xml",
+        "RealGrid_SSH.xml",
+        "RealGrid_TP.xml",
+        "RealGrid_SV.xml",
+    ];
     let paths: Vec<std::path::PathBuf> = names.iter().map(|n| Path::new(BASE).join(n)).collect();
     let refs: Vec<&Path> = paths.iter().map(AsRef::as_ref).collect();
     CimDataset::decode_files_parallel(&refs).expect("decode RealGrid")
@@ -59,7 +64,9 @@ fn bench_query(c: &mut Criterion) {
     group.bench_function("count_by_type", |b| {
         b.iter(|| {
             std::hint::black_box(
-                store.query("SELECT (COUNT(?s) AS ?n) WHERE { ?s a cim:ACLineSegment }").unwrap(),
+                store
+                    .query("SELECT (COUNT(?s) AS ?n) WHERE { ?s a cim:ACLineSegment }")
+                    .unwrap(),
             )
         })
     });

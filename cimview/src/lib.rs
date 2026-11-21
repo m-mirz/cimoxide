@@ -90,7 +90,10 @@ pub(crate) mod testing {
     /// `files` as one model set, under the configuration `cimox validate
     /// --common --quality` uses.
     pub fn validate(files: &[(PathBuf, Arc<str>)]) -> Set {
-        let datasets: Vec<CimDataset> = files.iter().map(|(_, t)| CimDataset::decode_str(t).unwrap()).collect();
+        let datasets: Vec<CimDataset> = files
+            .iter()
+            .map(|(_, t)| CimDataset::decode_str(t).unwrap())
+            .collect();
         let mut defs: HashMap<String, (usize, bool)> = HashMap::new();
         for (f, ds) in datasets.iter().enumerate() {
             for (id, el) in &ds.entries {
@@ -106,7 +109,15 @@ pub(crate) mod testing {
         let found = cimvalidation::validate_files_traced(datasets, &cfg);
         grid.add_findings(&found);
         tree.add_findings(&found);
-        let files = files.iter().map(|(p, _)| p.to_string_lossy().into_owned()).collect();
-        Set { grid, tree, files, defs }
+        let files = files
+            .iter()
+            .map(|(p, _)| p.to_string_lossy().into_owned())
+            .collect();
+        Set {
+            grid,
+            tree,
+            files,
+            defs,
+        }
     }
 }

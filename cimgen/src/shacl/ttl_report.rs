@@ -78,7 +78,11 @@ fn add_name(out: &mut HashSet<String>, s: &str) {
     }
 }
 
-fn collect(group: &'static str, shape: &ShapeInfo, out: &mut HashMap<&'static str, HashSet<String>>) {
+fn collect(
+    group: &'static str,
+    shape: &ShapeInfo,
+    out: &mut HashMap<&'static str, HashSet<String>>,
+) {
     for c in &shape.constraints {
         if c.component == "sh:SPARQLConstraintComponent" {
             add_name(out.entry(group).or_default(), &shape.name);
@@ -140,8 +144,7 @@ pub fn combine_coverage(
                     missing: Vec::new(),
                 },
                 Some(set) => {
-                    let mut missing: Vec<String> =
-                        set.difference(&implemented).cloned().collect();
+                    let mut missing: Vec<String> = set.difference(&implemented).cloned().collect();
                     missing.sort();
                     let implemented_count = set.intersection(&implemented).count();
                     CoverageRow {

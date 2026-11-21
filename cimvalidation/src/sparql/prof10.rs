@@ -1,17 +1,17 @@
-use cimmodel::CimDataset;
 use super::Fields;
 use crate::Violation;
+use cimmodel::CimDataset;
 
-const PROF_EQ:   &str = "http://iec.ch/TC57/ns/CIM/CoreEquipment-EU/3.0";
+const PROF_EQ: &str = "http://iec.ch/TC57/ns/CIM/CoreEquipment-EU/3.0";
 const PROF_EQBD: &str = "http://iec.ch/TC57/ns/CIM/EquipmentBoundary-EU/3.0";
-const PROF_DY:   &str = "http://iec.ch/TC57/ns/CIM/Dynamics-EU/1.0";
-const PROF_DL:   &str = "http://iec.ch/TC57/ns/CIM/DiagramLayout-EU/3.0";
-const PROF_SC:   &str = "http://iec.ch/TC57/ns/CIM/ShortCircuit-EU/3.0";
-const PROF_OP:   &str = "http://iec.ch/TC57/ns/CIM/Operation-EU/3.0";
-const PROF_GL:   &str = "http://iec.ch/TC57/ns/CIM/GeographicalLocation-EU/3.0";
-const PROF_SV:   &str = "http://iec.ch/TC57/ns/CIM/StateVariables-EU/3.0";
-const PROF_TP:   &str = "http://iec.ch/TC57/ns/CIM/Topology-EU/3.0";
-const PROF_SSH:  &str = "http://iec.ch/TC57/ns/CIM/SteadyStateHypothesis-EU/3.0";
+const PROF_DY: &str = "http://iec.ch/TC57/ns/CIM/Dynamics-EU/1.0";
+const PROF_DL: &str = "http://iec.ch/TC57/ns/CIM/DiagramLayout-EU/3.0";
+const PROF_SC: &str = "http://iec.ch/TC57/ns/CIM/ShortCircuit-EU/3.0";
+const PROF_OP: &str = "http://iec.ch/TC57/ns/CIM/Operation-EU/3.0";
+const PROF_GL: &str = "http://iec.ch/TC57/ns/CIM/GeographicalLocation-EU/3.0";
+const PROF_SV: &str = "http://iec.ch/TC57/ns/CIM/StateVariables-EU/3.0";
+const PROF_TP: &str = "http://iec.ch/TC57/ns/CIM/Topology-EU/3.0";
+const PROF_SSH: &str = "http://iec.ch/TC57/ns/CIM/SteadyStateHypothesis-EU/3.0";
 
 pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
@@ -27,18 +27,24 @@ pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
 fn profile_uri<'a>(profiles: &[&'a str]) -> &'a str {
     for p in profiles {
         let p = p.trim();
-        if !p.is_empty() { return p; }
+        if !p.is_empty() {
+            return p;
+        }
     }
     ""
 }
 
 fn dependent_on_profiles(dependent_on: &[String], dataset: &CimDataset) -> Vec<String> {
-    if dependent_on.is_empty() { return Vec::new(); }
+    if dependent_on.is_empty() {
+        return Vec::new();
+    }
     let mut out = Vec::new();
     for dep_ref in dependent_on {
         let dep_id = dep_ref.trim_start_matches('#');
         if let Some(entry) = dataset.entries.get(dep_id) {
-            let prof = match Fields::of_class(entry, "FullModel").or_else(|| Fields::of_class(entry, "DifferenceModel")) {
+            let prof = match Fields::of_class(entry, "FullModel")
+                .or_else(|| Fields::of_class(entry, "DifferenceModel"))
+            {
                 Some(m) => profile_uri(&m.texts("Model.profile")).to_string(),
                 None => "external".to_string(),
             };
@@ -55,7 +61,8 @@ fn has_value(deps: &[String], target: &str) -> bool {
 }
 
 fn all_in_set(deps: &[String], allowed: &[&str]) -> bool {
-    deps.iter().all(|d| d == "external" || allowed.contains(&d.as_str()))
+    deps.iter()
+        .all(|d| d == "external" || allowed.contains(&d.as_str()))
 }
 
 fn dataset_has_profile(dataset: &CimDataset, prof: &str) -> bool {
@@ -66,7 +73,9 @@ fn dataset_has_profile(dataset: &CimDataset, prof: &str) -> bool {
                 Some(m) => profile_uri(&m.texts("Model.profile")).to_string(),
                 None => continue,
             };
-            if p == prof { return true; }
+            if p == prof {
+                return true;
+            }
         }
     }
     false
@@ -87,40 +96,63 @@ fn prof10_violation(id: &str, rule_id: &str, msg: &str, severity: &str) -> Viola
 
 fn check_prof10_model(id: &str, m: &Fields, dataset: &CimDataset) -> Vec<Violation> {
     match profile_uri(&m.texts("Model.profile")) {
-        PROF_EQ  => check_prof10_eq(id, m, dataset),
-        PROF_DY  => check_prof10_dy(id, m, dataset),
-        PROF_DL  => check_prof10_dl(id, m, dataset),
-        PROF_SC  => check_prof10_sc(id, m, dataset),
-        PROF_OP  => check_prof10_op(id, m, dataset),
-        PROF_GL  => check_prof10_gl(id, m, dataset),
-        PROF_SV  => check_prof10_sv(id, m, dataset),
-        PROF_TP  => check_prof10_tp(id, m, dataset),
+        PROF_EQ => check_prof10_eq(id, m, dataset),
+        PROF_DY => check_prof10_dy(id, m, dataset),
+        PROF_DL => check_prof10_dl(id, m, dataset),
+        PROF_SC => check_prof10_sc(id, m, dataset),
+        PROF_OP => check_prof10_op(id, m, dataset),
+        PROF_GL => check_prof10_gl(id, m, dataset),
+        PROF_SV => check_prof10_sv(id, m, dataset),
+        PROF_TP => check_prof10_tp(id, m, dataset),
         PROF_SSH => check_prof10_ssh(id, m, dataset),
-        _        => Vec::new(),
+        _ => Vec::new(),
     }
 }
 
 const MSG_EQ: &str = "The EQ does not have reference to EQBD. The file header dependencies cardinalities and types for EQ profile are not according to PROF10.";
 fn check_prof10_eq(id: &str, m: &Fields, dataset: &CimDataset) -> Vec<Violation> {
     let deps = dependent_on_profiles(m.references("Model.DependentOn"), dataset);
-    if has_value(&deps, PROF_EQBD) || has_value(&deps, "external") { return Vec::new(); }
+    if has_value(&deps, PROF_EQBD) || has_value(&deps, "external") {
+        return Vec::new();
+    }
     vec![prof10_violation(id, "prof10:PROF10-EQ", MSG_EQ, "sh:Info")]
 }
 
 const MSG_DY: &str = "The file header dependencies cardinalities and types for DY profile are not according to PROF10.";
 fn check_prof10_dy(id: &str, m: &Fields, dataset: &CimDataset) -> Vec<Violation> {
     let deps = dependent_on_profiles(m.references("Model.DependentOn"), dataset);
-    if deps.is_empty() { return vec![prof10_violation(id, "prof10:PROF10-DY", MSG_DY, "sh:Violation")]; }
-    if has_value(&deps, PROF_EQ) { return Vec::new(); }
-    if has_value(&deps, "external") && !dataset_has_profile(dataset, PROF_EQ) { return Vec::new(); }
-    vec![prof10_violation(id, "prof10:PROF10-DY", MSG_DY, "sh:Violation")]
+    if deps.is_empty() {
+        return vec![prof10_violation(
+            id,
+            "prof10:PROF10-DY",
+            MSG_DY,
+            "sh:Violation",
+        )];
+    }
+    if has_value(&deps, PROF_EQ) {
+        return Vec::new();
+    }
+    if has_value(&deps, "external") && !dataset_has_profile(dataset, PROF_EQ) {
+        return Vec::new();
+    }
+    vec![prof10_violation(
+        id,
+        "prof10:PROF10-DY",
+        MSG_DY,
+        "sh:Violation",
+    )]
 }
 
 const MSG_DL: &str = "The file header dependencies cardinalities and types for DL profile are not according to PROF10.";
 fn check_prof10_dl(id: &str, m: &Fields, dataset: &CimDataset) -> Vec<Violation> {
     let deps = dependent_on_profiles(m.references("Model.DependentOn"), dataset);
     if !all_in_set(&deps, &[PROF_DY, PROF_TP, PROF_EQ, PROF_SC, PROF_OP]) {
-        return vec![prof10_violation(id, "prof10:PROF10-DL", MSG_DL, "sh:Violation")];
+        return vec![prof10_violation(
+            id,
+            "prof10:PROF10-DL",
+            MSG_DL,
+            "sh:Violation",
+        )];
     }
     Vec::new()
 }
@@ -128,9 +160,21 @@ fn check_prof10_dl(id: &str, m: &Fields, dataset: &CimDataset) -> Vec<Violation>
 const MSG_SC: &str = "The file header dependencies cardinalities and types for SC profile are not according to PROF10.";
 fn check_prof10_sc(id: &str, m: &Fields, dataset: &CimDataset) -> Vec<Violation> {
     let deps = dependent_on_profiles(m.references("Model.DependentOn"), dataset);
-    if deps.is_empty() { return vec![prof10_violation(id, "prof10:PROF10-SC", MSG_SC, "sh:Violation")]; }
+    if deps.is_empty() {
+        return vec![prof10_violation(
+            id,
+            "prof10:PROF10-SC",
+            MSG_SC,
+            "sh:Violation",
+        )];
+    }
     if !all_in_set(&deps, &[PROF_EQ, PROF_EQBD, PROF_OP]) {
-        return vec![prof10_violation(id, "prof10:PROF10-SC", MSG_SC, "sh:Violation")];
+        return vec![prof10_violation(
+            id,
+            "prof10:PROF10-SC",
+            MSG_SC,
+            "sh:Violation",
+        )];
     }
     Vec::new()
 }
@@ -138,9 +182,21 @@ fn check_prof10_sc(id: &str, m: &Fields, dataset: &CimDataset) -> Vec<Violation>
 const MSG_OP: &str = "The file header dependencies cardinalities and types for OP profile are not according to PROF10.";
 fn check_prof10_op(id: &str, m: &Fields, dataset: &CimDataset) -> Vec<Violation> {
     let deps = dependent_on_profiles(m.references("Model.DependentOn"), dataset);
-    if deps.is_empty() { return vec![prof10_violation(id, "prof10:PROF10-OP", MSG_OP, "sh:Violation")]; }
+    if deps.is_empty() {
+        return vec![prof10_violation(
+            id,
+            "prof10:PROF10-OP",
+            MSG_OP,
+            "sh:Violation",
+        )];
+    }
     if !all_in_set(&deps, &[PROF_EQ, PROF_EQBD, PROF_SC]) {
-        return vec![prof10_violation(id, "prof10:PROF10-OP", MSG_OP, "sh:Violation")];
+        return vec![prof10_violation(
+            id,
+            "prof10:PROF10-OP",
+            MSG_OP,
+            "sh:Violation",
+        )];
     }
     Vec::new()
 }
@@ -149,7 +205,12 @@ const MSG_GL: &str = "The file header dependencies cardinalities and types for G
 fn check_prof10_gl(id: &str, m: &Fields, dataset: &CimDataset) -> Vec<Violation> {
     let deps = dependent_on_profiles(m.references("Model.DependentOn"), dataset);
     if !all_in_set(&deps, &[PROF_EQBD, PROF_EQ, PROF_SC, PROF_OP]) {
-        return vec![prof10_violation(id, "prof10:PROF10-GL", MSG_GL, "sh:Violation")];
+        return vec![prof10_violation(
+            id,
+            "prof10:PROF10-GL",
+            MSG_GL,
+            "sh:Violation",
+        )];
     }
     Vec::new()
 }
@@ -157,26 +218,74 @@ fn check_prof10_gl(id: &str, m: &Fields, dataset: &CimDataset) -> Vec<Violation>
 const MSG_SV: &str = "The file header dependencies cardinalities and types for SV profile are not according to PROF10.";
 fn check_prof10_sv(id: &str, m: &Fields, dataset: &CimDataset) -> Vec<Violation> {
     let deps = dependent_on_profiles(m.references("Model.DependentOn"), dataset);
-    if deps.is_empty() { return vec![prof10_violation(id, "prof10:PROF10-SV", MSG_SV, "sh:Violation")]; }
-    if has_value(&deps, PROF_TP) { return Vec::new(); }
-    if has_value(&deps, "external") && !dataset_has_profile(dataset, PROF_TP) { return Vec::new(); }
-    vec![prof10_violation(id, "prof10:PROF10-SV", MSG_SV, "sh:Violation")]
+    if deps.is_empty() {
+        return vec![prof10_violation(
+            id,
+            "prof10:PROF10-SV",
+            MSG_SV,
+            "sh:Violation",
+        )];
+    }
+    if has_value(&deps, PROF_TP) {
+        return Vec::new();
+    }
+    if has_value(&deps, "external") && !dataset_has_profile(dataset, PROF_TP) {
+        return Vec::new();
+    }
+    vec![prof10_violation(
+        id,
+        "prof10:PROF10-SV",
+        MSG_SV,
+        "sh:Violation",
+    )]
 }
 
 const MSG_TP: &str = "The file header dependencies cardinalities and types for TP profile are not according to PROF10.";
 fn check_prof10_tp(id: &str, m: &Fields, dataset: &CimDataset) -> Vec<Violation> {
     let deps = dependent_on_profiles(m.references("Model.DependentOn"), dataset);
-    if deps.is_empty() { return vec![prof10_violation(id, "prof10:PROF10-TP", MSG_TP, "sh:Violation")]; }
-    if has_value(&deps, PROF_SSH) { return Vec::new(); }
-    if has_value(&deps, "external") && !dataset_has_profile(dataset, PROF_SSH) { return Vec::new(); }
-    vec![prof10_violation(id, "prof10:PROF10-TP", MSG_TP, "sh:Violation")]
+    if deps.is_empty() {
+        return vec![prof10_violation(
+            id,
+            "prof10:PROF10-TP",
+            MSG_TP,
+            "sh:Violation",
+        )];
+    }
+    if has_value(&deps, PROF_SSH) {
+        return Vec::new();
+    }
+    if has_value(&deps, "external") && !dataset_has_profile(dataset, PROF_SSH) {
+        return Vec::new();
+    }
+    vec![prof10_violation(
+        id,
+        "prof10:PROF10-TP",
+        MSG_TP,
+        "sh:Violation",
+    )]
 }
 
 const MSG_SSH: &str = "The file header dependencies cardinalities and types for SSH profile are not according to PROF10.";
 fn check_prof10_ssh(id: &str, m: &Fields, dataset: &CimDataset) -> Vec<Violation> {
     let deps = dependent_on_profiles(m.references("Model.DependentOn"), dataset);
-    if deps.is_empty() { return vec![prof10_violation(id, "prof10:PROF10-SSH", MSG_SSH, "sh:Violation")]; }
-    if has_value(&deps, PROF_EQ) { return Vec::new(); }
-    if has_value(&deps, "external") && !dataset_has_profile(dataset, PROF_EQ) { return Vec::new(); }
-    vec![prof10_violation(id, "prof10:PROF10-SSH", MSG_SSH, "sh:Violation")]
+    if deps.is_empty() {
+        return vec![prof10_violation(
+            id,
+            "prof10:PROF10-SSH",
+            MSG_SSH,
+            "sh:Violation",
+        )];
+    }
+    if has_value(&deps, PROF_EQ) {
+        return Vec::new();
+    }
+    if has_value(&deps, "external") && !dataset_has_profile(dataset, PROF_EQ) {
+        return Vec::new();
+    }
+    vec![prof10_violation(
+        id,
+        "prof10:PROF10-SSH",
+        MSG_SSH,
+        "sh:Violation",
+    )]
 }

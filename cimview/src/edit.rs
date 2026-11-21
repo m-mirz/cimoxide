@@ -34,12 +34,19 @@ impl File<'_> {
     /// (after `#`, or the whole of `_x` or `urn:uuid:x`).
     fn suffix(&self, r: Range, len: usize) -> Range {
         let end = self.lines.offset(self.text, r.end);
-        Range::new(self.lines.position(self.text, end.saturating_sub(len)), r.end)
+        Range::new(
+            self.lines.position(self.text, end.saturating_sub(len)),
+            r.end,
+        )
     }
 
     /// `r` widened to whole lines when nothing else is written on them.
     pub(crate) fn lines_of(&self, r: Range) -> Range {
-        let (text, start, end) = (self.text, self.lines.offset(self.text, r.start), self.lines.offset(self.text, r.end));
+        let (text, start, end) = (
+            self.text,
+            self.lines.offset(self.text, r.start),
+            self.lines.offset(self.text, r.end),
+        );
         let line_start = text[..start].rfind('\n').map_or(0, |i| i + 1);
         let line_end = text[end..].find('\n').map_or(text.len(), |i| end + i + 1);
         if text[line_start..start].trim().is_empty() && text[end..line_end].trim().is_empty() {
@@ -52,7 +59,10 @@ impl File<'_> {
     /// The text of a field written `<q>text</q>`, and its range.
     fn field_text(&self, head: Range, full: Range, qname: &str) -> Option<(&str, Range)> {
         let start = self.lines.offset(self.text, head.end);
-        let end = self.lines.offset(self.text, full.end).checked_sub(qname.len() + 3)?;
+        let end = self
+            .lines
+            .offset(self.text, full.end)
+            .checked_sub(qname.len() + 3)?;
         let value = self.text.get(start..end)?;
         (!value.contains('<')).then(|| (value, self.lines.range(self.text, start, end)))
     }
@@ -64,11 +74,17 @@ impl File<'_> {
 pub fn prepare_rename(files: &[File], name: &str, pos: Position) -> Option<(Range, String)> {
     let file = files.iter().find(|f| f.name == name)?;
     let el = file.index.element_at(pos)?;
-    if let Some((mrid, r)) = el.fields.iter().filter_map(|f| f.resource.as_ref()).find(|(_, r)| contains(*r, pos)) {
+    if let Some((mrid, r)) = el
+        .fields
+        .iter()
+        .filter_map(|f| f.resource.as_ref())
+        .find(|(_, r)| contains(*r, pos))
+    {
         return Some((file.suffix(*r, mrid.len()), mrid.clone()));
     }
     let id = el.id_range?;
-    (contains(el.head, pos) && !el.mrid.is_empty()).then(|| (file.suffix(id, el.mrid.len()), el.mrid.clone()))
+    (contains(el.head, pos) && !el.mrid.is_empty())
+        .then(|| (file.suffix(id, el.mrid.len()), el.mrid.clone()))
 }
 
 /// Rename mRID `old` to `new` in every file: each element's `rdf:ID` or
@@ -78,14 +94,25 @@ pub fn prepare_rename(files: &[File], name: &str, pos: Position) -> Option<(Rang
 pub fn rename<'a>(files: &[File<'a>], old: &str, new: &str) -> Result<Edits<'a>, String> {
     let new = new.trim();
     if new.is_empty() || new.contains(|c: char| c.is_whitespace() || "\"'<>&#".contains(c)) {
-        return Err(format!("`{new}` cannot be an mRID: no spaces, quotes, `<`, `>`, `&` or `#`"));
+        return Err(format!(
+            "`{new}` cannot be an mRID: no spaces, quotes, `<`, `>`, `&` or `#`"
+        ));
     }
-    let defined = files.iter().flat_map(|f| &f.index.elements).any(|e| e.mrid == old && e.id_kind == Some(IdKind::Id));
+    let defined = files
+        .iter()
+        .flat_map(|f| &f.index.elements)
+        .any(|e| e.mrid == old && e.id_kind == Some(IdKind::Id));
     let ncname = new.starts_with(|c: char| c.is_alphabetic() || c == '_') && !new.contains(':');
     if defined && !ncname {
-        return Err(format!("`{new}` cannot be an `rdf:ID`: it must start with a letter or `_` and hold no `:`"));
+        return Err(format!(
+            "`{new}` cannot be an `rdf:ID`: it must start with a letter or `_` and hold no `:`"
+        ));
     }
-    if files.iter().flat_map(|f| &f.index.elements).any(|e| e.mrid == new) {
+    if files
+        .iter()
+        .flat_map(|f| &f.index.elements)
+        .any(|e| e.mrid == new)
+    {
         return Err(format!("the model set already has an object `{new}`"));
     }
     let mut changes = Vec::new();
@@ -97,7 +124,9 @@ pub fn rename<'a>(files: &[File<'a>], old: &str, new: &str) -> Result<Edits<'a>,
             {
                 edits.push(TextEdit::new(file.suffix(id, old.len()), new.into()));
                 for f in el.fields.iter().filter(|f| f.key().ends_with(".mRID")) {
-                    let Some((text, r)) = file.field_text(f.head, f.full, &f.qname) else { continue };
+                    let Some((text, r)) = file.field_text(f.head, f.full, &f.qname) else {
+                        continue;
+                    };
                     let bare = |s: &str| s.strip_prefix('_').unwrap_or(s).to_string();
                     if text.trim() == old {
                         edits.push(TextEdit::new(r, new.into()));
@@ -142,7 +171,10 @@ pub fn delete<'a>(files: &[File<'a>], ids: &HashSet<&str>) -> Deletion<'a> {
                 continue;
             }
             for f in &el.fields {
-                if f.resource.as_ref().is_some_and(|(m, _)| ids.contains(m.as_str())) {
+                if f.resource
+                    .as_ref()
+                    .is_some_and(|(m, _)| ids.contains(m.as_str()))
+                {
                     references += 1;
                     edit(f.full);
                 }
@@ -152,7 +184,11 @@ pub fn delete<'a>(files: &[File<'a>], ids: &HashSet<&str>) -> Deletion<'a> {
             changes.push((file.name, edits));
         }
     }
-    Deletion { edits: changes, objects: objects.len(), references }
+    Deletion {
+        edits: changes,
+        objects: objects.len(),
+        references,
+    }
 }
 
 /// A field to add: where, and where its value is once added.
@@ -169,7 +205,14 @@ pub struct Addition {
 impl Addition {
     /// The edit with the reference to `c` filled in.
     pub fn naming(&self, c: &Candidate) -> TextEdit {
-        TextEdit::new(self.edit.range, self.edit.new_text.replacen("rdf:resource=\"#\"", &format!("rdf:resource=\"{}\"", c.reference()), 1))
+        TextEdit::new(
+            self.edit.range,
+            self.edit.new_text.replacen(
+                "rdf:resource=\"#\"",
+                &format!("rdf:resource=\"{}\"", c.reference()),
+                1,
+            ),
+        )
     }
 }
 
@@ -177,17 +220,36 @@ impl Addition {
 /// `dcterms:conformsTo`), by the schemas' profile tables.
 pub(crate) fn profiles(file: &File) -> Vec<&'static str> {
     let reg = type_registry();
-    let tables: Vec<&[(&str, &str)]> = ["cgmes", "nc"].iter().filter_map(|f| reg.schema(f)).map(|s| s.profiles).collect();
-    let Some(header) = file.index.elements.iter().find(|e| matches!(local(&e.qname), "FullModel" | "Dataset" | "DifferenceModel")) else { return Vec::new() };
+    let tables: Vec<&[(&str, &str)]> = ["cgmes", "nc"]
+        .iter()
+        .filter_map(|f| reg.schema(f))
+        .map(|s| s.profiles)
+        .collect();
+    let Some(header) = file
+        .index
+        .elements
+        .iter()
+        .find(|e| matches!(local(&e.qname), "FullModel" | "Dataset" | "DifferenceModel"))
+    else {
+        return Vec::new();
+    };
     header
         .fields
         .iter()
         .filter(|f| matches!(f.key(), "Model.profile" | "conformsTo"))
         .filter_map(|f| match &f.resource {
             Some((uri, _)) => Some(uri.as_str()),
-            None => file.field_text(f.head, f.full, &f.qname).map(|(t, _)| t.trim()),
+            None => file
+                .field_text(f.head, f.full, &f.qname)
+                .map(|(t, _)| t.trim()),
         })
-        .filter_map(|uri| tables.iter().flat_map(|t| t.iter()).find(|(_, u)| *u == uri).map(|(code, _)| *code))
+        .filter_map(|uri| {
+            tables
+                .iter()
+                .flat_map(|t| t.iter())
+                .find(|(_, u)| *u == uri)
+                .map(|(code, _)| *code)
+        })
         .collect()
 }
 
@@ -203,19 +265,40 @@ pub fn add_missing(files: &[File], prefer: &str, id: &str, key: &str) -> Option<
 
 /// [`add_missing`], with `given` as the value written (as [`set_field`] takes it) rather than
 /// one to type over.
-fn addition(files: &[File], prefer: &str, id: &str, key: &str, given: Option<&str>) -> Option<Addition> {
+fn addition(
+    files: &[File],
+    prefer: &str,
+    id: &str,
+    key: &str,
+    given: Option<&str>,
+) -> Option<Addition> {
     let reg = type_registry();
-    let sites: Vec<(&File, &crate::index::Element)> =
-        files.iter().flat_map(|f| f.index.elements.iter().filter(|e| e.mrid == id).map(move |e| (f, e))).collect();
-    if sites.iter().any(|(_, e)| e.fields.iter().any(|f| f.key() == key)) {
+    let sites: Vec<(&File, &crate::index::Element)> = files
+        .iter()
+        .flat_map(|f| {
+            f.index
+                .elements
+                .iter()
+                .filter(|e| e.mrid == id)
+                .map(move |e| (f, e))
+        })
+        .collect();
+    if sites
+        .iter()
+        .any(|(_, e)| e.fields.iter().any(|f| f.key() == key))
+    {
         return None;
     }
-    let (def_file, def) = sites.iter().max_by_key(|(_, e)| e.id_kind == Some(IdKind::Id))?;
+    let (def_file, def) = sites
+        .iter()
+        .max_by_key(|(_, e)| e.id_kind == Some(IdKind::Id))?;
     let class = def_file.index.class_of(&def.qname)?;
     let attr = reg.attr(class, key).filter(|a| a.used)?;
     let fits = |f: &File| {
         let declared = profiles(f);
-        declared.is_empty() || attr.origins.is_empty() || declared.iter().any(|p| attr.origins.contains(p))
+        declared.is_empty()
+            || attr.origins.is_empty()
+            || declared.iter().any(|p| attr.origins.contains(p))
     };
     let (file, el) = sites
         .iter()
@@ -228,19 +311,40 @@ fn addition(files: &[File], prefer: &str, id: &str, key: &str, given: Option<&st
                 _ if given.is_some() => escape(given.unwrap_or_default()),
                 ("IdentifiedObject.mRID", _) => id.strip_prefix('_').unwrap_or(id).to_string(),
                 (_, "boolean") => "false".into(),
-                (_, "double" | "float" | "decimal" | "integer" | "int" | "long" | "short") => "0".into(),
+                (_, "double" | "float" | "decimal" | "integer" | "int" | "long" | "short") => {
+                    "0".into()
+                }
                 _ => String::new(),
             };
             (format!("<{tag}>"), value, format!("</{tag}>"))
         }
         AttrKind::Association => match given {
-            Some(target) => (format!("<{tag} rdf:resource=\""), reference(target), "\" />".into()),
-            None => (format!("<{tag} rdf:resource=\"#"), String::new(), "\" />".into()),
+            Some(target) => (
+                format!("<{tag} rdf:resource=\""),
+                reference(target),
+                "\" />".into(),
+            ),
+            None => (
+                format!("<{tag} rdf:resource=\"#"),
+                String::new(),
+                "\" />".into(),
+            ),
         },
         AttrKind::Enum => {
-            let first = reg.family_of(class.qualified).and_then(|f| reg.schema(f)).and_then(|s| s.enumeration(attr.range)).and_then(|e| e.values.first());
-            let value = given.map_or_else(|| first.map_or(String::new(), |v| v.id.to_string()), |v| enum_value(attr.range, v).to_string());
-            (format!("<{tag} rdf:resource=\"{}", attr.value_ns), value, "\" />".into())
+            let first = reg
+                .family_of(class.qualified)
+                .and_then(|f| reg.schema(f))
+                .and_then(|s| s.enumeration(attr.range))
+                .and_then(|e| e.values.first());
+            let value = given.map_or_else(
+                || first.map_or(String::new(), |v| v.id.to_string()),
+                |v| enum_value(attr.range, v).to_string(),
+            );
+            (
+                format!("<{tag} rdf:resource=\"{}", attr.value_ns),
+                value,
+                "\" />".into(),
+            )
         }
     };
     // On a line of its own after the last field, indented as it is; else
@@ -249,14 +353,22 @@ fn addition(files: &[File], prefer: &str, id: &str, key: &str, given: Option<&st
     let indent_of = |r: Range| {
         let start = lines.offset(text, Position::new(r.start.line, 0));
         let at = lines.offset(text, r.start);
-        text[start..at].chars().take_while(|c| c.is_whitespace()).collect::<String>()
+        text[start..at]
+            .chars()
+            .take_while(|c| c.is_whitespace())
+            .collect::<String>()
     };
     let (at, indent) = match el.fields.last() {
         Some(f) => (f.full.end, indent_of(f.head)),
         None => {
             let end = lines.offset(text, el.full.end);
-            let closing = end.checked_sub(el.qname.len() + 3).filter(|&c| text.get(c..end) == Some(&format!("</{}>", el.qname)))?;
-            (lines.position(text, closing), format!("{}  ", indent_of(el.head)))
+            let closing = end
+                .checked_sub(el.qname.len() + 3)
+                .filter(|&c| text.get(c..end) == Some(&format!("</{}>", el.qname)))?;
+            (
+                lines.position(text, closing),
+                format!("{}  ", indent_of(el.head)),
+            )
         }
     };
     // Lines end as the file's do.
@@ -267,41 +379,80 @@ fn addition(files: &[File], prefer: &str, id: &str, key: &str, given: Option<&st
         format!("{eol}{indent}{open}{value}{close}")
     };
     let utf16 = |s: &str| s.encode_utf16().count() as u32;
-    let start = if el.fields.is_empty() { Position::new(at.line, at.character + 2 + utf16(&open)) } else { Position::new(at.line + 1, utf16(&indent) + utf16(&open)) };
-    let value_range = Range::new(start, Position::new(start.line, start.character + utf16(&value)));
+    let start = if el.fields.is_empty() {
+        Position::new(at.line, at.character + 2 + utf16(&open))
+    } else {
+        Position::new(at.line + 1, utf16(&indent) + utf16(&open))
+    };
+    let value_range = Range::new(
+        start,
+        Position::new(start.line, start.character + utf16(&value)),
+    );
     let reference = attr.kind == AttrKind::Association && given.is_none();
-    Some(Addition { file: file.name.to_string(), edit: TextEdit::new(Range::new(at, at), new_text), value: value_range, reference })
+    Some(Addition {
+        file: file.name.to_string(),
+        edit: TextEdit::new(Range::new(at, at), new_text),
+        value: value_range,
+        reference,
+    })
 }
 
 /// `text` as XML character data.
 fn escape(text: &str) -> String {
-    text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// A reference to object `target` as written: `#_id`, or an IRI as it is.
 fn reference(target: &str) -> String {
-    if target.contains(':') { target.to_string() } else { format!("#{target}") }
+    if target.contains(':') {
+        target.to_string()
+    } else {
+        format!("#{target}")
+    }
 }
 
 /// An enumeration's value as its IRI ends: `WindingConnection.D`, from `D` or the whole name.
 fn enum_value<'v>(range: &str, value: &'v str) -> std::borrow::Cow<'v, str> {
     let value = value.rsplit_once('#').map_or(value, |(_, v)| v);
-    if value.contains('.') { value.into() } else { format!("{range}.{value}").into() }
+    if value.contains('.') {
+        value.into()
+    } else {
+        format!("{range}.{value}").into()
+    }
 }
 
 /// Set field `key` of object `id` to `value`: a literal's text (escaped here), a reference's
 /// object (its mRID, or an IRI), or an enumeration's value (`D`, or `WindingConnection.D`).
 /// Wherever a file writes the field, its value is replaced; where none does, it is added as
 /// [`add_missing`] adds it, `prefer` first. An error if the object's class does not declare it.
-pub fn set_field<'a>(files: &[File<'a>], prefer: &str, id: &str, key: &str, value: &str) -> Result<Edits<'a>, String> {
+pub fn set_field<'a>(
+    files: &[File<'a>],
+    prefer: &str,
+    id: &str,
+    key: &str,
+    value: &str,
+) -> Result<Edits<'a>, String> {
     let reg = type_registry();
     let (def_file, def) = files
         .iter()
-        .flat_map(|f| f.index.elements.iter().filter(|e| e.mrid == id).map(move |e| (f, e)))
+        .flat_map(|f| {
+            f.index
+                .elements
+                .iter()
+                .filter(|e| e.mrid == id)
+                .map(move |e| (f, e))
+        })
         .max_by_key(|(_, e)| e.id_kind == Some(IdKind::Id))
         .ok_or_else(|| format!("no file writes `{id}`"))?;
-    let class = def_file.index.class_of(&def.qname).ok_or_else(|| format!("`{}` is no class of the tables", def.qname))?;
-    let attr = reg.attr(class, key).ok_or_else(|| format!("{} has no field {key}", class.local))?;
+    let class = def_file
+        .index
+        .class_of(&def.qname)
+        .ok_or_else(|| format!("`{}` is no class of the tables", def.qname))?;
+    let attr = reg
+        .attr(class, key)
+        .ok_or_else(|| format!("{} has no field {key}", class.local))?;
     let mut changes: Edits<'a> = Vec::new();
     for file in files {
         let mut edits = Vec::new();
@@ -311,7 +462,10 @@ pub fn set_field<'a>(files: &[File<'a>], prefer: &str, id: &str, key: &str, valu
                     (AttrKind::Literal, None) => match file.field_text(f.head, f.full, &f.qname) {
                         Some((_, r)) => TextEdit::new(r, escape(value)),
                         // `<x/>`: written anew.
-                        None => TextEdit::new(f.full, format!("<{q}>{}</{q}>", escape(value), q = f.qname)),
+                        None => TextEdit::new(
+                            f.full,
+                            format!("<{q}>{}</{q}>", escape(value), q = f.qname),
+                        ),
                     },
                     (AttrKind::Association, Some((_, r))) => TextEdit::new(*r, reference(value)),
                     (AttrKind::Enum, Some((_, r))) => {
@@ -319,10 +473,17 @@ pub fn set_field<'a>(files: &[File<'a>], prefer: &str, id: &str, key: &str, valu
                         let end = file.lines.offset(file.text, r.end);
                         let written = &file.text[start..end];
                         // Its namespace as written, else the attribute's.
-                        let ns = written.rsplit_once('#').map_or(attr.value_ns.to_string(), |(ns, _)| format!("{ns}#"));
+                        let ns = written
+                            .rsplit_once('#')
+                            .map_or(attr.value_ns.to_string(), |(ns, _)| format!("{ns}#"));
                         TextEdit::new(*r, format!("{ns}{}", enum_value(attr.range, value)))
                     }
-                    _ => return Err(format!("{key} is written in {} as it cannot be set", file.name)),
+                    _ => {
+                        return Err(format!(
+                            "{key} is written in {} as it cannot be set",
+                            file.name
+                        ));
+                    }
                 };
                 edits.push(edit);
             }
@@ -332,8 +493,13 @@ pub fn set_field<'a>(files: &[File<'a>], prefer: &str, id: &str, key: &str, valu
         }
     }
     if changes.is_empty() {
-        let added = addition(files, prefer, id, key, Some(value)).ok_or_else(|| format!("no file of the set takes {key} for `{id}`"))?;
-        let name = files.iter().find(|f| f.name == added.file).map(|f| f.name).expect("one of the files");
+        let added = addition(files, prefer, id, key, Some(value))
+            .ok_or_else(|| format!("no file of the set takes {key} for `{id}`"))?;
+        let name = files
+            .iter()
+            .find(|f| f.name == added.file)
+            .map(|f| f.name)
+            .expect("one of the files");
         changes.push((name, vec![added.edit]));
     }
     Ok(changes)
@@ -359,14 +525,28 @@ pub fn remove_field<'a>(files: &[File<'a>], id: &str, key: &str) -> Edits<'a> {
 }
 
 /// A field of `class` written as an element of `file`, its value as [`set_field`] takes it.
-pub(crate) fn field_element(file: &File, class: &'static cimmodel::base::ClassDef, key: &str, value: &str) -> Result<String, String> {
-    let attr = type_registry().attr(class, key).ok_or_else(|| format!("{} has no field {key}", class.local))?;
-    let prefix = file.index.prefix_of(attr.ns).ok_or_else(|| format!("{} binds no prefix to {}", file.name, attr.ns))?;
+pub(crate) fn field_element(
+    file: &File,
+    class: &'static cimmodel::base::ClassDef,
+    key: &str,
+    value: &str,
+) -> Result<String, String> {
+    let attr = type_registry()
+        .attr(class, key)
+        .ok_or_else(|| format!("{} has no field {key}", class.local))?;
+    let prefix = file
+        .index
+        .prefix_of(attr.ns)
+        .ok_or_else(|| format!("{} binds no prefix to {}", file.name, attr.ns))?;
     let tag = format!("{prefix}:{}", attr.id);
     Ok(match attr.kind {
         AttrKind::Literal => format!("<{tag}>{}</{tag}>", escape(value)),
         AttrKind::Association => format!("<{tag} rdf:resource=\"{}\" />", reference(value)),
-        AttrKind::Enum => format!("<{tag} rdf:resource=\"{}{}\" />", attr.value_ns, enum_value(attr.range, value)),
+        AttrKind::Enum => format!(
+            "<{tag} rdf:resource=\"{}{}\" />",
+            attr.value_ns,
+            enum_value(attr.range, value)
+        ),
     })
 }
 
@@ -387,10 +567,18 @@ pub(crate) fn at_end(file: &File, lines: &[String]) -> Result<TextEdit, String> 
 }
 
 /// A fresh mRID, `_` and a UUID from `random`, that the set does not have yet nor `taken`.
-pub(crate) fn fresh(files: &[File], taken: &HashSet<String>, random: &mut dyn FnMut() -> [u8; 16]) -> String {
+pub(crate) fn fresh(
+    files: &[File],
+    taken: &HashSet<String>,
+    random: &mut dyn FnMut() -> [u8; 16],
+) -> String {
     loop {
         let id = format!("_{}", uuid(random()));
-        if !taken.contains(&id) && !files.iter().any(|f| f.index.elements.iter().any(|e| e.mrid == id)) {
+        if !taken.contains(&id)
+            && !files
+                .iter()
+                .any(|f| f.index.elements.iter().any(|e| e.mrid == id))
+        {
             return id;
         }
     }
@@ -408,7 +596,10 @@ pub fn create<'a>(
     random: &mut dyn FnMut() -> [u8; 16],
 ) -> Result<Added<'a>, String> {
     let reg = type_registry();
-    let file = files.iter().find(|f| f.name == into).ok_or_else(|| format!("no file {into}"))?;
+    let file = files
+        .iter()
+        .find(|f| f.name == into)
+        .ok_or_else(|| format!("no file {into}"))?;
     // The class by the namespaces the file binds: CGMES's or NC's, whichever has it.
     let found = file
         .index
@@ -421,7 +612,10 @@ pub fn create<'a>(
     let id = fresh(files, &HashSet::new(), random);
     let mut lines = vec![format!("<{prefix}:{} rdf:ID=\"{id}\">", found.local)];
     // Its mRID as text: `IdentifiedObject.mRID`, or a class's own (`…Response.mRID`).
-    let mrid_key = reg.attrs(found).map(|a| a.id).find(|k| k.ends_with(".mRID"));
+    let mrid_key = reg
+        .attrs(found)
+        .map(|a| a.id)
+        .find(|k| k.ends_with(".mRID"));
     if let Some(key) = mrid_key.filter(|k| !values.iter().any(|(v, _)| v == k)) {
         lines.push(format!("  {}", field_element(file, found, key, &id[1..])?));
     }
@@ -432,7 +626,12 @@ pub fn create<'a>(
     let edit = at_end(file, &lines)?;
     let first = edit.range.start.line;
     let select = Range::new(Position::new(first, 0), Position::new(first, 0));
-    Ok(Added { edits: vec![(file.name, vec![edit])], file: file.name.to_string(), select, id })
+    Ok(Added {
+        edits: vec![(file.name, vec![edit])],
+        file: file.name.to_string(),
+        select,
+        id,
+    })
 }
 
 /// The text of a new file of profile `code` (`DL`) beside `like`: its
@@ -460,15 +659,29 @@ pub fn companion(like: &File, code: &str, id: &str) -> Result<String, String> {
     let start = like.lines.offset(text, header.full.start);
     let indent = text[..start].rsplit_once('\n').map_or("", |(_, i)| i);
     let prefix = header.qname.split_once(':').map_or("md", |(p, _)| p);
-    let model = if header.mrid.contains(':') { header.mrid.clone() } else { format!("#{}", header.mrid) };
+    let model = if header.mrid.contains(':') {
+        header.mrid.clone()
+    } else {
+        format!("#{}", header.mrid)
+    };
     let mut lines = vec![format!("<{prefix}:FullModel rdf:about=\"urn:uuid:{id}\">")];
     for f in &header.fields {
-        if matches!(f.key(), "Model.created" | "Model.scenarioTime" | "Model.version" | "Model.modelingAuthoritySet") {
-            lines.push(format!("  {}", &text[like.lines.offset(text, f.full.start)..like.lines.offset(text, f.full.end)]));
+        if matches!(
+            f.key(),
+            "Model.created" | "Model.scenarioTime" | "Model.version" | "Model.modelingAuthoritySet"
+        ) {
+            lines.push(format!(
+                "  {}",
+                &text[like.lines.offset(text, f.full.start)..like.lines.offset(text, f.full.end)]
+            ));
         }
     }
-    lines.push(format!("  <{prefix}:Model.profile>{profile}</{prefix}:Model.profile>"));
-    lines.push(format!("  <{prefix}:Model.DependentOn rdf:resource=\"{model}\" />"));
+    lines.push(format!(
+        "  <{prefix}:Model.profile>{profile}</{prefix}:Model.profile>"
+    ));
+    lines.push(format!(
+        "  <{prefix}:Model.DependentOn rdf:resource=\"{model}\" />"
+    ));
     lines.push(format!("</{prefix}:FullModel>"));
     let body: String = lines.iter().map(|l| format!("{indent}{l}{eol}")).collect();
     Ok(format!("{}{eol}{body}</rdf:RDF>{eol}", &text[..root_end]))
@@ -490,10 +703,21 @@ pub fn diagram<'a>(
     objects: &[Drawn],
     random: &mut dyn FnMut() -> [u8; 16],
 ) -> Result<Added<'a>, String> {
-    let defines = |f: &&File, id: &str| f.index.elements.iter().any(|e| e.mrid == id && e.id_kind == Some(IdKind::Id));
+    let defines = |f: &&File, id: &str| {
+        f.index
+            .elements
+            .iter()
+            .any(|e| e.mrid == id && e.id_kind == Some(IdKind::Id))
+    };
     let file = match existing {
-        Some(d) => files.iter().find(|f| defines(f, d)).ok_or_else(|| format!("no file defines the diagram {d}"))?,
-        None => files.iter().find(|f| f.name == into).ok_or_else(|| format!("no file {into}"))?,
+        Some(d) => files
+            .iter()
+            .find(|f| defines(f, d))
+            .ok_or_else(|| format!("no file defines the diagram {d}"))?,
+        None => files
+            .iter()
+            .find(|f| f.name == into)
+            .ok_or_else(|| format!("no file {into}"))?,
     };
     let reg = type_registry();
     let class = |local: &str| {
@@ -504,7 +728,11 @@ pub fn diagram<'a>(
             .next()
             .ok_or_else(|| format!("{} binds no namespace with a class {local}", file.name))
     };
-    let (diagram_class, object_class, point_class) = (class("Diagram")?, class("DiagramObject")?, class("DiagramObjectPoint")?);
+    let (diagram_class, object_class, point_class) = (
+        class("Diagram")?,
+        class("DiagramObject")?,
+        class("DiagramObjectPoint")?,
+    );
     let mut taken = HashSet::new();
     let mut fresh_id = |random: &mut dyn FnMut() -> [u8; 16]| {
         let id = fresh(files, &taken, random);
@@ -519,21 +747,35 @@ pub fn diagram<'a>(
             // diagram stays, with its name and the rest.
             let anew: HashSet<&str> = objects.iter().map(|(m, _, _)| *m).collect();
             let shows = |e: &crate::index::Element| {
-                e.fields.iter().any(|f| f.key() == "DiagramObject.IdentifiedObject" && f.resource.as_ref().is_some_and(|(m, _)| anew.contains(m.as_str())))
+                e.fields.iter().any(|f| {
+                    f.key() == "DiagramObject.IdentifiedObject"
+                        && f.resource
+                            .as_ref()
+                            .is_some_and(|(m, _)| anew.contains(m.as_str()))
+                })
             };
             let shown: HashSet<&str> = file
                 .index
                 .elements
                 .iter()
                 .filter(|e| local(&e.qname) == "DiagramObject")
-                .filter(|e| e.fields.iter().any(|f| f.key() == "DiagramObject.Diagram" && f.resource.as_ref().is_some_and(|(m, _)| m == d)))
+                .filter(|e| {
+                    e.fields.iter().any(|f| {
+                        f.key() == "DiagramObject.Diagram"
+                            && f.resource.as_ref().is_some_and(|(m, _)| m == d)
+                    })
+                })
                 .filter(|e| shows(e))
                 .map(|e| e.mrid.as_str())
                 .collect();
             let mut gone: HashSet<&str> = shown.clone();
             for e in files.iter().flat_map(|f| &f.index.elements) {
                 if local(&e.qname) == "DiagramObjectPoint"
-                    && e.fields.iter().any(|f| f.resource.as_ref().is_some_and(|(m, _)| shown.contains(m.as_str())))
+                    && e.fields.iter().any(|f| {
+                        f.resource
+                            .as_ref()
+                            .is_some_and(|(m, _)| shown.contains(m.as_str()))
+                    })
                 {
                     gone.insert(e.mrid.as_str());
                 }
@@ -543,13 +785,25 @@ pub fn diagram<'a>(
         }
         None => {
             let id = fresh_id(random);
-            lines.extend(element(file, diagram_class, &id, &[("IdentifiedObject.name", name), ("Diagram.orientation", "negative")])?);
+            lines.extend(element(
+                file,
+                diagram_class,
+                &id,
+                &[
+                    ("IdentifiedObject.name", name),
+                    ("Diagram.orientation", "negative"),
+                ],
+            )?);
             id
         }
     };
     for (shown, label, points) in objects {
         let id = fresh_id(random);
-        let mut values = vec![("DiagramObject.Diagram", diagram.as_str()), ("DiagramObject.IdentifiedObject", *shown), ("DiagramObject.rotation", "0")];
+        let mut values = vec![
+            ("DiagramObject.Diagram", diagram.as_str()),
+            ("DiagramObject.IdentifiedObject", *shown),
+            ("DiagramObject.rotation", "0"),
+        ];
         if !label.is_empty() {
             values.insert(0, ("IdentifiedObject.name", *label));
         }
@@ -561,7 +815,12 @@ pub fn diagram<'a>(
                 file,
                 point_class,
                 &point,
-                &[("DiagramObjectPoint.sequenceNumber", &k), ("DiagramObjectPoint.xPosition", &x), ("DiagramObjectPoint.yPosition", &y), ("DiagramObjectPoint.DiagramObject", &id)],
+                &[
+                    ("DiagramObjectPoint.sequenceNumber", &k),
+                    ("DiagramObjectPoint.xPosition", &x),
+                    ("DiagramObjectPoint.yPosition", &y),
+                    ("DiagramObjectPoint.DiagramObject", &id),
+                ],
             )?);
         }
     }
@@ -572,7 +831,12 @@ pub fn diagram<'a>(
         None => edits.push((file.name, vec![edit])),
     }
     let select = Range::new(Position::new(first, 0), Position::new(first, 0));
-    Ok(Added { edits, file: file.name.to_string(), select, id: diagram })
+    Ok(Added {
+        edits,
+        file: file.name.to_string(),
+        select,
+        id: diagram,
+    })
 }
 
 /// A coordinate as DL writes it: to a hundredth, without trailing zeros.
@@ -584,10 +848,18 @@ fn number(x: f64) -> String {
 
 /// An object's element, unindented: its `rdf:ID`, its mRID as text where the class has a field for
 /// it, and `values` as [`set_field`] takes them.
-pub(crate) fn element(file: &File, class: &'static cimmodel::base::ClassDef, id: &str, values: &[(&str, &str)]) -> Result<Vec<String>, String> {
+pub(crate) fn element(
+    file: &File,
+    class: &'static cimmodel::base::ClassDef,
+    id: &str,
+    values: &[(&str, &str)],
+) -> Result<Vec<String>, String> {
     let prefix = file.index.prefix_of(class.ns).ok_or("no prefix")?;
     let mut lines = vec![format!("<{prefix}:{} rdf:ID=\"{id}\">", class.local)];
-    let mrid_key = type_registry().attrs(class).map(|a| a.id).find(|k| k.ends_with(".mRID"));
+    let mrid_key = type_registry()
+        .attrs(class)
+        .map(|a| a.id)
+        .find(|k| k.ends_with(".mRID"));
     if let Some(key) = mrid_key.filter(|k| !values.iter().any(|(v, _)| v == k)) {
         lines.push(format!("  {}", field_element(file, class, key, &id[1..])?));
     }
@@ -620,38 +892,64 @@ pub fn copy<'a>(
 ) -> Result<Copied<'a>, String> {
     let sources = |f: &&File| from.is_none_or(|n| f.name == n);
     let target = match into {
-        Some(name) => Some(files.iter().find(|f| f.name == name).ok_or_else(|| format!("no file {name}"))?),
+        Some(name) => Some(
+            files
+                .iter()
+                .find(|f| f.name == name)
+                .ok_or_else(|| format!("no file {name}"))?,
+        ),
         None => None,
     };
     let mut taken = HashSet::new();
     let mut renamed: Vec<(String, String)> = Vec::new();
     for id in ids {
-        if !files.iter().filter(sources).any(|f| f.index.elements.iter().any(|e| e.mrid == *id)) {
-            return Err(format!("no file {}writes `{id}`", from.map_or(String::new(), |n| format!("but {n} "))));
+        if !files
+            .iter()
+            .filter(sources)
+            .any(|f| f.index.elements.iter().any(|e| e.mrid == *id))
+        {
+            return Err(format!(
+                "no file {}writes `{id}`",
+                from.map_or(String::new(), |n| format!("but {n} "))
+            ));
         }
         let new = fresh(files, &taken, random);
         taken.insert(new.clone());
         renamed.push((id.to_string(), new));
     }
-    let to: HashMap<&str, &str> = renamed.iter().map(|(o, n)| (o.as_str(), n.as_str())).collect();
+    let to: HashMap<&str, &str> = renamed
+        .iter()
+        .map(|(o, n)| (o.as_str(), n.as_str()))
+        .collect();
     let mut changes: Edits<'a> = Vec::new();
     let mut moved: Vec<String> = Vec::new();
     for file in files.iter().filter(sources) {
         let text = file.text;
         let mut edits = Vec::new();
-        for el in file.index.elements.iter().filter(|e| to.contains_key(e.mrid.as_str())) {
+        for el in file
+            .index
+            .elements
+            .iter()
+            .filter(|e| to.contains_key(e.mrid.as_str()))
+        {
             if let Some(t) = target.filter(|t| t.name != file.name) {
                 // The copy's prefixes, bound as they are here.
                 let qnames = std::iter::once(&el.qname).chain(el.fields.iter().map(|f| &f.qname));
                 for q in qnames {
                     let p = crate::index::prefix(q);
                     if t.index.namespace(p) != file.index.namespace(p) {
-                        return Err(format!("{} binds `{p}` otherwise than {}", t.name, file.name));
+                        return Err(format!(
+                            "{} binds `{p}` otherwise than {}",
+                            t.name, file.name
+                        ));
                     }
                 }
             }
             let block = file.lines_of(el.full);
-            let (start, end) = (file.lines.offset(text, block.start), file.lines.offset(text, block.end));
+            let (start, end) = (
+                file.lines.offset(text, block.start),
+                file.lines.offset(text, block.end),
+            );
             // Replacements within the block, by offset.
             let mut swaps: Vec<(usize, usize, String)> = Vec::new();
             // An mRID at the end of the value written at `r`.
@@ -674,7 +972,10 @@ pub fn copy<'a>(
                     && let Some((value, r)) = file.field_text(f.head, f.full, &f.qname)
                 {
                     let bare = |s: &str| s.strip_prefix('_').unwrap_or(s).to_string();
-                    let (vs, ve) = (file.lines.offset(text, r.start), file.lines.offset(text, r.end));
+                    let (vs, ve) = (
+                        file.lines.offset(text, r.start),
+                        file.lines.offset(text, r.end),
+                    );
                     if value.trim() == old {
                         swaps.push((vs, ve, new.to_string()));
                     } else if value.trim() == bare(old) {
@@ -709,7 +1010,10 @@ pub fn copy<'a>(
             None => changes.push((t.name, vec![edit])),
         }
     }
-    Ok(Copied { edits: changes, ids: renamed })
+    Ok(Copied {
+        edits: changes,
+        ids: renamed,
+    })
 }
 
 /// An object a reference can name.
@@ -724,7 +1028,11 @@ pub struct Candidate {
 impl Candidate {
     /// The reference to it as written: `#_id`, or an IRI as it is.
     pub fn reference(&self) -> String {
-        if self.id.contains(':') { self.id.clone() } else { format!("#{}", self.id) }
+        if self.id.contains(':') {
+            self.id.clone()
+        } else {
+            format!("#{}", self.id)
+        }
     }
 }
 
@@ -737,19 +1045,40 @@ impl Candidate {
 /// name them with the same field (a line's base voltage is the one the
 /// equipment of its voltage level names); then the most named.
 /// Empty if `key` is not a reference of the object's class.
-pub fn candidates(indexes: &[&Index], tree: &Tree, id: &str, key: &str, limit: usize) -> Vec<Candidate> {
+pub fn candidates(
+    indexes: &[&Index],
+    tree: &Tree,
+    id: &str,
+    key: &str,
+    limit: usize,
+) -> Vec<Candidate> {
     let reg = type_registry();
     let class = indexes
         .iter()
-        .flat_map(|ix| ix.elements.iter().filter(|e| e.mrid == id).map(move |e| (ix, e)))
+        .flat_map(|ix| {
+            ix.elements
+                .iter()
+                .filter(|e| e.mrid == id)
+                .map(move |e| (ix, e))
+        })
         .max_by_key(|(_, e)| e.id_kind == Some(IdKind::Id))
         .and_then(|(ix, e)| ix.class_of(&e.qname));
-    let Some(attr) = class.and_then(|c| reg.attr(c, key)).filter(|a| a.kind == AttrKind::Association) else { return Vec::new() };
+    let Some(attr) = class
+        .and_then(|c| reg.attr(c, key))
+        .filter(|a| a.kind == AttrKind::Association)
+    else {
+        return Vec::new();
+    };
     // What the object names with its other fields.
     let own: HashSet<&str> = indexes
         .iter()
         .flat_map(|ix| ix.elements.iter().filter(|e| e.mrid == id))
-        .flat_map(|e| e.fields.iter().filter(|f| f.key() != key).filter_map(|f| f.resource.as_ref().map(|(t, _)| t.as_str())))
+        .flat_map(|e| {
+            e.fields
+                .iter()
+                .filter(|f| f.key() != key)
+                .filter_map(|f| f.resource.as_ref().map(|(t, _)| t.as_str()))
+        })
         .filter(|t| !t.is_empty())
         .collect();
     let mut linked: HashSet<&str> = HashSet::new();
@@ -757,7 +1086,11 @@ pub fn candidates(indexes: &[&Index], tree: &Tree, id: &str, key: &str, limit: u
     let mut named: HashMap<&str, Vec<&str>> = HashMap::new();
     for ix in indexes {
         for el in &ix.elements {
-            let targets = || el.fields.iter().filter_map(|f| f.resource.as_ref().map(|(t, _)| t.as_str()));
+            let targets = || {
+                el.fields
+                    .iter()
+                    .filter_map(|f| f.resource.as_ref().map(|(t, _)| t.as_str()))
+            };
             if own.contains(el.mrid.as_str()) {
                 linked.extend(targets());
             } else if targets().any(|t| own.contains(t)) {
@@ -765,13 +1098,21 @@ pub fn candidates(indexes: &[&Index], tree: &Tree, id: &str, key: &str, limit: u
             }
             for f in el.fields.iter().filter(|f| f.key() == key && el.mrid != id) {
                 if let Some((target, _)) = &f.resource {
-                    named.entry(target.as_str()).or_default().push(el.mrid.as_str());
+                    named
+                        .entry(target.as_str())
+                        .or_default()
+                        .push(el.mrid.as_str());
                 }
             }
             if el.mrid.is_empty() || el.mrid == id {
                 continue;
             }
-            let Some(c) = ix.class_of(&el.qname).filter(|c| reg.chain(c).iter().any(|a| a.local == attr.range)) else { continue };
+            let Some(c) = ix
+                .class_of(&el.qname)
+                .filter(|c| reg.chain(c).iter().any(|a| a.local == attr.range))
+            else {
+                continue;
+            };
             let entry = found.entry(el.mrid.as_str()).or_insert((None, c.local));
             if entry.0.is_none() {
                 entry.0 = el.name.as_deref().filter(|n| !n.is_empty());
@@ -793,15 +1134,35 @@ pub fn candidates(indexes: &[&Index], tree: &Tree, id: &str, key: &str, limit: u
                 chain.pop();
                 shared(&chain)
             });
-            let score = near.chain(std::iter::once(shared(&tree.chain(c)))).max().unwrap_or(0);
-            (linked.contains(c), score, by.len(), name.unwrap_or(c).to_string(), c, class)
+            let score = near
+                .chain(std::iter::once(shared(&tree.chain(c))))
+                .max()
+                .unwrap_or(0);
+            (
+                linked.contains(c),
+                score,
+                by.len(),
+                name.unwrap_or(c).to_string(),
+                c,
+                class,
+            )
         })
         .collect();
-    ranked.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)).then(b.2.cmp(&a.2)).then_with(|| a.3.to_lowercase().cmp(&b.3.to_lowercase())));
+    ranked.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then(b.1.cmp(&a.1))
+            .then(b.2.cmp(&a.2))
+            .then_with(|| a.3.to_lowercase().cmp(&b.3.to_lowercase()))
+    });
     ranked
         .into_iter()
         .take(limit)
-        .map(|(_, _, _, label, c, class)| Candidate { id: c.to_string(), label, class, place: tree.containers(c).join(" › ") })
+        .map(|(_, _, _, label, c, class)| Candidate {
+            id: c.to_string(),
+            label,
+            class,
+            place: tree.containers(c).join(" › "),
+        })
         .collect()
 }
 
@@ -815,7 +1176,13 @@ pub struct Addable {
 fn class_in(files: &[File], id: &str) -> Option<&'static cimmodel::base::ClassDef> {
     let (file, el) = files
         .iter()
-        .flat_map(|f| f.index.elements.iter().filter(|e| e.mrid == id).map(move |e| (f, e)))
+        .flat_map(|f| {
+            f.index
+                .elements
+                .iter()
+                .filter(|e| e.mrid == id)
+                .map(move |e| (f, e))
+        })
         .max_by_key(|(_, e)| e.id_kind == Some(IdKind::Id))?;
     file.index.class_of(&el.qname)
 }
@@ -826,17 +1193,29 @@ fn class_in(files: &[File], id: &str) -> Option<&'static cimmodel::base::ClassDe
 /// declare (all, if none declares one).
 pub fn addable(files: &[File], parent: &str) -> Vec<Addable> {
     let reg = type_registry();
-    let Some(class) = class_in(files, parent) else { return Vec::new() };
-    let Some(schema) = reg.family_of(class.qualified).and_then(|f| reg.schema(f)) else { return Vec::new() };
+    let Some(class) = class_in(files, parent) else {
+        return Vec::new();
+    };
+    let Some(schema) = reg.family_of(class.qualified).and_then(|f| reg.schema(f)) else {
+        return Vec::new();
+    };
     let is = |range: &str| reg.chain(class).iter().any(|c| c.local == range);
     let declared: HashSet<&str> = files.iter().flat_map(profiles).collect();
     let mut out: Vec<Addable> = schema
         .classes
         .iter()
-        .filter(|c| c.concrete && (declared.is_empty() || c.origins.iter().any(|o| declared.contains(o))))
+        .filter(|c| {
+            c.concrete && (declared.is_empty() || c.origins.iter().any(|o| declared.contains(o)))
+        })
         .filter_map(|c| {
-            let key = CONTAINED.iter().find_map(|k| reg.attr(c, k).filter(|a| a.used && a.kind == AttrKind::Association))?;
-            is(key.range).then_some(Addable { class: c, key: key.id })
+            let key = CONTAINED.iter().find_map(|k| {
+                reg.attr(c, k)
+                    .filter(|a| a.used && a.kind == AttrKind::Association)
+            })?;
+            is(key.range).then_some(Addable {
+                class: c,
+                key: key.id,
+            })
         })
         .collect();
     out.sort_by_key(|a| a.class.local);
@@ -849,7 +1228,14 @@ pub fn uuid(mut b: [u8; 16]) -> String {
     b[6] = (b[6] & 0x0f) | 0x40;
     b[8] = (b[8] & 0x3f) | 0x80;
     let hex: String = b.iter().map(|x| format!("{x:02x}")).collect();
-    format!("{}-{}-{}-{}-{}", &hex[..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..])
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    )
 }
 
 /// An object added: the edits, and where its name (else its start tag) is.
@@ -879,28 +1265,47 @@ pub fn add<'a>(
 ) -> Result<Added<'a>, String> {
     let reg = type_registry();
     let found = addable(files, parent);
-    let Addable { class, key } = found.into_iter().find(|a| a.class.local == class).ok_or_else(|| format!("a {class} cannot be added there"))?;
+    let Addable { class, key } = found
+        .into_iter()
+        .find(|a| a.class.local == class)
+        .ok_or_else(|| format!("a {class} cannot be added there"))?;
     let fits = |f: &File| {
         let declared = profiles(f);
         declared.is_empty() || declared.iter().any(|p| class.origins.contains(p))
     };
-    let defines = |f: &File, id: &str| f.index.elements.iter().any(|e| e.mrid == id && e.id_kind == Some(IdKind::Id));
+    let defines = |f: &File, id: &str| {
+        f.index
+            .elements
+            .iter()
+            .any(|e| e.mrid == id && e.id_kind == Some(IdKind::Id))
+    };
     let main = files
         .iter()
         .filter(|f| fits(f) && !profiles(f).contains(&"SSH"))
         .max_by_key(|f| defines(f, parent))
         .ok_or_else(|| format!("no file of the model set has a profile for {}", class.local))?;
     let mut id = format!("_{}", uuid(random()));
-    while files.iter().any(|f| f.index.elements.iter().any(|e| e.mrid == id)) {
+    while files
+        .iter()
+        .any(|f| f.index.elements.iter().any(|e| e.mrid == id))
+    {
         id = format!("_{}", uuid(random()));
     }
 
     let prefix = |f: &File, ns: &str| f.index.prefix_of(ns).map(str::to_string);
-    let tag = format!("{}:{}", prefix(main, class.ns).ok_or("the file binds no prefix to the class's namespace")?, class.local);
-    let field = |f: &File, key: &str| reg.attr(class, key).and_then(|a| Some((a, format!("{}:{}", prefix(f, a.ns)?, a.id))));
+    let tag = format!(
+        "{}:{}",
+        prefix(main, class.ns).ok_or("the file binds no prefix to the class's namespace")?,
+        class.local
+    );
+    let field = |f: &File, key: &str| {
+        reg.attr(class, key)
+            .and_then(|a| Some((a, format!("{}:{}", prefix(f, a.ns)?, a.id))))
+    };
     let carries = |f: &File, key: &str| {
         let declared = profiles(f);
-        reg.attr(class, key).is_some_and(|a| declared.is_empty() || a.origins.iter().any(|o| declared.contains(o)))
+        reg.attr(class, key)
+            .is_some_and(|a| declared.is_empty() || a.origins.iter().any(|o| declared.contains(o)))
     };
     let mut lines = vec![format!("<{tag} rdf:ID=\"{id}\">")];
     let mut select_line = None;
@@ -916,8 +1321,13 @@ pub fn add<'a>(
         let escaped = name.replace('&', "&amp;").replace('<', "&lt;");
         lines.push(format!("  <{t}>{escaped}</{t}>"));
     }
-    let (_, container) = field(main, key).ok_or("the file binds no prefix to the field's namespace")?;
-    let target = if parent.contains(':') { parent.to_string() } else { format!("#{parent}") };
+    let (_, container) =
+        field(main, key).ok_or("the file binds no prefix to the field's namespace")?;
+    let target = if parent.contains(':') {
+        parent.to_string()
+    } else {
+        format!("#{parent}")
+    };
     lines.push(format!("  <{container} rdf:resource=\"{target}\" />"));
     lines.push(format!("</{tag}>"));
 
@@ -926,7 +1336,10 @@ pub fn add<'a>(
     let select = match select_line {
         Some((l, col, len)) => {
             let start = Position::new(line_no + l as u32, at.1 + col as u32);
-            Range::new(start, Position::new(start.line, start.character + len as u32))
+            Range::new(
+                start,
+                Position::new(start.line, start.character + len as u32),
+            )
         }
         None => Range::new(Position::new(line_no, at.1), Position::new(line_no, at.1)),
     };
@@ -941,7 +1354,12 @@ pub fn add<'a>(
         let (edit, _) = insertion(ssh, tree, parent, &ssh_lines)?;
         changes.push((ssh.name, vec![edit.0]));
     }
-    Ok(Added { edits: changes, file: main.name.to_string(), select, id })
+    Ok(Added {
+        edits: changes,
+        file: main.name.to_string(),
+        select,
+        id,
+    })
 }
 
 /// Where to insert `lines` (an element, unindented) in `file`: after the
@@ -949,11 +1367,21 @@ pub fn add<'a>(
 /// else before the root's end tag; indented as the elements are, in the
 /// file's line endings. The edit with the indent's width, and the line the
 /// element starts on.
-pub(crate) fn insertion(file: &File, tree: &Tree, parent: &str, lines: &[String]) -> Result<((TextEdit, u32), u32), String> {
+pub(crate) fn insertion(
+    file: &File,
+    tree: &Tree,
+    parent: &str,
+    lines: &[String],
+) -> Result<((TextEdit, u32), u32), String> {
     let (text, li) = (file.text, file.lines);
     let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
     let siblings: HashSet<&str> = tree.children(parent).into_iter().collect();
-    let anchor = file.index.elements.iter().rev().find(|e| siblings.contains(e.mrid.as_str()))
+    let anchor = file
+        .index
+        .elements
+        .iter()
+        .rev()
+        .find(|e| siblings.contains(e.mrid.as_str()))
         .or_else(|| file.index.elements.iter().rev().find(|e| e.mrid == parent));
     let (offset, indent) = match anchor {
         Some(el) => {
@@ -974,11 +1402,25 @@ pub(crate) fn insertion(file: &File, tree: &Tree, parent: &str, lines: &[String]
         }
     };
     // An anchor ending the file without a newline: start a line first.
-    let lead = if offset == text.len() && !text.ends_with('\n') { eol } else { "" };
+    let lead = if offset == text.len() && !text.ends_with('\n') {
+        eol
+    } else {
+        ""
+    };
     let body: String = lines.iter().map(|l| format!("{indent}{l}{eol}")).collect();
     let at = li.position(text, offset);
-    let first = if lead.is_empty() { at.line } else { at.line + 1 };
-    Ok(((TextEdit::new(Range::new(at, at), format!("{lead}{body}")), indent.encode_utf16().count() as u32), first))
+    let first = if lead.is_empty() {
+        at.line
+    } else {
+        at.line + 1
+    };
+    Ok((
+        (
+            TextEdit::new(Range::new(at, at), format!("{lead}{body}")),
+            indent.encode_utf16().count() as u32,
+        ),
+        first,
+    ))
 }
 
 /// A fix for a reference to nothing (`rdf:resource="#"`) or to an object the
@@ -997,11 +1439,22 @@ pub struct ReferenceFix {
 /// lacks, in every file that writes it, or only the field at `at`: each the
 /// five likeliest objects ([`candidates`]); `at` names a file and a place in
 /// it. An enumeration value is not a reference to an object, so it has none.
-pub fn reference_fixes(files: &[File], tree: &Tree, id: &str, at: Option<(&str, Position)>) -> Vec<ReferenceFix> {
+pub fn reference_fixes(
+    files: &[File],
+    tree: &Tree,
+    id: &str,
+    at: Option<(&str, Position)>,
+) -> Vec<ReferenceFix> {
     let sites: Vec<(&File, &crate::index::Field, &str, Range)> = files
         .iter()
         .filter(|f| at.is_none_or(|(n, _)| f.name == n))
-        .flat_map(|f| f.index.elements.iter().filter(|e| e.mrid == id).map(move |e| (f, e)))
+        .flat_map(|f| {
+            f.index
+                .elements
+                .iter()
+                .filter(|e| e.mrid == id)
+                .map(move |e| (f, e))
+        })
         .flat_map(|(f, e)| e.fields.iter().map(move |x| (f, x)))
         .filter(|(_, x)| at.is_none_or(|(_, pos)| contains(x.full, pos)))
         .filter_map(|(f, x)| x.resource.as_ref().map(|(t, r)| (f, x, t.as_str(), *r)))
@@ -1009,7 +1462,10 @@ pub fn reference_fixes(files: &[File], tree: &Tree, id: &str, at: Option<(&str, 
     if sites.is_empty() {
         return Vec::new();
     }
-    let known: HashSet<&str> = files.iter().flat_map(|f| f.index.elements.iter().map(|e| e.mrid.as_str())).collect();
+    let known: HashSet<&str> = files
+        .iter()
+        .flat_map(|f| f.index.elements.iter().map(|e| e.mrid.as_str()))
+        .collect();
     let indexes: Vec<&Index> = files.iter().map(|f| f.index).collect();
     let mut out = Vec::new();
     for (file, field, target, value) in sites {
@@ -1017,7 +1473,11 @@ pub fn reference_fixes(files: &[File], tree: &Tree, id: &str, at: Option<(&str, 
             continue;
         }
         for c in candidates(&indexes, tree, id, field.key(), 5) {
-            let place = if c.place.is_empty() { String::new() } else { format!(" in {}", c.place) };
+            let place = if c.place.is_empty() {
+                String::new()
+            } else {
+                format!(" in {}", c.place)
+            };
             out.push(ReferenceFix {
                 key: field.key().to_string(),
                 file: file.name.to_string(),
@@ -1036,7 +1496,12 @@ pub fn referrers<'a>(files: &[File<'a>], id: &str) -> Vec<(&'a str, &'a str)> {
     let mut out: Vec<(&str, &str)> = files
         .iter()
         .flat_map(|f| f.index.elements.iter())
-        .flat_map(|e| e.fields.iter().filter(|x| x.resource.as_ref().is_some_and(|(t, _)| t == id)).map(move |x| (e.mrid.as_str(), x.key())))
+        .flat_map(|e| {
+            e.fields
+                .iter()
+                .filter(|x| x.resource.as_ref().is_some_and(|(t, _)| t == id))
+                .map(move |x| (e.mrid.as_str(), x.key()))
+        })
         .filter(|(r, _)| !r.is_empty() && *r != id)
         .collect();
     out.sort_unstable();
@@ -1046,9 +1511,17 @@ pub fn referrers<'a>(files: &[File<'a>], id: &str) -> Vec<(&'a str, &'a str)> {
 
 /// How an object is named in a title: its class and name, else mRID.
 pub fn describe(files: &[File], id: &str) -> String {
-    let el = files.iter().flat_map(|f| &f.index.elements).filter(|e| e.mrid == id).max_by_key(|e| e.id_kind == Some(IdKind::Id));
+    let el = files
+        .iter()
+        .flat_map(|f| &f.index.elements)
+        .filter(|e| e.mrid == id)
+        .max_by_key(|e| e.id_kind == Some(IdKind::Id));
     match el {
-        Some(el) => format!("{} {}", local(&el.qname), el.name.as_deref().filter(|n| !n.is_empty()).unwrap_or(id)),
+        Some(el) => format!(
+            "{} {}",
+            local(&el.qname),
+            el.name.as_deref().filter(|n| !n.is_empty()).unwrap_or(id)
+        ),
         None => id.to_string(),
     }
 }
@@ -1092,7 +1565,11 @@ mod tests {
 
     /// The edits of the file `name`.
     fn of<'a>(edits: &Edits<'a>, name: &str) -> Vec<TextEdit> {
-        edits.iter().find(|(n, _)| *n == name).map(|(_, e)| e.clone()).unwrap_or_default()
+        edits
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, e)| e.clone())
+            .unwrap_or_default()
     }
 
     fn with_files<R>(f: impl FnOnce(&[File]) -> R) -> R {
@@ -1100,7 +1577,14 @@ mod tests {
         let texts = [EQ, SSH];
         let lines: Vec<LineIndex> = texts.iter().map(|t| LineIndex::new(t)).collect();
         let indexes: Vec<Index> = texts.iter().map(|t| Index::build(t)).collect();
-        let files: Vec<File> = (0..2).map(|i| File { name: names[i], text: texts[i], lines: &lines[i], index: &indexes[i] }).collect();
+        let files: Vec<File> = (0..2)
+            .map(|i| File {
+                name: names[i],
+                text: texts[i],
+                lines: &lines[i],
+                index: &indexes[i],
+            })
+            .collect();
         f(&files)
     }
 
@@ -1109,15 +1593,34 @@ mod tests {
         with_files(|files| {
             // On the reference, and on the start tag.
             let (r, old) = prepare_rename(files, "EQ.xml", Position::new(6, 55)).unwrap();
-            assert_eq!((old.as_str(), r), ("_b1", Range::new(Position::new(6, 53), Position::new(6, 56))));
-            assert_eq!(prepare_rename(files, "SSH.xml", Position::new(1, 4)).unwrap().1, "_b1");
+            assert_eq!(
+                (old.as_str(), r),
+                (
+                    "_b1",
+                    Range::new(Position::new(6, 53), Position::new(6, 56))
+                )
+            );
+            assert_eq!(
+                prepare_rename(files, "SSH.xml", Position::new(1, 4))
+                    .unwrap()
+                    .1,
+                "_b1"
+            );
             assert!(prepare_rename(files, "EQ.xml", Position::new(2, 10)).is_none());
 
             let changes = rename(files, "_b1", "_b2").unwrap();
             let eq = apply(EQ, of(&changes, "EQ.xml"));
-            assert!(eq.contains(r#"rdf:ID="_b2""#) && eq.contains(">b2</") && eq.contains(r##"rdf:resource="#_b2""##), "{eq}");
+            assert!(
+                eq.contains(r#"rdf:ID="_b2""#)
+                    && eq.contains(">b2</")
+                    && eq.contains(r##"rdf:resource="#_b2""##),
+                "{eq}"
+            );
             assert!(!eq.contains("b1"), "{eq}");
-            assert_eq!(apply(SSH, of(&changes, "SSH.xml")), SSH.replace("#_b1", "#_b2"));
+            assert_eq!(
+                apply(SSH, of(&changes, "SSH.xml")),
+                SSH.replace("#_b1", "#_b2")
+            );
 
             assert!(rename(files, "_b1", "_t1").is_err());
             assert!(rename(files, "_b1", "a b").is_err());
@@ -1127,19 +1630,37 @@ mod tests {
 
     #[test]
     fn adds_a_missing_field_where_its_profile_is() {
-        let header = |p: &str| format!(r#"  <md:FullModel rdf:about="urn:uuid:{p}">
+        let header = |p: &str| {
+            format!(
+                r#"  <md:FullModel rdf:about="urn:uuid:{p}">
     <md:Model.profile>http://iec.ch/TC57/ns/CIM/{p}/3.0</md:Model.profile>
   </md:FullModel>
-"#);
-        let with_header = |text: &str, p: &str| {
-            text.replacen(r#"xmlns:rdf"#, r#"xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#" xmlns:rdf"#, 1)
-                .replacen(">\n", &format!(">\n{}", header(p)), 1)
+"#
+            )
         };
-        let texts = [with_header(EQ, "CoreEquipment-EU"), with_header(SSH, "SteadyStateHypothesis-EU")];
+        let with_header = |text: &str, p: &str| {
+            text.replacen(
+                r#"xmlns:rdf"#,
+                r#"xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#" xmlns:rdf"#,
+                1,
+            )
+            .replacen(">\n", &format!(">\n{}", header(p)), 1)
+        };
+        let texts = [
+            with_header(EQ, "CoreEquipment-EU"),
+            with_header(SSH, "SteadyStateHypothesis-EU"),
+        ];
         let names = ["EQ.xml", "SSH.xml"];
         let lines: Vec<LineIndex> = texts.iter().map(|t| LineIndex::new(t)).collect();
         let indexes: Vec<Index> = texts.iter().map(|t| Index::build(t)).collect();
-        let files: Vec<File> = (0..2).map(|i| File { name: names[i], text: &texts[i], lines: &lines[i], index: &indexes[i] }).collect();
+        let files: Vec<File> = (0..2)
+            .map(|i| File {
+                name: names[i],
+                text: &texts[i],
+                lines: &lines[i],
+                index: &indexes[i],
+            })
+            .collect();
         let added = |id: &str, key: &str| {
             let a = add_missing(&files, names[0], id, key)?;
             let i = names.iter().position(|n| *n == a.file).unwrap();
@@ -1152,13 +1673,24 @@ mod tests {
         let (i, out, selected) = added("_b1", "Equipment.inService").unwrap();
         assert_eq!(i, 1);
         assert!(out.contains("<cim:Switch.open>false</cim:Switch.open>\n    <cim:Equipment.inService>false</cim:Equipment.inService>\n  </cim:Breaker>"), "{out}");
-        assert!(selected.contains("<cim:Equipment.inService>|</cim:Equipment.inService>"), "{selected}");
+        assert!(
+            selected.contains("<cim:Equipment.inService>|</cim:Equipment.inService>"),
+            "{selected}"
+        );
         // An EQ one to the EQ file; a reference left to fill in, an enumeration its first value.
         let (i, _, selected) = added("_t1", "Terminal.ConnectivityNode").unwrap();
         assert_eq!(i, 0);
-        assert!(selected.contains(r##"<cim:Terminal.ConnectivityNode rdf:resource="#|" />"##), "{selected}");
+        assert!(
+            selected.contains(r##"<cim:Terminal.ConnectivityNode rdf:resource="#|" />"##),
+            "{selected}"
+        );
         let (_, out, _) = added("_t1", "Terminal.phases").unwrap();
-        assert!(out.contains(r#"<cim:Terminal.phases rdf:resource="http://iec.ch/TC57/CIM100#PhaseCode."#), "{out}");
+        assert!(
+            out.contains(
+                r#"<cim:Terminal.phases rdf:resource="http://iec.ch/TC57/CIM100#PhaseCode."#
+            ),
+            "{out}"
+        );
         // Written already, or not the class's.
         assert!(added("_b1", "Switch.open").is_none());
         assert!(added("_b1", "ACLineSegment.r").is_none());
@@ -1169,20 +1701,45 @@ mod tests {
         with_files(|files| {
             // A literal, escaped; written in the SSH file.
             let set = set_field(files, "EQ.xml", "_b1", "Switch.open", "true").unwrap();
-            assert_eq!(apply(SSH, of(&set, "SSH.xml")), SSH.replace(">false<", ">true<"));
-            let named = set_field(files, "EQ.xml", "_b1", "IdentifiedObject.name", "B & 1").unwrap();
-            assert!(apply(EQ, of(&named, "EQ.xml")).contains("<cim:IdentifiedObject.name>B &amp; 1</cim:IdentifiedObject.name>"));
+            assert_eq!(
+                apply(SSH, of(&set, "SSH.xml")),
+                SSH.replace(">false<", ">true<")
+            );
+            let named =
+                set_field(files, "EQ.xml", "_b1", "IdentifiedObject.name", "B & 1").unwrap();
+            assert!(
+                apply(EQ, of(&named, "EQ.xml"))
+                    .contains("<cim:IdentifiedObject.name>B &amp; 1</cim:IdentifiedObject.name>")
+            );
             // A reference, to an mRID.
-            let to = set_field(files, "EQ.xml", "_t1", "Terminal.ConductingEquipment", "_b2").unwrap();
-            assert!(apply(EQ, of(&to, "EQ.xml")).contains(r##"<cim:Terminal.ConductingEquipment rdf:resource="#_b2" />"##));
+            let to = set_field(
+                files,
+                "EQ.xml",
+                "_t1",
+                "Terminal.ConductingEquipment",
+                "_b2",
+            )
+            .unwrap();
+            assert!(
+                apply(EQ, of(&to, "EQ.xml"))
+                    .contains(r##"<cim:Terminal.ConductingEquipment rdf:resource="#_b2" />"##)
+            );
             // Written nowhere: added, with the value given.
             let added = set_field(files, "EQ.xml", "_t1", "Terminal.phases", "ABC").unwrap();
-            assert!(apply(EQ, of(&added, "EQ.xml")).contains(r#"<cim:Terminal.phases rdf:resource="http://iec.ch/TC57/CIM100#PhaseCode.ABC" />"#));
+            assert!(apply(EQ, of(&added, "EQ.xml")).contains(
+                r#"<cim:Terminal.phases rdf:resource="http://iec.ch/TC57/CIM100#PhaseCode.ABC" />"#
+            ));
             assert!(set_field(files, "EQ.xml", "_b1", "ACLineSegment.r", "1").is_err());
 
             let removed = remove_field(files, "_t1", "Terminal.ConductingEquipment");
             let eq = apply(EQ, of(&removed, "EQ.xml"));
-            assert!(!eq.contains("ConductingEquipment") && eq.contains("<cim:Terminal rdf:ID=\"_t1\">\n    <cim:IdentifiedObject.name>T1"), "{eq}");
+            assert!(
+                !eq.contains("ConductingEquipment")
+                    && eq.contains(
+                        "<cim:Terminal rdf:ID=\"_t1\">\n    <cim:IdentifiedObject.name>T1"
+                    ),
+                "{eq}"
+            );
         });
     }
 
@@ -1200,24 +1757,57 @@ mod tests {
             let mut random = counting();
             let copied = copy(files, &["_b1", "_t1"], None, None, &mut random).unwrap();
             let (b2, t2) = (format!("_{}", uuid([1; 16])), format!("_{}", uuid([2; 16])));
-            assert_eq!(copied.ids, [("_b1".to_string(), b2.clone()), ("_t1".to_string(), t2.clone())]);
+            assert_eq!(
+                copied.ids,
+                [
+                    ("_b1".to_string(), b2.clone()),
+                    ("_t1".to_string(), t2.clone())
+                ]
+            );
             let eq = apply(EQ, of(&copied.edits, "EQ.xml"));
             // The originals stay; the copies follow them, naming each other.
-            assert!(eq.contains(r#"<cim:Breaker rdf:ID="_b1">"#) && eq.contains(&format!(r#"<cim:Breaker rdf:ID="{b2}">"#)), "{eq}");
-            assert!(eq.contains(&format!("<cim:IdentifiedObject.mRID>{}</cim:IdentifiedObject.mRID>", &b2[1..])), "{eq}");
-            assert!(eq.contains(&format!(r##"<cim:Terminal.ConductingEquipment rdf:resource="#{b2}" />"##)), "{eq}");
+            assert!(
+                eq.contains(r#"<cim:Breaker rdf:ID="_b1">"#)
+                    && eq.contains(&format!(r#"<cim:Breaker rdf:ID="{b2}">"#)),
+                "{eq}"
+            );
+            assert!(
+                eq.contains(&format!(
+                    "<cim:IdentifiedObject.mRID>{}</cim:IdentifiedObject.mRID>",
+                    &b2[1..]
+                )),
+                "{eq}"
+            );
+            assert!(
+                eq.contains(&format!(
+                    r##"<cim:Terminal.ConductingEquipment rdf:resource="#{b2}" />"##
+                )),
+                "{eq}"
+            );
             assert_eq!(eq.matches(r##"rdf:resource="#_b1""##).count(), 1);
             let ssh = apply(SSH, of(&copied.edits, "SSH.xml"));
-            assert!(ssh.contains(&format!(r##"<cim:Breaker rdf:about="#{b2}">"##)), "{ssh}");
+            assert!(
+                ssh.contains(&format!(r##"<cim:Breaker rdf:about="#{b2}">"##)),
+                "{ssh}"
+            );
             // Only the terminal: its reference to the breaker stays.
             let alone = copy(files, &["_t1"], None, None, &mut random).unwrap();
-            assert_eq!(apply(EQ, of(&alone.edits, "EQ.xml")).matches(r##"rdf:resource="#_b1""##).count(), 2);
+            assert_eq!(
+                apply(EQ, of(&alone.edits, "EQ.xml"))
+                    .matches(r##"rdf:resource="#_b1""##)
+                    .count(),
+                2
+            );
             // From one file, into another: the breaker's SSH part is not copied.
             let only = copy(files, &["_b1"], Some("EQ.xml"), None, &mut random).unwrap();
             assert_eq!(only.edits.len(), 1, "EQ only");
             let moved = copy(files, &["_t1"], None, Some("SSH.xml"), &mut random).unwrap();
             let ssh = apply(SSH, of(&moved.edits, "SSH.xml"));
-            assert!(ssh.contains(&format!(r#"<cim:Terminal rdf:ID="{}">"#, moved.ids[0].1)) && ssh.ends_with("</rdf:RDF>"), "{ssh}");
+            assert!(
+                ssh.contains(&format!(r#"<cim:Terminal rdf:ID="{}">"#, moved.ids[0].1))
+                    && ssh.ends_with("</rdf:RDF>"),
+                "{ssh}"
+            );
             assert!(copy(files, &["_nothing"], None, None, &mut random).is_err());
             assert!(copy(files, &["_t1"], Some("SSH.xml"), None, &mut random).is_err());
         });
@@ -1226,19 +1816,41 @@ mod tests {
     #[test]
     fn creates_an_object_of_any_class_with_its_values() {
         with_files(|files| {
-            let created = create(files, "EQ.xml", "Breaker", &[("IdentifiedObject.name", "B9"), ("Switch.normalOpen", "true")], &mut counting()).unwrap();
+            let created = create(
+                files,
+                "EQ.xml",
+                "Breaker",
+                &[
+                    ("IdentifiedObject.name", "B9"),
+                    ("Switch.normalOpen", "true"),
+                ],
+                &mut counting(),
+            )
+            .unwrap();
             let eq = apply(EQ, of(&created.edits, "EQ.xml"));
             let id = &created.id;
             assert!(eq.contains(&format!("  <cim:Breaker rdf:ID=\"{id}\">\n    <cim:IdentifiedObject.mRID>{}</cim:IdentifiedObject.mRID>\n    <cim:IdentifiedObject.name>B9</cim:IdentifiedObject.name>\n    <cim:Switch.normalOpen>true</cim:Switch.normalOpen>\n  </cim:Breaker>\n</rdf:RDF>", &id[1..])), "{eq}");
             assert!(create(files, "EQ.xml", "NoSuchClass", &[], &mut counting()).is_err());
-            assert!(create(files, "EQ.xml", "Breaker", &[("ACLineSegment.r", "1")], &mut counting()).is_err());
+            assert!(
+                create(
+                    files,
+                    "EQ.xml",
+                    "Breaker",
+                    &[("ACLineSegment.r", "1")],
+                    &mut counting()
+                )
+                .is_err()
+            );
         });
     }
 
     #[test]
     fn lists_what_refers_to_an_object() {
         with_files(|files| {
-            assert_eq!(referrers(files, "_b1"), [("_t1", "Terminal.ConductingEquipment")]);
+            assert_eq!(
+                referrers(files, "_b1"),
+                [("_t1", "Terminal.ConductingEquipment")]
+            );
             assert!(referrers(files, "_t1").is_empty());
         });
     }
@@ -1249,7 +1861,14 @@ mod tests {
             let d = delete(files, &HashSet::from(["_b1"]));
             assert_eq!((d.objects, d.references), (1, 1));
             let eq = apply(EQ, of(&d.edits, "EQ.xml"));
-            assert!(!eq.contains("Breaker") && !eq.contains("ConductingEquipment") && eq.contains("<cim:Terminal rdf:ID=\"_t1\">\n    <cim:IdentifiedObject.name>T1"), "{eq}");
+            assert!(
+                !eq.contains("Breaker")
+                    && !eq.contains("ConductingEquipment")
+                    && eq.contains(
+                        "<cim:Terminal rdf:ID=\"_t1\">\n    <cim:IdentifiedObject.name>T1"
+                    ),
+                "{eq}"
+            );
             assert!(!apply(SSH, of(&d.edits, "SSH.xml")).contains("Breaker"));
         });
     }
@@ -1267,16 +1886,29 @@ mod tests {
             for el in &ix.elements {
                 for f in &el.fields {
                     let key = f.key();
-                    let Some((target, _)) = &f.resource else { continue };
+                    let Some((target, _)) = &f.resource else {
+                        continue;
+                    };
                     // Not the containment's own fields: the object is where they put it.
-                    if !["ConductingEquipment.BaseVoltage", "Terminal.ConnectivityNode", "Terminal.TopologicalNode", "RegulatingControl.Terminal"].contains(&key) {
+                    if ![
+                        "ConductingEquipment.BaseVoltage",
+                        "Terminal.ConnectivityNode",
+                        "Terminal.TopologicalNode",
+                        "RegulatingControl.Terminal",
+                    ]
+                    .contains(&key)
+                    {
                         continue;
                     }
                     let c = candidates(&indexes, &set.tree, &el.mrid, key, 5);
                     let s = stats.entry(key).or_default();
                     s.0 += 1;
-                    if c.first().is_some_and(|c| c.id == *target) { s.1 += 1 }
-                    if c.iter().any(|c| c.id == *target) { s.2 += 1 }
+                    if c.first().is_some_and(|c| c.id == *target) {
+                        s.1 += 1
+                    }
+                    if c.iter().any(|c| c.id == *target) {
+                        s.2 += 1
+                    }
                 }
             }
         }
@@ -1298,43 +1930,96 @@ mod tests {
     fn adds_an_object_in_a_container() {
         let read = crate::testing::collect(&micro_grid());
         let set = crate::testing::validate(&read);
-        let names: Vec<String> = read.iter().map(|(p, _)| p.to_string_lossy().into_owned()).collect();
+        let names: Vec<String> = read
+            .iter()
+            .map(|(p, _)| p.to_string_lossy().into_owned())
+            .collect();
         let lines: Vec<LineIndex> = read.iter().map(|(_, t)| LineIndex::new(t)).collect();
         let indexes: Vec<Index> = read.iter().map(|(_, t)| Index::build(t)).collect();
-        let files: Vec<File> = (0..read.len()).map(|i| File { name: &names[i], text: &read[i].1, lines: &lines[i], index: &indexes[i] }).collect();
-        let find = |class: &str, name: &str| indexes.iter().flat_map(|ix| &ix.elements)
-            .find(|e| local(&e.qname) == class && e.name.as_deref() == Some(name)).unwrap().mrid.clone();
+        let files: Vec<File> = (0..read.len())
+            .map(|i| File {
+                name: &names[i],
+                text: &read[i].1,
+                lines: &lines[i],
+                index: &indexes[i],
+            })
+            .collect();
+        let find = |class: &str, name: &str| {
+            indexes
+                .iter()
+                .flat_map(|ix| &ix.elements)
+                .find(|e| local(&e.qname) == class && e.name.as_deref() == Some(name))
+                .unwrap()
+                .mrid
+                .clone()
+        };
         let vl = find("VoltageLevel", "110.0");
         let classes: Vec<&str> = addable(&files, &vl).iter().map(|a| a.class.local).collect();
-        for c in ["Breaker", "Bay", "ConnectivityNode", "LinearShuntCompensator"] {
+        for c in [
+            "Breaker",
+            "Bay",
+            "ConnectivityNode",
+            "LinearShuntCompensator",
+        ] {
             assert!(classes.contains(&c), "{classes:?}");
         }
         assert!(!classes.contains(&"Terminal"), "{classes:?}");
         let transformer = find("PowerTransformer", "BE-TR2_1");
-        let classes: Vec<&str> = addable(&files, &transformer).iter().map(|a| a.class.local).collect();
-        assert!(classes.contains(&"Terminal") && classes.contains(&"PowerTransformerEnd"), "{classes:?}");
+        let classes: Vec<&str> = addable(&files, &transformer)
+            .iter()
+            .map(|a| a.class.local)
+            .collect();
+        assert!(
+            classes.contains(&"Terminal") && classes.contains(&"PowerTransformerEnd"),
+            "{classes:?}"
+        );
 
         let mut draws = 0u8;
         let mut random = || {
             draws += 1;
             [draws; 16]
         };
-        let added = add(&files, &set.tree, &vl, "Breaker", Some("B-new"), &mut random).unwrap();
+        let added = add(
+            &files,
+            &set.tree,
+            &vl,
+            "Breaker",
+            Some("B-new"),
+            &mut random,
+        )
+        .unwrap();
         assert_eq!(added.edits.len(), 2, "EQ and SSH");
         assert_eq!(added.id, format!("_{}", uuid([1; 16])));
-        let edited: Vec<(std::path::PathBuf, std::sync::Arc<str>)> = read.iter().enumerate().map(|(i, (p, t))| {
-            let e = of(&added.edits, &names[i]);
-            (p.clone(), std::sync::Arc::from(if e.is_empty() { t.to_string() } else { apply(t, e) }))
-        }).collect();
+        let edited: Vec<(std::path::PathBuf, std::sync::Arc<str>)> = read
+            .iter()
+            .enumerate()
+            .map(|(i, (p, t))| {
+                let e = of(&added.edits, &names[i]);
+                (
+                    p.clone(),
+                    std::sync::Arc::from(if e.is_empty() {
+                        t.to_string()
+                    } else {
+                        apply(t, e)
+                    }),
+                )
+            })
+            .collect();
         let main = names.iter().position(|n| *n == added.file).unwrap();
         assert!(edited[main].0.to_string_lossy().contains("_EQ_"));
         let text = &edited[main].1;
         let selected = apply(text, vec![TextEdit::new(added.select, "|".into())]);
-        assert!(selected.contains("<cim:IdentifiedObject.name>|</cim:IdentifiedObject.name>"), "the name is selected");
+        assert!(
+            selected.contains("<cim:IdentifiedObject.name>|</cim:IdentifiedObject.name>"),
+            "the name is selected"
+        );
 
         let set2 = crate::testing::validate(&edited);
         assert_eq!(set2.tree.containers(&added.id), ["PP_Brussels", "110.0"]);
-        let ssh = edited.iter().find(|(p, _)| p.to_string_lossy().contains("_BE_SSH_")).unwrap();
+        let ssh = edited
+            .iter()
+            .find(|(p, _)| p.to_string_lossy().contains("_BE_SSH_"))
+            .unwrap();
         assert!(ssh.1.contains(&format!("rdf:about=\"#{}\"", added.id)));
     }
 
@@ -1343,29 +2028,68 @@ mod tests {
     #[test]
     fn a_companion_file_takes_a_diagram() {
         let read = crate::testing::collect(&micro_grid());
-        let names: Vec<String> = read.iter().map(|(p, _)| p.to_string_lossy().into_owned()).collect();
+        let names: Vec<String> = read
+            .iter()
+            .map(|(p, _)| p.to_string_lossy().into_owned())
+            .collect();
         let at = names.iter().position(|n| n.contains("_BE_EQ_")).unwrap();
         let (lines, index) = (LineIndex::new(&read[at].1), Index::build(&read[at].1));
-        let eq = File { name: &names[at], text: &read[at].1, lines: &lines, index: &index };
+        let eq = File {
+            name: &names[at],
+            text: &read[at].1,
+            lines: &lines,
+            index: &index,
+        };
         let text = companion(&eq, "DL", "0d1e2f30-0000-4000-8000-000000000000").unwrap();
         assert!(text.contains("<md:Model.profile>http://iec.ch/TC57/ns/CIM/DiagramLayout-EU/3.0</md:Model.profile>"), "{text}");
-        assert!(text.contains(&format!("<md:Model.DependentOn rdf:resource=\"{}\" />", index.elements[0].mrid)), "{text}");
+        assert!(
+            text.contains(&format!(
+                "<md:Model.DependentOn rdf:resource=\"{}\" />",
+                index.elements[0].mrid
+            )),
+            "{text}"
+        );
         assert!(!text.contains("CoreEquipment"), "{text}");
         let (dl_lines, dl_index) = (LineIndex::new(&text), Index::build(&text));
-        let dl = File { name: "new_DL.xml", text: &text, lines: &dl_lines, index: &dl_index };
+        let dl = File {
+            name: "new_DL.xml",
+            text: &text,
+            lines: &dl_lines,
+            index: &dl_index,
+        };
         let mut counter = 0u8;
         let mut random = || {
             counter += 1;
             [counter; 16]
         };
-        let breaker = index.elements.iter().find(|e| local(&e.qname) == "Breaker").map(|e| e.mrid.clone());
+        let breaker = index
+            .elements
+            .iter()
+            .find(|e| local(&e.qname) == "Breaker")
+            .map(|e| e.mrid.clone());
         let shown = breaker.as_deref().unwrap_or("_x");
-        let added = diagram(&[dl], "new_DL.xml", None, "One", &[(shown, "B", vec![(1.0, 2.5)])], &mut random).unwrap();
+        let added = diagram(
+            &[dl],
+            "new_DL.xml",
+            None,
+            "One",
+            &[(shown, "B", vec![(1.0, 2.5)])],
+            &mut random,
+        )
+        .unwrap();
         let written = crate::text::apply(&text, &added.edits[0].1);
-        assert!(written.contains("<cim:DiagramObjectPoint.xPosition>1</cim:DiagramObjectPoint.xPosition>"), "{written}");
-        assert!(written.contains("<cim:DiagramObjectPoint.yPosition>2.5</cim:DiagramObjectPoint.yPosition>"), "{written}");
+        assert!(
+            written
+                .contains("<cim:DiagramObjectPoint.xPosition>1</cim:DiagramObjectPoint.xPosition>"),
+            "{written}"
+        );
+        assert!(
+            written.contains(
+                "<cim:DiagramObjectPoint.yPosition>2.5</cim:DiagramObjectPoint.yPosition>"
+            ),
+            "{written}"
+        );
         assert!(written.contains("OrientationKind.negative"), "{written}");
         cimmodel::CimDataset::decode_str(&written).unwrap();
     }
 }
-

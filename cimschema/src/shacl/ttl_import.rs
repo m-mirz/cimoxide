@@ -8,7 +8,10 @@ use super::model::*;
 // ---------------------------------------------------------------------------
 
 fn literals(values: &[RdfVal]) -> Vec<String> {
-    values.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()
+    values
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect()
 }
 
 pub fn import_ttl_file(path: &Path) -> Result<FileResults, Box<dyn std::error::Error>> {
@@ -22,7 +25,11 @@ pub fn import_ttl_file(path: &Path) -> Result<FileResults, Box<dyn std::error::E
 
     let (graph, prefixes) = parse_turtle(&src)?;
     let shapes = extract_shapes(&graph);
-    Ok(FileResults { file_name, shapes, prefixes })
+    Ok(FileResults {
+        file_name,
+        shapes,
+        prefixes,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -31,24 +38,36 @@ pub fn import_ttl_file(path: &Path) -> Result<FileResults, Box<dyn std::error::E
 
 #[derive(Debug, Clone)]
 pub enum RdfVal {
-    Iri(String),             // simplified IRI: "cim:ACLineSegment" or "<full>"
-    Str(String),             // string literal
+    Iri(String), // simplified IRI: "cim:ACLineSegment" or "<full>"
+    Str(String), // string literal
     Int(i64),
     Float(f64),
     #[allow(dead_code)]
     Bool(bool),
-    List(Vec<RdfVal>),       // RDF collection ( ... )
+    List(Vec<RdfVal>), // RDF collection ( ... )
 }
 
 impl RdfVal {
     fn as_iri(&self) -> Option<&str> {
-        if let RdfVal::Iri(s) = self { Some(s) } else { None }
+        if let RdfVal::Iri(s) = self {
+            Some(s)
+        } else {
+            None
+        }
     }
     fn as_str(&self) -> Option<&str> {
-        if let RdfVal::Str(s) = self { Some(s) } else { None }
+        if let RdfVal::Str(s) = self {
+            Some(s)
+        } else {
+            None
+        }
     }
     fn as_int(&self) -> Option<i64> {
-        if let RdfVal::Int(n) = self { Some(*n) } else { None }
+        if let RdfVal::Int(n) = self {
+            Some(*n)
+        } else {
+            None
+        }
     }
     fn as_float(&self) -> Option<f64> {
         match self {
@@ -58,7 +77,11 @@ impl RdfVal {
         }
     }
     fn as_list(&self) -> Option<&Vec<RdfVal>> {
-        if let RdfVal::List(v) = self { Some(v) } else { None }
+        if let RdfVal::List(v) = self {
+            Some(v)
+        } else {
+            None
+        }
     }
 }
 
@@ -72,7 +95,13 @@ fn get_one<'g>(g: &'g Graph, subj: &str, pred: &str) -> Option<&'g RdfVal> {
 
 fn get_all<'g>(g: &'g Graph, subj: &str, pred: &str) -> Vec<&'g RdfVal> {
     g.get(subj)
-        .map(|pairs| pairs.iter().filter(|(p, _)| p == pred).map(|(_, v)| v).collect())
+        .map(|pairs| {
+            pairs
+                .iter()
+                .filter(|(p, _)| p == pred)
+                .map(|(_, v)| v)
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -82,14 +111,14 @@ fn get_all<'g>(g: &'g Graph, subj: &str, pred: &str) -> Vec<&'g RdfVal> {
 
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
-    IriRef(String),       // <...>
-    PrefixedName(String), // prefix:local or :local
+    IriRef(String),         // <...>
+    PrefixedName(String),   // prefix:local or :local
     BlankNodeLabel(String), // _:label
-    StringLit(String),    // "..." or '...' or """...""" or '''...'''
+    StringLit(String),      // "..." or '...' or """...""" or '''...'''
     Integer(i64),
     Float(f64),
     Bool(bool),
-    At,          // standalone @ (for @prefix / @base as keywords)
+    At, // standalone @ (for @prefix / @base as keywords)
     Semicolon,
     Comma,
     Dot,
@@ -110,7 +139,10 @@ struct Lexer<'a> {
 
 impl<'a> Lexer<'a> {
     fn new(src: &'a str) -> Self {
-        Self { src: src.as_bytes(), pos: 0 }
+        Self {
+            src: src.as_bytes(),
+            pos: 0,
+        }
     }
 
     fn peek(&self) -> Option<u8> {
@@ -150,7 +182,9 @@ impl<'a> Lexer<'a> {
         while self.peek().is_some_and(|c| c != b'>') {
             self.advance();
         }
-        let s = std::str::from_utf8(&self.src[start..self.pos]).unwrap_or("").to_string();
+        let s = std::str::from_utf8(&self.src[start..self.pos])
+            .unwrap_or("")
+            .to_string();
         self.advance(); // consume >
         s
     }
@@ -160,22 +194,28 @@ impl<'a> Lexer<'a> {
         // Check for triple quote
         let triple = self.peek() == Some(q) && self.peek2() == Some(q);
         if triple {
-            self.advance(); self.advance(); // consume two more
+            self.advance();
+            self.advance(); // consume two more
         }
         let mut s = String::new();
         loop {
             if triple {
-                if self.peek() == Some(q) && self.peek2() == Some(q)
+                if self.peek() == Some(q)
+                    && self.peek2() == Some(q)
                     && self.src.get(self.pos + 2).copied() == Some(q)
                 {
-                    self.advance(); self.advance(); self.advance();
+                    self.advance();
+                    self.advance();
+                    self.advance();
                     break;
                 }
             } else if self.peek() == Some(q) {
                 self.advance();
                 break;
             }
-            if self.peek().is_none() { break; }
+            if self.peek().is_none() {
+                break;
+            }
             let c = self.advance().unwrap();
             if c == b'\\' {
                 match self.advance() {
@@ -185,7 +225,10 @@ impl<'a> Lexer<'a> {
                     Some(b'\\') => s.push('\\'),
                     Some(b'"') => s.push('"'),
                     Some(b'\'') => s.push('\''),
-                    Some(esc) => { s.push('\\'); s.push(esc as char); }
+                    Some(esc) => {
+                        s.push('\\');
+                        s.push(esc as char);
+                    }
                     None => break,
                 }
             } else {
@@ -199,10 +242,14 @@ impl<'a> Lexer<'a> {
         self.advance(); // _
         self.advance(); // :
         let start = self.pos;
-        while self.peek().is_some_and(|c| !c.is_ascii_whitespace() && c != b',' && c != b';' && c != b'.' && c != b')') {
+        while self.peek().is_some_and(|c| {
+            !c.is_ascii_whitespace() && c != b',' && c != b';' && c != b'.' && c != b')'
+        }) {
             self.advance();
         }
-        std::str::from_utf8(&self.src[start..self.pos]).unwrap_or("").to_string()
+        std::str::from_utf8(&self.src[start..self.pos])
+            .unwrap_or("")
+            .to_string()
     }
 
     fn read_prefixed_name_or_keyword(&mut self) -> Token {
@@ -210,24 +257,46 @@ impl<'a> Lexer<'a> {
         loop {
             match self.peek() {
                 None => break,
-                Some(c) if c.is_ascii_whitespace() || c == b',' || c == b';'
-                    || c == b'(' || c == b')' || c == b'[' || c == b']' || c == b'^' => break,
+                Some(c)
+                    if c.is_ascii_whitespace()
+                        || c == b','
+                        || c == b';'
+                        || c == b'('
+                        || c == b')'
+                        || c == b'['
+                        || c == b']'
+                        || c == b'^' =>
+                {
+                    break;
+                }
                 Some(b'.') => {
                     // Only stop at '.' if the NEXT char is whitespace/EOF/special
                     // (so we don't chop "cim:Foo.bar" at the dot)
                     let next = self.src.get(self.pos + 1).copied();
                     let stop = match next {
                         None => true,
-                        Some(n) => n.is_ascii_whitespace() || n == b'#' || n == b';'
-                            || n == b',' || n == b')' || n == b']',
+                        Some(n) => {
+                            n.is_ascii_whitespace()
+                                || n == b'#'
+                                || n == b';'
+                                || n == b','
+                                || n == b')'
+                                || n == b']'
+                        }
                     };
-                    if stop { break; }
+                    if stop {
+                        break;
+                    }
                     self.advance();
                 }
-                _ => { self.advance(); }
+                _ => {
+                    self.advance();
+                }
             }
         }
-        let s = std::str::from_utf8(&self.src[start..self.pos]).unwrap_or("").to_string();
+        let s = std::str::from_utf8(&self.src[start..self.pos])
+            .unwrap_or("")
+            .to_string();
         match s.as_str() {
             "a" => Token::A,
             "true" => Token::Bool(true),
@@ -246,15 +315,27 @@ impl<'a> Lexer<'a> {
     fn read_number(&mut self, first: u8) -> Token {
         let neg = first == b'-';
         let mut s = String::new();
-        if neg { s.push('-'); } else { s.push(first as char); }
+        if neg {
+            s.push('-');
+        } else {
+            s.push(first as char);
+        }
         let mut is_float = false;
         while let Some(c) = self.peek() {
-            if c.is_ascii_digit() { s.push(c as char); self.advance(); }
-            else if c == b'.' && self.peek2().is_some_and(|n| n.is_ascii_digit()) {
-                is_float = true; s.push('.'); self.advance();
+            if c.is_ascii_digit() {
+                s.push(c as char);
+                self.advance();
+            } else if c == b'.' && self.peek2().is_some_and(|n| n.is_ascii_digit()) {
+                is_float = true;
+                s.push('.');
+                self.advance();
+            } else if c == b'e' || c == b'E' {
+                is_float = true;
+                s.push(c as char);
+                self.advance();
+            } else {
+                break;
             }
-            else if c == b'e' || c == b'E' { is_float = true; s.push(c as char); self.advance(); }
-            else { break; }
         }
         if is_float {
             Token::Float(s.parse().unwrap_or(0.0))
@@ -267,12 +348,8 @@ impl<'a> Lexer<'a> {
         self.skip_whitespace_and_comments();
         let c = self.peek()?;
         match c {
-            b'<' => {
-                Some(Token::IriRef(self.read_iri_ref()))
-            }
-            b'"' | b'\'' => {
-                Some(Token::StringLit(self.read_string()))
-            }
+            b'<' => Some(Token::IriRef(self.read_iri_ref())),
+            b'"' | b'\'' => Some(Token::StringLit(self.read_string())),
             b'_' if self.peek2() == Some(b':') => {
                 Some(Token::BlankNodeLabel(self.read_blank_node_label()))
             }
@@ -290,18 +367,43 @@ impl<'a> Lexer<'a> {
                     _ => Some(Token::At),
                 }
             }
-            b';' => { self.advance(); Some(Token::Semicolon) }
-            b',' => { self.advance(); Some(Token::Comma) }
-            b'.' => { self.advance(); Some(Token::Dot) }
-            b'(' => { self.advance(); Some(Token::LParen) }
-            b')' => { self.advance(); Some(Token::RParen) }
-            b'[' => { self.advance(); Some(Token::LBracket) }
-            b']' => { self.advance(); Some(Token::RBracket) }
+            b';' => {
+                self.advance();
+                Some(Token::Semicolon)
+            }
+            b',' => {
+                self.advance();
+                Some(Token::Comma)
+            }
+            b'.' => {
+                self.advance();
+                Some(Token::Dot)
+            }
+            b'(' => {
+                self.advance();
+                Some(Token::LParen)
+            }
+            b')' => {
+                self.advance();
+                Some(Token::RParen)
+            }
+            b'[' => {
+                self.advance();
+                Some(Token::LBracket)
+            }
+            b']' => {
+                self.advance();
+                Some(Token::RBracket)
+            }
             b'^' if self.peek2() == Some(b'^') => {
-                self.advance(); self.advance();
+                self.advance();
+                self.advance();
                 Some(Token::DoubleCaret)
             }
-            b'^' => { self.advance(); Some(Token::At) } // treat lone ^ as skip
+            b'^' => {
+                self.advance();
+                Some(Token::At)
+            } // treat lone ^ as skip
             b'-' | b'+' => {
                 let sign = self.advance().unwrap();
                 if self.peek().is_some_and(|c| c.is_ascii_digit()) {
@@ -315,9 +417,7 @@ impl<'a> Lexer<'a> {
                 let d = self.advance().unwrap();
                 Some(self.read_number(d))
             }
-            _ => {
-                Some(self.read_prefixed_name_or_keyword())
-            }
+            _ => Some(self.read_prefixed_name_or_keyword()),
         }
     }
 
@@ -371,13 +471,23 @@ impl Parser {
         loop {
             match self.peek() {
                 None => break,
-                Some(Token::LParen) | Some(Token::LBracket) => { depth += 1; self.advance(); }
-                Some(Token::RParen) | Some(Token::RBracket) => {
-                    if depth > 0 { depth -= 1; }
+                Some(Token::LParen) | Some(Token::LBracket) => {
+                    depth += 1;
                     self.advance();
                 }
-                Some(Token::Dot) if depth == 0 => { self.advance(); break; }
-                _ => { self.advance(); }
+                Some(Token::RParen) | Some(Token::RBracket) => {
+                    if depth > 0 {
+                        depth -= 1;
+                    }
+                    self.advance();
+                }
+                Some(Token::Dot) if depth == 0 => {
+                    self.advance();
+                    break;
+                }
+                _ => {
+                    self.advance();
+                }
             }
         }
     }
@@ -417,7 +527,10 @@ impl Parser {
         let mut items = Vec::new();
         loop {
             match self.peek() {
-                None | Some(Token::RParen) => { self.advance(); break; }
+                None | Some(Token::RParen) => {
+                    self.advance();
+                    break;
+                }
                 Some(Token::LBracket) => {
                     self.advance();
                     let bnode = self.parse_blank_node_body();
@@ -440,25 +553,41 @@ impl Parser {
         let id = self.new_bnode();
         loop {
             match self.peek() {
-                None | Some(Token::RBracket) => { self.advance(); break; }
-                Some(Token::Semicolon) => { self.advance(); continue; }
-                Some(Token::Dot) => { break; } // shouldn't happen inside []
+                None | Some(Token::RBracket) => {
+                    self.advance();
+                    break;
+                }
+                Some(Token::Semicolon) => {
+                    self.advance();
+                    continue;
+                }
+                Some(Token::Dot) => {
+                    break;
+                } // shouldn't happen inside []
                 _ => {
                     // predicate
                     let pred = match self.advance().cloned() {
                         Some(t) => match self.token_to_iri(&t) {
                             Some(p) => p,
-                            None => { self.skip_until_statement_end(); break; }
+                            None => {
+                                self.skip_until_statement_end();
+                                break;
+                            }
                         },
                         None => break,
                     };
                     // object(s)
                     loop {
                         if let Some(val) = self.parse_object() {
-                            self.graph.entry(id.clone()).or_default().push((pred.clone(), val));
+                            self.graph
+                                .entry(id.clone())
+                                .or_default()
+                                .push((pred.clone(), val));
                         }
                         match self.peek() {
-                            Some(Token::Comma) => { self.advance(); }
+                            Some(Token::Comma) => {
+                                self.advance();
+                            }
                             _ => break,
                         }
                     }
@@ -479,14 +608,18 @@ impl Parser {
                 let val = s.clone();
                 // Consume optional language tag or datatype
                 match self.peek() {
-                    Some(Token::At) => { self.advance(); } // @langcode — Token::At already includes the tag
+                    Some(Token::At) => {
+                        self.advance();
+                    } // @langcode — Token::At already includes the tag
                     Some(Token::DoubleCaret) => {
                         self.advance(); // ^^
                         // Coerce to numeric type based on xsd datatype
                         if let Some(dt_tok) = self.advance().cloned() {
                             let dt = self.token_to_iri(&dt_tok).unwrap_or_default();
                             match dt.as_str() {
-                                "xsd:float" | "xsd:double" | "xsd:decimal"
+                                "xsd:float"
+                                | "xsd:double"
+                                | "xsd:decimal"
                                 | "<http://www.w3.org/2001/XMLSchema#float>"
                                 | "<http://www.w3.org/2001/XMLSchema#double>"
                                 | "<http://www.w3.org/2001/XMLSchema#decimal>" => {
@@ -494,7 +627,9 @@ impl Parser {
                                         return Some(RdfVal::Float(f));
                                     }
                                 }
-                                "xsd:integer" | "xsd:int" | "xsd:long"
+                                "xsd:integer"
+                                | "xsd:int"
+                                | "xsd:long"
                                 | "<http://www.w3.org/2001/XMLSchema#integer>"
                                 | "<http://www.w3.org/2001/XMLSchema#int>"
                                 | "<http://www.w3.org/2001/XMLSchema#long>" => {
@@ -535,17 +670,23 @@ impl Parser {
                     self.advance();
                     // prefix name: <uri>
                     let prefix = match self.advance().cloned() {
-                        Some(Token::PrefixedName(s)) => {
-                            s.trim_end_matches(':').to_string()
+                        Some(Token::PrefixedName(s)) => s.trim_end_matches(':').to_string(),
+                        _ => {
+                            self.skip_until_statement_end();
+                            continue;
                         }
-                        _ => { self.skip_until_statement_end(); continue; }
                     };
                     let expanded = match self.advance().cloned() {
                         Some(Token::IriRef(s)) => s,
-                        _ => { self.skip_until_statement_end(); continue; }
+                        _ => {
+                            self.skip_until_statement_end();
+                            continue;
+                        }
                     };
                     // Consume optional dot
-                    if self.peek() == Some(&Token::Dot) { self.advance(); }
+                    if self.peek() == Some(&Token::Dot) {
+                        self.advance();
+                    }
                     self.prefixes.insert(prefix, expanded);
                 }
                 Some(Token::BaseDecl) => {
@@ -553,10 +694,16 @@ impl Parser {
                     if let Some(Token::IriRef(s)) = self.advance().cloned() {
                         self.base = s;
                     }
-                    if self.peek() == Some(&Token::Dot) { self.advance(); }
+                    if self.peek() == Some(&Token::Dot) {
+                        self.advance();
+                    }
                 }
-                Some(Token::Dot) => { self.advance(); }
-                Some(Token::Semicolon) | Some(Token::Comma) => { self.advance(); }
+                Some(Token::Dot) => {
+                    self.advance();
+                }
+                Some(Token::Semicolon) | Some(Token::Comma) => {
+                    self.advance();
+                }
                 _ => {
                     // Parse a subject
                     let subj = match self.advance().cloned() {
@@ -565,15 +712,24 @@ impl Parser {
                         Some(Token::BlankNodeLabel(s)) => format!("_:{s}"),
                         Some(Token::LBracket) => self.parse_blank_node_body(),
                         Some(Token::A) => "rdf:type".to_string(),
-                        _ => { self.skip_until_statement_end(); continue; }
+                        _ => {
+                            self.skip_until_statement_end();
+                            continue;
+                        }
                     };
 
                     // Parse predicate-object pairs
                     loop {
                         // End of statement?
                         match self.peek() {
-                            None | Some(Token::Dot) => { self.advance(); break; }
-                            Some(Token::Semicolon) => { self.advance(); continue; }
+                            None | Some(Token::Dot) => {
+                                self.advance();
+                                break;
+                            }
+                            Some(Token::Semicolon) => {
+                                self.advance();
+                                continue;
+                            }
                             _ => {}
                         }
 
@@ -583,24 +739,34 @@ impl Parser {
                         };
                         let pred = match self.token_to_iri(&pred_tok) {
                             Some(p) => p,
-                            None => { self.skip_until_statement_end(); break; }
+                            None => {
+                                self.skip_until_statement_end();
+                                break;
+                            }
                         };
 
                         // Object(s)
                         loop {
                             if let Some(val) = self.parse_object() {
-                                self.graph.entry(subj.clone()).or_default().push((pred.clone(), val));
+                                self.graph
+                                    .entry(subj.clone())
+                                    .or_default()
+                                    .push((pred.clone(), val));
                             }
                             // Typed literal suffix after string
                             match self.peek() {
-                                Some(Token::Comma) => { self.advance(); }
+                                Some(Token::Comma) => {
+                                    self.advance();
+                                }
                                 _ => break,
                             }
                         }
 
                         // After object(s), expect ; or .
                         match self.peek() {
-                            Some(Token::Semicolon) => { self.advance(); }
+                            Some(Token::Semicolon) => {
+                                self.advance();
+                            }
                             Some(Token::Dot) | None => {}
                             _ => {}
                         }
@@ -611,9 +777,7 @@ impl Parser {
     }
 }
 
-fn parse_turtle(
-    src: &str,
-) -> Result<(Graph, HashMap<String, String>), Box<dyn std::error::Error>> {
+fn parse_turtle(src: &str) -> Result<(Graph, HashMap<String, String>), Box<dyn std::error::Error>> {
     let tokens = Lexer::new(src).tokenize();
     let mut parser = Parser::new(tokens);
     parser.parse();
@@ -665,12 +829,13 @@ fn build_node_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
     // the simplify stage needs the target to report structural drops.
     for v in get_all(g, id, "sh:targetNode") {
         if let Some(iri) = v.as_iri()
-            && seen_targets.insert(iri.to_string()) {
-                targets.push(TargetInfo {
-                    kind: "targetNode".to_string(),
-                    value: iri.to_string(),
-                });
-            }
+            && seen_targets.insert(iri.to_string())
+        {
+            targets.push(TargetInfo {
+                kind: "targetNode".to_string(),
+                value: iri.to_string(),
+            });
+        }
     }
 
     // sh:targetSubjectsOf / sh:targetObjectsOf target every subject/object of a given
@@ -807,8 +972,8 @@ fn extract_node_compound_constraints(
 
     for (pred, component) in &[
         ("sh:xone", "sh:XoneConstraintComponent"),
-        ("sh:or",   "sh:OrConstraintComponent"),
-        ("sh:and",  "sh:AndConstraintComponent"),
+        ("sh:or", "sh:OrConstraintComponent"),
+        ("sh:and", "sh:AndConstraintComponent"),
     ] {
         for val in get_all(g, id, pred) {
             let items = match val.as_list() {
@@ -823,9 +988,7 @@ fn extract_node_compound_constraints(
                 // `[ sh:not X ]`: the branch conforms when X does not.
                 let (target, negate) = match get_one(g, node, "sh:not").and_then(|v| v.as_iri()) {
                     Some(x) => {
-                        unsupported.extend(
-                            unsupported_predicates(g, node, &["sh:not"]),
-                        );
+                        unsupported.extend(unsupported_predicates(g, node, &["sh:not"]));
                         (x, true)
                     }
                     None => (node, false),
@@ -868,9 +1031,19 @@ fn extract_node_compound_constraints(
 /// cannot carry: neither turned into a constraint nor safe to ignore.
 fn unsupported_predicates(g: &Graph, node: &str, also: &[&str]) -> Vec<String> {
     const UNDERSTOOD: &[&str] = &[
-        "sh:path", "sh:minCount", "sh:maxCount", "sh:hasValue", "sh:in",
+        "sh:path",
+        "sh:minCount",
+        "sh:maxCount",
+        "sh:hasValue",
+        "sh:in",
         // Annotations: no effect on conformance.
-        RDF_TYPE, "sh:name", "sh:description", "sh:message", "sh:severity", "sh:order", "sh:group",
+        RDF_TYPE,
+        "sh:name",
+        "sh:description",
+        "sh:message",
+        "sh:severity",
+        "sh:order",
+        "sh:group",
     ];
     g.get(node)
         .into_iter()
@@ -892,7 +1065,11 @@ fn shape_constraints(g: &Graph, node: &str) -> (Vec<ConstraintInfo>, Vec<String>
     let mut unsupported = unsupported_predicates(
         g,
         node,
-        &["sh:property", "sh:qualifiedValueShape", "sh:qualifiedMinCount"],
+        &[
+            "sh:property",
+            "sh:qualifiedValueShape",
+            "sh:qualifiedMinCount",
+        ],
     );
 
     if let Some(qmin) = get_one(g, node, "sh:qualifiedMinCount").and_then(|v| v.as_int()) {
@@ -952,16 +1129,34 @@ fn extract_branch_constraints(g: &Graph, bnode_id: &str) -> Vec<ConstraintInfo> 
     };
 
     if let Some(n) = get_one(g, bnode_id, "sh:minCount").and_then(|v| v.as_int()) {
-        constraints.push(mk("sh:MinCountConstraintComponent", "minCount", ShaclValue::Int(n), path.clone()));
+        constraints.push(mk(
+            "sh:MinCountConstraintComponent",
+            "minCount",
+            ShaclValue::Int(n),
+            path.clone(),
+        ));
     }
     if let Some(n) = get_one(g, bnode_id, "sh:maxCount").and_then(|v| v.as_int()) {
-        constraints.push(mk("sh:MaxCountConstraintComponent", "maxCount", ShaclValue::Int(n), path.clone()));
+        constraints.push(mk(
+            "sh:MaxCountConstraintComponent",
+            "maxCount",
+            ShaclValue::Int(n),
+            path.clone(),
+        ));
     }
     if let Some(v) = get_one(g, bnode_id, "sh:hasValue") {
         let sv = v.as_iri().or_else(|| v.as_str()).map(str::to_string);
         if let Some(s) = sv {
-            let mut c = mk("sh:HasValueConstraintComponent", "hasValue", ShaclValue::Str(s), path.clone());
-            c.payload.insert(LITERALS.to_string(), ShaclValue::List(literals(std::slice::from_ref(v))));
+            let mut c = mk(
+                "sh:HasValueConstraintComponent",
+                "hasValue",
+                ShaclValue::Str(s),
+                path.clone(),
+            );
+            c.payload.insert(
+                LITERALS.to_string(),
+                ShaclValue::List(literals(std::slice::from_ref(v))),
+            );
             constraints.push(c);
         }
     }
@@ -971,8 +1166,14 @@ fn extract_branch_constraints(g: &Graph, bnode_id: &str) -> Vec<ConstraintInfo> 
             .filter_map(|v| v.as_iri().or_else(|| v.as_str()).map(str::to_string))
             .collect();
         if !values.is_empty() {
-            let mut c = mk("sh:InConstraintComponent", "in", ShaclValue::List(values), path.clone());
-            c.payload.insert(LITERALS.to_string(), ShaclValue::List(literals(in_list)));
+            let mut c = mk(
+                "sh:InConstraintComponent",
+                "in",
+                ShaclValue::List(values),
+                path.clone(),
+            );
+            c.payload
+                .insert(LITERALS.to_string(), ShaclValue::List(literals(in_list)));
             constraints.push(c);
         }
     }
@@ -984,7 +1185,9 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
     let is_prop = get_all(g, id, RDF_TYPE)
         .iter()
         .any(|v| v.as_iri() == Some(SH_PROPERTY_SHAPE));
-    let has_path = g.get(id).is_some_and(|pairs| pairs.iter().any(|(p, _)| p == "sh:path"));
+    let has_path = g
+        .get(id)
+        .is_some_and(|pairs| pairs.iter().any(|(p, _)| p == "sh:path"));
     if !is_prop && !has_path && !id.starts_with("_:") {
         return None;
     }
@@ -994,7 +1197,11 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
     let description = get_str(g, id, "sh:description").unwrap_or_default();
     let message = get_str(g, id, "sh:message").unwrap_or_default();
     let severity = get_str(g, id, "sh:severity")
-        .or_else(|| get_all(g, id, "sh:severity").into_iter().find_map(|v| v.as_iri().map(str::to_string)))
+        .or_else(|| {
+            get_all(g, id, "sh:severity")
+                .into_iter()
+                .find_map(|v| v.as_iri().map(str::to_string))
+        })
         .unwrap_or_else(|| "sh:Violation".to_string());
 
     // Collect constraints from this shape
@@ -1121,7 +1328,11 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
     if let Some(in_list) = get_one(g, id, "sh:in").and_then(|v| v.as_list()) {
         let values: Vec<String> = in_list
             .iter()
-            .filter_map(|v| v.as_iri().map(str::to_string).or_else(|| v.as_str().map(str::to_string)))
+            .filter_map(|v| {
+                v.as_iri()
+                    .map(str::to_string)
+                    .or_else(|| v.as_str().map(str::to_string))
+            })
             .collect();
         let mut payload = HashMap::new();
         payload.insert("in".to_string(), ShaclValue::List(values));
@@ -1140,11 +1351,17 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
 
     // sh:hasValue
     if let Some(v) = get_one(g, id, "sh:hasValue") {
-        let val = v.as_iri().map(str::to_string).or_else(|| v.as_str().map(str::to_string));
+        let val = v
+            .as_iri()
+            .map(str::to_string)
+            .or_else(|| v.as_str().map(str::to_string));
         if let Some(hv) = val {
             let mut payload = HashMap::new();
             payload.insert("hasValue".to_string(), ShaclValue::Str(hv));
-            payload.insert(LITERALS.to_string(), ShaclValue::List(literals(std::slice::from_ref(v))));
+            payload.insert(
+                LITERALS.to_string(),
+                ShaclValue::List(literals(std::slice::from_ref(v))),
+            );
             constraints.push(ConstraintInfo {
                 path: path.clone(),
                 severity: severity.clone(),
@@ -1233,7 +1450,10 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
     ] {
         if let Some(val) = get_one(g, id, pred).and_then(|v| v.as_float()) {
             let mut payload = HashMap::new();
-            payload.insert(pred.trim_start_matches("sh:").to_string(), ShaclValue::Float(val));
+            payload.insert(
+                pred.trim_start_matches("sh:").to_string(),
+                ShaclValue::Float(val),
+            );
             constraints.push(ConstraintInfo {
                 path: path.clone(),
                 severity: severity.clone(),
@@ -1279,15 +1499,17 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
                 .iter()
                 .filter_map(|item| item.as_iri())
                 .filter(|bnode_id| {
-                    g.get(*bnode_id).is_some_and(|pairs| {
-                        pairs.iter().any(|(p, _)| p == "sh:path")
-                    })
+                    g.get(*bnode_id)
+                        .is_some_and(|pairs| pairs.iter().any(|(p, _)| p == "sh:path"))
                 })
                 .collect();
             if !inv_items.is_empty() {
                 // Complex inverse cardinality — emit as-is for future handling
                 let mut payload = HashMap::new();
-                payload.insert("complex".to_string(), ShaclValue::Str("sh:or+inversePath".to_string()));
+                payload.insert(
+                    "complex".to_string(),
+                    ShaclValue::Str("sh:or+inversePath".to_string()),
+                );
                 constraints.push(ConstraintInfo {
                     path: path.clone(),
                     severity: severity.clone(),
@@ -1321,7 +1543,10 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
     // sh:lessThanOrEquals
     if let Some(lte_val) = get_one(g, id, "sh:lessThanOrEquals").and_then(|v| v.as_iri()) {
         let mut payload = HashMap::new();
-        payload.insert("lessThanOrEquals".to_string(), ShaclValue::Str(lte_val.to_string()));
+        payload.insert(
+            "lessThanOrEquals".to_string(),
+            ShaclValue::Str(lte_val.to_string()),
+        );
         constraints.push(ConstraintInfo {
             path: path.clone(),
             severity: severity.clone(),
@@ -1338,20 +1563,21 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
     for not_val in get_all(g, id, "sh:not") {
         if let Some(bnode_id) = not_val.as_iri()
             && let Some(class_val) = get_one(g, bnode_id, "sh:class")
-                && let Some(class) = class_val.as_iri() {
-                    let mut payload = HashMap::new();
-                    payload.insert("class".to_string(), ShaclValue::Str(class.to_string()));
-                    constraints.push(ConstraintInfo {
-                        path: path.clone(),
-                        severity: severity.clone(),
-                        message: message.clone(),
-                        name: name.clone(),
-                        description: description.clone(),
-                        component: "sh:NotClassConstraintComponent".to_string(),
-                        payload,
-                        rule_id: id.to_string(),
-                    });
-                }
+            && let Some(class) = class_val.as_iri()
+        {
+            let mut payload = HashMap::new();
+            payload.insert("class".to_string(), ShaclValue::Str(class.to_string()));
+            constraints.push(ConstraintInfo {
+                path: path.clone(),
+                severity: severity.clone(),
+                message: message.clone(),
+                name: name.clone(),
+                description: description.clone(),
+                component: "sh:NotClassConstraintComponent".to_string(),
+                payload,
+                rule_id: id.to_string(),
+            });
+        }
     }
 
     // sh:sparql — emit a marker constraint so the codegen skip reporter can count it.
@@ -1373,26 +1599,27 @@ fn build_property_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
     // property's values satisfy the nested shape". NCP uses it only with a
     // nested sh:in, to assert conformance to one of a set of profile IRIs.
     if let Some(qmin) = get_one(g, id, "sh:qualifiedMinCount").and_then(|v| v.as_int())
-        && let Some(shape_id) = get_one(g, id, "sh:qualifiedValueShape").and_then(|v| v.as_iri()) {
-            // The nested shape carries no sh:path of its own; the outer
-            // constraint's path is the one that applies.
-            let branch = extract_branch_constraints(g, shape_id);
-            if !branch.is_empty() {
-                let mut payload = HashMap::new();
-                payload.insert("qualifiedMinCount".to_string(), ShaclValue::Int(qmin));
-                payload.insert("shape".to_string(), ShaclValue::Shapes(vec![branch]));
-                constraints.push(ConstraintInfo {
-                    path: path.clone(),
-                    severity: severity.clone(),
-                    message: message.clone(),
-                    name: name.clone(),
-                    description: description.clone(),
-                    component: "sh:QualifiedMinCountConstraintComponent".to_string(),
-                    payload,
-                    rule_id: id.to_string(),
-                });
-            }
+        && let Some(shape_id) = get_one(g, id, "sh:qualifiedValueShape").and_then(|v| v.as_iri())
+    {
+        // The nested shape carries no sh:path of its own; the outer
+        // constraint's path is the one that applies.
+        let branch = extract_branch_constraints(g, shape_id);
+        if !branch.is_empty() {
+            let mut payload = HashMap::new();
+            payload.insert("qualifiedMinCount".to_string(), ShaclValue::Int(qmin));
+            payload.insert("shape".to_string(), ShaclValue::Shapes(vec![branch]));
+            constraints.push(ConstraintInfo {
+                path: path.clone(),
+                severity: severity.clone(),
+                message: message.clone(),
+                name: name.clone(),
+                description: description.clone(),
+                component: "sh:QualifiedMinCountConstraintComponent".to_string(),
+                payload,
+                rule_id: id.to_string(),
+            });
         }
+    }
 
     if constraints.is_empty() {
         return None;
@@ -1527,10 +1754,9 @@ fn nested_shape_ids(g: &Graph, id: &str) -> Vec<String> {
                         }
                     }
                 }
-                RdfVal::Iri(bnode)
-                    if bnode.starts_with("_:") => {
-                        result.push(bnode.clone());
-                    }
+                RdfVal::Iri(bnode) if bnode.starts_with("_:") => {
+                    result.push(bnode.clone());
+                }
                 _ => {}
             }
         }
@@ -1539,8 +1765,11 @@ fn nested_shape_ids(g: &Graph, id: &str) -> Vec<String> {
 }
 
 fn get_str(g: &Graph, subj: &str, pred: &str) -> Option<String> {
-    get_one(g, subj, pred).and_then(|v| v.as_str().map(str::to_string)
-        .or_else(|| v.as_iri().map(|s| s.to_string())))
+    get_one(g, subj, pred).and_then(|v| {
+        v.as_str()
+            .map(str::to_string)
+            .or_else(|| v.as_iri().map(|s| s.to_string()))
+    })
 }
 
 // ---------------------------------------------------------------------------

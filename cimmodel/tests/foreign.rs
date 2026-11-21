@@ -55,7 +55,10 @@ fn a_blank_node_is_kept_and_referenced_by_its_label() {
 #[test]
 fn a_field_keeps_its_namespace_per_class() {
     let xml = dataset_to_xml(&CimDataset::decode_str(RD).unwrap()).unwrap();
-    assert!(xml.contains("<dcterms:type>Reference data</dcterms:type>"), "{xml}");
+    assert!(
+        xml.contains("<dcterms:type>Reference data</dcterms:type>"),
+        "{xml}"
+    );
     assert!(xml.contains("<prov:type>TSO</prov:type>"), "{xml}");
 }
 
@@ -93,14 +96,21 @@ fn an_element_keeps_the_namespace_it_was_written_in() {
     let ds = CimDataset::decode_str(xml).unwrap();
     assert_eq!(ds.entries["_bp"].type_name(), "BoundaryPoint");
     let out = dataset_to_xml(&ds).unwrap();
-    assert!(out.contains(r##"<cim:BoundaryPoint rdf:about="#_bp">"##), "{out}");
+    assert!(
+        out.contains(r##"<cim:BoundaryPoint rdf:about="#_bp">"##),
+        "{out}"
+    );
 }
 
 /// Merged, a foreign object described in two files joins their fields.
 #[test]
 fn foreign_objects_merge() {
     let mut a = CimDataset::decode_str(RD).unwrap();
-    let b = CimDataset::decode_str(&RD.replace("<prov:type>TSO</prov:type>", "<prov:atLocation>Belgovia</prov:atLocation>")).unwrap();
+    let b = CimDataset::decode_str(&RD.replace(
+        "<prov:type>TSO</prov:type>",
+        "<prov:atLocation>Belgovia</prov:atLocation>",
+    ))
+    .unwrap();
     a.merge(b);
     assert_eq!(a.foreign[AGENT].get_str("atLocation"), Some("Belgovia"));
     assert_eq!(a.foreign[AGENT].get_str("type"), Some("TSO"));
