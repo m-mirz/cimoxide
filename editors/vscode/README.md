@@ -41,13 +41,11 @@ Language support for ENTSO-E **CGMES** and **Network Code (NC)** RDF/XML, powere
   ![The CIM Model view of MicroGrid, down through a substation and voltage level to a generator, with findings counts and equipment symbols](https://github.com/user-attachments/assets/f1760cf4-dcb3-45f8-bd86-5211a6c826cd)
 - **Rename and delete** — *Rename Symbol* (F2) on an `rdf:ID`, `rdf:about` or `rdf:resource`, or
   *Rename mRID…* in the *CIM Model* view, renames the mRID in every file of the model set:
-  definitions, descriptions, references and an `IdentifiedObject.mRID` that writes it. *Delete* in
-  the view removes an object from every file with the references to it, or with everything it holds
-  (a voltage level's bays, equipment, terminals, …); the edit opens in the refactoring preview
-  first. Both change the files as written and nothing else, and are undone like any edit; the files
-  they change open for review.
-
-  ![Deleting a voltage level with everything it holds, previewed across six files of the model set](https://github.com/user-attachments/assets/097a7556-58ad-4eca-9e2e-99066283a94a)
+  definitions, descriptions, references and an `IdentifiedObject.mRID` that writes it; the files it
+  changes open for review. *Delete* in the view removes an object from every file with the
+  references to it, or with everything it holds (a voltage level's bays, equipment, terminals, …):
+  once confirmed, it is made and saved in every file at once, so no file is left half-deleted. Both
+  change the files as written and nothing else.
 - **Add an object** — *Add…* on an object in the *CIM Model* view: pick a class among those it can hold (equipment, bays and connectivity nodes in a voltage
   level; terminals, ends, limit sets on equipment, …) and a name. The object is written with a new
   UUID, its mRID, name and container, in the file whose profile carries it, after what the

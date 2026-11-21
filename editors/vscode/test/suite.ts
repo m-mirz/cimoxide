@@ -113,8 +113,9 @@ test("deleting is the tree's: it reaches every file; the editor offers none", as
   const vl = (await api.request<Hit[]>("cimoxide/search", { uri: eq.toString(), query: "110.0" }))
     .find((h) => h.class === "VoltageLevel" && h.place === "PP_Brussels");
   assert.ok(vl, "no 110 kV level in PP_Brussels");
-  const del = await api.request<{ edit: { documentChanges: unknown[] } }>("cimoxide/delete", { uri: eq.toString(), id: vl.id, dependents: true });
-  assert.ok(del.edit.documentChanges.length >= 3, `the deletion reaches ${del.edit.documentChanges.length} file(s)`);
+  const del = await api.request<{ edit: { changes: Record<string, unknown[]> } }>("cimoxide/delete", { uri: eq.toString(), id: vl.id, dependents: true });
+  const reached = Object.keys(del.edit.changes).length;
+  assert.ok(reached >= 3, `the deletion reaches ${reached} file(s)`);
 });
 
 test("Referenced by lists what refers to an object", async () => {
@@ -295,8 +296,9 @@ test("a file over 50 MB, which VS Code keeps from the server, takes topology edi
   assert.deepStrictEqual(counts, [1, 1], `written ${counts} times; first ${first}, second ${second}; around the first: ${JSON.stringify(written.slice(Math.max(0, at - 300), at + 900))}`);
   // And the server, reading it again, finds both in the substation.
   await until("both breakers, read again", async () => {
-    const now = await api.request<Inside>("cimoxide/substation", { uri: nl.toString(), id: amsterdam.id });
-    const ids = new Set(now.items.map((it) => it.id));
+    // `null` while the set is revalidated.
+    const now = await api.request<Inside | null>("cimoxide/substation", { uri: nl.toString(), id: amsterdam.id });
+    const ids = new Set(now?.items.map((it) => it.id));
     return ids.has(first) && ids.has(second) ? true : undefined;
   }, 30000);
 });
@@ -321,6 +323,29 @@ test("files chosen form a set of their own, from which their folder's set gives 
   await api.chosen.set([]);
   await until("the folder's set again", async () => ((await finds(be[0], "PP_Amsterdam")) ? true : undefined));
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(api.chosen.setFile, "utf8")).files, []);
+});
+
+// Last: it removes a voltage level and what it holds, which the tests before look at.
+test("the tree's delete, confirmed, is made and saved in every file, none left open unsaved", async () => {
+  // The folder's set again, after the test before: revalidated first.
+  const vl = await until("the 110 kV level in PP_Brussels", async () =>
+    (await api.request<Hit[]>("cimoxide/search", { uri: eq.toString(), query: "110.0" }))
+      .find((h) => h.class === "VoltageLevel" && h.place === "PP_Brussels"));
+  const holding = () => fs.readdirSync(data).filter((f) => f.endsWith(".xml") && fs.readFileSync(path.join(data, f), "utf8").includes(vl.id));
+  const held = holding();
+  assert.ok(held.length >= 2, held.join(", "));
+  const asked: string[] = [];
+  const confirm = window.showWarningMessage;
+  (window as { showWarningMessage: unknown }).showWarningMessage = async (message: string) => (asked.push(message), "Delete");
+  try {
+    await commands.executeCommand("cimoxide.model.deleteAll", { id: vl.id, class: vl.class, label: vl.label, key: vl.id });
+  } finally {
+    (window as { showWarningMessage: unknown }).showWarningMessage = confirm;
+  }
+  assert.strictEqual(asked.length, 1, "asked once before deleting");
+  assert.deepStrictEqual(holding(), [], "files on disk still write the level or refer to it");
+  const dirty = workspace.textDocuments.filter((d) => d.isDirty).map((d) => d.uri.path.split("/").pop() as string);
+  assert.deepStrictEqual(dirty.filter((f) => held.includes(f)), [], "left unsaved");
 });
 
 export async function run(): Promise<void> {

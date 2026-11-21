@@ -404,10 +404,28 @@ export function registerModelTree(context: ExtensionContext, client: () => Langu
   const remove = async (e: Entry | undefined, dependents: boolean): Promise<void> => {
     const c = client();
     if (!c || !tree.uri || !e?.id) return;
-    const found = await c.sendRequest<{ edit: unknown } | null>(DELETE_REQUEST, { uri: tree.uri.toString(), id: e.id, dependents });
+    const found = await c.sendRequest<{ edit: unknown; label: string; objects: number; references: number } | null>(
+      DELETE_REQUEST, { uri: tree.uri.toString(), id: e.id, dependents });
     if (!found) return;
-    // Applied once confirmed in the preview; then what it changed, for review.
-    await openEdited(await apply(found.edit as LspWorkspaceEdit, true));
+    // Confirmed, then made and saved in every file at once: a deletion left
+    // unsaved in some of its files would leave references to what is gone.
+    const go = await window.showWarningMessage(
+      `${found.label}?`,
+      { modal: true, detail: `${found.objects} object(s) and ${found.references} reference(s) to them are removed, and the files saved.` },
+      "Delete",
+    );
+    if (go !== "Delete") return;
+    const changed = await applyEdit(c, found.edit as LspWorkspaceEdit);
+    if (!changed) {
+      window.showErrorMessage(`cimoxide: VS Code did not make the deletion (${found.label}).`);
+      return;
+    }
+    const unsaved: string[] = [];
+    for (const uri of changed) {
+      const doc = workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
+      if (doc?.isDirty && !(await doc.save())) unsaved.push(uri.path.split("/").pop() ?? uri.toString());
+    }
+    if (unsaved.length) window.showErrorMessage(`cimoxide: the deletion is not saved in ${unsaved.join(", ")}; save them, or the model set is left half-deleted.`);
   };
   // Adding asks for the class, from those the containment puts in the
   // object, then for a name; the server writes the object, and validation

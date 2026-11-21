@@ -949,7 +949,7 @@ fn deletion(state: &Shared, p: &DeleteParams) -> Option<(edit::Deletion, String)
         }
         let what = edit::describe(files, &p.id);
         let label = if p.dependents { format!("Delete {what} and what it holds") } else { format!("Delete {what}") };
-        (edit::delete(files, &ids, &label), label)
+        (edit::delete(files, &ids), label)
     })
 }
 

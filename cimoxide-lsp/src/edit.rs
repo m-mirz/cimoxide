@@ -3,10 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use lsp_types::{
-    AnnotatedTextEdit, ChangeAnnotation, DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier, TextDocumentEdit,
-    Url, WorkspaceEdit,
-};
+use lsp_types::{DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier, TextDocumentEdit, Url, WorkspaceEdit};
 
 pub use cimview::edit::{Addition, File, addable, candidates, describe, prepare_rename, reference_fixes, referrers};
 
@@ -26,37 +23,17 @@ pub fn rename(files: &[File], old: &str, new: &str) -> Result<WorkspaceEdit, Str
     cimview::edit::rename(files, old, new).map(workspace)
 }
 
-/// What deleting objects changes ([`cimview::edit::delete`]), annotated for the client to ask
-/// before applying it (`label`).
+/// What deleting objects changes ([`cimview::edit::delete`]): a plain edit, which the client
+/// applies and saves once the user has confirmed the deletion.
 pub struct Deletion {
     pub edit: WorkspaceEdit,
     pub objects: usize,
     pub references: usize,
 }
 
-pub fn delete(files: &[File], ids: &HashSet<&str>, label: &str) -> Deletion {
+pub fn delete(files: &[File], ids: &HashSet<&str>) -> Deletion {
     let found = cimview::edit::delete(files, ids);
-    let annotation = "delete".to_string();
-    let changes = found
-        .edits
-        .into_iter()
-        .filter_map(|(name, edits)| {
-            Some(TextDocumentEdit {
-                text_document: OptionalVersionedTextDocumentIdentifier { uri: Url::parse(name).ok()?, version: None },
-                edits: edits
-                    .into_iter()
-                    .map(|e| OneOf::Right(AnnotatedTextEdit { text_edit: lsp_edit(e), annotation_id: annotation.clone() }))
-                    .collect(),
-            })
-        })
-        .collect();
-    let description = format!("{} object(s), {} reference(s) to them", found.objects, found.references);
-    let annotations = HashMap::from([(annotation, ChangeAnnotation { label: label.into(), needs_confirmation: Some(true), description: Some(description) })]);
-    Deletion {
-        edit: WorkspaceEdit { document_changes: Some(DocumentChanges::Edits(changes)), change_annotations: Some(annotations), ..Default::default() },
-        objects: found.objects,
-        references: found.references,
-    }
+    Deletion { edit: workspace(found.edits), objects: found.objects, references: found.references }
 }
 
 /// Add field `key` to object `id` ([`cimview::edit::add_missing`]), `prefer` first.
