@@ -57,7 +57,12 @@ fn an_unknown_profile_iri_is_ignored() {
 #[test]
 fn the_index_covers_the_cgmes_profiles() {
     let (iris, codes) = cimvalidation::cgmes_profile_index();
-    assert_eq!(codes, ["DL", "DY", "EQ", "EQBD", "FH", "GL", "OP", "SC", "SSH", "SV", "TP"]);
+    assert_eq!(
+        codes,
+        [
+            "DL", "DY", "EQ", "EQBD", "FH", "GL", "OP", "SC", "SSH", "SV", "TP"
+        ]
+    );
     assert!(iris.iter().all(|(_, code)| codes.contains(code)));
 }
 
@@ -86,11 +91,14 @@ fn dcat_file(conforms_to: &[&str], body: &str) -> CimDataset {
 
 #[test]
 fn a_dcat_header_declares_cgmes_profiles() {
-    let ds = dcat_file(&[
-        "http://iec.ch/TC57/CIM100#",
-        "http://iec.ch/TC57/ns/CIM/CoreEquipment-EU/3.0",
-        "http://iec.ch/TC57/ns/CIM/EquipmentBoundary-EU/3.0",
-    ], "");
+    let ds = dcat_file(
+        &[
+            "http://iec.ch/TC57/CIM100#",
+            "http://iec.ch/TC57/ns/CIM/CoreEquipment-EU/3.0",
+            "http://iec.ch/TC57/ns/CIM/EquipmentBoundary-EU/3.0",
+        ],
+        "",
+    );
     assert_eq!(cimvalidation::detect_config(&ds).profiles, ["EQ", "EQBD"]);
     assert!(cimvalidation::detect_nc_profiles(&ds).is_empty());
 }
@@ -98,7 +106,10 @@ fn a_dcat_header_declares_cgmes_profiles() {
 /// ReliCapGrid's boundary headers name vocabularies only.
 #[test]
 fn a_vocabulary_is_not_a_profile() {
-    let ds = dcat_file(&["http://iec.ch/TC57/CIM100#", "https://cim4.eu/ns/nc/2.4#"], "");
+    let ds = dcat_file(
+        &["http://iec.ch/TC57/CIM100#", "https://cim4.eu/ns/nc/2.4#"],
+        "",
+    );
     assert!(cimvalidation::detect_config(&ds).profiles.is_empty());
 }
 
@@ -115,5 +126,9 @@ fn shapes_run_on_a_file_with_a_dcat_header() {
             .count()
     };
     assert!(run(&["http://iec.ch/TC57/ns/CIM/CoreEquipment-EU/3.0"]) > 0);
-    assert_eq!(run(&["http://iec.ch/TC57/CIM100#"]), 0, "no profile declared, nothing runs");
+    assert_eq!(
+        run(&["http://iec.ch/TC57/CIM100#"]),
+        0,
+        "no profile declared, nothing runs"
+    );
 }

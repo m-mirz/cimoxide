@@ -79,7 +79,10 @@ impl cimview::Locations for ModelSet {
         }
     }
     fn files(&self) -> Vec<serde_json::Value> {
-        self.files.iter().map(|f| serde_json::json!(f.url)).collect()
+        self.files
+            .iter()
+            .map(|f| serde_json::json!(f.url))
+            .collect()
     }
 }
 
@@ -114,7 +117,11 @@ impl SetKey {
 /// The CIM files of set `key`, in name order, with open buffers in place of
 /// what is on disk: a directory's, less those `chosen`; or the chosen ones,
 /// those that cannot be read or are not CIM left out.
-pub fn collect(key: &SetKey, chosen: &[PathBuf], open: &HashMap<PathBuf, Arc<str>>) -> Vec<(PathBuf, Arc<str>)> {
+pub fn collect(
+    key: &SetKey,
+    chosen: &[PathBuf],
+    open: &HashMap<PathBuf, Arc<str>>,
+) -> Vec<(PathBuf, Arc<str>)> {
     let mut paths: Vec<PathBuf> = match key {
         SetKey::Chosen => chosen.to_vec(),
         SetKey::Dir(dir) => {
@@ -123,7 +130,9 @@ pub fn collect(key: &SetKey, chosen: &[PathBuf], open: &HashMap<PathBuf, Arc<str
                 .flatten()
                 .flatten()
                 .map(|e| e.path())
-                .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("xml")) && p.is_file())
+                .filter(|p| {
+                    p.extension().is_some_and(|x| x.eq_ignore_ascii_case("xml")) && p.is_file()
+                })
                 .collect();
             // An open buffer not yet saved to this directory still belongs to it.
             for p in open.keys() {
@@ -151,7 +160,10 @@ pub fn collect(key: &SetKey, chosen: &[PathBuf], open: &HashMap<PathBuf, Arc<str
 
 /// Validate `files` as one model set. Returns the set and the diagnostics
 /// of every file in it, an empty list for a clean one.
-pub fn validate(files: &[(PathBuf, Arc<str>)], opts: &Options) -> (ModelSet, Vec<(Url, Vec<Diagnostic>)>) {
+pub fn validate(
+    files: &[(PathBuf, Arc<str>)],
+    opts: &Options,
+) -> (ModelSet, Vec<(Url, Vec<Diagnostic>)>) {
     // Decode and index each file on its own thread, as `cimox` decodes.
     let decoded: Vec<(Result<cimmodel::CimDataset, String>, Index)> = std::thread::scope(|s| {
         files
@@ -174,7 +186,9 @@ pub fn validate(files: &[(PathBuf, Arc<str>)], opts: &Options) -> (ModelSet, Vec
     let mut origin = Vec::new();
     let mut out: Vec<(Url, Vec<Diagnostic>)> = Vec::new();
     for ((path, text), (ds, index)) in files.iter().zip(decoded) {
-        let Ok(url) = Url::from_file_path(path) else { continue };
+        let Ok(url) = Url::from_file_path(path) else {
+            continue;
+        };
         let mut diags = Vec::new();
         match ds {
             Ok(ds) => {
@@ -190,7 +204,12 @@ pub fn validate(files: &[(PathBuf, Arc<str>)], opts: &Options) -> (ModelSet, Vec
                 ..Default::default()
             }),
         }
-        set.files.push(SetFile { path: path.clone(), url: url.clone(), index, seen: text_hash(text) });
+        set.files.push(SetFile {
+            path: path.clone(),
+            url: url.clone(),
+            index,
+            seen: text_hash(text),
+        });
         out.push((url, diags));
     }
     for (fi, f) in set.files.iter().enumerate() {
@@ -207,7 +226,14 @@ pub fn validate(files: &[(PathBuf, Arc<str>)], opts: &Options) -> (ModelSet, Vec
     }
 
     if !datasets.is_empty() {
-        let cfg = cimvalidation::combined_config(&datasets, None, None, opts.common, opts.quality, opts.silence.clone());
+        let cfg = cimvalidation::combined_config(
+            &datasets,
+            None,
+            None,
+            opts.common,
+            opts.quality,
+            opts.silence.clone(),
+        );
         {
             let model = cimview::grid::Model::new(&datasets);
             set.grid = cimview::grid::build(&model);
@@ -215,12 +241,19 @@ pub fn validate(files: &[(PathBuf, Arc<str>)], opts: &Options) -> (ModelSet, Vec
             set.state = cimview::state::overlay(&model, &set.grid);
         }
         let violations = cimvalidation::validate_files_traced(datasets, &cfg);
-        let violations: Vec<_> = violations.into_iter().map(|(d, v)| (d.map(|d| origin[d]), v)).collect();
+        let violations: Vec<_> = violations
+            .into_iter()
+            .map(|(d, v)| (d.map(|d| origin[d]), v))
+            .collect();
         set.grid.add_findings(&violations);
         set.tree.add_findings(&violations);
         for (_, v) in &violations {
             if !v.object_id.is_empty() {
-                set.findings.entry(v.object_id.clone()).or_default().push((v.property.clone(), v.rule_id.clone(), v.message.clone()));
+                set.findings.entry(v.object_id.clone()).or_default().push((
+                    v.property.clone(),
+                    v.rule_id.clone(),
+                    v.message.clone(),
+                ));
             }
         }
         place(&set, &violations, &mut out);
@@ -235,7 +268,11 @@ pub fn validate(files: &[(PathBuf, Arc<str>)], opts: &Options) -> (ModelSet, Vec
 /// writes belongs on the SSH element, not on the EQ field. A finding about
 /// no object in the set (a header check, a dataset-wide count) goes to the
 /// top of its file, else of the first.
-fn place(set: &ModelSet, violations: &[(Option<usize>, Violation)], out: &mut [(Url, Vec<Diagnostic>)]) {
+fn place(
+    set: &ModelSet,
+    violations: &[(Option<usize>, Violation)],
+    out: &mut [(Url, Vec<Diagnostic>)],
+) {
     let mut by_mrid: HashMap<&str, Vec<(usize, usize)>> = HashMap::new();
     for (fi, f) in set.files.iter().enumerate() {
         for (ei, el) in f.index.elements.iter().enumerate() {
@@ -243,8 +280,11 @@ fn place(set: &ModelSet, violations: &[(Option<usize>, Violation)], out: &mut [(
         }
     }
     for (file, v) in violations {
-        let all = by_mrid.get(v.object_id.as_str()).map_or(&[][..], Vec::as_slice);
-        let local: Vec<(usize, usize)> = all.iter().filter(|s| Some(s.0) == *file).copied().collect();
+        let all = by_mrid
+            .get(v.object_id.as_str())
+            .map_or(&[][..], Vec::as_slice);
+        let local: Vec<(usize, usize)> =
+            all.iter().filter(|s| Some(s.0) == *file).copied().collect();
         let (sites, def) = if local.is_empty() {
             (all, set.defs.get(v.object_id.as_str()))
         } else {
@@ -255,7 +295,10 @@ fn place(set: &ModelSet, violations: &[(Option<usize>, Violation)], out: &mut [(
             .iter()
             .flat_map(|&(fi, ei)| {
                 let el = &set.files[fi].index.elements[ei];
-                el.fields.iter().filter(|f| f.key() == key).map(move |f| (fi, crate::index::lsp(f.full)))
+                el.fields
+                    .iter()
+                    .filter(|f| f.key() == key)
+                    .map(move |f| (fi, crate::index::lsp(f.full)))
             })
             .collect();
         if placed.is_empty() {
@@ -269,7 +312,10 @@ fn place(set: &ModelSet, violations: &[(Option<usize>, Violation)], out: &mut [(
             };
         }
         if placed.is_empty() && !out.is_empty() {
-            placed.push((file.unwrap_or(0), Range::new(Position::new(0, 0), Position::new(0, 0))));
+            placed.push((
+                file.unwrap_or(0),
+                Range::new(Position::new(0, 0), Position::new(0, 0)),
+            ));
         }
         for (fi, range) in placed {
             out[fi].1.push(diagnostic(v, range));
@@ -323,10 +369,22 @@ mod tests {
     #[test]
     fn a_file_chosen_leaves_its_directorys_set() {
         let chosen = [PathBuf::from("/a/eq.xml"), PathBuf::from("/b/bd.xml")];
-        assert_eq!(SetKey::of(Path::new("/a/eq.xml"), &chosen), Some(SetKey::Chosen));
-        assert_eq!(SetKey::of(Path::new("/b/bd.xml"), &chosen), Some(SetKey::Chosen));
-        assert_eq!(SetKey::of(Path::new("/a/ssh.xml"), &chosen), Some(SetKey::Dir(PathBuf::from("/a"))));
-        assert_eq!(SetKey::of(Path::new("/a/eq.xml"), &[]), Some(SetKey::Dir(PathBuf::from("/a"))));
+        assert_eq!(
+            SetKey::of(Path::new("/a/eq.xml"), &chosen),
+            Some(SetKey::Chosen)
+        );
+        assert_eq!(
+            SetKey::of(Path::new("/b/bd.xml"), &chosen),
+            Some(SetKey::Chosen)
+        );
+        assert_eq!(
+            SetKey::of(Path::new("/a/ssh.xml"), &chosen),
+            Some(SetKey::Dir(PathBuf::from("/a")))
+        );
+        assert_eq!(
+            SetKey::of(Path::new("/a/eq.xml"), &[]),
+            Some(SetKey::Dir(PathBuf::from("/a")))
+        );
     }
 
     /// The chosen set holds the files chosen, from any directory, open buffers
@@ -344,13 +402,27 @@ mod tests {
         std::fs::write(a.join("notes.xml"), "<notes/>").unwrap();
         let chosen = vec![b.join("bd.xml"), a.join("eq.xml"), root.join("gone.xml")];
         let open = HashMap::from([(a.join("eq.xml"), Arc::from(&*doc("Open", "")))]);
-        let names = |files: Vec<(PathBuf, Arc<str>)>| files.into_iter().map(|(p, t)| (p, t.contains("Open"))).collect::<Vec<_>>();
+        let names = |files: Vec<(PathBuf, Arc<str>)>| {
+            files
+                .into_iter()
+                .map(|(p, t)| (p, t.contains("Open")))
+                .collect::<Vec<_>>()
+        };
         // Chosen: in name order, the open buffer's text, what is missing left out.
-        assert_eq!(names(collect(&SetKey::Chosen, &chosen, &open)), [(a.join("eq.xml"), true), (b.join("bd.xml"), false)]);
+        assert_eq!(
+            names(collect(&SetKey::Chosen, &chosen, &open)),
+            [(a.join("eq.xml"), true), (b.join("bd.xml"), false)]
+        );
         // Its directory: what is left, not CIM left out.
-        assert_eq!(names(collect(&SetKey::Dir(a.clone()), &chosen, &open)), [(a.join("ssh.xml"), false)]);
+        assert_eq!(
+            names(collect(&SetKey::Dir(a.clone()), &chosen, &open)),
+            [(a.join("ssh.xml"), false)]
+        );
         // Nothing chosen: the whole directory again.
-        assert_eq!(collect(&SetKey::Dir(a.clone()), &[], &HashMap::new()).len(), 2);
+        assert_eq!(
+            collect(&SetKey::Dir(a.clone()), &[], &HashMap::new()).len(),
+            2
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -358,16 +430,35 @@ mod tests {
     #[test]
     fn views_locate_an_object_where_it_is_defined() {
         use cimview::Locations;
-        let ssh = doc("SteadyStateHypothesis-EU", r##"  <cim:Equipment rdf:about="#_b">
+        let ssh = doc(
+            "SteadyStateHypothesis-EU",
+            r##"  <cim:Equipment rdf:about="#_b">
     <cim:Equipment.inService>true</cim:Equipment.inService>
-  </cim:Equipment>"##);
-        let eq = doc("CoreEquipment-EU", r#"  <cim:BusbarSection rdf:ID="_b">
+  </cim:Equipment>"##,
+        );
+        let eq = doc(
+            "CoreEquipment-EU",
+            r#"  <cim:BusbarSection rdf:ID="_b">
     <cim:IdentifiedObject.mRID>b</cim:IdentifiedObject.mRID>
-  </cim:BusbarSection>"#);
-        let files = [(PathBuf::from("/set/a_SSH.xml"), ssh), (PathBuf::from("/set/b_EQ.xml"), eq)];
-        let (set, _) = validate(&files, &Options { common: false, quality: false, silence: vec![] });
+  </cim:BusbarSection>"#,
+        );
+        let files = [
+            (PathBuf::from("/set/a_SSH.xml"), ssh),
+            (PathBuf::from("/set/b_EQ.xml"), eq),
+        ];
+        let (set, _) = validate(
+            &files,
+            &Options {
+                common: false,
+                quality: false,
+                silence: vec![],
+            },
+        );
         let at = set.location("_b");
-        assert!(at["uri"].as_str().unwrap().ends_with("/set/b_EQ.xml"), "{at}");
+        assert!(
+            at["uri"].as_str().unwrap().ends_with("/set/b_EQ.xml"),
+            "{at}"
+        );
         assert!(at["range"]["start"]["line"].is_number(), "{at}");
         assert!(set.location("nothing").is_null());
         let listed = set.files();
@@ -379,23 +470,39 @@ mod tests {
     fn a_finding_stays_in_the_file_it_was_found_in() {
         // The SSH file lacks the mRID the EQ file writes: the finding is the
         // SSH file's, so it must not land on the EQ file's mRID field.
-        let eq = doc("CoreEquipment-EU", r#"  <cim:BusbarSection rdf:ID="_b">
+        let eq = doc(
+            "CoreEquipment-EU",
+            r#"  <cim:BusbarSection rdf:ID="_b">
     <cim:IdentifiedObject.mRID>b</cim:IdentifiedObject.mRID>
-  </cim:BusbarSection>"#);
-        let ssh = doc("SteadyStateHypothesis-EU", r#"  <cim:Equipment rdf:ID="_b">
+  </cim:BusbarSection>"#,
+        );
+        let ssh = doc(
+            "SteadyStateHypothesis-EU",
+            r#"  <cim:Equipment rdf:ID="_b">
     <cim:Equipment.inService>true</cim:Equipment.inService>
-  </cim:Equipment>"#);
+  </cim:Equipment>"#,
+        );
         let dir = std::env::temp_dir();
         let files = vec![(dir.join("x_EQ.xml"), eq), (dir.join("x_SSH.xml"), ssh)];
         let (_, out) = validate(&files, &Options::default());
         let mrid = |i: usize| -> Vec<Range> {
-            out[i].1.iter()
-                .filter(|d| d.code == Some(NumberOrString::String("ido:IdentifiedObject.mRID-cardinality".into())))
+            out[i]
+                .1
+                .iter()
+                .filter(|d| {
+                    d.code
+                        == Some(NumberOrString::String(
+                            "ido:IdentifiedObject.mRID-cardinality".into(),
+                        ))
+                })
                 .map(|d| d.range)
                 .collect()
         };
         assert!(mrid(0).is_empty(), "{:?}", out[0].1);
         // On the SSH element's `rdf:ID` value.
-        assert_eq!(mrid(1), [Range::new(Position::new(4, 25), Position::new(4, 27))]);
+        assert_eq!(
+            mrid(1),
+            [Range::new(Position::new(4, 25), Position::new(4, 27))]
+        );
     }
 }

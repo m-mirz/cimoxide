@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use std::path::Path;
 use cimmodel::CimDataset;
 use cimvalidation::Violation;
+use std::collections::HashMap;
+use std::path::Path;
 
 #[allow(dead_code)]
 pub fn load_dataset(path: &str) -> CimDataset {

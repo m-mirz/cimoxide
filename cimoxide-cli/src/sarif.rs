@@ -12,9 +12,10 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use cimvalidation::Violation;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-const SCHEMA: &str = "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json";
+const SCHEMA: &str =
+    "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json";
 
 /// The SARIF level of a SHACL severity: `sh:Info` is advisory, as in the text
 /// output's exit code.
@@ -38,16 +39,26 @@ fn sites(files: &[PathBuf], wanted: &HashSet<&str>) -> Sites {
     }
     for (fi, path) in files.iter().enumerate() {
         // Line by line: a whole EQ file held at once costs more than the scan.
-        let Ok(file) = std::fs::File::open(path) else { continue };
+        let Ok(file) = std::fs::File::open(path) else {
+            continue;
+        };
         for (li, line) in BufReader::new(file).lines().enumerate() {
             let Ok(line) = line else { break };
             for attr in ["rdf:ID=\"", "rdf:about=\""] {
-                let Some(start) = line.find(attr).map(|i| i + attr.len()) else { continue };
-                let Some(len) = line[start..].find('"') else { continue };
+                let Some(start) = line.find(attr).map(|i| i + attr.len()) else {
+                    continue;
+                };
+                let Some(len) = line[start..].find('"') else {
+                    continue;
+                };
                 let value = &line[start..start + len];
                 let mrid = value.rsplit_once('#').map_or(value, |(_, f)| f);
                 if wanted.contains(mrid) {
-                    out.entry(mrid.to_string()).or_default().push((fi, li + 1, line.trim().to_string()));
+                    out.entry(mrid.to_string()).or_default().push((
+                        fi,
+                        li + 1,
+                        line.trim().to_string(),
+                    ));
                 }
             }
         }
@@ -153,9 +164,14 @@ mod tests {
 
     fn finding(object_id: &str, rule_id: &str, severity: &str) -> Violation {
         Violation {
-            object_id: object_id.into(), rule_id: rule_id.into(), class: "ACLineSegment".into(),
-            property: "ACLineSegment.r".into(), message: "m".into(), severity: severity.into(),
-            name: "n".into(), description: String::new(),
+            object_id: object_id.into(),
+            rule_id: rule_id.into(),
+            class: "ACLineSegment".into(),
+            property: "ACLineSegment.r".into(),
+            message: "m".into(),
+            severity: severity.into(),
+            name: "n".into(),
+            description: String::new(),
         }
     }
 
@@ -165,11 +181,19 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let eq = dir.join("eq.xml");
         let ssh = dir.join("ssh.xml");
-        std::fs::write(&eq, "<rdf:RDF>\n  <cim:ACLineSegment rdf:ID=\"_x\">\n</rdf:RDF>\n").unwrap();
+        std::fs::write(
+            &eq,
+            "<rdf:RDF>\n  <cim:ACLineSegment rdf:ID=\"_x\">\n</rdf:RDF>\n",
+        )
+        .unwrap();
         std::fs::write(&ssh, "<rdf:RDF>\n\n  <cim:Equipment rdf:about=\"#_x\">\n  <cim:Line rdf:about=\"urn:uuid:y\">\n").unwrap();
         let files = [eq, ssh];
         let log = render(
-            &[finding("_x", "b:rule", "sh:Violation"), finding("urn:uuid:y", "a:rule", "sh:Info"), finding("global", "a:rule", "sh:Warning")],
+            &[
+                finding("_x", "b:rule", "sh:Violation"),
+                finding("urn:uuid:y", "a:rule", "sh:Info"),
+                finding("global", "a:rule", "sh:Warning"),
+            ],
             &files,
         );
         std::fs::remove_dir_all(&dir).ok();
@@ -184,14 +208,32 @@ mod tests {
         assert_eq!(results[2]["level"], "warning");
 
         let lines = |r: &Value| -> Vec<(u64, u64)> {
-            r["locations"].as_array().unwrap().iter().filter_map(|l| {
-                let p = &l["physicalLocation"];
-                Some((p["artifactLocation"]["index"].as_u64()?, p["region"]["startLine"].as_u64()?))
-            }).collect()
+            r["locations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|l| {
+                    let p = &l["physicalLocation"];
+                    Some((
+                        p["artifactLocation"]["index"].as_u64()?,
+                        p["region"]["startLine"].as_u64()?,
+                    ))
+                })
+                .collect()
         };
-        assert_eq!(lines(&results[0]), [(0, 2), (1, 3)], "both files, at the element's line");
+        assert_eq!(
+            lines(&results[0]),
+            [(0, 2), (1, 3)],
+            "both files, at the element's line"
+        );
         assert_eq!(lines(&results[1]), [(1, 4)]);
-        assert!(lines(&results[2]).is_empty(), "a dataset-wide finding has no file");
-        assert_eq!(results[2]["locations"][0]["logicalLocations"][0]["name"], "global");
+        assert!(
+            lines(&results[2]).is_empty(),
+            "a dataset-wide finding has no file"
+        );
+        assert_eq!(
+            results[2]["locations"][0]["logicalLocations"][0]["name"],
+            "global"
+        );
     }
 }

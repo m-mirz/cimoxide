@@ -14,11 +14,17 @@ fn file(class: &str, field: &str) -> CimDataset {
 }
 
 fn eq() -> CimDataset {
-    file("ACLineSegment", "<cim:ACLineSegment.r>1</cim:ACLineSegment.r>")
+    file(
+        "ACLineSegment",
+        "<cim:ACLineSegment.r>1</cim:ACLineSegment.r>",
+    )
 }
 
 fn ssh() -> CimDataset {
-    file("Equipment", "<cim:Equipment.inService>true</cim:Equipment.inService>")
+    file(
+        "Equipment",
+        "<cim:Equipment.inService>true</cim:Equipment.inService>",
+    )
 }
 
 fn check(ds: &CimDataset) {
@@ -26,9 +32,16 @@ fn check(ds: &CimDataset) {
     assert_eq!(e.type_name(), "ACLineSegment");
     let types: Vec<&str> = e.types().map(|c| c.qualified).collect();
     assert_eq!(types, ["ACLineSegment", "Equipment"], "both types kept");
-    assert!(e.fields().contains_key("ACLineSegment.r") && e.fields().contains_key("Equipment.inService"));
+    assert!(
+        e.fields().contains_key("ACLineSegment.r")
+            && e.fields().contains_key("Equipment.inService")
+    );
     assert_eq!(ds.by_type.get("ACLineSegment").map(Vec::len), Some(1));
-    assert!(ds.by_type.get("Equipment").is_none_or(Vec::is_empty), "{:?}", ds.by_type);
+    assert!(
+        ds.by_type.get("Equipment").is_none_or(Vec::is_empty),
+        "{:?}",
+        ds.by_type
+    );
 }
 
 #[test]
@@ -76,5 +89,8 @@ fn unrelated_types_are_conflicts() {
     a.merge(ssh());
     assert!(a.type_conflicts().is_empty());
     a.merge(file("Breaker", "<cim:Switch.open>false</cim:Switch.open>"));
-    assert_eq!(a.type_conflicts(), [("_x", vec!["ACLineSegment", "Equipment", "Breaker"])]);
+    assert_eq!(
+        a.type_conflicts(),
+        [("_x", vec!["ACLineSegment", "Equipment", "Breaker"])]
+    );
 }

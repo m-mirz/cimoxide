@@ -63,10 +63,8 @@ fn render_type_stub(s: &mut String, t: &CimType, spec: &CimSpecification) {
     if !t.comment.is_empty() {
         writeln!(s, "# {}", t.comment.replace('\n', " ")).unwrap();
     }
-    let mut keys: Vec<(String, &'static str)> = vec![
-        ("id".to_string(), "str"),
-        ("_type".to_string(), "str"),
-    ];
+    let mut keys: Vec<(String, &'static str)> =
+        vec![("id".to_string(), "str"), ("_type".to_string(), "str")];
     let mut chain = vec![t];
     while let Some(parent) = spec.types.get(&chain.last().unwrap().super_type) {
         chain.push(parent);
@@ -77,8 +75,17 @@ fn render_type_stub(s: &mut String, t: &CimType, spec: &CimSpecification) {
             keys.push((attr.id.clone(), ty));
         }
     }
-    let fields: Vec<String> = keys.iter().map(|(k, ty)| format!("\"{k}\": {ty}")).collect();
-    writeln!(s, "{id} = TypedDict(\"{id}\", {{{}}}, total=False)", fields.join(", "), id = t.id).unwrap();
+    let fields: Vec<String> = keys
+        .iter()
+        .map(|(k, ty)| format!("\"{k}\": {ty}"))
+        .collect();
+    writeln!(
+        s,
+        "{id} = TypedDict(\"{id}\", {{{}}}, total=False)",
+        fields.join(", "),
+        id = t.id
+    )
+    .unwrap();
     writeln!(s).unwrap();
 }
 

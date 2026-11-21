@@ -50,13 +50,19 @@ const DCTERMS_NS: &str = "http://purl.org/dc/terms/";
 const HEADERS: &[&str] = &["nc:Dataset", "nc:DifferenceSet"];
 
 fn schema() -> &'static Schema {
-    type_registry().schema("nc").expect("the NC family is registered")
+    type_registry()
+        .schema("nc")
+        .expect("the NC family is registered")
 }
 
 /// The profile vocabulary URI an NC profile code stands for
 /// (`https://ap-voc.cim4.eu/Contingency/2.3` for `CO`).
 pub fn nc_profile_uri(code: &str) -> Option<&'static str> {
-    schema().profiles.iter().find(|(c, _)| *c == code).map(|(_, uri)| *uri)
+    schema()
+        .profiles
+        .iter()
+        .find(|(c, _)| *c == code)
+        .map(|(_, uri)| *uri)
 }
 
 /// The application profile's name in a profile URI: `Contingency` in both the
@@ -79,9 +85,17 @@ impl Prefixes {
     /// An allocator for `ds`, whose prefixes start as `bindings` (prefix,
     /// namespace), the ones a document's root already declares.
     pub(crate) fn seeded(ds: &CimDataset, bindings: &[(&'static str, &'static str)]) -> Self {
-        let mut documents: Vec<(&'static str, &'static str)> = ds.prefixes.iter().map(|(ns, p)| (*p, *ns)).collect();
+        let mut documents: Vec<(&'static str, &'static str)> =
+            ds.prefixes.iter().map(|(ns, p)| (*p, *ns)).collect();
         documents.sort_unstable();
-        Self { bound: bindings.iter().map(|(p, ns)| (*ns, p.to_string())).collect(), generated: 0, documents }
+        Self {
+            bound: bindings
+                .iter()
+                .map(|(p, ns)| (*ns, p.to_string()))
+                .collect(),
+            generated: 0,
+            documents,
+        }
     }
 
     pub(crate) fn of(&mut self, ns: &'static str) -> String {
@@ -97,11 +111,13 @@ impl Prefixes {
             .filter(|(_, n)| *n == ns)
             .map(|(p, _)| p.to_string())
             .find(|p| !p.is_empty() && !taken(p, &self.bound));
-        let prefix = preferred.unwrap_or_else(|| loop {
-            self.generated += 1;
-            let p = format!("ns{}", self.generated);
-            if !taken(&p, &self.bound) {
-                break p;
+        let prefix = preferred.unwrap_or_else(|| {
+            loop {
+                self.generated += 1;
+                let p = format!("ns{}", self.generated);
+                if !taken(&p, &self.bound) {
+                    break p;
+                }
             }
         });
         self.bound.insert(ns, prefix.clone());
@@ -114,13 +130,18 @@ impl Prefixes {
 /// mRID. A file may hold more than one — the dataset and the series its
 /// `isVersionOf` names.
 fn headers_for<'a>(ds: &'a CimDataset, profile_uri: &str) -> Vec<&'a Element> {
-    let Some(name) = profile_name(profile_uri) else { return Vec::new() };
+    let Some(name) = profile_name(profile_uri) else {
+        return Vec::new();
+    };
     let mut headers: Vec<&Element> = HEADERS
         .iter()
         .flat_map(|t| ds.by_type.get(*t).into_iter().flatten())
         .filter_map(|m| ds.entries.get(m))
         .filter(|e| {
-            e.get_refs("conformsTo").iter().map(String::as_str).chain(e.get_str("conformsTo"))
+            e.get_refs("conformsTo")
+                .iter()
+                .map(String::as_str)
+                .chain(e.get_str("conformsTo"))
                 .any(|c| profile_name(c) == Some(name))
         })
         .collect();
@@ -140,8 +161,12 @@ fn headers_for<'a>(ds: &'a CimDataset, profile_uri: &str) -> Vec<&'a Element> {
 /// - An element of another class is written only for the fields no other
 ///   profile exchanges (`TapChanger.TapChangerController` in ER), as the
 ///   description of an object defined elsewhere.
-pub fn dataset_to_xml_for_nc_profile(ds: &CimDataset, code: &str) -> Result<String, Box<dyn Error>> {
-    let profile_uri = nc_profile_uri(code).ok_or_else(|| format!("unknown NC profile code {code:?}"))?;
+pub fn dataset_to_xml_for_nc_profile(
+    ds: &CimDataset,
+    code: &str,
+) -> Result<String, Box<dyn Error>> {
+    let profile_uri =
+        nc_profile_uri(code).ok_or_else(|| format!("unknown NC profile code {code:?}"))?;
     let reg = type_registry();
     let mut prefixes = Prefixes::seeded(ds, &[]);
     let mut body = String::new();
@@ -171,9 +196,16 @@ pub fn dataset_to_xml_for_nc_profile(ds: &CimDataset, code: &str) -> Result<Stri
             // A class NC's `cim:` namespace names but the NC table lacks: its
             // NC fields are those its CGMES class does not declare, so a CGMES
             // object's `IdentifiedObject.name` never draws it in.
-            let nc_attr = |key: &str| reg.attr(class, key).is_none().then(|| reg.family_attr("nc", key)).flatten();
+            let nc_attr = |key: &str| {
+                reg.attr(class, key)
+                    .is_none()
+                    .then(|| reg.family_attr("nc", key))
+                    .flatten()
+            };
             if element.fields().keys().any(|k| only_here(nc_attr(k))) {
-                write_element(&mut body, &mut prefixes, ds, element, NC_CIM, |key| only_here(nc_attr(key)))?;
+                write_element(&mut body, &mut prefixes, ds, element, NC_CIM, |key| {
+                    only_here(nc_attr(key))
+                })?;
             }
             continue;
         }
@@ -182,14 +214,21 @@ pub fn dataset_to_xml_for_nc_profile(ds: &CimDataset, code: &str) -> Result<Stri
                 let a = reg.attr_of(class, key);
                 a.is_none() || in_profile(a)
             })?;
-        } else if element.fields().keys().any(|k| only_here(reg.attr_of(class, k))) {
-            write_element(&mut body, &mut prefixes, ds, element, class.ns, |key| only_here(reg.attr_of(class, key)))?;
+        } else if element
+            .fields()
+            .keys()
+            .any(|k| only_here(reg.attr_of(class, k)))
+        {
+            write_element(&mut body, &mut prefixes, ds, element, class.ns, |key| {
+                only_here(reg.attr_of(class, key))
+            })?;
         }
     }
 
     let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rdf:RDF");
     write!(out, " xmlns:rdf=\"{RDF_NS}\"")?;
-    let mut bindings: Vec<(&String, &&str)> = prefixes.bound.iter().map(|(ns, p)| (p, ns)).collect();
+    let mut bindings: Vec<(&String, &&str)> =
+        prefixes.bound.iter().map(|(ns, p)| (p, ns)).collect();
     bindings.sort();
     for (prefix, ns) in bindings {
         write!(out, " xmlns:{prefix}=\"{}\"", escape_attr(ns))?;
@@ -203,8 +242,16 @@ pub fn dataset_to_xml_for_nc_profile(ds: &CimDataset, code: &str) -> Result<Stri
 /// Write every NC object and every foreign object ([`CimDataset::foreign`])
 /// with all its fields, as read: what [`crate::convert::dataset_to_xml`] adds
 /// to the CGMES elements. Headers first, then by identifier.
-pub(crate) fn write_as_read(out: &mut String, prefixes: &mut Prefixes, ds: &CimDataset) -> Result<(), Box<dyn Error>> {
-    let mut nc: Vec<&Element> = ds.entries.values().filter(|e| e.type_name().starts_with("nc:")).collect();
+pub(crate) fn write_as_read(
+    out: &mut String,
+    prefixes: &mut Prefixes,
+    ds: &CimDataset,
+) -> Result<(), Box<dyn Error>> {
+    let mut nc: Vec<&Element> = ds
+        .entries
+        .values()
+        .filter(|e| e.type_name().starts_with("nc:"))
+        .collect();
     nc.sort_by_key(|e| (!HEADERS.contains(&e.type_name()), e.mrid()));
     for element in nc {
         write_element(out, prefixes, ds, element, element.class().ns, |_| true)?;
@@ -247,7 +294,8 @@ fn write_element(
     keep: impl Fn(&str) -> bool,
 ) -> Result<(), Box<dyn Error>> {
     let class = element.class();
-    let mut fields: Vec<(&&'static str, &FieldValue)> = element.fields().iter().filter(|(k, _)| keep(k)).collect();
+    let mut fields: Vec<(&&'static str, &FieldValue)> =
+        element.fields().iter().filter(|(k, _)| keep(k)).collect();
     if fields.is_empty() && !element.fields().is_empty() {
         return Ok(());
     }
@@ -258,12 +306,27 @@ fn write_element(
     let reg = type_registry();
     // A foreign object's fields are named only by the documents: a CIM
     // attribute of the same bare name may live in another namespace.
-    let foreign = ds.foreign.get(element.mrid()).is_some_and(|f| std::ptr::eq(f, element));
+    let foreign = ds
+        .foreign
+        .get(element.mrid())
+        .is_some_and(|f| std::ptr::eq(f, element));
     for (key, value) in fields {
-        let attr = if foreign { None } else { reg.attr_of(class, key).or_else(|| reg.family_attr("nc", key)) };
-        let form = ds.field_forms.get(&(class.qualified, *key)).copied().unwrap_or_default();
+        let attr = if foreign {
+            None
+        } else {
+            reg.attr_of(class, key)
+                .or_else(|| reg.family_attr("nc", key))
+        };
+        let form = ds
+            .field_forms
+            .get(&(class.qualified, *key))
+            .copied()
+            .unwrap_or_default();
         let ns = form.ns.or(attr.map(|a| a.ns)).unwrap_or(class_ns);
-        let datatype = form.datatype.map(|d| format!(" rdf:datatype=\"{}\"", escape_attr(d))).unwrap_or_default();
+        let datatype = form
+            .datatype
+            .map(|d| format!(" rdf:datatype=\"{}\"", escape_attr(d)))
+            .unwrap_or_default();
         let name = format!("{}:{key}", prefixes.of(ns));
         let langs: Vec<&str> = element.langs(key).collect();
         let texts: &[String] = match value {
@@ -276,10 +339,17 @@ fn write_element(
         let tagged = langs.len() == texts.len();
         for (i, text) in texts.iter().enumerate() {
             match (tagged, langs.get(i)) {
-                (true, Some(lang)) => {
-                    write!(out, "\n    <{name} xml:lang=\"{}\">{}</{name}>", escape_attr(lang), escape_text(text))?
-                }
-                _ => write!(out, "\n    <{name}{datatype}>{}</{name}>", escape_text(text))?,
+                (true, Some(lang)) => write!(
+                    out,
+                    "\n    <{name} xml:lang=\"{}\">{}</{name}>",
+                    escape_attr(lang),
+                    escape_text(text)
+                )?,
+                _ => write!(
+                    out,
+                    "\n    <{name}{datatype}>{}</{name}>",
+                    escape_text(text)
+                )?,
             }
         }
         let refs: &[String] = match value {
@@ -291,8 +361,14 @@ fn write_element(
             if let Some(label) = r.strip_prefix("_:") {
                 write!(out, "\n    <{name} rdf:nodeID=\"{}\"/>", escape_attr(label))?;
             } else {
-                let cut_from = form.resource_ns.filter(|_| !ds.entries.contains_key(r) && !ds.foreign.contains_key(r));
-                write!(out, "\n    <{name} rdf:resource=\"{}\"/>", escape_attr(&resource(attr, cut_from, r)))?;
+                let cut_from = form
+                    .resource_ns
+                    .filter(|_| !ds.entries.contains_key(r) && !ds.foreign.contains_key(r));
+                write!(
+                    out,
+                    "\n    <{name} rdf:resource=\"{}\"/>",
+                    escape_attr(&resource(attr, cut_from, r))
+                )?;
             }
         }
     }
@@ -337,16 +413,28 @@ fn write_synthesized_header(
     // The header names the application profile, the vocabulary's sibling.
     let conforms = profile_uri.replacen("://ap-voc.", "://ap.", 1);
     writeln!(out, "  <{dcat}:Dataset rdf:about=\"{urn}\">")?;
-    writeln!(out, "    <{dcterms}:conformsTo rdf:resource=\"{}\"/>", escape_attr(&conforms))?;
-    writeln!(out, "    <{dcterms}:identifier>{}</{dcterms}:identifier>", urn.trim_start_matches("urn:uuid:"))?;
+    writeln!(
+        out,
+        "    <{dcterms}:conformsTo rdf:resource=\"{}\"/>",
+        escape_attr(&conforms)
+    )?;
+    writeln!(
+        out,
+        "    <{dcterms}:identifier>{}</{dcterms}:identifier>",
+        urn.trim_start_matches("urn:uuid:")
+    )?;
     writeln!(out, "  </{dcat}:Dataset>")?;
     Ok(())
 }
 
 fn escape_text(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn escape_attr(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('"', "&quot;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('"', "&quot;")
 }

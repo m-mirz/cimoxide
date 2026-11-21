@@ -1,22 +1,36 @@
-use cimmodel::CimDataset;
 use crate::Config;
+use cimmodel::CimDataset;
 
 /// The short code for a CGMES profile IRI, from `CGMES/PROF` via
 /// [`crate::cgmes_profile_index`].
 fn uri_to_short_name(uri: &str) -> Option<&'static str> {
-    crate::cgmes_profile_index().0.iter().find(|(iri, _)| *iri == uri).map(|(_, code)| *code)
+    crate::cgmes_profile_index()
+        .0
+        .iter()
+        .find(|(iri, _)| *iri == uri)
+        .map(|(_, code)| *code)
 }
 
-fn collect_profiles_from_type(dataset: &CimDataset, type_name: &str, seen: &mut std::collections::HashSet<&'static str>) {
+fn collect_profiles_from_type(
+    dataset: &CimDataset,
+    type_name: &str,
+    seen: &mut std::collections::HashSet<&'static str>,
+) {
     for mrid in dataset.by_type.get(type_name).into_iter().flatten() {
-        let entry = match dataset.entries.get(mrid) { Some(e) => e, None => continue };
-        let Some(model) = crate::sparql::Fields::of_class(entry, type_name) else { continue };
+        let entry = match dataset.entries.get(mrid) {
+            Some(e) => e,
+            None => continue,
+        };
+        let Some(model) = crate::sparql::Fields::of_class(entry, type_name) else {
+            continue;
+        };
         for p in model.texts("Model.profile") {
             let p = p.trim();
             if !p.is_empty()
-                && let Some(short) = uri_to_short_name(p) {
-                    seen.insert(short);
-                }
+                && let Some(short) = uri_to_short_name(p)
+            {
+                seen.insert(short);
+            }
         }
     }
 }
@@ -65,9 +79,10 @@ pub fn detect_nc_profiles(dataset: &CimDataset) -> Vec<String> {
     let mut seen: Vec<String> = Vec::new();
     for iri in conforms_to(dataset) {
         if let Some(code) = nc_profile_code(iri)
-            && !seen.iter().any(|s| s == code) {
-                seen.push(code.to_string());
-            }
+            && !seen.iter().any(|s| s == code)
+        {
+            seen.push(code.to_string());
+        }
     }
     seen.sort();
     seen
@@ -83,7 +98,10 @@ fn conforms_to(dataset: &CimDataset) -> impl Iterator<Item = &str> {
         .flat_map(|t| dataset.by_type.get(t).into_iter().flatten())
         .filter_map(|mrid| dataset.entries.get(mrid))
         .flat_map(|el| {
-            el.get_refs("conformsTo").iter().map(String::as_str).chain(el.get_str("conformsTo"))
+            el.get_refs("conformsTo")
+                .iter()
+                .map(String::as_str)
+                .chain(el.get_str("conformsTo"))
         })
 }
 

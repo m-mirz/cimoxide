@@ -25,17 +25,29 @@
 pub const MANIFEST: &[(&str, &str)] = &[
     ("61970-552-Header-AP-Con-Simple-SHACL", "HDR"),
     // IdentifiedObject string lengths, for every profile
-    ("61970-600-2_IdentifiedObjectCommon_AP-Con-Complex-SHACL", "COMMON"),
+    (
+        "61970-600-2_IdentifiedObjectCommon_AP-Con-Complex-SHACL",
+        "COMMON",
+    ),
     // DL
-    ("61970-301_DiagramLayout-AP-Con-Complex-NotSolvedMAS-SHACL", "DL!NS"),
+    (
+        "61970-301_DiagramLayout-AP-Con-Complex-NotSolvedMAS-SHACL",
+        "DL!NS",
+    ),
     ("61970-301_DiagramLayout-AP-Con-Complex-SHACL", "DL"),
     ("61970-453_DiagramLayout-AP-Con-Complex-SHACL", "DL"),
     ("61970-600-2_DiagramLayout-AP-Con-Simple-SHACL", "DL"),
-    ("61970-453_DiagramLayout-AP-Con-Complex-Implicit-CrossProfile-SHACL", "X:DL"),
+    (
+        "61970-453_DiagramLayout-AP-Con-Complex-Implicit-CrossProfile-SHACL",
+        "X:DL",
+    ),
     // DY
     ("61970-302_Dynamics-AP-Con-Complex-SHACL", "DY"),
     ("61970-600-2_Dynamics-AP-Con-Simple-SHACL", "DY"),
-    ("61970-457_Dynamics-AP-Con-Complex-Implicit-CrossProfile-SHACL", "X:DY"),
+    (
+        "61970-457_Dynamics-AP-Con-Complex-Implicit-CrossProfile-SHACL",
+        "X:DY",
+    ),
     // EQ
     ("61970-301_Equipment-AP-Con-Complex-SHACL", "EQ"),
     ("61970-452_Equipment-AP-Con-Complex-SHACL", "EQ"),
@@ -48,30 +60,60 @@ pub const MANIFEST: &[(&str, &str)] = &[
     // GL
     ("61968-13_GeographicalLocation-AP-Con-Complex-SHACL", "GL"),
     ("61970-600-2_GeographicalLocation-AP-Con-Simple-SHACL", "GL"),
-    ("61970-600-2_GeographicalLocation-AP-Con-Complex-Implicit-CrossProfile-SHACL", "X:GL"),
+    (
+        "61970-600-2_GeographicalLocation-AP-Con-Complex-Implicit-CrossProfile-SHACL",
+        "X:GL",
+    ),
     // OP
     ("61970-301_Operation-AP-Con-Complex-SHACL", "OP"),
     ("61970-452_Operation-AP-Con-Complex-SHACL", "OP"),
     ("61970-600-2_Operation-AP-Con-Simple-SHACL", "OP"),
-    ("61970-600-2_Operation-AP-Con-Complex-Implicit-CrossProfile-SHACL", "X:OP"),
+    (
+        "61970-600-2_Operation-AP-Con-Complex-Implicit-CrossProfile-SHACL",
+        "X:OP",
+    ),
     // SC
     ("61970-301_ShortCircuit-AP-Con-Complex-SHACL", "SC"),
     ("61970-600-2_ShortCircuit-AP-Con-Simple-SHACL", "SC"),
     // SSH
-    ("61970-301_SteadyStateHypothesis-AP-Con-Complex-NotSolvedMAS-SHACL", "SSH!NS"),
-    ("61970-301_SteadyStateHypothesis-AP-Con-Complex-SHACL", "SSH"),
-    ("61970-456_SteadyStateHypothesis-AP-Con-Complex-NotSolvedMAS-SHACL", "SSH!NS"),
-    ("61970-456_SteadyStateHypothesis-AP-Con-Complex-SHACL", "SSH"),
-    ("61970-600-2_SteadyStateHypothesis-AP-Con-Simple-SHACL", "SSH"),
+    (
+        "61970-301_SteadyStateHypothesis-AP-Con-Complex-NotSolvedMAS-SHACL",
+        "SSH!NS",
+    ),
+    (
+        "61970-301_SteadyStateHypothesis-AP-Con-Complex-SHACL",
+        "SSH",
+    ),
+    (
+        "61970-456_SteadyStateHypothesis-AP-Con-Complex-NotSolvedMAS-SHACL",
+        "SSH!NS",
+    ),
+    (
+        "61970-456_SteadyStateHypothesis-AP-Con-Complex-SHACL",
+        "SSH",
+    ),
+    (
+        "61970-600-2_SteadyStateHypothesis-AP-Con-Simple-SHACL",
+        "SSH",
+    ),
     // SV
     ("61970-301_StateVariables-AP-Con-Complex-SHACL", "SV"),
     ("61970-600-2_StateVariables-AP-Con-Simple-SHACL", "SV"),
-    ("61970-456_StateVariables-AP-Con-Complex-Explicit-CrossProfile-SHACL", "X:SV"),
-    ("61970-456_StateVariables-AP-Con-Complex-Implicit-CrossProfile-SHACL", "X:SV"),
+    (
+        "61970-456_StateVariables-AP-Con-Complex-Explicit-CrossProfile-SHACL",
+        "X:SV",
+    ),
+    (
+        "61970-456_StateVariables-AP-Con-Complex-Implicit-CrossProfile-SHACL",
+        "X:SV",
+    ),
     // TP
     ("61970-456_Topology-AP-Con-Complex-SHACL", "TP"),
     ("61970-600-2_Topology-AP-Con-Simple-SHACL", "TP"),
-    ("61970-456_Topology-AP-Con-Complex-Implicit-CrossProfile-SHACL", "X:TP"),
+    (
+        "61970-456_Topology-AP-Con-Complex-Implicit-CrossProfile-SHACL",
+        "X:TP",
+    ),
 ];
 
 /// The profiles with cross-profile rules, in the order they run.

@@ -16,8 +16,8 @@ use std::fmt::Write;
 
 use cimmodel::CimDataset;
 use cimmodel::base::{AttrKind, ClassDef};
-use cimvalidation::{validate_nc_profile, Config};
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use cimvalidation::{Config, validate_nc_profile};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
 const ELEMENTS: usize = 20_000;
 
@@ -79,7 +79,12 @@ fn co_document(n: usize) -> String {
         let class = classes[i % classes.len()];
         let cp = prefix_for(class.ns).expect("filtered above");
         let mrid = format!("urn:uuid:{i:08x}-0000-0000-0000-000000000000");
-        writeln!(out, "  <{cp}:{local} rdf:about=\"{mrid}\">", local = class.local).unwrap();
+        writeln!(
+            out,
+            "  <{cp}:{local} rdf:about=\"{mrid}\">",
+            local = class.local
+        )
+        .unwrap();
         writeln!(
             out,
             "    <cim:IdentifiedObject.mRID>{i:08x}-0000-0000-0000-000000000000</cim:IdentifiedObject.mRID>"

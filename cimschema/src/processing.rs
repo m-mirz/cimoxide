@@ -141,8 +141,7 @@ fn is_primitive_type(s: &str) -> bool {
 // Pass 2: merge attribute origins up into the owning type's origins.
 fn add_origins_of_attributes(spec: &mut CimSpecification) {
     for t in spec.types.values_mut() {
-        let mut set: std::collections::HashSet<String> =
-            t.origins.iter().cloned().collect();
+        let mut set: std::collections::HashSet<String> = t.origins.iter().cloned().collect();
         for attr in &t.attributes {
             for o in &attr.origins {
                 set.insert(o.clone());
@@ -204,7 +203,8 @@ fn reorder_origins(spec: &mut CimSpecification) {
         .collect();
 
     for t in spec.types.values_mut() {
-        t.origins.sort_by_key(|o| prio.get(o).copied().unwrap_or(u32::MAX));
+        t.origins
+            .sort_by_key(|o| prio.get(o).copied().unwrap_or(u32::MAX));
         promote_defining_origin(t, base);
         for attr in &mut t.attributes {
             attr.origins
@@ -247,11 +247,7 @@ fn set_main_origin(spec: &mut CimSpecification) {
     }
 }
 
-fn compute_main_origin(
-    id: &str,
-    types: &HashMap<String, CimType>,
-    base: Option<&str>,
-) -> String {
+fn compute_main_origin(id: &str, types: &HashMap<String, CimType>, base: Option<&str>) -> String {
     let mut counts: HashMap<String, usize> = HashMap::new();
     let mut current_id = id.to_string();
 
@@ -318,10 +314,7 @@ fn set_has_inverse_role(spec: &mut CimSpecification) {
 // Pass 7: mark types that have class-valued (non-list) attributes.
 fn set_has_class_attributes(spec: &mut CimSpecification) {
     for t in spec.types.values_mut() {
-        t.has_class_attributes = t
-            .attributes
-            .iter()
-            .any(|a| a.is_class && !a.is_list);
+        t.has_class_attributes = t.attributes.iter().any(|a| a.is_class && !a.is_list);
     }
 }
 
@@ -411,7 +404,11 @@ fn set_is_inverse_role_attribute_list(spec: &mut CimSpecification) {
         for (idx, attr) in t.attributes.iter().enumerate() {
             if let Some((inv_type, inv_label)) = attr.cim_inverse_role.split_once('.') {
                 if let Some(inv_t) = spec.types.get(inv_type) {
-                    if inv_t.attributes.iter().any(|a| a.label == inv_label && a.is_list) {
+                    if inv_t
+                        .attributes
+                        .iter()
+                        .any(|a| a.label == inv_label && a.is_list)
+                    {
                         flags.push((tid.clone(), idx));
                     }
                 }
@@ -485,7 +482,10 @@ mod tests {
         let spec = import_schema_files(&pattern_for(&family::NC), &family::NC, false).unwrap();
 
         // NCP declares classes in two namespaces and inherits across them.
-        assert_eq!(spec.types["Contingency"].namespace, "https://cim.ucaiug.io/ns#");
+        assert_eq!(
+            spec.types["Contingency"].namespace,
+            "https://cim.ucaiug.io/ns#"
+        );
         assert_eq!(
             spec.types["OrdinaryContingency"].namespace,
             "https://cim4.eu/ns/nc#"

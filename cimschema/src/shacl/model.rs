@@ -16,10 +16,18 @@ pub enum ShaclValue {
 
 impl ShaclValue {
     pub fn as_str(&self) -> Option<&str> {
-        if let ShaclValue::Str(s) = self { Some(s) } else { None }
+        if let ShaclValue::Str(s) = self {
+            Some(s)
+        } else {
+            None
+        }
     }
     pub fn as_int(&self) -> Option<i64> {
-        if let ShaclValue::Int(n) = self { Some(*n) } else { None }
+        if let ShaclValue::Int(n) = self {
+            Some(*n)
+        } else {
+            None
+        }
     }
     pub fn as_float(&self) -> Option<f64> {
         match self {
@@ -29,10 +37,18 @@ impl ShaclValue {
         }
     }
     pub fn as_list(&self) -> Option<&Vec<String>> {
-        if let ShaclValue::List(v) = self { Some(v) } else { None }
+        if let ShaclValue::List(v) = self {
+            Some(v)
+        } else {
+            None
+        }
     }
     pub fn as_shapes(&self) -> Option<&Vec<Vec<ConstraintInfo>>> {
-        if let ShaclValue::Shapes(v) = self { Some(v) } else { None }
+        if let ShaclValue::Shapes(v) = self {
+            Some(v)
+        } else {
+            None
+        }
     }
 }
 

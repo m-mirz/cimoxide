@@ -7,10 +7,14 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use serde_json::{Value, json};
 
-const MICROGRID: &str = "CGMES-Test-Configurations/v3.0/MicroGrid/MicroGid-BaseCase/MicroGrid-BaseCase-Merged";
+const MICROGRID: &str =
+    "CGMES-Test-Configurations/v3.0/MicroGrid/MicroGid-BaseCase/MicroGrid-BaseCase-Merged";
 
 fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf()
 }
 
 struct Server {
@@ -28,7 +32,11 @@ impl Server {
     /// Started with `args` besides `--dir`.
     fn start_with(args: &[&str]) -> Self {
         let dir = repo_root().join(MICROGRID);
-        assert!(dir.is_dir(), "missing test data {} — run `git submodule update --init`", dir.display());
+        assert!(
+            dir.is_dir(),
+            "missing test data {} — run `git submodule update --init`",
+            dir.display()
+        );
         let mut child = Command::new(env!("CARGO_BIN_EXE_cimmcp"))
             .arg("--dir")
             .arg(repo_root())
@@ -39,8 +47,16 @@ impl Server {
             .expect("start cimmcp");
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
-        let mut server = Server { child, stdin, stdout, next_id: 1 };
-        let init = server.request("initialize", json!({ "protocolVersion": "2025-06-18", "capabilities": {} }));
+        let mut server = Server {
+            child,
+            stdin,
+            stdout,
+            next_id: 1,
+        };
+        let init = server.request(
+            "initialize",
+            json!({ "protocolVersion": "2025-06-18", "capabilities": {} }),
+        );
         assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
         server.send(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }));
         server
@@ -66,7 +82,10 @@ impl Server {
     fn call(&mut self, name: &str, args: Value) -> (String, bool) {
         let reply = self.request("tools/call", json!({ "name": name, "arguments": args }));
         let result = &reply["result"];
-        (result["content"][0]["text"].as_str().unwrap().to_string(), result["isError"].as_bool().unwrap())
+        (
+            result["content"][0]["text"].as_str().unwrap().to_string(),
+            result["isError"].as_bool().unwrap(),
+        )
     }
 
     fn ok(&mut self, name: &str, args: Value) -> String {
@@ -86,8 +105,27 @@ impl Drop for Server {
 fn lists_tools_and_rejects_unknown_ones() {
     let mut s = Server::start();
     let list = s.request("tools/list", json!({}));
-    let names: Vec<&str> = list["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["list_model_sets", "summary", "find_objects", "get_object", "validate", "conflicts", "sparql", "export", "edit", "describe_class"]);
+    let names: Vec<&str> = list["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "list_model_sets",
+            "summary",
+            "find_objects",
+            "get_object",
+            "validate",
+            "conflicts",
+            "sparql",
+            "export",
+            "edit",
+            "describe_class"
+        ]
+    );
     let reply = s.request("tools/call", json!({ "name": "nope", "arguments": {} }));
     assert_eq!(reply["error"]["code"], -32602);
     let reply = s.request("no/such/method", json!({}));
@@ -97,49 +135,105 @@ fn lists_tools_and_rejects_unknown_ones() {
 #[test]
 fn finds_and_describes_objects() {
     let mut s = Server::start();
-    let sets = s.ok("list_model_sets", json!({ "root": "CGMES-Test-Configurations/v3.0/MicroGrid/MicroGid-BaseCase" }));
+    let sets = s.ok(
+        "list_model_sets",
+        json!({ "root": "CGMES-Test-Configurations/v3.0/MicroGrid/MicroGid-BaseCase" }),
+    );
     assert!(sets.contains("MicroGrid-BaseCase-Merged/"), "{sets}");
-    assert!(sets.contains("20210325T1530Z_1D_BE_EQ_001.xml [EQ, SC]"), "{sets}");
+    assert!(
+        sets.contains("20210325T1530Z_1D_BE_EQ_001.xml [EQ, SC]"),
+        "{sets}"
+    );
 
     let summary = s.ok("summary", json!({ "path": MICROGRID }));
     assert!(summary.contains("12 file(s)"), "{summary}");
     assert!(summary.contains("SynchronousMachine"), "{summary}");
 
     // An abstract class finds its concrete descendants.
-    let machines = s.ok("find_objects", json!({ "path": MICROGRID, "class": "RotatingMachine", "text": "BE-G1" }));
+    let machines = s.ok(
+        "find_objects",
+        json!({ "path": MICROGRID, "class": "RotatingMachine", "text": "BE-G1" }),
+    );
     assert!(machines.starts_with("1 matching object(s)"), "{machines}");
-    assert!(machines.contains("SynchronousMachine _3a3b27be-b18b-4385-b557-6735d733baf0 \"BE-G1\""), "{machines}");
+    assert!(
+        machines.contains("SynchronousMachine _3a3b27be-b18b-4385-b557-6735d733baf0 \"BE-G1\""),
+        "{machines}"
+    );
 
     // An attribute named without its class, a value as written.
-    let terminals = s.ok("find_objects", json!({ "path": MICROGRID, "attribute": "connected", "value": "true", "limit": 1 }));
-    assert!(terminals.contains("[ACDCTerminal.connected = true]"), "{terminals}");
+    let terminals = s.ok(
+        "find_objects",
+        json!({ "path": MICROGRID, "attribute": "connected", "value": "true", "limit": 1 }),
+    );
+    assert!(
+        terminals.contains("[ACDCTerminal.connected = true]"),
+        "{terminals}"
+    );
 
     // The mRID without its `_`; references resolved both ways.
-    let g1 = s.ok("get_object", json!({ "path": MICROGRID, "mrid": "3a3b27be-b18b-4385-b557-6735d733baf0" }));
+    let g1 = s.ok(
+        "get_object",
+        json!({ "path": MICROGRID, "mrid": "3a3b27be-b18b-4385-b557-6735d733baf0" }),
+    );
     assert!(g1.contains("RotatingMachine.p = -90"), "{g1}");
-    assert!(g1.contains("RotatingMachine.GeneratingUnit = → GeneratingUnit"), "{g1}");
+    assert!(
+        g1.contains("RotatingMachine.GeneratingUnit = → GeneratingUnit"),
+        "{g1}"
+    );
     assert!(g1.contains("SynchronousMachine.operatingMode = SynchronousMachineOperatingMode.generator (Operating as generator.)"), "{g1}");
     assert!(g1.contains("via Terminal.ConductingEquipment"), "{g1}");
 
-    let (missing, err) = s.call("get_object", json!({ "path": MICROGRID, "mrid": "_nothing" }));
+    let (missing, err) = s.call(
+        "get_object",
+        json!({ "path": MICROGRID, "mrid": "_nothing" }),
+    );
     assert!(err, "{missing}");
 
     let breaker = s.ok("describe_class", json!({ "class": "Breaker" }));
-    assert!(breaker.contains("Switch.open: Boolean (xsd:boolean)  {SSH}"), "{breaker}");
+    assert!(
+        breaker.contains("Switch.open: Boolean (xsd:boolean)  {SSH}"),
+        "{breaker}"
+    );
     assert!(breaker.contains("nc:Breaker (NC)"), "{breaker}");
     // The vocabulary's definitions: the class's, and each attribute's.
-    assert!(breaker.contains("A mechanical switching device capable of making"), "{breaker}");
-    assert!(breaker.contains("The attribute tells if the switch is considered open"), "{breaker}");
+    assert!(
+        breaker.contains("A mechanical switching device capable of making"),
+        "{breaker}"
+    );
+    assert!(
+        breaker.contains("The attribute tells if the switch is considered open"),
+        "{breaker}"
+    );
     let open = s.ok("describe_class", json!({ "class": "Breaker.open" }));
-    assert!(open.starts_with("Switch.open (CGMES): Boolean (xsd:boolean)"), "{open}");
-    let mode = s.ok("describe_class", json!({ "class": "SynchronousMachineOperatingMode" }));
-    assert!(mode.contains("SynchronousMachineOperatingMode.condenser — Operating as condenser."), "{mode}");
-    let generator = s.ok("describe_class", json!({ "class": "SynchronousMachineOperatingMode.generator" }));
+    assert!(
+        open.starts_with("Switch.open (CGMES): Boolean (xsd:boolean)"),
+        "{open}"
+    );
+    let mode = s.ok(
+        "describe_class",
+        json!({ "class": "SynchronousMachineOperatingMode" }),
+    );
+    assert!(
+        mode.contains("SynchronousMachineOperatingMode.condenser — Operating as condenser."),
+        "{mode}"
+    );
+    let generator = s.ok(
+        "describe_class",
+        json!({ "class": "SynchronousMachineOperatingMode.generator" }),
+    );
     assert!(generator.contains("Operating as generator."), "{generator}");
-    assert!(generator.contains("rdf:resource=\"http://iec.ch/TC57/CIM100#SynchronousMachineOperatingMode.generator\""), "{generator}");
+    assert!(
+        generator.contains(
+            "rdf:resource=\"http://iec.ch/TC57/CIM100#SynchronousMachineOperatingMode.generator\""
+        ),
+        "{generator}"
+    );
     let (none, err) = s.call("describe_class", json!({ "class": "Breaker.bogus" }));
     assert!(err && none.contains("no attribute `bogus`"), "{none}");
-    let (unknown, err) = s.call("find_objects", json!({ "path": MICROGRID, "class": "Generatr" }));
+    let (unknown, err) = s.call(
+        "find_objects",
+        json!({ "path": MICROGRID, "class": "Generatr" }),
+    );
     assert!(err && unknown.starts_with("unknown class"), "{unknown}");
 }
 
@@ -150,7 +244,10 @@ fn queries_with_sparql() {
         "sparql",
         json!({ "path": MICROGRID, "query": "SELECT ?g ?p WHERE { ?g a cim:SynchronousMachine ; cim:IdentifiedObject.name \"BE-G1\" ; cim:RotatingMachine.p ?p }" }),
     );
-    assert_eq!(rows, "g\tp\n_3a3b27be-b18b-4385-b557-6735d733baf0\t-90\n(1 row(s))\n");
+    assert_eq!(
+        rows,
+        "g\tp\n_3a3b27be-b18b-4385-b557-6735d733baf0\t-90\n(1 row(s))\n"
+    );
     let (bad, err) = s.call("sparql", json!({ "path": MICROGRID, "query": "SELEC" }));
     assert!(err && bad.starts_with("query failed"), "{bad}");
 }
@@ -160,7 +257,12 @@ fn queries_with_sparql() {
 #[test]
 fn validates_as_cimox_does() {
     let dir = repo_root().join(MICROGRID);
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "xml")).collect();
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "xml"))
+        .collect();
     files.sort();
     let paths: Vec<&Path> = files.iter().map(PathBuf::as_path).collect();
     let per_file = cimmodel::CimDataset::decode_files_parallel_separate(&paths).unwrap();
@@ -169,15 +271,33 @@ fn validates_as_cimox_does() {
     assert!(!expected.is_empty());
 
     let mut s = Server::start();
-    let text = s.ok("validate", json!({ "path": MICROGRID, "common": true, "quality": true, "limit": 1000 }));
-    assert!(text.starts_with(&format!("{} finding(s)", expected.len())), "{text}");
+    let text = s.ok(
+        "validate",
+        json!({ "path": MICROGRID, "common": true, "quality": true, "limit": 1000 }),
+    );
+    assert!(
+        text.starts_with(&format!("{} finding(s)", expected.len())),
+        "{text}"
+    );
     for v in &expected {
-        let line = format!("[{}] {} — {} — {} {}", v.severity, v.rule_id, v.message, v.class, v.object_id);
+        let line = format!(
+            "[{}] {} — {} — {} {}",
+            v.severity, v.rule_id, v.message, v.class, v.object_id
+        );
         assert!(text.contains(&line), "missing {line}\n{text}");
     }
 
-    let one = s.ok("validate", json!({ "path": MICROGRID, "common": true, "quality": true, "rule": "Substation-count" }));
-    assert!(one.starts_with(&format!("1 finding(s) of {} matching the filters", expected.len())), "{one}");
+    let one = s.ok(
+        "validate",
+        json!({ "path": MICROGRID, "common": true, "quality": true, "rule": "Substation-count" }),
+    );
+    assert!(
+        one.starts_with(&format!(
+            "1 finding(s) of {} matching the filters",
+            expected.len()
+        )),
+        "{one}"
+    );
 }
 
 /// A model set listed as files and directories that lie apart (BE's
@@ -188,7 +308,11 @@ fn takes_a_model_set_as_a_file_list() {
     const BASE: &str = "CGMES-Test-Configurations/v3.0/MicroGrid/MicroGid-BaseCase";
     let be = format!("{BASE}/MicroGrid-BE-MAS");
     let boundary = format!("{BASE}/MicroGrid-BD-MAS/20171002T0930Z_ENTSO-E_EQ_BD_2.xml");
-    let mut files: Vec<PathBuf> = std::fs::read_dir(repo_root().join(&be)).unwrap().flatten().map(|e| e.path()).collect();
+    let mut files: Vec<PathBuf> = std::fs::read_dir(repo_root().join(&be))
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .collect();
     files.sort();
     files.push(repo_root().join(&boundary));
     let paths: Vec<&Path> = files.iter().map(PathBuf::as_path).collect();
@@ -200,19 +324,40 @@ fn takes_a_model_set_as_a_file_list() {
     let mut s = Server::start();
     let set = json!([be, boundary]);
     let summary = s.ok("summary", json!({ "files": set }));
-    assert!(summary.starts_with(&format!("Model set {be} + {boundary} — 8 file(s)")), "{summary}");
-    assert!(summary.contains("MicroGrid-BD-MAS/20171002T0930Z_ENTSO-E_EQ_BD_2.xml [EQBD]"), "{summary}");
+    assert!(
+        summary.starts_with(&format!("Model set {be} + {boundary} — 8 file(s)")),
+        "{summary}"
+    );
+    assert!(
+        summary.contains("MicroGrid-BD-MAS/20171002T0930Z_ENTSO-E_EQ_BD_2.xml [EQBD]"),
+        "{summary}"
+    );
 
     // A BE line ends at a boundary node, which only the boundary file defines.
-    let node = s.ok("find_objects", json!({ "files": set, "class": "ConnectivityNode", "text": "Border" }));
+    let node = s.ok(
+        "find_objects",
+        json!({ "files": set, "class": "ConnectivityNode", "text": "Border" }),
+    );
     assert!(!node.starts_with("No matching"), "{node}");
-    let alone = s.ok("find_objects", json!({ "path": be, "class": "ConnectivityNode", "text": "Border" }));
+    let alone = s.ok(
+        "find_objects",
+        json!({ "path": be, "class": "ConnectivityNode", "text": "Border" }),
+    );
     assert!(alone.starts_with("No matching"), "{alone}");
 
-    let text = s.ok("validate", json!({ "files": set, "common": true, "quality": true, "limit": 1000 }));
-    assert!(text.starts_with(&format!("{} finding(s)", expected.len())), "{text}");
+    let text = s.ok(
+        "validate",
+        json!({ "files": set, "common": true, "quality": true, "limit": 1000 }),
+    );
+    assert!(
+        text.starts_with(&format!("{} finding(s)", expected.len())),
+        "{text}"
+    );
     for v in &expected {
-        let line = format!("[{}] {} — {} — {} {}", v.severity, v.rule_id, v.message, v.class, v.object_id);
+        let line = format!(
+            "[{}] {} — {} — {} {}",
+            v.severity, v.rule_id, v.message, v.class, v.object_id
+        );
         assert!(text.contains(&line), "missing {line}\n{text}");
     }
 
@@ -221,7 +366,10 @@ fn takes_a_model_set_as_a_file_list() {
     let (missing, err) = s.call("summary", json!({ "files": [be, "nowhere.xml"] }));
     assert!(err && missing.contains("does not exist"), "{missing}");
     let (not_cim, err) = s.call("summary", json!({ "files": [be, "Cargo.toml"] }));
-    assert!(err && not_cim.contains("is not a CGMES or NC RDF/XML file"), "{not_cim}");
+    assert!(
+        err && not_cim.contains("is not a CGMES or NC RDF/XML file"),
+        "{not_cim}"
+    );
 }
 
 /// A tool given neither `path` nor `files` reads the set the editor chose,
@@ -230,20 +378,29 @@ fn takes_a_model_set_as_a_file_list() {
 fn reads_the_set_chosen_in_the_editor_by_default() {
     const BASE: &str = "CGMES-Test-Configurations/v3.0/MicroGrid/MicroGid-BaseCase";
     let be = repo_root().join(format!("{BASE}/MicroGrid-BE-MAS"));
-    let boundary = repo_root().join(format!("{BASE}/MicroGrid-BD-MAS/20171002T0930Z_ENTSO-E_EQ_BD_2.xml"));
+    let boundary = repo_root().join(format!(
+        "{BASE}/MicroGrid-BD-MAS/20171002T0930Z_ENTSO-E_EQ_BD_2.xml"
+    ));
     let set_file = std::env::temp_dir().join(format!("cimmcp-set-{}.json", std::process::id()));
-    let write = |files: &[&Path]| std::fs::write(&set_file, json!({ "files": files }).to_string()).unwrap();
+    let write =
+        |files: &[&Path]| std::fs::write(&set_file, json!({ "files": files }).to_string()).unwrap();
     write(&[&be, &boundary]);
     let mut s = Server::start_with(&["--set-file", set_file.to_str().unwrap()]);
     let chosen = s.ok("summary", json!({}));
     assert!(chosen.contains("— 8 file(s)"), "{chosen}");
-    assert!(chosen.contains("20171002T0930Z_ENTSO-E_EQ_BD_2.xml [EQBD]"), "{chosen}");
+    assert!(
+        chosen.contains("20171002T0930Z_ENTSO-E_EQ_BD_2.xml [EQBD]"),
+        "{chosen}"
+    );
     // Chosen again, without a restart.
     write(&[&boundary]);
     let again = s.ok("summary", json!({}));
     assert!(again.contains("— 1 file(s)"), "{again}");
     // A path given wins over it.
-    let named = s.ok("summary", json!({ "path": format!("{BASE}/MicroGrid-BE-MAS") }));
+    let named = s.ok(
+        "summary",
+        json!({ "path": format!("{BASE}/MicroGrid-BE-MAS") }),
+    );
     assert!(named.contains("— 7 file(s)"), "{named}");
     // None chosen: the workspace, which holds no CIM file itself.
     write(&[]);
@@ -260,13 +417,24 @@ fn exports_as_cimmodel_does() {
     const BASE: &str = "CGMES-Test-Configurations/v3.0/MicroGrid/MicroGid-BaseCase";
     let be = format!("{BASE}/MicroGrid-BE-MAS");
     let boundary = format!("{BASE}/MicroGrid-BD-MAS/20171002T0930Z_ENTSO-E_EQ_BD_2.xml");
-    let mut files: Vec<PathBuf> = std::fs::read_dir(repo_root().join(&be)).unwrap().flatten().map(|e| e.path()).collect();
+    let mut files: Vec<PathBuf> = std::fs::read_dir(repo_root().join(&be))
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .collect();
     files.sort();
     let paths: Vec<&Path> = files.iter().map(PathBuf::as_path).collect();
-    let ssh = cimmodel::convert::dataset_to_xml_for_profile(&cimmodel::CimDataset::decode_files_parallel(&paths).unwrap(), "SSH").unwrap();
+    let ssh = cimmodel::convert::dataset_to_xml_for_profile(
+        &cimmodel::CimDataset::decode_files_parallel(&paths).unwrap(),
+        "SSH",
+    )
+    .unwrap();
     files.push(repo_root().join(&boundary));
     let paths: Vec<&Path> = files.iter().map(PathBuf::as_path).collect();
-    let whole = cimmodel::convert::dataset_to_xml(&cimmodel::CimDataset::decode_files_parallel(&paths).unwrap()).unwrap();
+    let whole = cimmodel::convert::dataset_to_xml(
+        &cimmodel::CimDataset::decode_files_parallel(&paths).unwrap(),
+    )
+    .unwrap();
 
     let mut s = Server::start();
     assert_eq!(s.ok("export", json!({ "path": be, "profile": "SSH" })), ssh);
@@ -278,10 +446,16 @@ fn exports_as_cimmodel_does() {
     let set = json!([be, boundary]);
     let wrote = s.ok("export", json!({ "files": set, "output": out }));
     assert!(wrote.starts_with(&format!("Wrote {out} ")), "{wrote}");
-    assert_eq!(std::fs::read_to_string(repo_root().join(&out)).unwrap(), whole);
+    assert_eq!(
+        std::fs::read_to_string(repo_root().join(&out)).unwrap(),
+        whole
+    );
     let (exists, err) = s.call("export", json!({ "files": set, "output": out }));
     assert!(err && exists.contains("set `overwrite`"), "{exists}");
-    s.ok("export", json!({ "files": set, "output": out, "overwrite": true }));
+    s.ok(
+        "export",
+        json!({ "files": set, "output": out, "overwrite": true }),
+    );
     std::fs::remove_dir_all(repo_root().join(&dir)).unwrap();
 
     let (unknown, err) = s.call("export", json!({ "path": be, "profile": "XX" }));
@@ -297,11 +471,25 @@ fn exports_as_cimmodel_does() {
 #[test]
 fn reports_defining_files_and_conflicts() {
     let mut s = Server::start();
-    let g1 = s.ok("get_object", json!({ "path": MICROGRID, "mrid": "3a3b27be-b18b-4385-b557-6735d733baf0" }));
-    assert!(g1.contains("20210325T1530Z_1D_BE_EQ_001.xml — defines (rdf:ID) as SynchronousMachine"), "{g1}");
-    assert!(g1.contains("20210325T1530Z_1D_BE_SSH_001.xml — describes (rdf:about) as SynchronousMachine"), "{g1}");
+    let g1 = s.ok(
+        "get_object",
+        json!({ "path": MICROGRID, "mrid": "3a3b27be-b18b-4385-b557-6735d733baf0" }),
+    );
+    assert!(
+        g1.contains("20210325T1530Z_1D_BE_EQ_001.xml — defines (rdf:ID) as SynchronousMachine"),
+        "{g1}"
+    );
+    assert!(
+        g1.contains(
+            "20210325T1530Z_1D_BE_SSH_001.xml — describes (rdf:about) as SynchronousMachine"
+        ),
+        "{g1}"
+    );
     let clean = s.ok("conflicts", json!({ "path": MICROGRID }));
-    assert!(clean.starts_with("No conflicts across 12 file(s)"), "{clean}");
+    assert!(
+        clean.starts_with("No conflicts across 12 file(s)"),
+        "{clean}"
+    );
 
     // `_x` defined by both files; `_y` a line in one, a breaker in the other.
     let dir = format!("target/cimmcp-conflicts-{}", std::process::id());
@@ -323,7 +511,12 @@ fn reports_defining_files_and_conflicts() {
     .unwrap();
     let found = s.ok("conflicts", json!({ "path": dir }));
     std::fs::remove_dir_all(repo_root().join(&dir)).unwrap();
-    assert!(found.contains("1 object(s) defined by more than one file:\n  Substation _x \"S\" — a.xml, b.xml\n"), "{found}");
+    assert!(
+        found.contains(
+            "1 object(s) defined by more than one file:\n  Substation _x \"S\" — a.xml, b.xml\n"
+        ),
+        "{found}"
+    );
     assert!(found.contains("1 object(s) typed with unrelated classes:\n  _y — ACLineSegment in a.xml; Breaker in b.xml\n"), "{found}");
 }
 
@@ -333,11 +526,18 @@ fn reports_defining_files_and_conflicts() {
 fn edits_and_writes_the_result() {
     const BASE: &str = "CGMES-Test-Configurations/v3.0/MicroGrid/MicroGid-BaseCase";
     let be = format!("{BASE}/MicroGrid-BE-MAS");
-    let mut files: Vec<PathBuf> = std::fs::read_dir(repo_root().join(&be)).unwrap().flatten().map(|e| e.path()).collect();
+    let mut files: Vec<PathBuf> = std::fs::read_dir(repo_root().join(&be))
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .collect();
     files.sort();
     let paths: Vec<&Path> = files.iter().map(PathBuf::as_path).collect();
     let before = cimmodel::CimDataset::decode_files_parallel(&paths).unwrap();
-    let eq_file = files.iter().find(|f| f.to_string_lossy().contains("_EQ_")).unwrap();
+    let eq_file = files
+        .iter()
+        .find(|f| f.to_string_lossy().contains("_EQ_"))
+        .unwrap();
     let eq = cimmodel::CimDataset::decode_file(eq_file).unwrap();
     let g1 = "_3a3b27be-b18b-4385-b557-6735d733baf0";
     let gone = eq.by_type["Substation"].iter().min().unwrap().clone();
@@ -354,9 +554,17 @@ fn edits_and_writes_the_result() {
             { "id": gone, "delete": true },
         ] }),
     );
-    assert!(report.contains(&format!("updated {g1} (SynchronousMachine): IdentifiedObject.description, IdentifiedObject.name")), "{report}");
+    assert!(
+        report.contains(&format!(
+            "updated {g1} (SynchronousMachine): IdentifiedObject.description, IdentifiedObject.name"
+        )),
+        "{report}"
+    );
     assert!(report.contains(&format!("copied {g1} to _g1-copy (SynchronousMachine): IdentifiedObject.name; IdentifiedObject.mRID follows the new id")), "{report}");
-    assert!(report.contains("created _new-region (GeographicalRegion): IdentifiedObject.name"), "{report}");
+    assert!(
+        report.contains("created _new-region (GeographicalRegion): IdentifiedObject.name"),
+        "{report}"
+    );
     assert!(report.contains(&format!("deleted {gone}")), "{report}");
     assert!(report.contains(&format!("Wrote {out} ")), "{report}");
 
@@ -368,11 +576,20 @@ fn edits_and_writes_the_result() {
     let copy = json(&after, "_g1-copy");
     assert_eq!(after.entries["_g1-copy"].type_name(), "SynchronousMachine");
     assert_eq!(copy["IdentifiedObject.mRID"], "g1-copy");
-    assert_eq!(copy["RotatingMachine.GeneratingUnit"], renamed["RotatingMachine.GeneratingUnit"]);
-    assert_eq!(after.entries["_new-region"].type_name(), "GeographicalRegion");
+    assert_eq!(
+        copy["RotatingMachine.GeneratingUnit"],
+        renamed["RotatingMachine.GeneratingUnit"]
+    );
+    assert_eq!(
+        after.entries["_new-region"].type_name(),
+        "GeographicalRegion"
+    );
     assert!(!after.entries.contains_key(&gone));
     // Everything else is the EQ file as read.
-    let unchanged = cimmodel::CimDataset::decode_str(&cimmodel::convert::dataset_to_xml_for_profile(&before, "EQ").unwrap()).unwrap();
+    let unchanged = cimmodel::CimDataset::decode_str(
+        &cimmodel::convert::dataset_to_xml_for_profile(&before, "EQ").unwrap(),
+    )
+    .unwrap();
     for (id, el) in &unchanged.entries {
         if ![g1, gone.as_str()].contains(&id.as_str()) {
             assert_eq!(json(&after, id), el.to_json_value(), "{id}");
@@ -387,20 +604,50 @@ fn edits_and_writes_the_result() {
     assert!(only.contains("kept the 1 changed object(s)"), "{only}");
     let xml = &only[only.find("<?xml").unwrap()..];
     let alone = cimmodel::CimDataset::decode_str(xml).unwrap();
-    assert_eq!(alone.entries.keys().filter(|k| !alone.entries[*k].type_name().contains("FullModel")).count(), 1, "{xml}");
+    assert_eq!(
+        alone
+            .entries
+            .keys()
+            .filter(|k| !alone.entries[*k].type_name().contains("FullModel"))
+            .count(),
+        1,
+        "{xml}"
+    );
 
     for (change, error) in [
         (json!({ "id": g1, "from": g1 }), "a copy needs a new `id`"),
-        (json!({ "id": "_nothing", "fields": { "IdentifiedObject.name": "x" } }), "give `type` to create it"),
-        (json!({ "id": "_nothing", "type": "Generatr" }), "unknown class `Generatr`"),
-        (json!({ "id": "_nothing", "delete": true }), "no object `_nothing` to delete"),
-        (json!({ "id": g1, "fields": { "IdentifiedObject.name": 3 } }), "a string, an array of strings or null"),
+        (
+            json!({ "id": "_nothing", "fields": { "IdentifiedObject.name": "x" } }),
+            "give `type` to create it",
+        ),
+        (
+            json!({ "id": "_nothing", "type": "Generatr" }),
+            "unknown class `Generatr`",
+        ),
+        (
+            json!({ "id": "_nothing", "delete": true }),
+            "no object `_nothing` to delete",
+        ),
+        (
+            json!({ "id": g1, "fields": { "IdentifiedObject.name": 3 } }),
+            "a string, an array of strings or null",
+        ),
     ] {
         let (text, err) = s.call("edit", json!({ "path": be, "profile": "EQ", "output": format!("{dir}/x.xml"), "changes": [change] }));
-        assert!(err && text.starts_with("change 1: ") && text.contains(error), "{text}");
+        assert!(
+            err && text.starts_with("change 1: ") && text.contains(error),
+            "{text}"
+        );
     }
-    let own = eq_file.strip_prefix(repo_root()).unwrap().to_string_lossy().into_owned();
-    let (text, err) = s.call("edit", json!({ "path": be, "output": own, "overwrite": true, "changes": [{ "id": g1 }] }));
+    let own = eq_file
+        .strip_prefix(repo_root())
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let (text, err) = s.call(
+        "edit",
+        json!({ "path": be, "output": own, "overwrite": true, "changes": [{ "id": g1 }] }),
+    );
     assert!(err && text.contains("a file of the model set"), "{text}");
     std::fs::remove_dir_all(repo_root().join(&dir)).unwrap();
 }
@@ -438,20 +685,38 @@ fn dumps_every_object_as_json() {
         v["_type"] = el.type_name().into();
         v
     };
-    let want: serde_json::Map<String, Value> =
-        ds.entries.iter().chain(&ds.foreign).map(|(id, el)| (id.clone(), element(el))).collect();
+    let want: serde_json::Map<String, Value> = ds
+        .entries
+        .iter()
+        .chain(&ds.foreign)
+        .map(|(id, el)| (id.clone(), element(el)))
+        .collect();
     assert_eq!(got, Value::Object(want));
     assert_eq!(got["_line"]["Equipment.EquipmentContainer"], "_vl");
-    assert_eq!(got["https://energy.referencedata.eu/test/party/TSO-Belgovia"]["_type"], "http://www.w3.org/ns/prov#Agent");
-    assert_eq!(got["https://energy.referencedata.eu/test/party/TSO-Belgovia"]["_lang"], json!({ "prefLabel": ["en"] }), "{text}");
-    assert!(got.as_object().unwrap().keys().any(|k| k.starts_with("_:")), "{text}");
+    assert_eq!(
+        got["https://energy.referencedata.eu/test/party/TSO-Belgovia"]["_type"],
+        "http://www.w3.org/ns/prov#Agent"
+    );
+    assert_eq!(
+        got["https://energy.referencedata.eu/test/party/TSO-Belgovia"]["_lang"],
+        json!({ "prefLabel": ["en"] }),
+        "{text}"
+    );
+    assert!(
+        got.as_object().unwrap().keys().any(|k| k.starts_with("_:")),
+        "{text}"
+    );
 
     // An edit can be written as JSON too.
     let edited = s.ok("edit", json!({ "path": file, "format": "json", "changes": [{ "id": "_line", "fields": { "IdentifiedObject.name": "L2" } }] }));
-    let json_part: Value = serde_json::from_str(&edited[edited.find("\n\n{").unwrap() + 2..]).unwrap();
+    let json_part: Value =
+        serde_json::from_str(&edited[edited.find("\n\n{").unwrap() + 2..]).unwrap();
     assert_eq!(json_part["_line"]["IdentifiedObject.name"], "L2");
 
-    let (both, err) = s.call("export", json!({ "path": file, "format": "json", "profile": "EQ" }));
+    let (both, err) = s.call(
+        "export",
+        json!({ "path": file, "format": "json", "profile": "EQ" }),
+    );
     assert!(err && both.contains("takes no `profile`"), "{both}");
     let (bad, err) = s.call("export", json!({ "path": file, "format": "ttl" }));
     assert!(err && bad.contains("`rdfxml` or `json`"), "{bad}");

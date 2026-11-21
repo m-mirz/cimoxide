@@ -14,8 +14,16 @@ pub fn type_registry() -> &'static TypeRegistry {
         let mut reg = TypeRegistry::new();
         // CGMES alone takes the bare-name fallback: an unbound prefix cannot
         // tell the families apart, and CGMES is the historical default.
-        reg.add_family("cgmes", crate::schema_source::resolve("cgmes", &crate::cgmes_classes::SCHEMA), true);
-        reg.add_family("nc", crate::schema_source::resolve("nc", &crate::nc_classes::SCHEMA), false);
+        reg.add_family(
+            "cgmes",
+            crate::schema_source::resolve("cgmes", &crate::cgmes_classes::SCHEMA),
+            true,
+        );
+        reg.add_family(
+            "nc",
+            crate::schema_source::resolve("nc", &crate::nc_classes::SCHEMA),
+            false,
+        );
         reg
     })
 }

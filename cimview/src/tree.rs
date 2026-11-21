@@ -114,9 +114,15 @@ struct Object {
 }
 
 enum What {
-    Section { key: &'static str, label: &'static str },
+    Section {
+        key: &'static str,
+        label: &'static str,
+    },
     /// Objects of a class: forest nodes in Not contained, leaf objects in By class.
-    Group { section: &'static str, class: &'static str },
+    Group {
+        section: &'static str,
+        class: &'static str,
+    },
     /// An object in the containment (`c`) or operational (`o`) forest.
     Object { object: u32, forest: char },
 }
@@ -152,7 +158,10 @@ pub fn build(m: &Model<'_>) -> Tree {
     let mut ids: Vec<&str> = m.objects.keys().copied().collect();
     ids.sort_unstable();
     for &id in &ids {
-        let label = m.text(id, "IdentifiedObject.name").filter(|n| !n.is_empty()).map(Box::from);
+        let label = m
+            .text(id, "IdentifiedObject.name")
+            .filter(|n| !n.is_empty())
+            .map(Box::from);
         t.object(id, label, m.class(id).unwrap_or(""));
     }
 
@@ -171,7 +180,12 @@ pub fn build(m: &Model<'_>) -> Tree {
     let areas = operational.roots;
     for n in roots {
         let class = t.class_of(n);
-        let holds_container = || t.nodes[n as usize].children.iter().any(|&c| CONTAINERS.contains(&t.class_of(c)));
+        let holds_container = || {
+            t.nodes[n as usize]
+                .children
+                .iter()
+                .any(|&c| CONTAINERS.contains(&t.class_of(c)))
+        };
         if CONTAINERS.contains(&class) || (class == MISSING && holds_container()) {
             geo.push(n);
         } else {
@@ -185,7 +199,10 @@ pub fn build(m: &Model<'_>) -> Tree {
     for n in other {
         by_class.entry(t.class_of(n)).or_default().push(n);
     }
-    let mut groups: Vec<u32> = by_class.into_iter().map(|(class, ns)| t.group("other", class, ns)).collect();
+    let mut groups: Vec<u32> = by_class
+        .into_iter()
+        .map(|(class, ns)| t.group("other", class, ns))
+        .collect();
     groups.sort_by_key(|&g| t.class_of(g));
     let other = t.section("other", "Not contained", groups);
     let mut by_class: FastMap<&'static str, Vec<u32>> = FastMap::default();
@@ -203,7 +220,10 @@ pub fn build(m: &Model<'_>) -> Tree {
         .collect();
     groups.sort_by_key(|&g| t.class_of(g));
     let class = t.section("class", "By class", groups);
-    t.sections = [geo, op, other, class].into_iter().filter(|&s| !t.nodes[s as usize].children.is_empty()).collect();
+    t.sections = [geo, op, other, class]
+        .into_iter()
+        .filter(|&s| !t.nodes[s as usize].children.is_empty())
+        .collect();
     t
 }
 
@@ -220,9 +240,17 @@ fn forest(t: &mut Tree, m: &Model<'_>, ids: &[&str], keys: &[&str], name: char) 
     let rank: FastMap<&str, usize> = keys.iter().enumerate().map(|(i, &k)| (k, i)).collect();
     let mut parent: FastMap<u32, u32> = FastMap::default();
     for &id in ids {
-        let Some(els) = m.objects.get(id) else { continue };
-        let best = els.iter().flat_map(|el| el.fields().keys()).filter_map(|k| rank.get(k).map(|&r| (r, *k))).min();
-        let Some(target) = best.and_then(|(_, k)| m.target(id, k)).filter(|p| *p != id) else { continue };
+        let Some(els) = m.objects.get(id) else {
+            continue;
+        };
+        let best = els
+            .iter()
+            .flat_map(|el| el.fields().keys())
+            .filter_map(|k| rank.get(k).map(|&r| (r, *k)))
+            .min();
+        let Some(target) = best.and_then(|(_, k)| m.target(id, k)).filter(|p| *p != id) else {
+            continue;
+        };
         let p = match t.by_id.get(target) {
             Some(&p) => p,
             None => t.object(target, None, MISSING),
@@ -235,7 +263,8 @@ fn forest(t: &mut Tree, m: &Model<'_>, ids: &[&str], keys: &[&str], name: char) 
     }
     let mut roots = Vec::new();
     for o in 0..t.objects.len() as u32 {
-        let is_root = !parent.contains_key(&o) && (name == 'c' || AREAS.contains(&t.objects[o as usize].class));
+        let is_root = !parent.contains_key(&o)
+            && (name == 'c' || AREAS.contains(&t.objects[o as usize].class));
         if is_root {
             roots.push(grow(t, &children, o, name));
         }
@@ -250,7 +279,11 @@ fn grow(t: &mut Tree, children: &FastMap<u32, Vec<u32>>, o: u32, name: char) -> 
     while let Some((n, o)) = stack.pop() {
         let mut kids = Vec::new();
         for &c in children.get(&o).map_or(&[][..], Vec::as_slice) {
-            let slot = if name == 'c' { t.objects[c as usize].contained } else { t.objects[c as usize].operational };
+            let slot = if name == 'c' {
+                t.objects[c as usize].contained
+            } else {
+                t.objects[c as usize].operational
+            };
             if slot.is_some() {
                 continue;
             }
@@ -270,16 +303,32 @@ fn grow(t: &mut Tree, children: &FastMap<u32, Vec<u32>>, o: u32, name: char) -> 
 impl Tree {
     fn object(&mut self, id: &str, label: Option<Box<str>>, class: &'static str) -> u32 {
         let o = self.objects.len() as u32;
-        self.objects.push(Object { id: id.into(), label, class, findings: Counts::default(), contained: None, operational: None });
+        self.objects.push(Object {
+            id: id.into(),
+            label,
+            class,
+            findings: Counts::default(),
+            contained: None,
+            operational: None,
+        });
         self.by_id.insert(id.into(), o);
         o
     }
 
     fn node(&mut self, o: u32, forest: char) -> u32 {
         let n = self.nodes.len() as u32;
-        self.nodes.push(Node { what: What::Object { object: o, forest }, children: Vec::new(), parent: NONE, findings: Counts::default() });
+        self.nodes.push(Node {
+            what: What::Object { object: o, forest },
+            children: Vec::new(),
+            parent: NONE,
+            findings: Counts::default(),
+        });
         let obj = &mut self.objects[o as usize];
-        if forest == 'c' { obj.contained = Some(n) } else { obj.operational = Some(n) }
+        if forest == 'c' {
+            obj.contained = Some(n)
+        } else {
+            obj.operational = Some(n)
+        }
         n
     }
 
@@ -288,7 +337,12 @@ impl Tree {
         for &c in &children {
             self.nodes[c as usize].parent = n;
         }
-        self.nodes.push(Node { what: What::Section { key, label }, children, parent: NONE, findings: Counts::default() });
+        self.nodes.push(Node {
+            what: What::Section { key, label },
+            children,
+            parent: NONE,
+            findings: Counts::default(),
+        });
         self.named.insert(key.into(), n);
         n
     }
@@ -300,7 +354,12 @@ impl Tree {
                 self.nodes[c as usize].parent = n;
             }
         }
-        self.nodes.push(Node { what: What::Group { section, class }, children, parent: NONE, findings: Counts::default() });
+        self.nodes.push(Node {
+            what: What::Group { section, class },
+            children,
+            parent: NONE,
+            findings: Counts::default(),
+        });
         self.named.insert(format!("{section}/{class}"), n);
         n
     }
@@ -310,7 +369,9 @@ impl Tree {
         match self.nodes[n as usize].what {
             What::Section { key, .. } => key.into(),
             What::Group { section, class } => format!("{section}/{class}"),
-            What::Object { object, forest } => format!("{forest}/{}", self.objects[object as usize].id),
+            What::Object { object, forest } => {
+                format!("{forest}/{}", self.objects[object as usize].id)
+            }
         }
     }
 
@@ -328,7 +389,11 @@ impl Tree {
             .enumerate()
             .filter(|(_, o)| o.class != MISSING)
             .filter_map(|(i, o)| {
-                let name = o.label.as_deref().map(str::to_lowercase).unwrap_or_default();
+                let name = o
+                    .label
+                    .as_deref()
+                    .map(str::to_lowercase)
+                    .unwrap_or_default();
                 let rank = if name == q {
                     0
                 } else if name.starts_with(&q) {
@@ -361,7 +426,13 @@ impl Tree {
 
     /// What object `id` holds directly.
     pub fn children(&self, id: &str) -> Vec<&str> {
-        let Some(n) = self.by_id.get(id).and_then(|&o| self.objects[o as usize].contained) else { return Vec::new() };
+        let Some(n) = self
+            .by_id
+            .get(id)
+            .and_then(|&o| self.objects[o as usize].contained)
+        else {
+            return Vec::new();
+        };
         self.nodes[n as usize]
             .children
             .iter()
@@ -374,7 +445,13 @@ impl Tree {
 
     /// What object `id` holds, at any depth: its subtree in the containment.
     pub fn descendants(&self, id: &str) -> Vec<&str> {
-        let Some(root) = self.by_id.get(id).and_then(|&o| self.objects[o as usize].contained) else { return Vec::new() };
+        let Some(root) = self
+            .by_id
+            .get(id)
+            .and_then(|&o| self.objects[o as usize].contained)
+        else {
+            return Vec::new();
+        };
         let mut out = Vec::new();
         let mut stack = self.nodes[root as usize].children.clone();
         while let Some(n) = stack.pop() {
@@ -390,9 +467,19 @@ impl Tree {
     /// Object `id`'s node in the containment and its containers' before it,
     /// outermost first, as node numbers; empty if it is not in the tree.
     pub fn chain(&self, id: &str) -> Vec<u32> {
-        let Some(mut n) = self.by_id.get(id).and_then(|&o| self.objects[o as usize].contained) else { return Vec::new() };
+        let Some(mut n) = self
+            .by_id
+            .get(id)
+            .and_then(|&o| self.objects[o as usize].contained)
+        else {
+            return Vec::new();
+        };
         let mut out = vec![n];
-        while let Some(What::Object { .. }) = self.nodes.get(self.nodes[n as usize].parent as usize).map(|p| &p.what) {
+        while let Some(What::Object { .. }) = self
+            .nodes
+            .get(self.nodes[n as usize].parent as usize)
+            .map(|p| &p.what)
+        {
             n = self.nodes[n as usize].parent;
             out.push(n);
         }
@@ -405,7 +492,12 @@ impl Tree {
     pub fn containers(&self, id: &str) -> Vec<&str> {
         let mut out = self.chain(id);
         out.pop();
-        let region = |&n: &u32| matches!(self.class_of(n), "GeographicalRegion" | "SubGeographicalRegion");
+        let region = |&n: &u32| {
+            matches!(
+                self.class_of(n),
+                "GeographicalRegion" | "SubGeographicalRegion"
+            )
+        };
         if out.iter().any(|n| !region(n)) {
             out.retain(|n| !region(n));
         }
@@ -417,7 +509,11 @@ impl Tree {
     /// level is split into included; `None` if it is not listed (filtered out).
     pub fn path(&self, id: &str, only_findings: bool) -> Option<Vec<String>> {
         let mut chain = vec![self.objects[*self.by_id.get(id)? as usize].contained?];
-        while let Some(&p) = chain.last().map(|&n| &self.nodes[n as usize].parent).filter(|&&p| p != NONE) {
+        while let Some(&p) = chain
+            .last()
+            .map(|&n| &self.nodes[n as usize].parent)
+            .filter(|&&p| p != NONE)
+        {
             chain.push(p);
         }
         chain.reverse();
@@ -425,14 +521,25 @@ impl Tree {
         for pair in chain.windows(2) {
             let (parent, child) = (self.key_of(pair[0]), pair[1]);
             let entries = self.entries(&parent, only_findings)?;
-            let at = entries.iter().position(|e| matches!(e, Entry::Node(c) if *c == child))?;
+            let at = entries
+                .iter()
+                .position(|e| matches!(e, Entry::Node(c) if *c == child))?;
             // As `children_json` lists a long level.
             if entries.len() > PAGE {
                 let class = self.class_of(child);
                 if entries.iter().any(|&e| self.entry_class(e) != class) {
-                    let within = entries.iter().take(at).filter(|&&e| self.entry_class(e) == class).count();
+                    let within = entries
+                        .iter()
+                        .take(at)
+                        .filter(|&&e| self.entry_class(e) == class)
+                        .count();
                     keys.push(format!("{parent}|{class}"));
-                    if entries.iter().filter(|&&e| self.entry_class(e) == class).count() > PAGE {
+                    if entries
+                        .iter()
+                        .filter(|&&e| self.entry_class(e) == class)
+                        .count()
+                        > PAGE
+                    {
                         keys.push(format!("{parent}|{class}~{}", within / PAGE * PAGE));
                     }
                 } else {
@@ -469,7 +576,11 @@ impl Tree {
     fn sort(&self, nodes: &mut [u32]) {
         nodes.sort_by_cached_key(|&n| {
             let class = self.class_of(n);
-            (!(class == MISSING || CONTAINERS.contains(&class)), class, self.node_label(n).to_lowercase())
+            (
+                !(class == MISSING || CONTAINERS.contains(&class)),
+                class,
+                self.node_label(n).to_lowercase(),
+            )
         });
     }
 
@@ -487,7 +598,12 @@ impl Tree {
                 let node = &self.nodes[n];
                 let mut sum = match (&node.what, pass) {
                     (What::Object { object, .. }, 0) => self.objects[*object as usize].findings,
-                    (What::Group { section: "class", .. }, 1) => {
+                    (
+                        What::Group {
+                            section: "class", ..
+                        },
+                        1,
+                    ) => {
                         let mut sum = Counts::default();
                         for &o in &node.children {
                             sum.merge(self.objects[o as usize].findings);
@@ -511,7 +627,9 @@ impl Tree {
     /// unknown key.
     fn entries(&self, key: &str, only_findings: bool) -> Option<Vec<Entry>> {
         let (key, start) = match key.rsplit_once('~') {
-            Some((key, start)) if start.parse::<usize>().is_ok() => (key, start.parse::<usize>().ok()),
+            Some((key, start)) if start.parse::<usize>().is_ok() => {
+                (key, start.parse::<usize>().ok())
+            }
             _ => (key, None),
         };
         let (base, class) = match key.split_once('|') {
@@ -524,8 +642,24 @@ impl Tree {
             _ => *self.named.get(base)?,
         };
         let node = &self.nodes[n as usize];
-        let leaves = matches!(node.what, What::Group { section: "class", .. });
-        let mut out: Vec<Entry> = node.children.iter().map(|&c| if leaves { Entry::Leaf(c) } else { Entry::Node(c) }).collect();
+        let leaves = matches!(
+            node.what,
+            What::Group {
+                section: "class",
+                ..
+            }
+        );
+        let mut out: Vec<Entry> = node
+            .children
+            .iter()
+            .map(|&c| {
+                if leaves {
+                    Entry::Leaf(c)
+                } else {
+                    Entry::Node(c)
+                }
+            })
+            .collect();
         if only_findings {
             out.retain(|&e| self.findings(e).total() > 0);
         }
@@ -556,11 +690,18 @@ impl Tree {
     /// each with its key, label, class, number of children, findings, where
     /// it is written and where the grid view shows it. `None` for a key the
     /// tree does not have (any more).
-    pub fn children_json(&self, set: &impl Locations, grid: &Grid, key: Option<&str>, only_findings: bool) -> Option<Value> {
+    pub fn children_json(
+        &self,
+        set: &impl Locations,
+        grid: &Grid,
+        key: Option<&str>,
+        only_findings: bool,
+    ) -> Option<Value> {
         let entries = match key {
             Some(key) => self.entries(key, only_findings)?,
             None => {
-                let mut sections: Vec<Entry> = self.sections.iter().map(|&s| Entry::Node(s)).collect();
+                let mut sections: Vec<Entry> =
+                    self.sections.iter().map(|&s| Entry::Node(s)).collect();
                 if only_findings {
                     sections.retain(|&e| self.findings(e).total() > 0);
                 }
@@ -568,7 +709,9 @@ impl Tree {
             }
         };
         // Too many to list: by class if they differ, else in pages.
-        if let Some(key) = key.filter(|k| !k.contains('~')) && entries.len() > PAGE {
+        if let Some(key) = key.filter(|k| !k.contains('~'))
+            && entries.len() > PAGE
+        {
             let sum = |es: &[Entry]| {
                 let mut findings = Counts::default();
                 for &e in es {
@@ -614,10 +757,13 @@ impl Tree {
         // A line is shown as its segments are: the first of them on the grid.
         let reveal = |o: u32, kids: &[u32]| -> Option<Value> {
             grid.reveal(&self.objects[o as usize].id).or_else(|| {
-                kids.iter().find_map(|&c| match self.nodes[c as usize].what {
-                    What::Object { object, .. } => grid.reveal(&self.objects[object as usize].id).filter(|r| r.get("enter").is_none()),
-                    _ => None,
-                })
+                kids.iter()
+                    .find_map(|&c| match self.nodes[c as usize].what {
+                        What::Object { object, .. } => grid
+                            .reveal(&self.objects[object as usize].id)
+                            .filter(|r| r.get("enter").is_none()),
+                        _ => None,
+                    })
             })
         };
         let object = |o: u32, key: String, kids: &[u32], findings: Counts| -> Value {
@@ -663,7 +809,11 @@ mod tests {
     use crate::testing::{collect, validate};
 
     fn labels(v: &Value) -> Vec<&str> {
-        v.as_array().unwrap().iter().map(|x| x["label"].as_str().unwrap()).collect()
+        v.as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x["label"].as_str().unwrap())
+            .collect()
     }
 
     /// MicroGrid: regions down to terminals, the boundary's lines among them;
@@ -673,15 +823,29 @@ mod tests {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../CGMES-Test-Configurations/v3.0/MicroGrid/MicroGid-BaseCase/MicroGrid-BaseCase-Merged");
         let files = collect(&dir);
-        assert_eq!(files.len(), 12, "missing test data — run `git submodule update --init`");
+        assert_eq!(
+            files.len(),
+            12,
+            "missing test data — run `git submodule update --init`"
+        );
         let set = validate(&files);
         let t = &set.tree;
         let children = |key: Option<&str>| t.children_json(&set, &set.grid, key, false).unwrap();
-        assert_eq!(labels(&children(None)), ["Geographical", "Operational", "Not contained", "By class"]);
+        assert_eq!(
+            labels(&children(None)),
+            ["Geographical", "Operational", "Not contained", "By class"]
+        );
 
         let geo = children(Some("geo"));
         assert!(labels(&geo).contains(&"BE"), "{:?}", labels(&geo));
-        let find = |list: &Value, label: &str| list.as_array().unwrap().iter().find(|x| x["label"] == label).cloned().unwrap();
+        let find = |list: &Value, label: &str| {
+            list.as_array()
+                .unwrap()
+                .iter()
+                .find(|x| x["label"] == label)
+                .cloned()
+                .unwrap()
+        };
         let be = find(&geo, "BE");
         let sub_regions = children(be["key"].as_str());
         let brussels_region = find(&sub_regions, "ELIA-Brussels");
@@ -691,21 +855,41 @@ mod tests {
         assert_eq!(brussels["grid"]["inside"], brussels["id"]);
         // Its voltage levels first, then the transformers it holds itself.
         let held = children(brussels["key"].as_str());
-        let classes: Vec<&str> = held.as_array().unwrap().iter().map(|x| x["class"].as_str().unwrap()).collect();
+        let classes: Vec<&str> = held
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x["class"].as_str().unwrap())
+            .collect();
         assert_eq!(&classes[..5], ["VoltageLevel"; 5], "{classes:?}");
         assert!(classes.contains(&"PowerTransformer"), "{classes:?}");
-        assert_eq!(t.containers(brussels["id"].as_str().unwrap()), ["BE", "ELIA-Brussels"]);
+        assert_eq!(
+            t.containers(brussels["id"].as_str().unwrap()),
+            ["BE", "ELIA-Brussels"]
+        );
 
         // Search: by name, ignoring case, the exact one first; by mRID.
         assert_eq!(t.search("anvers", 5)[0].1, "Anvers");
         // Names starting with it before names holding it; objects may share a name.
         let lines: Vec<&str> = t.search("be-line_", 30).into_iter().map(|h| h.1).collect();
-        let starting = lines.iter().take_while(|l| l.starts_with("BE-Line_")).count();
-        assert!(starting >= 7 && lines[starting..].iter().all(|l| l.contains("BE-Line_") && !l.starts_with("BE-Line_")), "{lines:?}");
+        let starting = lines
+            .iter()
+            .take_while(|l| l.starts_with("BE-Line_"))
+            .count();
+        assert!(
+            starting >= 7
+                && lines[starting..]
+                    .iter()
+                    .all(|l| l.contains("BE-Line_") && !l.starts_with("BE-Line_")),
+            "{lines:?}"
+        );
         let id = brussels["id"].as_str().unwrap();
         assert_eq!(t.search(&id[3..15], 5)[0].0, id);
         assert!(t.search("  ", 5).is_empty());
-        assert_eq!(t.containers(held[0]["id"].as_str().unwrap()), ["PP_Brussels"]);
+        assert_eq!(
+            t.containers(held[0]["id"].as_str().unwrap()),
+            ["PP_Brussels"]
+        );
 
         // Each object's path leads to it, a listed level at a time.
         for group in children(Some("class")).as_array().unwrap() {
@@ -714,9 +898,19 @@ mod tests {
                 assert!(["geo", "other"].contains(&keys[0].as_str()), "{keys:?}");
                 for step in keys.windows(2) {
                     let listed = children(Some(&step[0]));
-                    assert!(listed.as_array().unwrap().iter().any(|y| y["key"] == step[1].as_str()), "{keys:?}");
+                    assert!(
+                        listed
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .any(|y| y["key"] == step[1].as_str()),
+                        "{keys:?}"
+                    );
                 }
-                assert_eq!(keys.last().unwrap(), &format!("c/{}", x["id"].as_str().unwrap()));
+                assert_eq!(
+                    keys.last().unwrap(),
+                    &format!("c/{}", x["id"].as_str().unwrap())
+                );
             }
         }
 
@@ -733,20 +927,52 @@ mod tests {
                 }
             }
         }
-        let by_class: u64 = children(Some("class")).as_array().unwrap().iter().map(|x| x["children"].as_u64().unwrap()).sum();
+        let by_class: u64 = children(Some("class"))
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x["children"].as_u64().unwrap())
+            .sum();
         assert_eq!(seen, by_class);
 
         // A section counts the findings of what it holds; By class, of every
         // object, so all the findings on objects of the set.
-        let total = |x: &Value| ["violation", "warning", "info"].iter().map(|s| x["findings"][s].as_u64().unwrap()).sum::<u64>();
+        let total = |x: &Value| {
+            ["violation", "warning", "info"]
+                .iter()
+                .map(|s| x["findings"][s].as_u64().unwrap())
+                .sum::<u64>()
+        };
         let sections = children(None);
-        let sum_of = |key: &str| children(Some(key)).as_array().unwrap().iter().map(total).sum::<u64>();
+        let sum_of = |key: &str| {
+            children(Some(key))
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(total)
+                .sum::<u64>()
+        };
         for s in sections.as_array().unwrap() {
-            assert_eq!(total(s), sum_of(s["key"].as_str().unwrap()), "{}", s["label"]);
+            assert_eq!(
+                total(s),
+                sum_of(s["key"].as_str().unwrap()),
+                "{}",
+                s["label"]
+            );
         }
         let all = total(&find(&sections, "By class"));
         assert!(all > 0);
-        assert_eq!(total(&find(&sections, "Geographical")) + total(&find(&sections, "Not contained")), all);
-        assert!(t.children_json(&set, &set.grid, None, true).unwrap().as_array().unwrap().iter().all(|x| total(x) > 0));
+        assert_eq!(
+            total(&find(&sections, "Geographical")) + total(&find(&sections, "Not contained")),
+            all
+        );
+        assert!(
+            t.children_json(&set, &set.grid, None, true)
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|x| total(x) > 0)
+        );
     }
 }

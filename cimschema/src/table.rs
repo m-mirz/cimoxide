@@ -68,7 +68,9 @@ pub fn value_namespace<'a>(spec: &'a CimSpecification, a: &CimAttribute) -> &'a 
     if attr_kind(a) != Kind::Enum {
         return "";
     }
-    spec.enums.get(&a.rdf_range).map_or("", |e| e.namespace.as_str())
+    spec.enums
+        .get(&a.rdf_range)
+        .map_or("", |e| e.namespace.as_str())
 }
 
 /// The family's enumerations, sorted by name; each one's values in
@@ -95,8 +97,11 @@ pub fn profile_uris(spec: &CimSpecification) -> Vec<(&str, &str)> {
 /// XML prefix → namespace IRI, as the family's vocabularies bind them, sorted
 /// by prefix.
 pub fn namespaces(spec: &CimSpecification) -> Vec<(&str, &str)> {
-    let mut v: Vec<(&str, &str)> =
-        spec.profile_namespaces.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let mut v: Vec<(&str, &str)> = spec
+        .profile_namespaces
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
     v.sort_unstable();
     v
 }

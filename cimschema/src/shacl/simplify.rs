@@ -18,7 +18,9 @@ pub fn simplify(results: &mut [FileResults]) -> Vec<(String, Vec<skip::SkipEntry
             // targetSubjectsOf/targetObjectsOf/sparqlTarget kinds hold a predicate IRI or
             // blank node id (see model.rs's TargetInfo::kind doc), which would otherwise
             // show up as a bogus "class" label on skip entries below.
-            let class_names: Vec<String> = shape.targets.iter()
+            let class_names: Vec<String> = shape
+                .targets
+                .iter()
                 .filter(|t| t.kind == "targetClass" || t.kind == "targetNode")
                 .map(|t| local_name(&t.value))
                 .filter(|n| !n.is_empty())
@@ -31,7 +33,9 @@ pub fn simplify(results: &mut [FileResults]) -> Vec<(String, Vec<skip::SkipEntry
 }
 
 fn local_name(iri: &str) -> String {
-    iri.find(':').map(|i| iri[i + 1..].to_string()).unwrap_or_else(|| iri.to_string())
+    iri.find(':')
+        .map(|i| iri[i + 1..].to_string())
+        .unwrap_or_else(|| iri.to_string())
 }
 
 fn simplify_shape(
@@ -46,8 +50,14 @@ fn simplify_shape(
         for prop in &shape.properties {
             let path = prop.path.first().map(|s| s.as_str()).unwrap_or("");
             for c in &prop.constraints {
-                push_for_classes(collector, class_names, path, &c.component, &c.name,
-                    "sh:deactivated — switched off by the schema");
+                push_for_classes(
+                    collector,
+                    class_names,
+                    path,
+                    &c.component,
+                    &c.name,
+                    "sh:deactivated — switched off by the schema",
+                );
             }
         }
         shape.properties.clear();
@@ -61,8 +71,14 @@ fn simplify_shape(
         }
         let path = prop.path.first().map(|s| s.as_str()).unwrap_or("");
         for c in &prop.constraints {
-            push_for_classes(collector, class_names, path, &c.component, &c.name,
-                "sh:deactivated — switched off by the schema");
+            push_for_classes(
+                collector,
+                class_names,
+                path,
+                &c.component,
+                &c.name,
+                "sh:deactivated — switched off by the schema",
+            );
         }
         false
     });
@@ -98,13 +114,23 @@ fn simplify_constraints(
             | "sh:MaxCountConstraintComponent"
             | "sh:ExactCountConstraintComponent"
             | "sh:RequiredConstraintComponent" => {
-                let min = c.payload.get("minCount").and_then(|v| v.as_int()).unwrap_or(0);
+                let min = c
+                    .payload
+                    .get("minCount")
+                    .and_then(|v| v.as_int())
+                    .unwrap_or(0);
                 let max = c.payload.get("maxCount").and_then(|v| v.as_int());
 
                 // Rule 3: Drop minCount=0 — vacuously true.
                 if min == 0 && max.is_none() && c.component == "sh:MinCountConstraintComponent" {
-                    push_for_classes(collector, class_names, path, &c.component, &c.name,
-                        "MinCount=0 vacuously true");
+                    push_for_classes(
+                        collector,
+                        class_names,
+                        path,
+                        &c.component,
+                        &c.name,
+                        "MinCount=0 vacuously true",
+                    );
                     continue;
                 }
 
@@ -112,8 +138,14 @@ fn simplify_constraints(
                 // codegen can emit a duplicate-field check; drop MinCountConstraintComponent
                 // with min=0 (vacuously true) when paired with an explicit max.
                 if min == 0 && max == Some(1) && c.component == "sh:MinCountConstraintComponent" {
-                    push_for_classes(collector, class_names, path, &c.component, &c.name,
-                        "MinCount=0 vacuously true (paired with MaxCount=1)");
+                    push_for_classes(
+                        collector,
+                        class_names,
+                        path,
+                        &c.component,
+                        &c.name,
+                        "MinCount=0 vacuously true (paired with MaxCount=1)",
+                    );
                     continue;
                 }
 
@@ -126,20 +158,21 @@ fn simplify_constraints(
             "sh:InConstraintComponent" => {
                 let values = c.payload.get("in").and_then(|v| v.as_list());
                 if let Some(vals) = values
-                    && vals.len() == 1 {
-                        let single = vals[0].clone();
-                        let mut payload = std::collections::HashMap::new();
-                        payload.insert("hasValue".to_string(), ShaclValue::Str(single));
-                        if let Some(lits) = c.payload.get(LITERALS) {
-                            payload.insert(LITERALS.to_string(), lits.clone());
-                        }
-                        out.push(ConstraintInfo {
-                            component: "sh:HasValueConstraintComponent".to_string(),
-                            payload,
-                            ..c
-                        });
-                        continue;
+                    && vals.len() == 1
+                {
+                    let single = vals[0].clone();
+                    let mut payload = std::collections::HashMap::new();
+                    payload.insert("hasValue".to_string(), ShaclValue::Str(single));
+                    if let Some(lits) = c.payload.get(LITERALS) {
+                        payload.insert(LITERALS.to_string(), lits.clone());
                     }
+                    out.push(ConstraintInfo {
+                        component: "sh:HasValueConstraintComponent".to_string(),
+                        payload,
+                        ..c
+                    });
+                    continue;
+                }
                 out.push(c);
             }
 

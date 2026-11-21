@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::fs;
 
-use quick_xml::events::Event;
 use quick_xml::Reader;
+use quick_xml::events::Event;
 
 use super::family::Family;
 use super::model::*;
@@ -57,7 +57,10 @@ impl Block {
                 return s;
             }
         }
-        self.stereotypes.last().map(|s| uri_end(s)).unwrap_or_default()
+        self.stereotypes
+            .last()
+            .map(|s| uri_end(s))
+            .unwrap_or_default()
     }
 
     fn set(&mut self, tag: &str, value: String) {
@@ -119,8 +122,7 @@ fn parse_file(
     family: &'static Family,
     spec: &mut CimSpecification,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let content = fs::read_to_string(path)
-        .map_err(|e| format!("cannot read {path}: {e}"))?;
+    let content = fs::read_to_string(path).map_err(|e| format!("cannot read {path}: {e}"))?;
 
     let mut reader = Reader::from_str(&content);
     let mut buf = Vec::new();
@@ -139,7 +141,10 @@ fn parse_file(
                     for attr in e.attributes().flatten() {
                         let key = bytes_to_str(attr.key.as_ref())?;
                         let val = std::str::from_utf8(&attr.value)?.to_string();
-                        if let Some(prefix) = key.strip_prefix("xmlns:").or_else(|| key.strip_prefix("xml:")) {
+                        if let Some(prefix) = key
+                            .strip_prefix("xmlns:")
+                            .or_else(|| key.strip_prefix("xml:"))
+                        {
                             let ns = ensure_terminated(val);
                             ns_map.insert(prefix.to_string(), ns);
                         }
@@ -520,9 +525,7 @@ fn bytes_to_str(b: &[u8]) -> Result<String, Box<dyn std::error::Error>> {
     Ok(std::str::from_utf8(b)?.to_string())
 }
 
-fn find_resource(
-    attrs: quick_xml::events::attributes::Attributes,
-) -> Option<String> {
+fn find_resource(attrs: quick_xml::events::attributes::Attributes) -> Option<String> {
     for attr in attrs.flatten() {
         if let Ok(key) = std::str::from_utf8(attr.key.as_ref()) {
             if key == "rdf:resource" {
@@ -647,9 +650,7 @@ pub fn import_profile_index(
     Ok(out)
 }
 
-fn read_profile(
-    path: &std::path::Path,
-) -> Result<Option<ProfileInfo>, Box<dyn std::error::Error>> {
+fn read_profile(path: &std::path::Path) -> Result<Option<ProfileInfo>, Box<dyn std::error::Error>> {
     use quick_xml::events::Event;
 
     let mut reader = quick_xml::Reader::from_file(path)?;
@@ -713,8 +714,12 @@ fn read_profile(
         buf.clear();
     }
 
-    let Some(keyword) = keyword else { return Ok(None) };
-    let Some(subject) = subject else { return Ok(None) };
+    let Some(keyword) = keyword else {
+        return Ok(None);
+    };
+    let Some(subject) = subject else {
+        return Ok(None);
+    };
     iris.extend(
         versions
             .into_iter()

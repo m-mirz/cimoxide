@@ -52,7 +52,10 @@ impl ModelSet {
     /// The SPARQL store over the merged dataset, built on first use.
     pub fn store(&mut self) -> Result<&CimStore, String> {
         if self.store.is_none() {
-            self.store = Some(CimStore::from_dataset(&self.dataset).map_err(|e| format!("building the RDF graph: {e}"))?);
+            self.store = Some(
+                CimStore::from_dataset(&self.dataset)
+                    .map_err(|e| format!("building the RDF graph: {e}"))?,
+            );
         }
         Ok(self.store.as_ref().expect("built above"))
     }
@@ -62,11 +65,16 @@ impl ModelSet {
     pub fn origins(&mut self) -> Result<(&CimDataset, &HashMap<String, Vec<Origin>>), String> {
         if self.origins.is_none() {
             let paths: Vec<&Path> = self.files.iter().map(PathBuf::as_path).collect();
-            let per_file = CimDataset::decode_files_parallel_separate(&paths).map_err(|e| e.to_string())?;
+            let per_file =
+                CimDataset::decode_files_parallel_separate(&paths).map_err(|e| e.to_string())?;
             let mut origins: HashMap<String, Vec<Origin>> = HashMap::new();
             for (file, ds) in per_file.into_iter().enumerate() {
                 for (mrid, el) in ds.entries {
-                    origins.entry(mrid).or_default().push(Origin { file, defined: el.defined(), class: el.type_name() });
+                    origins.entry(mrid).or_default().push(Origin {
+                        file,
+                        defined: el.defined(),
+                        class: el.type_name(),
+                    });
                 }
             }
             self.origins = Some(origins);
@@ -83,9 +91,18 @@ impl ModelSet {
             Some(i) => i,
             None => {
                 let paths: Vec<&Path> = self.files.iter().map(PathBuf::as_path).collect();
-                let per_file = CimDataset::decode_files_parallel_separate(&paths).map_err(|e| e.to_string())?;
-                let cfg = cimvalidation::combined_config(&per_file, None, None, opts.common, opts.quality, opts.silence.clone());
-                self.findings.push((opts.clone(), cimvalidation::validate_files(per_file, &cfg)));
+                let per_file = CimDataset::decode_files_parallel_separate(&paths)
+                    .map_err(|e| e.to_string())?;
+                let cfg = cimvalidation::combined_config(
+                    &per_file,
+                    None,
+                    None,
+                    opts.common,
+                    opts.quality,
+                    opts.silence.clone(),
+                );
+                self.findings
+                    .push((opts.clone(), cimvalidation::validate_files(per_file, &cfg)));
                 self.findings.len() - 1
             }
         };
@@ -119,7 +136,11 @@ pub struct Session {
 impl Session {
     pub fn new(base: PathBuf, set_file: Option<PathBuf>) -> Self {
         let base = base.canonicalize().unwrap_or(base);
-        Self { base, set_file, sets: HashMap::new() }
+        Self {
+            base,
+            set_file,
+            sets: HashMap::new(),
+        }
     }
 
     /// The files `set_file` lists now; none without one.
@@ -132,7 +153,12 @@ impl Session {
         listed
             .as_ref()
             .and_then(|v| v["files"].as_array())
-            .map(|files| files.iter().filter_map(|f| f.as_str().map(str::to_string)).collect())
+            .map(|files| {
+                files
+                    .iter()
+                    .filter_map(|f| f.as_str().map(str::to_string))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -142,7 +168,11 @@ impl Session {
             None => self.base.clone(),
             Some(p) => {
                 let p = Path::new(p.trim());
-                let full = if p.is_absolute() { p.to_path_buf() } else { self.base.join(p) };
+                let full = if p.is_absolute() {
+                    p.to_path_buf()
+                } else {
+                    self.base.join(p)
+                };
                 full.canonicalize().unwrap_or(full)
             }
         }
@@ -160,11 +190,23 @@ impl Session {
     /// The model set `path` names, or the one `files` lists (each a file, or a
     /// directory standing for its CIM files, merged in the order given),
     /// decoded if new or changed since.
-    pub fn model_set(&mut self, path: Option<&str>, files: &[String]) -> Result<&mut ModelSet, String> {
+    pub fn model_set(
+        &mut self,
+        path: Option<&str>,
+        files: &[String],
+    ) -> Result<&mut ModelSet, String> {
         // Given neither, the set the editor's user chose, if any.
-        let chosen = if files.is_empty() && path.is_none_or(|p| p.trim().is_empty()) { self.chosen() } else { Vec::new() };
+        let chosen = if files.is_empty() && path.is_none_or(|p| p.trim().is_empty()) {
+            self.chosen()
+        } else {
+            Vec::new()
+        };
         let files = if chosen.is_empty() { files } else { &chosen };
-        let listed: Vec<&str> = files.iter().map(|f| f.trim()).filter(|f| !f.is_empty()).collect();
+        let listed: Vec<&str> = files
+            .iter()
+            .map(|f| f.trim())
+            .filter(|f| !f.is_empty())
+            .collect();
         let (key, root, name, files) = if listed.is_empty() {
             let root = self.resolve(path);
             let files = if root.is_file() {
@@ -172,12 +214,21 @@ impl Session {
             } else if root.is_dir() {
                 cim_files(&root)
             } else {
-                return Err(format!("{} does not exist (paths are relative to {})", root.display(), self.base.display()));
+                return Err(format!(
+                    "{} does not exist (paths are relative to {})",
+                    root.display(),
+                    self.base.display()
+                ));
             };
             if files.is_empty() {
                 return Err(self.no_cim_files(&root));
             }
-            (vec![root.clone()], root.clone(), self.relative(&root), files)
+            (
+                vec![root.clone()],
+                root.clone(),
+                self.relative(&root),
+                files,
+            )
         } else {
             if path.is_some() {
                 return Err("give `path` or `files`, not both".into());
@@ -187,13 +238,20 @@ impl Session {
             for source in &sources {
                 let found = if source.is_file() {
                     if !head(source, 8192).is_some_and(|h| cimmodel::decode::is_cim(&h)) {
-                        return Err(format!("{} is not a CGMES or NC RDF/XML file", self.relative(source)));
+                        return Err(format!(
+                            "{} is not a CGMES or NC RDF/XML file",
+                            self.relative(source)
+                        ));
                     }
                     vec![source.clone()]
                 } else if source.is_dir() {
                     cim_files(source)
                 } else {
-                    return Err(format!("{} does not exist (paths are relative to {})", source.display(), self.base.display()));
+                    return Err(format!(
+                        "{} does not exist (paths are relative to {})",
+                        source.display(),
+                        self.base.display()
+                    ));
                 };
                 if found.is_empty() {
                     return Err(self.no_cim_files(source));
@@ -204,15 +262,35 @@ impl Session {
                     }
                 }
             }
-            let name = sources.iter().map(|s| self.relative(s)).collect::<Vec<_>>().join(" + ");
+            let name = sources
+                .iter()
+                .map(|s| self.relative(s))
+                .collect::<Vec<_>>()
+                .join(" + ");
             (sources, common_dir(&files), name, files)
         };
-        let stamps: Vec<Option<SystemTime>> = files.iter().map(|f| f.metadata().and_then(|m| m.modified()).ok()).collect();
-        let fresh = self.sets.get(&key).is_some_and(|s| s.files == files && s.stamps == stamps);
+        let stamps: Vec<Option<SystemTime>> = files
+            .iter()
+            .map(|f| f.metadata().and_then(|m| m.modified()).ok())
+            .collect();
+        let fresh = self
+            .sets
+            .get(&key)
+            .is_some_and(|s| s.files == files && s.stamps == stamps);
         if !fresh {
             let paths: Vec<&Path> = files.iter().map(PathBuf::as_path).collect();
-            let dataset = CimDataset::decode_files_parallel(&paths).map_err(|e| format!("decoding {name}: {e}"))?;
-            let set = ModelSet { root, name, files, stamps, dataset, store: None, origins: None, findings: Vec::new() };
+            let dataset = CimDataset::decode_files_parallel(&paths)
+                .map_err(|e| format!("decoding {name}: {e}"))?;
+            let set = ModelSet {
+                root,
+                name,
+                files,
+                stamps,
+                dataset,
+                store: None,
+                origins: None,
+                findings: Vec::new(),
+            };
             self.sets.insert(key.clone(), set);
         }
         Ok(self.sets.get_mut(&key).expect("inserted above"))
@@ -228,7 +306,10 @@ impl Session {
                 msg.push_str(&format!("\n  {}", self.relative(d)));
             }
             if below.len() > 20 {
-                msg.push_str(&format!("\n  … and {} more (list_model_sets)", below.len() - 20));
+                msg.push_str(&format!(
+                    "\n  … and {} more (list_model_sets)",
+                    below.len() - 20
+                ));
             }
         }
         msg
@@ -237,7 +318,9 @@ impl Session {
 
 /// The deepest directory holding every one of `files`.
 fn common_dir(files: &[PathBuf]) -> PathBuf {
-    let mut dir = files[0].parent().map_or_else(PathBuf::new, Path::to_path_buf);
+    let mut dir = files[0]
+        .parent()
+        .map_or_else(PathBuf::new, Path::to_path_buf);
     for file in &files[1..] {
         while !file.starts_with(&dir) && dir.pop() {}
     }
@@ -247,7 +330,11 @@ fn common_dir(files: &[PathBuf]) -> PathBuf {
 /// The first bytes of `path`, enough to tell a CIM file and read its header.
 pub fn head(path: &Path, len: usize) -> Option<String> {
     let mut buf = Vec::with_capacity(len);
-    std::fs::File::open(path).ok()?.take(len as u64).read_to_end(&mut buf).ok()?;
+    std::fs::File::open(path)
+        .ok()?
+        .take(len as u64)
+        .read_to_end(&mut buf)
+        .ok()?;
     // A cut through a multi-byte character costs that character only.
     Some(String::from_utf8_lossy(&buf).into_owned())
 }
@@ -283,7 +370,9 @@ fn walk(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
     if depth == 0 {
         return;
     }
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name();

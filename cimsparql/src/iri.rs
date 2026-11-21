@@ -16,7 +16,9 @@ use cimmodel::registry::type_registry;
 const XSD: &str = "http://www.w3.org/2001/XMLSchema#";
 
 fn schema() -> &'static Schema {
-    type_registry().schema("cgmes").expect("the CGMES family is registered")
+    type_registry()
+        .schema("cgmes")
+        .expect("the CGMES family is registered")
 }
 
 /// Base for identifiers that are neither absolute IRIs nor UUIDs. Nothing in the CGMES test
@@ -54,7 +56,12 @@ pub struct AttrRdf {
 fn type_ns_index() -> &'static HashMap<&'static str, &'static str> {
     static IDX: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     IDX.get_or_init(|| {
-        schema().classes.iter().filter(|c| !c.ns.is_empty()).map(|c| (c.local, c.ns)).collect()
+        schema()
+            .classes
+            .iter()
+            .filter(|c| !c.ns.is_empty())
+            .map(|c| (c.local, c.ns))
+            .collect()
     })
 }
 
@@ -64,7 +71,12 @@ fn attr_index() -> &'static HashMap<&'static str, AttrRdf> {
         // The full XSD IRIs, one per datatype the schema uses.
         let mut xsd: HashMap<&'static str, &'static str> = HashMap::new();
         let mut idx = HashMap::new();
-        for a in schema().classes.iter().flat_map(|c| c.attrs).filter(|a| !a.ns.is_empty()) {
+        for a in schema()
+            .classes
+            .iter()
+            .flat_map(|c| c.attrs)
+            .filter(|a| !a.ns.is_empty())
+        {
             let (kind, range) = match a.kind {
                 AttrKind::Literal => {
                     let iri = *xsd
@@ -75,7 +87,11 @@ fn attr_index() -> &'static HashMap<&'static str, AttrRdf> {
                 AttrKind::Enum => (Kind::Enum, a.value_ns),
                 AttrKind::Association => (Kind::Association, ""),
             };
-            idx.entry(a.id).or_insert(AttrRdf { namespace: a.ns, range, kind });
+            idx.entry(a.id).or_insert(AttrRdf {
+                namespace: a.ns,
+                range,
+                kind,
+            });
         }
         idx
     })
@@ -89,7 +105,10 @@ pub fn type_namespace(type_name: &str) -> Option<&'static str> {
 
 /// Full class IRI for a decoded `type_name`.
 pub fn type_iri(type_name: &str) -> String {
-    format!("{}{type_name}", type_namespace(type_name).unwrap_or(FALLBACK_NS))
+    format!(
+        "{}{type_name}",
+        type_namespace(type_name).unwrap_or(FALLBACK_NS)
+    )
 }
 
 /// RDF metadata for an `Element::fields` key such as `"ACLineSegment.b0ch"`.

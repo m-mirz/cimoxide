@@ -43,8 +43,11 @@ pub fn write(
     match results {
         QueryResults::Boolean(b) => write_boolean(b, format, out),
         QueryResults::Solutions(solutions) => {
-            let variables: Vec<String> =
-                solutions.variables().iter().map(|v| v.as_str().to_string()).collect();
+            let variables: Vec<String> = solutions
+                .variables()
+                .iter()
+                .map(|v| v.as_str().to_string())
+                .collect();
             let mut rows: Vec<Vec<Option<Term>>> = Vec::new();
             for solution in solutions {
                 let solution = solution?;
@@ -103,13 +106,20 @@ fn write_solutions(
         Format::Csv => {
             writeln!(out, "{}", variables.join(","))?;
             for row in rows {
-                let cells: Vec<String> =
-                    row.iter().map(|t| csv_escape(&plain_value(t))).collect();
+                let cells: Vec<String> = row.iter().map(|t| csv_escape(&plain_value(t))).collect();
                 writeln!(out, "{}", cells.join(","))?;
             }
         }
         Format::Tsv => {
-            writeln!(out, "{}", variables.iter().map(|v| format!("?{v}")).collect::<Vec<_>>().join("\t"))?;
+            writeln!(
+                out,
+                "{}",
+                variables
+                    .iter()
+                    .map(|v| format!("?{v}"))
+                    .collect::<Vec<_>>()
+                    .join("\t")
+            )?;
             for row in rows {
                 let cells: Vec<String> = row
                     .iter()
@@ -119,8 +129,10 @@ fn write_solutions(
             }
         }
         Format::Text => {
-            let cells: Vec<Vec<String>> =
-                rows.iter().map(|r| r.iter().map(plain_value).collect()).collect();
+            let cells: Vec<Vec<String>> = rows
+                .iter()
+                .map(|r| r.iter().map(plain_value).collect())
+                .collect();
             let widths: Vec<usize> = variables
                 .iter()
                 .enumerate()
@@ -139,7 +151,15 @@ fn write_solutions(
                 .map(|(v, w)| format!("{:<w$}", format!("?{v}"), w = w))
                 .collect();
             writeln!(out, "{}", header.join("  ").trim_end())?;
-            writeln!(out, "{}", widths.iter().map(|w| "-".repeat(*w)).collect::<Vec<_>>().join("  "))?;
+            writeln!(
+                out,
+                "{}",
+                widths
+                    .iter()
+                    .map(|w| "-".repeat(*w))
+                    .collect::<Vec<_>>()
+                    .join("  ")
+            )?;
             for row in &cells {
                 let line: Vec<String> = row
                     .iter()

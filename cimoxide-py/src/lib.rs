@@ -119,7 +119,9 @@ impl PyCimDataset {
             paths.iter().map(std::path::PathBuf::from).collect();
         let path_refs: Vec<&Path> = path_bufs.iter().map(|p| p.as_path()).collect();
         let ds = py
-            .allow_threads(|| CimDataset::decode_files_parallel(&path_refs).map_err(|e| e.to_string()))
+            .allow_threads(|| {
+                CimDataset::decode_files_parallel(&path_refs).map_err(|e| e.to_string())
+            })
             .map_err(map_err)?;
         Ok(Self {
             inner: std::sync::Mutex::new(Inner::new(ds)),
@@ -205,7 +207,10 @@ impl PyCimDataset {
             .by_type_name(&type_name)
             .ok_or_else(|| PyValueError::new_err(format!("unknown CIM type \"{type_name}\"")))?;
         let mut guard = self.lock()?;
-        let element = guard.ds.element_from_json(class, &json_val).map_err(PyValueError::new_err)?;
+        let element = guard
+            .ds
+            .element_from_json(class, &json_val)
+            .map_err(PyValueError::new_err)?;
         guard.ds.set(mrid, element);
         guard.invalidate();
         Ok(())
@@ -250,7 +255,12 @@ impl PyCimDataset {
     /// merge, an object is defined if any merged file defined it.
     fn defined_mrids(&self) -> PyResult<Vec<String>> {
         let ds = self.lock()?;
-        Ok(ds.entries.iter().filter(|(_, e)| e.defined()).map(|(m, _)| m.clone()).collect())
+        Ok(ds
+            .entries
+            .iter()
+            .filter(|(_, e)| e.defined())
+            .map(|(m, _)| m.clone())
+            .collect())
     }
 
     /// Every type the files wrote `mrid` under: its class first, then any other
@@ -258,7 +268,10 @@ impl PyCimDataset {
     /// `ACLineSegment`). Raises `KeyError` if not found.
     fn types(&self, mrid: &str) -> PyResult<Vec<String>> {
         let ds = self.lock()?;
-        let entry = ds.entries.get(mrid).ok_or_else(|| PyKeyError::new_err(mrid.to_string()))?;
+        let entry = ds
+            .entries
+            .get(mrid)
+            .ok_or_else(|| PyKeyError::new_err(mrid.to_string()))?;
         Ok(entry.types().map(|c| c.qualified.to_string()).collect())
     }
 
@@ -391,8 +404,11 @@ impl PyCimDataset {
         match store.query(sparql).map_err(map_err)? {
             QueryResults::Boolean(b) => Ok(b.into_pyobject(py)?.to_owned().unbind().into()),
             QueryResults::Solutions(solutions) => {
-                let variables: Vec<String> =
-                    solutions.variables().iter().map(|v| v.as_str().to_string()).collect();
+                let variables: Vec<String> = solutions
+                    .variables()
+                    .iter()
+                    .map(|v| v.as_str().to_string())
+                    .collect();
                 let rows = PyList::empty(py);
                 for solution in solutions {
                     let solution = solution.map_err(map_err)?;
@@ -431,7 +447,8 @@ impl PyCimDataset {
         let dir_path = Path::new(dir);
         std::fs::create_dir_all(dir_path).map_err(map_err)?;
         for profile in &profiles {
-            let xml = cimmodel::convert::dataset_to_xml_for_profile(&ds, profile).map_err(map_err)?;
+            let xml =
+                cimmodel::convert::dataset_to_xml_for_profile(&ds, profile).map_err(map_err)?;
             let path = dir_path.join(format!("{profile}.xml"));
             std::fs::write(&path, &xml).map_err(map_err)?;
         }
@@ -462,13 +479,13 @@ fn violations_to_py(violations: Vec<cimvalidation::Violation>) -> Vec<PyViolatio
     violations
         .into_iter()
         .map(|v| PyViolation {
-            object_id:   v.object_id,
-            rule_id:     v.rule_id,
-            name:        v.name,
-            class:       v.class,
-            property:    v.property,
-            message:     v.message,
-            severity:    v.severity,
+            object_id: v.object_id,
+            rule_id: v.rule_id,
+            name: v.name,
+            class: v.class,
+            property: v.property,
+            message: v.message,
+            severity: v.severity,
             description: v.description,
         })
         .collect()
@@ -477,30 +494,57 @@ fn violations_to_py(violations: Vec<cimvalidation::Violation>) -> Vec<PyViolatio
 /// A single SHACL or custom validation finding.
 #[pyclass(frozen)]
 pub struct PyViolation {
-    pub object_id:   String,
-    pub rule_id:     String,
-    pub name:        String,
-    pub class:       String,
-    pub property:    String,
-    pub message:     String,
-    pub severity:    String,
+    pub object_id: String,
+    pub rule_id: String,
+    pub name: String,
+    pub class: String,
+    pub property: String,
+    pub message: String,
+    pub severity: String,
     pub description: String,
 }
 
 #[pymethods]
 impl PyViolation {
-    #[getter] fn object_id(&self)   -> &str { &self.object_id }
-    #[getter] fn rule_id(&self)     -> &str { &self.rule_id }
-    #[getter] fn name(&self)        -> &str { &self.name }
+    #[getter]
+    fn object_id(&self) -> &str {
+        &self.object_id
+    }
+    #[getter]
+    fn rule_id(&self) -> &str {
+        &self.rule_id
+    }
+    #[getter]
+    fn name(&self) -> &str {
+        &self.name
+    }
     /// The CIM class of the offending element. Named ``class_`` to avoid the Python keyword.
-    #[getter] fn class_(&self)      -> &str { &self.class }
-    #[getter] fn property(&self)    -> &str { &self.property }
-    #[getter] fn message(&self)     -> &str { &self.message }
-    #[getter] fn severity(&self)    -> &str { &self.severity }
-    #[getter] fn description(&self) -> &str { &self.description }
+    #[getter]
+    fn class_(&self) -> &str {
+        &self.class
+    }
+    #[getter]
+    fn property(&self) -> &str {
+        &self.property
+    }
+    #[getter]
+    fn message(&self) -> &str {
+        &self.message
+    }
+    #[getter]
+    fn severity(&self) -> &str {
+        &self.severity
+    }
+    #[getter]
+    fn description(&self) -> &str {
+        &self.description
+    }
 
     fn __repr__(&self) -> String {
-        format!("[{}] {} — {} ({})", self.severity, self.rule_id, self.message, self.object_id)
+        format!(
+            "[{}] {} — {} ({})",
+            self.severity, self.rule_id, self.message, self.object_id
+        )
     }
 }
 

@@ -1,6 +1,6 @@
-use cimmodel::CimDataset;
 use super::Fields;
 use crate::Violation;
+use cimmodel::CimDataset;
 
 pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
     check_mutual_coupling_terminals_assignment(dataset)
@@ -14,20 +14,32 @@ fn check_mutual_coupling_terminals_assignment(dataset: &CimDataset) -> Vec<Viola
         let term = Fields::get(dataset, term_id, "Terminal")?;
         let ce_ref = term.reference("Terminal.ConductingEquipment")?;
         let eq_id = ce_ref.trim_start_matches('#').to_string();
-        let type_name = dataset.entries.get(&eq_id).map(|e| e.type_name().to_string());
+        let type_name = dataset
+            .entries
+            .get(&eq_id)
+            .map(|e| e.type_name().to_string());
         Some((eq_id, type_name))
     };
 
     for mrid in dataset.by_type.get("MutualCoupling").into_iter().flatten() {
         let entry = &dataset.entries[mrid];
         let mc = match Fields::of_class(entry, "MutualCoupling") {
-            Some(o) => o, None => continue,
+            Some(o) => o,
+            None => continue,
         };
-        let (eq1_id, eq1_type) = match mc.reference("MutualCoupling.First_Terminal").and_then(conducting_equipment_of) {
-            Some(x) => x, None => continue,
+        let (eq1_id, eq1_type) = match mc
+            .reference("MutualCoupling.First_Terminal")
+            .and_then(conducting_equipment_of)
+        {
+            Some(x) => x,
+            None => continue,
         };
-        let (eq2_id, eq2_type) = match mc.reference("MutualCoupling.Second_Terminal").and_then(conducting_equipment_of) {
-            Some(x) => x, None => continue,
+        let (eq2_id, eq2_type) = match mc
+            .reference("MutualCoupling.Second_Terminal")
+            .and_then(conducting_equipment_of)
+        {
+            Some(x) => x,
+            None => continue,
         };
 
         let is_line_like = |t: &Option<String>| -> bool {

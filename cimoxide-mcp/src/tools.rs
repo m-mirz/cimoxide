@@ -54,7 +54,7 @@ pub fn definitions() -> Value {
             "name": "find_objects",
             "title": "Find objects",
             "description": "Search a model set's objects by class (abstract classes include subclasses: `ConductingEquipment`, `Switch`), \
-by name/mRID text, and by an attribute's value. Returns mRID, class and name of each match.",
+    by name/mRID text, and by an attribute's value. Returns mRID, class and name of each match.",
             "inputSchema": { "type": "object", "properties": {
                 "path": path,
                 "files": files,
@@ -70,7 +70,7 @@ by name/mRID text, and by an attribute's value. Returns mRID, class and name of 
             "name": "get_object",
             "title": "Get an object",
             "description": "One object by mRID: its class, the files that write it (defining it with `rdf:ID` or describing it with `rdf:about`), \
-every field as written (references resolved to class and name) and the objects that reference it.",
+    every field as written (references resolved to class and name) and the objects that reference it.",
             "inputSchema": { "type": "object", "properties": {
                 "path": path,
                 "files": files,
@@ -83,7 +83,7 @@ every field as written (references resolved to class and name) and the objects t
             "name": "validate",
             "title": "Validate a model set",
             "description": "Run the ENTSO-E SHACL and SPARQL rules over a model set, as `cimox validate` does. \
-Returns counts by severity and rule, and the findings (filterable). Results are cached until a file changes.",
+    Returns counts by severity and rule, and the findings (filterable). Results are cached until a file changes.",
             "inputSchema": { "type": "object", "properties": {
                 "path": path,
                 "files": files,
@@ -102,7 +102,7 @@ Returns counts by severity and rule, and the findings (filterable). Results are 
             "name": "conflicts",
             "title": "Merge conflicts",
             "description": "Where a model set's files disagree: objects more than one file defines (`rdf:ID`; common or boundary data \
-defined again by a model), and objects the files type with unrelated classes. `get_object` shows which files wrote one object.",
+    defined again by a model), and objects the files type with unrelated classes. `get_object` shows which files wrote one object.",
             "inputSchema": { "type": "object", "properties": {
                 "path": path,
                 "files": files,
@@ -114,8 +114,8 @@ defined again by a model), and objects the files type with unrelated classes. `g
             "name": "sparql",
             "title": "SPARQL query",
             "description": "Run a SPARQL 1.1 query over a model set's merged CGMES data. Prefixes `cim:`, `eu:`, `md:`, `rdf:`, `xsd:` and \
-the other CGMES namespaces are pre-bound. Classes are `cim:ACLineSegment`, properties `cim:IdentifiedObject.name`. \
-Object IRIs come back as mRIDs. NC data is not in the graph.",
+    the other CGMES namespaces are pre-bound. Classes are `cim:ACLineSegment`, properties `cim:IdentifiedObject.name`. \
+    Object IRIs come back as mRIDs. NC data is not in the graph.",
             "inputSchema": { "type": "object", "properties": {
                 "path": path,
                 "files": files,
@@ -128,8 +128,8 @@ Object IRIs come back as mRIDs. NC data is not in the graph.",
             "name": "export",
             "title": "Export a model set",
             "description": "Write a model set as RDF/XML: one profile's content with that profile's header (CGMES `EQ`, `SSH`, `TP`, `SV`, …; \
-NC `CO`, `AE`, `RA`, …), or with no `profile` the whole merged dataset as read (CGMES, NC and reference data). \
-`format: \"json\"` writes every decoded object as JSON instead. Writes `output`; without it, returns the text when it is short.",
+    NC `CO`, `AE`, `RA`, …), or with no `profile` the whole merged dataset as read (CGMES, NC and reference data). \
+    `format: \"json\"` writes every decoded object as JSON instead. Writes `output`; without it, returns the text when it is short.",
             "inputSchema": { "type": "object", "properties": {
                 "path": path,
                 "files": files,
@@ -144,9 +144,9 @@ NC `CO`, `AE`, `RA`, …), or with no `profile` the whole merged dataset as read
             "name": "edit",
             "title": "Edit a model set",
             "description": "Change a model set and write the result as RDF/XML, as `export` does; the set's files stay as they are. \
-The changes apply in order, each to one object: update its `fields`, copy an object `from` another to a new `id`, create one of a `type`, \
-or `delete` it. `keep: \"changed\"` writes only the objects changed (a dataset of its own, such as a response). To validate the result in place \
-of a file, write it outside the set's directories and list it in `validate`'s `files` instead of that file.",
+    The changes apply in order, each to one object: update its `fields`, copy an object `from` another to a new `id`, create one of a `type`, \
+    or `delete` it. `keep: \"changed\"` writes only the objects changed (a dataset of its own, such as a response). To validate the result in place \
+    of a file, write it outside the set's directories and list it in `validate`'s `files` instead of that file.",
             "inputSchema": { "type": "object", "properties": {
                 "path": path,
                 "files": files,
@@ -169,8 +169,8 @@ of a file, write it outside the set's directories and list it in `validate`'s `f
             "name": "describe_class",
             "title": "Describe a CIM class",
             "description": "What the CGMES/NC schema says about a class: its definition from the ENTSO-E vocabulary, superclasses, subclasses, profiles \
-and every attribute and association it may carry (type, multiplicity, profiles, definition). Name an attribute (`SvStatus.inService`) for its full definition alone. \
-Also describes enumerations (`WindingConnection`: every value with its definition) and enumeration values (`WindingConnection.D`).",
+    and every attribute and association it may carry (type, multiplicity, profiles, definition). Name an attribute (`SvStatus.inService`) for its full definition alone. \
+    Also describes enumerations (`WindingConnection`: every value with its definition) and enumeration values (`WindingConnection.D`).",
             "inputSchema": { "type": "object", "properties": {
                 "class": { "type": "string", "description": "Class name, e.g. `SynchronousMachine`; `nc:` prefix for NC only. Or `Class.attribute` for one attribute, or an enumeration or `Enumeration.value`." },
                 "include_unused": { "type": "boolean", "description": "Also list association ends no profile exchanges (default false)." },
@@ -201,7 +201,10 @@ pub fn call(session: &mut Session, name: &str, args: &Value) -> Option<Result<St
 // --- Arguments --------------------------------------------------------------
 
 fn str_arg<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
-    args.get(key).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty())
+    args.get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
 }
 
 fn bool_arg(args: &Value, key: &str) -> bool {
@@ -209,13 +212,24 @@ fn bool_arg(args: &Value, key: &str) -> bool {
 }
 
 fn usize_arg(args: &Value, key: &str, default: usize) -> usize {
-    args.get(key).and_then(Value::as_u64).map_or(default, |n| n.max(1) as usize)
+    args.get(key)
+        .and_then(Value::as_u64)
+        .map_or(default, |n| n.max(1) as usize)
 }
 
 fn list_arg(args: &Value, key: &str) -> Vec<String> {
     match args.get(key) {
-        Some(Value::Array(items)) => items.iter().filter_map(Value::as_str).map(str::to_string).collect(),
-        Some(Value::String(s)) => s.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect(),
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect(),
+        Some(Value::String(s)) => s
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -228,7 +242,8 @@ fn model_set<'s>(session: &'s mut Session, args: &Value) -> Result<&'s mut Model
 }
 
 fn name_of(el: &Element) -> Option<&str> {
-    el.get_str("IdentifiedObject.name").filter(|n| !n.is_empty())
+    el.get_str("IdentifiedObject.name")
+        .filter(|n| !n.is_empty())
 }
 
 /// `Class mrid "name"`.
@@ -245,17 +260,24 @@ fn lookup<'a>(ds: &'a CimDataset, mrid: &str) -> Option<&'a Element> {
     let m = mrid.trim().trim_start_matches('#');
     let bare = m.strip_prefix("urn:uuid:").unwrap_or(m);
     let bare = bare.strip_prefix('_').unwrap_or(bare);
-    [m.to_string(), format!("_{bare}"), bare.to_string(), format!("urn:uuid:{bare}")]
-        .iter()
-        .find_map(|k| ds.entries.get(k))
+    [
+        m.to_string(),
+        format!("_{bare}"),
+        bare.to_string(),
+        format!("urn:uuid:{bare}"),
+    ]
+    .iter()
+    .find_map(|k| ds.entries.get(k))
 }
 
 /// Whether `el` is an instance of the class `want` names (by local or
 /// qualified name), any of its types and their ancestors considered.
 fn is_a(el: &Element, want: &str) -> bool {
     let reg = type_registry();
-    let hit = |c: &ClassDef| c.local.eq_ignore_ascii_case(want) || c.qualified.eq_ignore_ascii_case(want);
-    el.types().any(|t| hit(t) || reg.chain(t).iter().any(|c| hit(c)))
+    let hit =
+        |c: &ClassDef| c.local.eq_ignore_ascii_case(want) || c.qualified.eq_ignore_ascii_case(want);
+    el.types()
+        .any(|t| hit(t) || reg.chain(t).iter().any(|c| hit(c)))
 }
 
 /// Whether field `key` is the one `want` names: the same key, or the same
@@ -281,7 +303,9 @@ fn clip(s: &str, max: usize) -> String {
 fn values(v: &FieldValue) -> Vec<&str> {
     match v {
         FieldValue::Text(s) | FieldValue::Resource(s) => vec![s.as_str()],
-        FieldValue::TextList(l) | FieldValue::ResourceList(l) => l.iter().map(String::as_str).collect(),
+        FieldValue::TextList(l) | FieldValue::ResourceList(l) => {
+            l.iter().map(String::as_str).collect()
+        }
     }
 }
 
@@ -290,13 +314,18 @@ fn value_matches(v: &FieldValue, want: &str) -> bool {
     let want_bare = want.strip_prefix('_').unwrap_or(want);
     values(v).into_iter().any(|x| {
         let x = after_hash(x.trim());
-        x.eq_ignore_ascii_case(want) || x.strip_prefix('_').unwrap_or(x).eq_ignore_ascii_case(want_bare)
+        x.eq_ignore_ascii_case(want)
+            || x.strip_prefix('_')
+                .unwrap_or(x)
+                .eq_ignore_ascii_case(want_bare)
     })
 }
 
 /// Profile codes a file's header declares, read from its first bytes.
 fn header_profiles(file: &Path) -> Vec<&'static str> {
-    let Some(head) = session::head(file, 64 * 1024) else { return Vec::new() };
+    let Some(head) = session::head(file, 64 * 1024) else {
+        return Vec::new();
+    };
     let mut iris: Vec<&str> = Vec::new();
     // CGMES: <md:Model.profile>IRI</md:Model.profile>
     for part in head.split("Model.profile>").skip(1).step_by(2) {
@@ -312,9 +341,12 @@ fn header_profiles(file: &Path) -> Vec<&'static str> {
     }
     let mut codes: Vec<&'static str> = Vec::new();
     for iri in iris.into_iter().filter(|i| !i.is_empty()) {
-        let code = [cimvalidation::cgmes_profile_index(), cimvalidation::nc_profile_index()]
-            .iter()
-            .find_map(|(index, _)| index.iter().find(|(i, _)| *i == iri).map(|(_, c)| *c));
+        let code = [
+            cimvalidation::cgmes_profile_index(),
+            cimvalidation::nc_profile_index(),
+        ]
+        .iter()
+        .find_map(|(index, _)| index.iter().find(|(i, _)| *i == iri).map(|(_, c)| *c));
         if let Some(code) = code
             && !codes.contains(&code)
         {
@@ -327,8 +359,16 @@ fn header_profiles(file: &Path) -> Vec<&'static str> {
 fn file_line(display: &str, file: &Path) -> String {
     let profiles = header_profiles(file);
     let size = file.metadata().map(|m| m.len()).unwrap_or(0);
-    let size = if size >= 1 << 20 { format!("{:.1} MB", size as f64 / (1 << 20) as f64) } else { format!("{} kB", size.div_ceil(1024)) };
-    if profiles.is_empty() { format!("{display} ({size})") } else { format!("{display} [{}] ({size})", profiles.join(", ")) }
+    let size = if size >= 1 << 20 {
+        format!("{:.1} MB", size as f64 / (1 << 20) as f64)
+    } else {
+        format!("{} kB", size.div_ceil(1024))
+    };
+    if profiles.is_empty() {
+        format!("{display} ({size})")
+    } else {
+        format!("{display} [{}] ({size})", profiles.join(", "))
+    }
 }
 
 fn more(out: &mut String, shown: usize, total: usize, hint: &str) {
@@ -344,17 +384,30 @@ fn list_model_sets(session: &mut Session, args: &Value) -> Result<String, String
     if !root.is_dir() {
         return Err(format!("{} is not a directory", root.display()));
     }
-    let depth = args.get("depth").and_then(Value::as_u64).map_or(6, |d| d as usize);
+    let depth = args
+        .get("depth")
+        .and_then(Value::as_u64)
+        .map_or(6, |d| d as usize);
     let sets = session::find_sets(&root, depth);
     if sets.is_empty() {
-        return Ok(format!("No CGMES or NC RDF/XML files at or below {} (depth {depth}).", session.relative(&root)));
+        return Ok(format!(
+            "No CGMES or NC RDF/XML files at or below {} (depth {depth}).",
+            session.relative(&root)
+        ));
     }
     const MAX: usize = 100;
-    let mut out = format!("{} model set(s) below {}:\n", sets.len(), session.relative(&root));
+    let mut out = format!(
+        "{} model set(s) below {}:\n",
+        sets.len(),
+        session.relative(&root)
+    );
     for dir in sets.iter().take(MAX) {
         let _ = writeln!(out, "\n{}/", session.relative(dir));
         for file in session::cim_files(dir) {
-            let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let name = file
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
             let _ = writeln!(out, "  {}", file_line(&name, &file));
         }
     }
@@ -366,16 +419,27 @@ fn summary(session: &mut Session, args: &Value) -> Result<String, String> {
     let set = model_set(session, args)?;
     let ds = &set.dataset;
     let mut out = String::new();
-    let _ = writeln!(out, "Model set {} — {} file(s), {} objects", set.name, set.files.len(), ds.entries.len());
+    let _ = writeln!(
+        out,
+        "Model set {} — {} file(s), {} objects",
+        set.name,
+        set.files.len(),
+        ds.entries.len()
+    );
     for file in &set.files {
         let _ = writeln!(out, "  {}", file_line(&set.display(file), file));
     }
 
-    let headers: Vec<&Element> = ["FullModel", "DifferenceModel", "nc:Dataset", "nc:DifferenceSet"]
-        .iter()
-        .flat_map(|t| ds.by_type.get(*t).into_iter().flatten())
-        .filter_map(|m| ds.entries.get(m))
-        .collect();
+    let headers: Vec<&Element> = [
+        "FullModel",
+        "DifferenceModel",
+        "nc:Dataset",
+        "nc:DifferenceSet",
+    ]
+    .iter()
+    .flat_map(|t| ds.by_type.get(*t).into_iter().flatten())
+    .filter_map(|m| ds.entries.get(m))
+    .collect();
     if !headers.is_empty() {
         let _ = writeln!(out, "\nModel headers:");
         for h in headers {
@@ -388,7 +452,11 @@ fn summary(session: &mut Session, args: &Value) -> Result<String, String> {
         }
     }
 
-    let mut counts: Vec<(&str, usize)> = ds.by_type.iter().map(|(t, m)| (t.as_str(), m.len())).collect();
+    let mut counts: Vec<(&str, usize)> = ds
+        .by_type
+        .iter()
+        .map(|(t, m)| (t.as_str(), m.len()))
+        .collect();
     counts.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
     let _ = writeln!(out, "\nObjects by class ({} classes):", counts.len());
     for (t, n) in counts {
@@ -408,7 +476,10 @@ fn find_objects(session: &mut Session, args: &Value) -> Result<String, String> {
     }
     if let Some(c) = class {
         let reg = type_registry();
-        if reg.by_type_name(c).is_none() && reg.by_type_name(&format!("nc:{c}")).is_none() && !known_local(c) {
+        if reg.by_type_name(c).is_none()
+            && reg.by_type_name(&format!("nc:{c}")).is_none()
+            && !known_local(c)
+        {
             return Err(format!("unknown class `{c}`{}", suggest(c)));
         }
     }
@@ -422,9 +493,13 @@ fn find_objects(session: &mut Session, args: &Value) -> Result<String, String> {
         .filter(|el| {
             text.as_deref().is_none_or(|t| {
                 el.mrid().to_lowercase().contains(t)
-                    || ["IdentifiedObject.name", "IdentifiedObject.description", "IdentifiedObject.shortName"]
-                        .iter()
-                        .any(|k| el.get_str(k).is_some_and(|s| s.to_lowercase().contains(t)))
+                    || [
+                        "IdentifiedObject.name",
+                        "IdentifiedObject.description",
+                        "IdentifiedObject.shortName",
+                    ]
+                    .iter()
+                    .any(|k| el.get_str(k).is_some_and(|s| s.to_lowercase().contains(t)))
             })
         })
         .filter_map(|el| match attribute {
@@ -436,7 +511,13 @@ fn find_objects(session: &mut Session, args: &Value) -> Result<String, String> {
                 .map(|(k, v)| (el, Some(format!("{k} = {}", values(v).join(", "))))),
         })
         .collect();
-    hits.sort_by(|a, b| (a.0.type_name(), name_of(a.0), a.0.mrid()).cmp(&(b.0.type_name(), name_of(b.0), b.0.mrid())));
+    hits.sort_by(|a, b| {
+        (a.0.type_name(), name_of(a.0), a.0.mrid()).cmp(&(
+            b.0.type_name(),
+            name_of(b.0),
+            b.0.mrid(),
+        ))
+    });
 
     if hits.is_empty() {
         return Ok("No matching objects.".into());
@@ -449,7 +530,12 @@ fn find_objects(session: &mut Session, args: &Value) -> Result<String, String> {
         }
         out.push('\n');
     }
-    more(&mut out, limit.min(hits.len()), hits.len(), "; raise `limit` or narrow the search");
+    more(
+        &mut out,
+        limit.min(hits.len()),
+        hits.len(),
+        "; raise `limit` or narrow the search",
+    );
     Ok(out)
 }
 
@@ -459,7 +545,9 @@ fn get_object(session: &mut Session, args: &Value) -> Result<String, String> {
     let set = model_set(session, args)?;
     let names: Vec<String> = set.files.iter().map(|f| set.display(f)).collect();
     let (ds, origins) = set.origins()?;
-    let el = lookup(ds, mrid).ok_or_else(|| format!("no object `{mrid}` in this model set; find_objects searches by name"))?;
+    let el = lookup(ds, mrid).ok_or_else(|| {
+        format!("no object `{mrid}` in this model set; find_objects searches by name")
+    })?;
     let reg = type_registry();
 
     let mut out = format!("{}\n", label(el));
@@ -474,7 +562,11 @@ fn get_object(session: &mut Session, args: &Value) -> Result<String, String> {
     if let Some(written) = origins.get(el.mrid()) {
         let _ = writeln!(out, "\nFiles:");
         for o in written {
-            let how = if o.defined { "defines (rdf:ID)" } else { "describes (rdf:about)" };
+            let how = if o.defined {
+                "defines (rdf:ID)"
+            } else {
+                "describes (rdf:about)"
+            };
             let _ = writeln!(out, "  {} — {how} as {}", names[o.file], o.class);
         }
     }
@@ -483,15 +575,23 @@ fn get_object(session: &mut Session, args: &Value) -> Result<String, String> {
     let mut fields: Vec<(&&str, &FieldValue)> = el.fields().iter().collect();
     fields.sort_by_key(|(k, _)| **k);
     for (k, v) in fields {
-        let dup = if el.duplicate_fields().contains(*k) { "  (written more than once)" } else { "" };
+        let dup = if el.duplicate_fields().contains(*k) {
+            "  (written more than once)"
+        } else {
+            ""
+        };
         let shown: Vec<String> = match v {
             FieldValue::Resource(_) | FieldValue::ResourceList(_) => values(v)
                 .into_iter()
                 .map(|r| {
-                    let is_enum = reg.attr_of(el.class(), k).is_some_and(|a| a.kind == AttrKind::Enum);
+                    let is_enum = reg
+                        .attr_of(el.class(), k)
+                        .is_some_and(|a| a.kind == AttrKind::Enum);
                     match lookup(ds, r) {
                         _ if is_enum => match reg.enum_value(el.class(), after_hash(r)) {
-                            Some((_, v)) if !v.comment.is_empty() => format!("{} ({})", v.id, clip(v.comment, 120)),
+                            Some((_, v)) if !v.comment.is_empty() => {
+                                format!("{} ({})", v.id, clip(v.comment, 120))
+                            }
                             _ => after_hash(r).to_string(),
                         },
                         Some(t) => format!("→ {}", label(t)),
@@ -520,13 +620,20 @@ fn get_object(session: &mut Session, args: &Value) -> Result<String, String> {
             })
         })
         .collect();
-    incoming.sort_by(|a, b| (a.1, a.0.type_name(), a.0.mrid()).cmp(&(b.1, b.0.type_name(), b.0.mrid())));
+    incoming.sort_by(|a, b| {
+        (a.1, a.0.type_name(), a.0.mrid()).cmp(&(b.1, b.0.type_name(), b.0.mrid()))
+    });
     if !incoming.is_empty() {
         let _ = writeln!(out, "\nReferenced by ({}):", incoming.len());
         for (other, k) in incoming.iter().take(limit) {
             let _ = writeln!(out, "  {} via {k}", label(other));
         }
-        more(&mut out, limit.min(incoming.len()), incoming.len(), "; raise `limit`");
+        more(
+            &mut out,
+            limit.min(incoming.len()),
+            incoming.len(),
+            "; raise `limit`",
+        );
     }
     Ok(out)
 }
@@ -540,8 +647,14 @@ fn conflicts(session: &mut Session, args: &Value) -> Result<String, String> {
     let mut twice: Vec<(&Element, Vec<&str>)> = origins
         .iter()
         .filter_map(|(mrid, written)| {
-            let by: Vec<&str> = written.iter().filter(|o| o.defined).map(|o| names[o.file].as_str()).collect();
-            (by.len() > 1).then(|| ds.entries.get(mrid).map(|el| (el, by))).flatten()
+            let by: Vec<&str> = written
+                .iter()
+                .filter(|o| o.defined)
+                .map(|o| names[o.file].as_str())
+                .collect();
+            (by.len() > 1)
+                .then(|| ds.entries.get(mrid).map(|el| (el, by)))
+                .flatten()
         })
         .collect();
     twice.sort_by(|a, b| (a.0.type_name(), a.0.mrid()).cmp(&(b.0.type_name(), b.0.mrid())));
@@ -555,17 +668,30 @@ fn conflicts(session: &mut Session, args: &Value) -> Result<String, String> {
     }
     let mut out = String::new();
     if !twice.is_empty() {
-        let _ = writeln!(out, "{} object(s) defined by more than one file:", twice.len());
+        let _ = writeln!(
+            out,
+            "{} object(s) defined by more than one file:",
+            twice.len()
+        );
         for (el, by) in twice.iter().take(limit) {
             let _ = writeln!(out, "  {} — {}", label(el), by.join(", "));
         }
-        more(&mut out, limit.min(twice.len()), twice.len(), "; raise `limit`");
+        more(
+            &mut out,
+            limit.min(twice.len()),
+            twice.len(),
+            "; raise `limit`",
+        );
     }
     if !typed.is_empty() {
         if !out.is_empty() {
             out.push('\n');
         }
-        let _ = writeln!(out, "{} object(s) typed with unrelated classes:", typed.len());
+        let _ = writeln!(
+            out,
+            "{} object(s) typed with unrelated classes:",
+            typed.len()
+        );
     }
     for (mrid, _) in typed.iter().take(limit) {
         let mut by_class: Vec<(&str, Vec<&str>)> = Vec::new();
@@ -575,15 +701,27 @@ fn conflicts(session: &mut Session, args: &Value) -> Result<String, String> {
                 None => by_class.push((o.class, vec![&names[o.file]])),
             }
         }
-        let shown: Vec<String> = by_class.iter().map(|(c, files)| format!("{c} in {}", files.join(", "))).collect();
+        let shown: Vec<String> = by_class
+            .iter()
+            .map(|(c, files)| format!("{c} in {}", files.join(", ")))
+            .collect();
         let _ = writeln!(out, "  {mrid} — {}", shown.join("; "));
     }
-    more(&mut out, limit.min(typed.len()), typed.len(), "; raise `limit`");
+    more(
+        &mut out,
+        limit.min(typed.len()),
+        typed.len(),
+        "; raise `limit`",
+    );
     Ok(out)
 }
 
 fn validate(session: &mut Session, args: &Value) -> Result<String, String> {
-    let opts = Options { common: bool_arg(args, "common"), quality: bool_arg(args, "quality"), silence: list_arg(args, "silence") };
+    let opts = Options {
+        common: bool_arg(args, "common"),
+        quality: bool_arg(args, "quality"),
+        silence: list_arg(args, "silence"),
+    };
     let rule = str_arg(args, "rule").map(str::to_lowercase);
     let object = str_arg(args, "object");
     let class = str_arg(args, "class");
@@ -600,10 +738,21 @@ fn validate(session: &mut Session, args: &Value) -> Result<String, String> {
     let total = all.len();
     let found: Vec<&cimvalidation::Violation> = all
         .iter()
-        .filter(|v| rule.as_deref().is_none_or(|r| v.rule_id.to_lowercase().contains(r)))
+        .filter(|v| {
+            rule.as_deref()
+                .is_none_or(|r| v.rule_id.to_lowercase().contains(r))
+        })
         .filter(|v| object.as_deref().is_none_or(|o| v.object_id == o))
-        .filter(|v| severity.as_deref().is_none_or(|s| v.severity.eq_ignore_ascii_case(s)))
-        .filter(|v| class.is_none_or(|c| v.class.eq_ignore_ascii_case(c) || v.class.rsplit(':').next() == Some(c)))
+        .filter(|v| {
+            severity
+                .as_deref()
+                .is_none_or(|s| v.severity.eq_ignore_ascii_case(s))
+        })
+        .filter(|v| {
+            class.is_none_or(|c| {
+                v.class.eq_ignore_ascii_case(c) || v.class.rsplit(':').next() == Some(c)
+            })
+        })
         .collect();
     let filtered = found.len() != total;
 
@@ -613,11 +762,19 @@ fn validate(session: &mut Session, args: &Value) -> Result<String, String> {
         out,
         "{} finding(s){}: {} sh:Violation, {} sh:Warning, {} sh:Info{}",
         found.len(),
-        if filtered { format!(" of {total} matching the filters") } else { String::new() },
+        if filtered {
+            format!(" of {total} matching the filters")
+        } else {
+            String::new()
+        },
         count("sh:Violation"),
         count("sh:Warning"),
         count("sh:Info"),
-        if opts.common || opts.quality { "" } else { " (common and quality checks off)" },
+        if opts.common || opts.quality {
+            ""
+        } else {
+            " (common and quality checks off)"
+        },
     );
     if found.is_empty() {
         return Ok(out);
@@ -628,7 +785,16 @@ fn validate(session: &mut Session, args: &Value) -> Result<String, String> {
     for v in &found {
         match rules.iter_mut().find(|r| r.0 == v.rule_id) {
             Some(r) => r.2 += 1,
-            None => rules.push((&v.rule_id, &v.severity, 1, if v.description.is_empty() { &v.message } else { &v.description })),
+            None => rules.push((
+                &v.rule_id,
+                &v.severity,
+                1,
+                if v.description.is_empty() {
+                    &v.message
+                } else {
+                    &v.description
+                },
+            )),
         }
     }
     rules.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(b.0)));
@@ -648,9 +814,18 @@ fn validate(session: &mut Session, args: &Value) -> Result<String, String> {
         if !v.property.is_empty() {
             let _ = write!(what, " .{}", v.property);
         }
-        let _ = writeln!(out, "  [{}] {} — {} — {what}", v.severity, v.rule_id, v.message);
+        let _ = writeln!(
+            out,
+            "  [{}] {} — {} — {what}",
+            v.severity, v.rule_id, v.message
+        );
     }
-    more(&mut out, limit.min(found.len()), found.len(), "; filter by `rule`, `class` or `object`, or raise `limit`");
+    more(
+        &mut out,
+        limit.min(found.len()),
+        found.len(),
+        "; filter by `rule`, `class` or `object`, or raise `limit`",
+    );
     Ok(out)
 }
 
@@ -675,7 +850,11 @@ fn export(session: &mut Session, args: &Value) -> Result<String, String> {
 /// The edited set as a change list leaves it: each change's line, and the
 /// dataset.
 fn edit(session: &mut Session, args: &Value) -> Result<String, String> {
-    let changes = args.get("changes").and_then(Value::as_array).filter(|c| !c.is_empty()).ok_or("`changes` is required: a non-empty array")?;
+    let changes = args
+        .get("changes")
+        .and_then(Value::as_array)
+        .filter(|c| !c.is_empty())
+        .ok_or("`changes` is required: a non-empty array")?;
     let keep_changed = match str_arg(args, "keep") {
         None | Some("all") => false,
         Some("changed") => true,
@@ -687,7 +866,8 @@ fn edit(session: &mut Session, args: &Value) -> Result<String, String> {
     let set = model_set(session, args)?;
     // The set's own dataset stays as read; the edit works on a copy.
     let paths: Vec<&Path> = set.files.iter().map(PathBuf::as_path).collect();
-    let mut ds = CimDataset::decode_files_parallel(&paths).map_err(|e| format!("decoding {}: {e}", set.name))?;
+    let mut ds = CimDataset::decode_files_parallel(&paths)
+        .map_err(|e| format!("decoding {}: {e}", set.name))?;
     let joins = joins_set(set, output.as_deref())?;
     let name = set.name.clone();
 
@@ -695,7 +875,13 @@ fn edit(session: &mut Session, args: &Value) -> Result<String, String> {
     let mut report: Vec<String> = Vec::new();
     for (i, change) in changes.iter().enumerate() {
         let at = |e: String| format!("change {}: {e}", i + 1);
-        let text = |key: &str| change.get(key).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
+        let text = |key: &str| {
+            change
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        };
         let id = text("id").ok_or_else(|| at("`id` is required".into()))?;
         let existing = lookup(&ds, id).map(|e| e.mrid().to_string());
         let existed = existing.is_some();
@@ -708,19 +894,32 @@ fn edit(session: &mut Session, args: &Value) -> Result<String, String> {
             continue;
         }
         let (key, mut json, source) = match (text("from"), existing) {
-            (Some(_), Some(key)) => return Err(at(format!("`{key}` exists; a copy needs a new `id`"))),
+            (Some(_), Some(key)) => {
+                return Err(at(format!("`{key}` exists; a copy needs a new `id`")));
+            }
             (Some(from), None) => {
-                let src = lookup(&ds, from).ok_or_else(|| at(format!("no object `{from}` to copy")))?;
-                (id.to_string(), element_json(src), Some(src.mrid().to_string()))
+                let src =
+                    lookup(&ds, from).ok_or_else(|| at(format!("no object `{from}` to copy")))?;
+                (
+                    id.to_string(),
+                    element_json(src),
+                    Some(src.mrid().to_string()),
+                )
             }
             (None, Some(key)) => {
                 let json = element_json(&ds.entries[&key]);
                 (key, json, None)
             }
             (None, None) if text("type").is_some() => (id.to_string(), json!({}), None),
-            (None, None) => return Err(at(format!("no object `{id}`; give `type` to create it or `from` to copy one"))),
+            (None, None) => {
+                return Err(at(format!(
+                    "no object `{id}`; give `type` to create it or `from` to copy one"
+                )));
+            }
         };
-        let obj = json.as_object_mut().expect("an element's JSON is an object");
+        let obj = json
+            .as_object_mut()
+            .expect("an element's JSON is an object");
         if let Some(t) = text("type") {
             obj.insert("_type".into(), t.into());
         }
@@ -750,11 +949,24 @@ fn edit(session: &mut Session, args: &Value) -> Result<String, String> {
                 Value::String(_) | Value::Array(_) => {
                     obj.insert(k.clone(), v.clone());
                 }
-                other => return Err(at(format!("{k}: a string, an array of strings or null, not {other}"))),
+                other => {
+                    return Err(at(format!(
+                        "{k}: a string, an array of strings or null, not {other}"
+                    )));
+                }
             }
         }
-        let type_name = obj.get("_type").and_then(Value::as_str).unwrap_or_default().to_string();
-        let class = type_registry().by_type_name(&type_name).ok_or_else(|| at(format!("unknown class `{type_name}`{}", suggest(&type_name))))?;
+        let type_name = obj
+            .get("_type")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let class = type_registry().by_type_name(&type_name).ok_or_else(|| {
+            at(format!(
+                "unknown class `{type_name}`{}",
+                suggest(&type_name)
+            ))
+        })?;
         let element = ds.element_from_json(class, &json).map_err(at)?;
         ds.set(key.clone(), element);
         if !changed.contains(&key) {
@@ -770,17 +982,31 @@ fn edit(session: &mut Session, args: &Value) -> Result<String, String> {
             let _ = write!(line, ": {}", keys.join(", "));
         }
         if !followed.is_empty() {
-            let _ = write!(line, "; {} follow{} the new id", followed.join(", "), if followed.len() == 1 { "s" } else { "" });
+            let _ = write!(
+                line,
+                "; {} follow{} the new id",
+                followed.join(", "),
+                if followed.len() == 1 { "s" } else { "" }
+            );
         }
         report.push(line);
     }
     if keep_changed {
-        let rest: Vec<String> = ds.entries.keys().filter(|k| !changed.contains(k)).cloned().collect();
+        let rest: Vec<String> = ds
+            .entries
+            .keys()
+            .filter(|k| !changed.contains(k))
+            .cloned()
+            .collect();
         for key in &rest {
             ds.remove(key);
         }
         ds.foreign.clear();
-        report.push(format!("kept the {} changed object(s), left out the other {}", changed.len(), rest.len()));
+        report.push(format!(
+            "kept the {} changed object(s), left out the other {}",
+            changed.len(),
+            rest.len()
+        ));
     }
 
     let xml = encode(&ds, profile, json_out)?;
@@ -811,10 +1037,15 @@ fn bare_id(id: &str) -> &str {
 /// `output`, checked before any work: inside the workspace, and not over a
 /// file unless `overwrite`.
 fn output_arg(session: &Session, args: &Value) -> Result<Option<PathBuf>, String> {
-    let Some(o) = str_arg(args, "output") else { return Ok(None) };
+    let Some(o) = str_arg(args, "output") else {
+        return Ok(None);
+    };
     let out = output_path(&session.base, o)?;
     if out.exists() && !bool_arg(args, "overwrite") {
-        return Err(format!("{} exists; set `overwrite` to replace it", session.relative(&out)));
+        return Err(format!(
+            "{} exists; set `overwrite` to replace it",
+            session.relative(&out)
+        ));
     }
     Ok(Some(out))
 }
@@ -823,7 +1054,9 @@ fn output_arg(session: &Session, args: &Value) -> Result<Option<PathBuf>, String
 fn json_arg(args: &Value, profile: Option<&str>) -> Result<bool, String> {
     match str_arg(args, "format") {
         None | Some("rdfxml") => Ok(false),
-        Some("json") if profile.is_some() => Err("`format: \"json\"` writes the whole dataset and takes no `profile`".into()),
+        Some("json") if profile.is_some() => {
+            Err("`format: \"json\"` writes the whole dataset and takes no `profile`".into())
+        }
         Some("json") => Ok(true),
         Some(other) => Err(format!("`format` is `rdfxml` or `json`, not `{other}`")),
     }
@@ -834,8 +1067,12 @@ fn json_arg(args: &Value, profile: Option<&str>) -> Result<bool, String> {
 /// give.
 fn encode(ds: &CimDataset, profile: Option<&str>, json: bool) -> Result<String, String> {
     if json {
-        let all: serde_json::Map<String, Value> =
-            ds.entries.iter().chain(&ds.foreign).map(|(id, el)| (id.clone(), element_json(el))).collect();
+        let all: serde_json::Map<String, Value> = ds
+            .entries
+            .iter()
+            .chain(&ds.foreign)
+            .map(|(id, el)| (id.clone(), element_json(el)))
+            .collect();
         return serde_json::to_string_pretty(&all).map_err(|e| e.to_string());
     }
     match profile {
@@ -850,17 +1087,28 @@ fn encode(ds: &CimDataset, profile: Option<&str>, json: bool) -> Result<String, 
 fn joins_set(set: &ModelSet, output: Option<&Path>) -> Result<bool, String> {
     let Some(out) = output else { return Ok(false) };
     if set.files.iter().any(|f| f == out) {
-        return Err(format!("`output` is {}, a file of the model set; its files are never written", set.display(out)));
+        return Err(format!(
+            "`output` is {}, a file of the model set; its files are never written",
+            set.display(out)
+        ));
     }
     Ok(set.files.iter().any(|f| f.parent() == out.parent()))
 }
 
 /// `xml` written to `output`, or returned when there is none and it is short.
-fn deliver(session: &Session, xml: &str, output: Option<PathBuf>, joins: bool, what: &str) -> Result<String, String> {
+fn deliver(
+    session: &Session,
+    xml: &str,
+    output: Option<PathBuf>,
+    joins: bool,
+    what: &str,
+) -> Result<String, String> {
     let Some(out) = output else {
         let n = xml.chars().count();
         if n > EXPORT_INLINE {
-            return Err(format!("{what} is {n} characters; give `output` to write it to a file"));
+            return Err(format!(
+                "{what} is {n} characters; give `output` to write it to a file"
+            ));
         }
         return Ok(xml.to_string());
     };
@@ -868,7 +1116,11 @@ fn deliver(session: &Session, xml: &str, output: Option<PathBuf>, joins: bool, w
         std::fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
     }
     std::fs::write(&out, xml).map_err(|e| format!("writing {}: {e}", out.display()))?;
-    let mut msg = format!("Wrote {} ({} bytes): {what}.", session.relative(&out), xml.len());
+    let mut msg = format!(
+        "Wrote {} ({} bytes): {what}.",
+        session.relative(&out),
+        xml.len()
+    );
     if joins {
         msg.push_str(" Its directory holds the model set's files, so the set now includes it.");
     }
@@ -881,9 +1133,16 @@ fn output_path(base: &Path, output: &str) -> Result<PathBuf, String> {
     if p.components().any(|c| c == Component::ParentDir) {
         return Err("`output` may not contain `..`".into());
     }
-    let full = if p.is_absolute() { p.to_path_buf() } else { base.join(p) };
+    let full = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        base.join(p)
+    };
     if !full.starts_with(base) || full == base {
-        return Err(format!("`output` must be a file inside the workspace {}", base.display()));
+        return Err(format!(
+            "`output` must be a file inside the workspace {}",
+            base.display()
+        ));
     }
     Ok(full)
 }
@@ -892,7 +1151,10 @@ fn sparql(session: &mut Session, args: &Value) -> Result<String, String> {
     let query = str_arg(args, "query").ok_or("`query` is required")?;
     let limit = usize_arg(args, "limit", 100);
     let set = model_set(session, args)?;
-    let results = set.store()?.query(query).map_err(|e| format!("query failed: {e}"))?;
+    let results = set
+        .store()?
+        .query(query)
+        .map_err(|e| format!("query failed: {e}"))?;
     let ds = &set.dataset;
     let prefixes = cimsparql::prefixes();
     let term = |t: &Term| -> String {
@@ -906,7 +1168,10 @@ fn sparql(session: &mut Session, args: &Value) -> Result<String, String> {
                     .iter()
                     .filter(|(_, ns)| iri.starts_with(ns))
                     .max_by_key(|(_, ns)| ns.len())
-                    .map_or_else(|| format!("<{iri}>"), |(p, ns)| format!("{p}:{}", &iri[ns.len()..]))
+                    .map_or_else(
+                        || format!("<{iri}>"),
+                        |(p, ns)| format!("{p}:{}", &iri[ns.len()..]),
+                    )
             }
             Term::Literal(l) => l.value().to_string(),
             other => other.to_string(),
@@ -917,19 +1182,31 @@ fn sparql(session: &mut Session, args: &Value) -> Result<String, String> {
     match results {
         QueryResults::Boolean(b) => out.push_str(if b { "true" } else { "false" }),
         QueryResults::Solutions(solutions) => {
-            let vars: Vec<String> = solutions.variables().iter().map(|v| v.as_str().to_string()).collect();
+            let vars: Vec<String> = solutions
+                .variables()
+                .iter()
+                .map(|v| v.as_str().to_string())
+                .collect();
             let _ = writeln!(out, "{}", vars.join("\t"));
             let mut rows = 0usize;
             for solution in solutions {
                 let solution = solution.map_err(|e| format!("query failed: {e}"))?;
                 rows += 1;
                 if rows <= limit {
-                    let cells: Vec<String> = vars.iter().map(|v| solution.get(v.as_str()).map(&term).unwrap_or_default()).collect();
+                    let cells: Vec<String> = vars
+                        .iter()
+                        .map(|v| solution.get(v.as_str()).map(&term).unwrap_or_default())
+                        .collect();
                     let _ = writeln!(out, "{}", cells.join("\t"));
                 }
             }
             let _ = writeln!(out, "({rows} row(s))");
-            more(&mut out, limit.min(rows), rows, "; raise `limit` or aggregate in the query");
+            more(
+                &mut out,
+                limit.min(rows),
+                rows,
+                "; raise `limit` or aggregate in the query",
+            );
         }
         QueryResults::Graph(triples) => {
             let mut n = 0usize;
@@ -937,7 +1214,13 @@ fn sparql(session: &mut Session, args: &Value) -> Result<String, String> {
                 let triple = triple.map_err(|e| format!("query failed: {e}"))?;
                 n += 1;
                 if n <= limit {
-                    let _ = writeln!(out, "{} {} {} .", term(&triple.subject.into()), term(&triple.predicate.into()), term(&triple.object));
+                    let _ = writeln!(
+                        out,
+                        "{} {} {} .",
+                        term(&triple.subject.into()),
+                        term(&triple.predicate.into()),
+                        term(&triple.object)
+                    );
                 }
             }
             more(&mut out, limit.min(n), n, "; raise `limit`");
@@ -1005,7 +1288,10 @@ fn describe_attribute(name: &str) -> Result<String, String> {
     let (class_name, attr) = name.rsplit_once('.').expect("caller checked");
     let classes = classes_named(class_name);
     if classes.is_empty() {
-        return Err(format!("unknown class `{class_name}`{}", suggest(class_name)));
+        return Err(format!(
+            "unknown class `{class_name}`{}",
+            suggest(class_name)
+        ));
     }
     let reg = type_registry();
     let mut out = String::new();
@@ -1014,7 +1300,10 @@ fn describe_attribute(name: &str) -> Result<String, String> {
         let family = reg.family_of(class.qualified).unwrap_or("?").to_uppercase();
         // The attribute as written, else by its name after the class, inherited ones included.
         let id = format!("{}.{attr}", class.local);
-        let Some(a) = reg.attr(class, &id).or_else(|| reg.attrs(class).find(|a| key_matches(a.id, attr))) else {
+        let Some(a) = reg
+            .attr(class, &id)
+            .or_else(|| reg.attrs(class).find(|a| key_matches(a.id, attr)))
+        else {
             missing.push(class.qualified);
             continue;
         };
@@ -1022,10 +1311,21 @@ fn describe_attribute(name: &str) -> Result<String, String> {
         if !a.origins.is_empty() {
             let _ = writeln!(out, "  profiles: {}", a.origins.join(", "));
         }
-        let _ = writeln!(out, "  {}\n", if a.comment.is_empty() { "(no definition in the vocabulary)" } else { a.comment });
+        let _ = writeln!(
+            out,
+            "  {}\n",
+            if a.comment.is_empty() {
+                "(no definition in the vocabulary)"
+            } else {
+                a.comment
+            }
+        );
     }
     if out.is_empty() {
-        return Err(format!("{} has no attribute `{attr}`; describe_class `{class_name}` lists them", missing.join(" and ")));
+        return Err(format!(
+            "{} has no attribute `{attr}`; describe_class `{class_name}` lists them",
+            missing.join(" and ")
+        ));
     }
     Ok(out.trim_end().to_string() + "\n")
 }
@@ -1040,23 +1340,57 @@ fn describe_enum(name: &str) -> Option<String> {
         None => (None, name),
     };
     let mut out = String::new();
-    for f in ["cgmes", "nc"].into_iter().filter(|f| family.is_none_or(|w| w == *f)) {
-        let Some(schema) = reg.schema(f) else { continue };
+    for f in ["cgmes", "nc"]
+        .into_iter()
+        .filter(|f| family.is_none_or(|w| w == *f))
+    {
+        let Some(schema) = reg.schema(f) else {
+            continue;
+        };
         if let Some((e, v)) = schema.enum_value(name) {
-            let _ = writeln!(out, "{} ({}): value of enumeration {}", v.id, f.to_uppercase(), e.local);
-            let _ = writeln!(out, "  {}", if v.comment.is_empty() { "(no definition in the vocabulary)" } else { v.comment });
+            let _ = writeln!(
+                out,
+                "{} ({}): value of enumeration {}",
+                v.id,
+                f.to_uppercase(),
+                e.local
+            );
+            let _ = writeln!(
+                out,
+                "  {}",
+                if v.comment.is_empty() {
+                    "(no definition in the vocabulary)"
+                } else {
+                    v.comment
+                }
+            );
             if !e.comment.is_empty() {
                 let _ = writeln!(out, "  {}: {}", e.local, e.comment);
             }
             let _ = writeln!(out, "  written as rdf:resource=\"{}{}\"\n", e.ns, v.id);
         } else if let Some(e) = schema.enumeration(name) {
-            let _ = writeln!(out, "{} ({} enumeration) — namespace {}", e.local, f.to_uppercase(), e.ns);
+            let _ = writeln!(
+                out,
+                "{} ({} enumeration) — namespace {}",
+                e.local,
+                f.to_uppercase(),
+                e.ns
+            );
             if !e.comment.is_empty() {
                 let _ = writeln!(out, "  {}", e.comment);
             }
             let _ = writeln!(out, "  values ({}):", e.values.len());
             for v in e.values {
-                let _ = writeln!(out, "    {}{}", v.id, if v.comment.is_empty() { String::new() } else { format!(" — {}", v.comment) });
+                let _ = writeln!(
+                    out,
+                    "    {}{}",
+                    v.id,
+                    if v.comment.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" — {}", v.comment)
+                    }
+                );
             }
             out.push('\n');
         }
@@ -1093,25 +1427,51 @@ fn describe_class(args: &Value) -> Result<String, String> {
             let _ = writeln!(out, "  {}", class.comment);
         }
         let chain = reg.chain(class);
-        let _ = writeln!(out, "  inherits: {}", chain.iter().map(|c| c.local).collect::<Vec<_>>().join(" → "));
+        let _ = writeln!(
+            out,
+            "  inherits: {}",
+            chain
+                .iter()
+                .map(|c| c.local)
+                .collect::<Vec<_>>()
+                .join(" → ")
+        );
         if !class.origins.is_empty() {
             let _ = writeln!(out, "  profiles: {}", class.origins.join(", "));
         }
-        let below: Vec<&str> = reg.concrete_descendants(class.qualified).into_iter().filter(|q| *q != class.qualified).collect();
+        let below: Vec<&str> = reg
+            .concrete_descendants(class.qualified)
+            .into_iter()
+            .filter(|q| *q != class.qualified)
+            .collect();
         if !below.is_empty() {
             let shown: Vec<&str> = below.iter().take(40).copied().collect();
-            let _ = writeln!(out, "  concrete subclasses ({}): {}{}", below.len(), shown.join(", "), if below.len() > 40 { ", …" } else { "" });
+            let _ = writeln!(
+                out,
+                "  concrete subclasses ({}): {}{}",
+                below.len(),
+                shown.join(", "),
+                if below.len() > 40 { ", …" } else { "" }
+            );
         }
         let mut hidden = 0usize;
         for c in chain {
-            let attrs: Vec<_> = c.attrs.iter().filter(|a| include_unused || a.used).collect();
+            let attrs: Vec<_> = c
+                .attrs
+                .iter()
+                .filter(|a| include_unused || a.used)
+                .collect();
             hidden += c.attrs.len() - attrs.len();
             if attrs.is_empty() {
                 continue;
             }
             let _ = writeln!(out, "  from {}:", c.local);
             for a in attrs {
-                let profiles = if a.origins.is_empty() { String::new() } else { format!("  {{{}}}", a.origins.join(", ")) };
+                let profiles = if a.origins.is_empty() {
+                    String::new()
+                } else {
+                    format!("  {{{}}}", a.origins.join(", "))
+                };
                 let _ = writeln!(out, "    {}: {}{profiles}", a.id, attr_type(a));
                 // A long definition is cut here; the attribute alone gives it whole.
                 if !a.comment.is_empty() {
@@ -1120,7 +1480,10 @@ fn describe_class(args: &Value) -> Result<String, String> {
             }
         }
         if hidden > 0 {
-            let _ = writeln!(out, "  ({hidden} association end(s) no profile exchanges not shown; include_unused lists them)");
+            let _ = writeln!(
+                out,
+                "  ({hidden} association end(s) no profile exchanges not shown; include_unused lists them)"
+            );
         }
         out.push('\n');
     }

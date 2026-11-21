@@ -30,7 +30,10 @@ fn copy_header(ds: &CimDataset) -> cimmodel::Element {
 #[test]
 fn an_undeclared_field_the_dataset_holds_as_a_reference_stays_one() {
     let ds = CimDataset::decode_str(RAS).unwrap();
-    assert!(matches!(copy_header(&ds).get("conformsTo"), Some(FieldValue::Resource(_))));
+    assert!(matches!(
+        copy_header(&ds).get("conformsTo"),
+        Some(FieldValue::Resource(_))
+    ));
 }
 
 /// The NC table declares `dcat:version` an association; the data writes text.
@@ -43,8 +46,14 @@ fn a_declared_field_the_dataset_holds_as_text_stays_text() {
 #[test]
 fn language_tags_survive_json() {
     let ds = CimDataset::decode_str(RAS).unwrap();
-    assert_eq!(ds.entries[HEADER].to_json_value()["_lang"]["description"][0], "en");
-    assert_eq!(copy_header(&ds).langs("description").collect::<Vec<_>>(), ["en"]);
+    assert_eq!(
+        ds.entries[HEADER].to_json_value()["_lang"]["description"][0],
+        "en"
+    );
+    assert_eq!(
+        copy_header(&ds).langs("description").collect::<Vec<_>>(),
+        ["en"]
+    );
 }
 
 #[test]

@@ -17,7 +17,11 @@ cargo test                                # all crates
 cargo test -p cimoxide-gen --test codegen cimmodel_codegen_stable   # one test
 cargo bench -p cimoxide-model
 cargo run -p cimoxide-gen                 # regenerate cimmodel and cimvalidation
+cargo fmt --all && cargo fmt --manifest-path cimoxide-py/Cargo.toml   # CI checks both
 ```
+
+Formatting is rustfmt's defaults, no `rustfmt.toml`; the generated modules are declared
+`#[rustfmt::skip]`.
 
 Submodules: `application-profiles-library/` (ENTSO-E RDFS and SHACL) and
 `CGMES-Test-Configurations/` (real test datasets). `relicapgrid/` (ENTSO-E's ReliCapGrid,

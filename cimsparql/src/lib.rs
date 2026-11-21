@@ -104,10 +104,7 @@ impl CimStore {
     }
 
     /// Materialise the dataset under [`GraphOptions`].
-    pub fn from_dataset_with(
-        ds: &CimDataset,
-        opts: &GraphOptions,
-    ) -> Result<Self, CimSparqlError> {
+    pub fn from_dataset_with(ds: &CimDataset, opts: &GraphOptions) -> Result<Self, CimSparqlError> {
         let store = Store::new()?;
         let mut stats = Stats::default();
         let mut loader = store.bulk_loader();
@@ -140,7 +137,10 @@ impl CimStore {
                 evaluator = evaluator.with_prefix(*prefix, *ns)?;
             }
         }
-        Ok(evaluator.parse_query(sparql)?.on_store(&self.store).execute()?)
+        Ok(evaluator
+            .parse_query(sparql)?
+            .on_store(&self.store)
+            .execute()?)
     }
 
     /// Number of quads in the store.

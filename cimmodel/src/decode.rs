@@ -1,9 +1,11 @@
 use std::path::Path;
 
-use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
+use quick_xml::events::{BytesStart, Event};
 
-use crate::base::{intern, AttrDef, AttrKind, ClassDef, Element, FastMap, FastSet, FieldValue, TypeRegistry};
+use crate::base::{
+    AttrDef, AttrKind, ClassDef, Element, FastMap, FastSet, FieldValue, TypeRegistry, intern,
+};
 use crate::difference::{Block, Differences};
 use crate::registry;
 
@@ -18,9 +20,14 @@ pub fn is_cim(text: &str) -> bool {
         end -= 1;
     }
     let head = &text[..end];
-    ["http://iec.ch/TC57/", "https://cim.ucaiug.io/ns#", "https://ap.cim4.eu/", "https://energy.referencedata.eu/"]
-        .iter()
-        .any(|marker| head.contains(marker))
+    [
+        "http://iec.ch/TC57/",
+        "https://cim.ucaiug.io/ns#",
+        "https://ap.cim4.eu/",
+        "https://energy.referencedata.eu/",
+    ]
+    .iter()
+    .any(|marker| head.contains(marker))
 }
 
 /// How a dataset's files wrote one field of one class
@@ -132,7 +139,9 @@ impl CimDataset {
     /// Decode files in parallel using one thread per file, without merging.
     /// Preserves input order. Falls back to sequential decoding for 0–1 paths
     /// to avoid thread-spawn overhead.
-    pub fn decode_files_parallel_separate(paths: &[&Path]) -> Result<Vec<Self>, Box<dyn std::error::Error>> {
+    pub fn decode_files_parallel_separate(
+        paths: &[&Path],
+    ) -> Result<Vec<Self>, Box<dyn std::error::Error>> {
         // wasm32-unknown-unknown compiles `std::thread` and panics when it is used.
         if paths.len() <= 1 || cfg!(target_family = "wasm") {
             return paths.iter().map(|p| Self::decode_file(p)).collect();
@@ -204,11 +213,17 @@ impl CimDataset {
                 }
                 if changed {
                     moved.entry(old.qualified).or_default().insert(mrid.clone());
-                    self.by_type.entry(existing.type_name().to_string()).or_default().push(mrid);
+                    self.by_type
+                        .entry(existing.type_name().to_string())
+                        .or_default()
+                        .push(mrid);
                 }
             } else {
                 let type_name = incoming.type_name().to_string();
-                self.by_type.entry(type_name).or_default().push(mrid.clone());
+                self.by_type
+                    .entry(type_name)
+                    .or_default()
+                    .push(mrid.clone());
                 self.entries.insert(mrid, incoming);
             }
         }
@@ -227,7 +242,11 @@ impl CimDataset {
     /// undeclared `conformsTo` as a reference, `dcat:version`, which the NC
     /// table declares an association, as the text the data writes. Otherwise
     /// the class table decides, and an undeclared field is text.
-    pub fn element_from_json(&self, class: &'static ClassDef, value: &serde_json::Value) -> Result<Element, String> {
+    pub fn element_from_json(
+        &self,
+        class: &'static ClassDef,
+        value: &serde_json::Value,
+    ) -> Result<Element, String> {
         let reg = registry::type_registry();
         let mut element = Element::from_json(class, reg, value)?;
         let keys: Vec<&'static str> = element.fields().keys().copied().collect();
@@ -252,7 +271,12 @@ impl CimDataset {
                 FieldValue::Resource(_) | FieldValue::ResourceList(_) => Some(true),
                 FieldValue::Text(_) | FieldValue::TextList(_) => Some(false),
             })
-            .or_else(|| self.field_forms.get(&(type_name, key)).and_then(|f| f.resource_ns).map(|_| true))
+            .or_else(|| {
+                self.field_forms
+                    .get(&(type_name, key))
+                    .and_then(|f| f.resource_ns)
+                    .map(|_| true)
+            })
     }
 
     /// Insert or replace the element at `mrid`, keeping `by_type` consistent
@@ -262,9 +286,10 @@ impl CimDataset {
         if let Some(old) = self.entries.get(&mrid) {
             let old_type = old.type_name();
             if old_type != new_type
-                && let Some(v) = self.by_type.get_mut(old_type) {
-                    v.retain(|m| m != &mrid);
-                }
+                && let Some(v) = self.by_type.get_mut(old_type)
+            {
+                v.retain(|m| m != &mrid);
+            }
         }
         let already_indexed = self
             .by_type
@@ -302,7 +327,10 @@ impl CimDataset {
             .iter()
             .filter_map(|(mrid, e)| {
                 let types: Vec<&'static ClassDef> = e.types().collect();
-                let conflict = types.iter().enumerate().any(|(i, a)| types[i + 1..].iter().any(|b| !related(a, b)));
+                let conflict = types
+                    .iter()
+                    .enumerate()
+                    .any(|(i, a)| types[i + 1..].iter().any(|b| !related(a, b)));
                 conflict.then(|| (mrid.as_str(), types.iter().map(|c| c.qualified).collect()))
             })
             .collect();
@@ -387,10 +415,13 @@ impl Scope {
     fn ns(&self, prefix: Option<&[u8]>) -> &'static str {
         match prefix {
             None => self.default_ns,
-            Some(p) => self.prefixes.iter().find(|(k, _, _)| k.as_slice() == p).map_or("", |(_, ns, _)| ns),
+            Some(p) => self
+                .prefixes
+                .iter()
+                .find(|(k, _, _)| k.as_slice() == p)
+                .map_or("", |(_, ns, _)| ns),
         }
     }
-
 }
 
 /// What an object element's attributes say about it.
@@ -410,7 +441,12 @@ struct Subject {
 /// Scanning twice costs more than the nested-`xmlns` case it would serve,
 /// because every element pays for it and almost none declare one.
 fn scan_attrs(e: &BytesStart) -> Result<Subject, Box<dyn std::error::Error>> {
-    let mut subject = Subject { mrid: String::new(), id: String::new(), described: false, has_xmlns: false };
+    let mut subject = Subject {
+        mrid: String::new(),
+        id: String::new(),
+        described: false,
+        has_xmlns: false,
+    };
     let mut defined = false;
     for attr in e.attributes().flatten() {
         let key = attr.key.as_ref();
@@ -449,7 +485,13 @@ fn object(
     let ns = scope.ns(prefix);
     let (mut element, foreign) = match resolve(scope, reg, name.as_ref())? {
         Some(class) => (Element::new(class, subject.mrid), false),
-        None => (Element::new(crate::base::foreign_class(ns, std::str::from_utf8(local)?), subject.id), true),
+        None => (
+            Element::new(
+                crate::base::foreign_class(ns, std::str::from_utf8(local)?),
+                subject.id,
+            ),
+            true,
+        ),
     };
     if subject.described {
         element.mark_described();
@@ -475,7 +517,11 @@ fn store(ds: &mut CimDataset, element: Element, foreign: bool, written: Option<&
     if foreign {
         ds.foreign.insert(element.mrid().to_string(), element);
     } else if !element.mrid().is_empty() {
-        index(&mut ds.by_type, element.type_name(), element.mrid().to_string());
+        index(
+            &mut ds.by_type,
+            element.type_name(),
+            element.mrid().to_string(),
+        );
         ds.entries.insert(element.mrid().to_string(), element);
     }
 }
@@ -584,8 +630,11 @@ fn parse_events(
         let key = attr.map_or_else(|| intern(local), |a| a.id);
         let attrs = field_attrs(e.attributes())?;
         let ns = scope.ns(prefix);
-        let undeclared_ns = (!ns.is_empty() && attr.is_none_or(|a| !same_ns(a.ns, ns))).then_some(ns);
-        let resource_ns = attrs.resource_ns.filter(|_| attr.is_none_or(|a| a.kind != AttrKind::Enum));
+        let undeclared_ns =
+            (!ns.is_empty() && attr.is_none_or(|a| !same_ns(a.ns, ns))).then_some(ns);
+        let resource_ns = attrs
+            .resource_ns
+            .filter(|_| attr.is_none_or(|a| a.kind != AttrKind::Enum));
         if undeclared_ns.is_some() || attrs.datatype.is_some() || resource_ns.is_some() {
             forms.entry((class, key)).or_default().fill_from(FieldForm {
                 ns: undeclared_ns,
@@ -626,22 +675,38 @@ fn parse_events(
                             nested = Some(std::mem::replace(&mut scope, inner));
                         }
 
-                        (current, current_foreign, current_ns) = match object(&scope, reg, e, subject)? {
-                            Some((element, foreign, written)) => (Some(element), foreign, written),
-                            None => (None, false, None),
-                        };
+                        (current, current_foreign, current_ns) =
+                            match object(&scope, reg, e, subject)? {
+                                Some((element, foreign, written)) => {
+                                    (Some(element), foreign, written)
+                                }
+                                None => (None, false, None),
+                            };
                         declared = current.as_ref().and_then(|c| reg.declared(c.class()));
                     }
                     3 => {
                         if let Some(element) = current.as_mut() {
-                            let (key, attrs) = field(declared, element.type_name(), e, &scope, &mut ds.field_forms)?;
+                            let (key, attrs) = field(
+                                declared,
+                                element.type_name(),
+                                e,
+                                &scope,
+                                &mut ds.field_forms,
+                            )?;
                             if attrs.nodes
                                 && let Some(which) = block_of(key)
                             {
                                 // A difference header's statements: objects of their own,
                                 // read up to the block's end tag, which closes this field.
-                                let found = differences.get_or_insert_with(|| Differences::new(element.mrid()));
-                                parse_events(reader, reg, found.block_mut(which), scope.clone(), true)?;
+                                let found = differences
+                                    .get_or_insert_with(|| Differences::new(element.mrid()));
+                                parse_events(
+                                    reader,
+                                    reg,
+                                    found.block_mut(which),
+                                    scope.clone(),
+                                    true,
+                                )?;
                                 depth -= 1;
                                 buf.clear();
                                 continue;
@@ -681,7 +746,8 @@ fn parse_events(
                             None
                         };
                         let active = local_scope.as_ref().unwrap_or(&scope);
-                        if let Some((element, foreign, written)) = object(active, reg, e, subject)? {
+                        if let Some((element, foreign, written)) = object(active, reg, e, subject)?
+                        {
                             store(ds, element, foreign, written);
                         }
                     }
@@ -689,12 +755,20 @@ fn parse_events(
                         // Self-closing field element within the current type
                         // block: a reference, or else an empty literal.
                         if let Some(element) = current.as_mut() {
-                            let (key, attrs) = field(declared, element.type_name(), e, &scope, &mut ds.field_forms)?;
+                            let (key, attrs) = field(
+                                declared,
+                                element.type_name(),
+                                e,
+                                &scope,
+                                &mut ds.field_forms,
+                            )?;
                             if attrs.nodes
                                 && let Some(which) = block_of(key)
                             {
                                 // An empty statements block: no statements, but the block is there.
-                                differences.get_or_insert_with(|| Differences::new(element.mrid())).block_mut(which);
+                                differences
+                                    .get_or_insert_with(|| Differences::new(element.mrid()))
+                                    .block_mut(which);
                             } else if let Some(res) = attrs.resource {
                                 element.add_field(key, FieldValue::Resource(res));
                             } else if !attrs.nodes {
@@ -719,12 +793,13 @@ fn parse_events(
 
             Ok(Event::End(_)) => {
                 if depth == 3
-                    && let (Some(element), Some(key)) = (current.as_mut(), pending_key.take()) {
-                        element.add_field(key, FieldValue::Text(std::mem::take(&mut pending_text)));
-                        if let Some(lang) = pending_lang.take() {
-                            element.add_lang(key, &lang);
-                        }
+                    && let (Some(element), Some(key)) = (current.as_mut(), pending_key.take())
+                {
+                    element.add_field(key, FieldValue::Text(std::mem::take(&mut pending_text)));
+                    if let Some(lang) = pending_lang.take() {
+                        element.add_lang(key, &lang);
                     }
+                }
                 if depth == 2 {
                     pending_key = None;
                     pending_lang = None;
@@ -758,7 +833,6 @@ fn parse_events(
 
 // --- helpers ----------------------------------------------------------------
 
-
 /// Strip the fragment from a URI, e.g. "http://example.com#foo" → "foo".
 ///
 /// An IRI whose fragment is empty names a vocabulary, not an object
@@ -772,7 +846,6 @@ fn strip_fragment(s: &str) -> String {
         None => s.to_string(),
     }
 }
-
 
 /// What a field element's attributes say about its value.
 struct FieldAttrs {
@@ -790,8 +863,16 @@ struct FieldAttrs {
 }
 
 /// A field element's attributes, in one pass.
-fn field_attrs(attrs: quick_xml::events::attributes::Attributes<'_>) -> Result<FieldAttrs, Box<dyn std::error::Error>> {
-    let mut out = FieldAttrs { resource: None, resource_ns: None, lang: None, datatype: None, nodes: false };
+fn field_attrs(
+    attrs: quick_xml::events::attributes::Attributes<'_>,
+) -> Result<FieldAttrs, Box<dyn std::error::Error>> {
+    let mut out = FieldAttrs {
+        resource: None,
+        resource_ns: None,
+        lang: None,
+        datatype: None,
+        nodes: false,
+    };
     for attr in attrs.flatten() {
         match attr.key.as_ref() {
             b"rdf:resource" => {
@@ -802,7 +883,9 @@ fn field_attrs(attrs: quick_xml::events::attributes::Attributes<'_>) -> Result<F
                 }
                 out.resource = Some(kept);
             }
-            b"rdf:nodeID" => out.resource = Some(format!("_:{}", std::str::from_utf8(&attr.value)?)),
+            b"rdf:nodeID" => {
+                out.resource = Some(format!("_:{}", std::str::from_utf8(&attr.value)?))
+            }
             b"xml:lang" => out.lang = Some(std::str::from_utf8(&attr.value)?.to_string()),
             b"rdf:datatype" => out.datatype = Some(intern(std::str::from_utf8(&attr.value)?)),
             b"rdf:parseType" => out.nodes = attr.value.as_ref() != b"Literal",

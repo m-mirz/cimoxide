@@ -7,14 +7,20 @@ use cimmodel::CimDataset;
 use cimsparql::{CimStore, GraphOptions, QueryResults};
 
 fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf()
 }
 
 fn full_grid(names: &[&str]) -> CimDataset {
     let base = repo_root().join("CGMES-Test-Configurations/v3.0/FullGrid/FullGrid-Merged");
     let paths: Vec<PathBuf> = names.iter().map(|n| base.join(n)).collect();
     if let Some(missing) = paths.iter().find(|p| !p.exists()) {
-        panic!("missing test data {} — run `git submodule update --init`", missing.display());
+        panic!(
+            "missing test data {} — run `git submodule update --init`",
+            missing.display()
+        );
     }
     let refs: Vec<&Path> = paths.iter().map(AsRef::as_ref).collect();
     CimDataset::decode_files(&refs).expect("decode")
@@ -28,7 +34,9 @@ fn column(store: &CimStore, query: &str, var: &str) -> Vec<String> {
     solutions
         .map(|s| {
             let s = s.expect("solution");
-            let term = s.get(var).unwrap_or_else(|| panic!("no binding for ?{var}"));
+            let term = s
+                .get(var)
+                .unwrap_or_else(|| panic!("no binding for ?{var}"));
             match term {
                 cimsparql::Term::NamedNode(n) => n.as_str().to_string(),
                 cimsparql::Term::Literal(l) => l.value().to_string(),
@@ -44,7 +52,10 @@ fn type_index_parity() {
     let store = CimStore::from_dataset(&ds).unwrap();
 
     let subjects = column(&store, "SELECT ?s WHERE { ?s a cim:ACLineSegment }", "s");
-    let expected = ds.by_type.get("ACLineSegment").expect("ACLineSegments in FullGrid");
+    let expected = ds
+        .by_type
+        .get("ACLineSegment")
+        .expect("ACLineSegments in FullGrid");
     assert_eq!(subjects.len(), expected.len());
 
     // Every subject IRI resolves back to an MRID the decoder actually holds.
@@ -71,7 +82,10 @@ fn namespace_fidelity() {
         "SELECT ?n WHERE { ?s a eu:BoundaryPoint ; eu:BoundaryPoint.toEndName ?n }",
         "n",
     );
-    assert!(!eu.is_empty(), "expected eu:BoundaryPoint.toEndName triples");
+    assert!(
+        !eu.is_empty(),
+        "expected eu:BoundaryPoint.toEndName triples"
+    );
 
     // The same attribute must NOT be reachable under cim:.
     let wrong_ns = column(
@@ -79,7 +93,10 @@ fn namespace_fidelity() {
         "SELECT ?n WHERE { ?s cim:BoundaryPoint.toEndName ?n }",
         "n",
     );
-    assert!(wrong_ns.is_empty(), "eu: attribute leaked into the cim: namespace");
+    assert!(
+        wrong_ns.is_empty(),
+        "eu: attribute leaked into the cim: namespace"
+    );
 
     // ...while a cim: attribute on the very same eu:-typed subject stays under cim:.
     let cim = column(
@@ -87,7 +104,10 @@ fn namespace_fidelity() {
         "SELECT ?d WHERE { ?s a eu:BoundaryPoint ; cim:IdentifiedObject.description ?d }",
         "d",
     );
-    assert!(!cim.is_empty(), "expected cim:IdentifiedObject.description on eu:BoundaryPoint");
+    assert!(
+        !cim.is_empty(),
+        "expected cim:IdentifiedObject.description on eu:BoundaryPoint"
+    );
 }
 
 /// Literals must carry their XSD datatype, or `FILTER(?r > 0.1)` compares lexically and
@@ -103,10 +123,15 @@ fn literals_are_typed_numerically() {
         .unwrap()
         .iter()
         .filter(|m| {
-            ds.entries[*m].get_f64("ACLineSegment.r").is_some_and(|r| r > 0.1)
+            ds.entries[*m]
+                .get_f64("ACLineSegment.r")
+                .is_some_and(|r| r > 0.1)
         })
         .count();
-    assert!(expected > 0 && expected < ds.by_type["ACLineSegment"].len(), "need a mixed fixture");
+    assert!(
+        expected > 0 && expected < ds.by_type["ACLineSegment"].len(),
+        "need a mixed fixture"
+    );
 
     let n = column(
         &store,
@@ -165,7 +190,11 @@ fn enum_values_are_full_iris() {
         "u",
     );
     assert!(!units.is_empty());
-    assert!(units.iter().all(|u| u.starts_with("http://iec.ch/TC57/CIM100#UnitSymbol.")));
+    assert!(
+        units
+            .iter()
+            .all(|u| u.starts_with("http://iec.ch/TC57/CIM100#UnitSymbol."))
+    );
 
     // Matching a specific enum value by IRI has to work.
     let QueryResults::Boolean(found) = store
@@ -192,7 +221,9 @@ fn misclassified_eu_enums_recover_their_namespace() {
     );
     assert!(!kinds.is_empty());
     assert!(
-        kinds.iter().all(|k| k.starts_with("http://iec.ch/TC57/CIM100-European#LimitKind.")),
+        kinds
+            .iter()
+            .all(|k| k.starts_with("http://iec.ch/TC57/CIM100-European#LimitKind.")),
         "got {kinds:?}"
     );
 }
@@ -244,7 +275,11 @@ fn entsoe_sparql_constraint_shape() {
     };
 
     // Same semantics as the hand-written check: no violations on this fixture.
-    for class in ["cim:EquivalentBranch", "cim:EquivalentShunt", "cim:EquivalentInjection"] {
+    for class in [
+        "cim:EquivalentBranch",
+        "cim:EquivalentShunt",
+        "cim:EquivalentInjection",
+    ] {
         assert!(
             column(&store, &query(class), "this").is_empty(),
             "unexpected violation for {class}"
@@ -261,16 +296,18 @@ fn entsoe_sparql_constraint_shape() {
     // and `false` — 122 of the 125 occurrences in this fixture. They agree on the three
     // classes the rule actually targets here, but this is the kind of divergence a migration
     // to engine-evaluated `sh:sparql` would have to reconcile.
-    let flagged: HashSet<String> =
-        column(&store, &query("cim:ACLineSegment"), "this").into_iter().collect();
+    let flagged: HashSet<String> = column(&store, &query("cim:ACLineSegment"), "this")
+        .into_iter()
+        .collect();
     let expected: HashSet<String> = ds.by_type["ACLineSegment"]
         .iter()
-        .filter(|m| {
-            ds.entries[*m].get("Equipment.aggregate").is_some()
-        })
+        .filter(|m| ds.entries[*m].get("Equipment.aggregate").is_some())
         .map(|m| cimsparql::iri::mrid_to_iri(m))
         .collect();
-    assert!(!expected.is_empty(), "fixture should have ACLineSegments carrying the attribute");
+    assert!(
+        !expected.is_empty(),
+        "fixture should have ACLineSegments carrying the attribute"
+    );
     assert_eq!(flagged, expected);
 }
 
@@ -303,5 +340,10 @@ fn all_predicates_are_mapped() {
         "FullGrid_SC.xml",
     ]);
     let store = CimStore::from_dataset(&ds).unwrap();
-    assert_eq!(store.stats().unmapped_predicates, 0, "unmapped predicates: {:?}", store.stats());
+    assert_eq!(
+        store.stats().unmapped_predicates,
+        0,
+        "unmapped predicates: {:?}",
+        store.stats()
+    );
 }

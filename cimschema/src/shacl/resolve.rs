@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::family::Family;
 use crate::model::{CimSpecification, CimType};
-use crate::shacl::model::{ConstraintInfo, FileResults, ShapeInfo, LITERALS, NEGATED, UNSUPPORTED};
+use crate::shacl::model::{ConstraintInfo, FileResults, LITERALS, NEGATED, ShapeInfo, UNSUPPORTED};
 use crate::shacl::skip::SkipCollector;
 
 // ---------------------------------------------------------------------------
@@ -96,7 +96,10 @@ pub enum Constraint {
     NotClass(Vec<String>),
     /// `sh:qualifiedValueShape [ sh:in (..) ]` with `sh:qualifiedMinCount` —
     /// at least `min` values must be among `allowed`.
-    QualifiedIn { allowed: Vec<String>, min: u32 },
+    QualifiedIn {
+        allowed: Vec<String>,
+        min: u32,
+    },
     /// `sh:length` — exactly this many characters.
     Length(u32),
 }
@@ -211,7 +214,10 @@ pub struct Resolver {
 
 /// `(namespace, local)` → qualified class name, and qualified class → its
 /// concrete descendants.
-type ClassMaps = (HashMap<(String, String), String>, HashMap<String, Vec<String>>);
+type ClassMaps = (
+    HashMap<(String, String), String>,
+    HashMap<String, Vec<String>>,
+);
 
 fn class_maps(spec: &CimSpecification) -> ClassMaps {
     let prefix = spec.family.type_prefix;
@@ -282,7 +288,13 @@ impl Resolver {
                 (format!("{prefix}{}", t.id), chain)
             })
             .collect();
-        Self { by_ns, concrete_of, any_family, any_concrete, ancestors }
+        Self {
+            by_ns,
+            concrete_of,
+            any_family,
+            any_concrete,
+            ancestors,
+        }
     }
 
     /// The concrete classes a `sh:closed` shape on `target` governs: `target`
@@ -300,13 +312,19 @@ impl Resolver {
             return vec![target.to_string()];
         }
         let below_target = |c: &String| {
-            c != target && self.ancestors.get(c).is_some_and(|a| a.iter().any(|x| x == target))
+            c != target
+                && self
+                    .ancestors
+                    .get(c)
+                    .is_some_and(|a| a.iter().any(|x| x == target))
         };
         self.concrete(target)
             .iter()
             .filter(|d| {
                 !self.ancestors.get(*d).is_some_and(|chain| {
-                    chain.iter().any(|a| closed_classes.contains(a) && below_target(a))
+                    chain
+                        .iter()
+                        .any(|a| closed_classes.contains(a) && below_target(a))
                 })
             })
             .cloned()
@@ -361,8 +379,12 @@ impl Resolver {
     fn any_classes(&self, iris: &[String], prefixes: &HashMap<String, String>) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
         for iri in iris {
-            let Some((prefix, local)) = iri.split_once(':') else { continue };
-            let Some(ns) = prefixes.get(prefix) else { continue };
+            let Some((prefix, local)) = iri.split_once(':') else {
+                continue;
+            };
+            let Some(ns) = prefixes.get(prefix) else {
+                continue;
+            };
             if let Some(q) = self.any_family.get(&(ns.clone(), local.to_string())) {
                 match self.any_concrete.get(q) {
                     Some(c) if !c.is_empty() => out.extend(c.iter().cloned()),
@@ -394,7 +416,11 @@ fn value_key(c: &ConstraintInfo, v: &str, prefixes: &HashMap<String, String>) ->
         .get(LITERALS)
         .and_then(|l| l.as_list())
         .is_some_and(|l| l.iter().any(|x| x == v));
-    if literal { v.to_string() } else { iri_key(v, prefixes) }
+    if literal {
+        v.to_string()
+    } else {
+        iri_key(v, prefixes)
+    }
 }
 
 /// An IRI the way the decoder stores an `rdf:resource` (its
@@ -443,8 +469,13 @@ pub fn resolve_shapes(
         let profiles = match profiles_of.get(&fr.file_name) {
             Some(p) if !p.is_empty() => p.clone(),
             _ => {
-                collector.push("", &fr.file_name, "file", "",
-                    "not imported by any profile manifest");
+                collector.push(
+                    "",
+                    &fr.file_name,
+                    "file",
+                    "",
+                    "not imported by any profile manifest",
+                );
                 continue;
             }
         };
@@ -458,7 +489,15 @@ pub fn resolve_shapes(
             .filter_map(|t| r.class(&t.value, &fr.prefixes).cloned())
             .collect();
         for shape in &fr.shapes {
-            for def in resolve_shape(shape, fr, &profiles, &r, &closed_classes, collector, &mut stats) {
+            for def in resolve_shape(
+                shape,
+                fr,
+                &profiles,
+                &r,
+                &closed_classes,
+                collector,
+                &mut stats,
+            ) {
                 stats.shapes += 1;
                 out.push(def);
             }
@@ -487,8 +526,13 @@ fn resolve_shape(
                 Some(q) => {
                     let concrete = r.targets_of(q);
                     if concrete.is_empty() {
-                        collector.push(&t.value, "", "sh:targetClass", &shape.name,
-                            "class has no concrete subclass in this family");
+                        collector.push(
+                            &t.value,
+                            "",
+                            "sh:targetClass",
+                            &shape.name,
+                            "class has no concrete subclass in this family",
+                        );
                         continue;
                     }
                     target_classes.push(q.clone());
@@ -506,8 +550,13 @@ fn resolve_shape(
                     // were skipped while CGMES structs dropped the NC attribute
                     // they constrain. Elements now keep it, so they could run;
                     // enabling them is a behaviour change left for later.
-                    collector.push(&t.value, "", "sh:targetClass", &shape.name,
-                        "target class is not in this family's schema (cross-family shape)");
+                    collector.push(
+                        &t.value,
+                        "",
+                        "sh:targetClass",
+                        &shape.name,
+                        "target class is not in this family's schema (cross-family shape)",
+                    );
                     continue;
                 }
             },
@@ -516,8 +565,13 @@ fn resolve_shape(
                 closed_targets.push(Target::SubjectsOf(field_key(&t.value).to_string()));
             }
             other => {
-                collector.push(&t.value, "", other, &shape.name,
-                    "unsupported SHACL target mechanism");
+                collector.push(
+                    &t.value,
+                    "",
+                    other,
+                    &shape.name,
+                    "unsupported SHACL target mechanism",
+                );
             }
         }
     }
@@ -598,7 +652,13 @@ fn resolve_prop(
     let path = match resolve_path(&prop.path) {
         Ok(p) => p,
         Err(reason) => {
-            collector.push(class_label, &prop.path.join(" / "), "sh:path", &prop.name, reason);
+            collector.push(
+                class_label,
+                &prop.path.join(" / "),
+                "sh:path",
+                &prop.name,
+                reason,
+            );
             return None;
         }
     };
@@ -620,8 +680,16 @@ fn resolve_prop(
         match resolve_constraint(c, r, &fr.prefixes, is_ref_type) {
             Some(constraint) => checks.push(Check {
                 constraint,
-                rule_id: if c.rule_id.is_empty() { prop.id.clone() } else { c.rule_id.clone() },
-                name: if c.name.is_empty() { prop.name.clone() } else { c.name.clone() },
+                rule_id: if c.rule_id.is_empty() {
+                    prop.id.clone()
+                } else {
+                    c.rule_id.clone()
+                },
+                name: if c.name.is_empty() {
+                    prop.name.clone()
+                } else {
+                    c.name.clone()
+                },
                 message: c.message.clone(),
                 description: if c.description.is_empty() {
                     prop.description.clone()
@@ -635,8 +703,13 @@ fn resolve_prop(
                 },
             }),
             None => {
-                collector.push(class_label, seg, &c.component, &c.name,
-                    "constraint component not supported for bag families");
+                collector.push(
+                    class_label,
+                    seg,
+                    &c.component,
+                    &c.name,
+                    "constraint component not supported for bag families",
+                );
             }
         }
     }
@@ -668,7 +741,7 @@ fn resolve_path(segs: &[String]) -> Result<Path, &'static str> {
                     "rdf:type" if last => Step::Type,
                     "rdf:type" => return Err("rdf:type before the end of a sequence path"),
                     s if s.starts_with('|') => {
-                        return Err("alternative path inside a sequence path")
+                        return Err("alternative path inside a sequence path");
                     }
                     s => match s.strip_prefix('^') {
                         Some(inv) => Step::Inverse(field_key(inv).to_string()),
@@ -706,7 +779,11 @@ fn resolve_logic(
         collector.push(class_label, "", &c.component, &shape.name, reason);
         None
     };
-    if c.payload.get(UNSUPPORTED).and_then(|v| v.as_list()).is_some_and(|u| !u.is_empty()) {
+    if c.payload
+        .get(UNSUPPORTED)
+        .and_then(|v| v.as_list())
+        .is_some_and(|u| !u.is_empty())
+    {
         return skip("logical branch uses a construct the importer does not represent");
     }
     let Some(raw) = c.payload.get("branches").and_then(|v| v.as_shapes()) else {
@@ -734,7 +811,8 @@ fn resolve_logic(
             {
                 continue;
             }
-            let Some(constraint) = resolve_constraint(bc, r, &fr.prefixes, path.yields_types()) else {
+            let Some(constraint) = resolve_constraint(bc, r, &fr.prefixes, path.yields_types())
+            else {
                 return skip("logical branch constraint not supported for bag families");
             };
             let check = Check {
@@ -747,10 +825,16 @@ fn resolve_logic(
             };
             match props.iter_mut().find(|p| p.path == path) {
                 Some(p) => p.checks.push(check),
-                None => props.push(PropShape { path, checks: vec![check] }),
+                None => props.push(PropShape {
+                    path,
+                    checks: vec![check],
+                }),
             }
         }
-        branches.push(Branch { props, negate: negated.contains(&bi) });
+        branches.push(Branch {
+            props,
+            negate: negated.contains(&bi),
+        });
     }
     Some(Logic {
         op,
@@ -759,7 +843,11 @@ fn resolve_logic(
         name: c.name.clone(),
         message: c.message.clone(),
         description: c.description.clone(),
-        severity: if c.severity.is_empty() { "sh:Violation".to_string() } else { c.severity.clone() },
+        severity: if c.severity.is_empty() {
+            "sh:Violation".to_string()
+        } else {
+            c.severity.clone()
+        },
     })
 }
 
@@ -838,7 +926,9 @@ fn resolve_constraint(
         }
         "sh:DatatypeConstraintComponent" => {
             let dt = c.payload.get("datatype")?.as_str()?;
-            Some(Constraint::Datatype(field_key(dt.trim_end_matches('>')).to_string()))
+            Some(Constraint::Datatype(
+                field_key(dt.trim_end_matches('>')).to_string(),
+            ))
         }
         "sh:NodeKindConstraintComponent" => {
             let kind = match c.payload.get("nodeKind")?.as_str()? {
@@ -870,11 +960,19 @@ fn resolve_constraint(
             let inner = c.payload.get("shape")?.as_shapes()?.first()?;
             let [ic] = inner.as_slice() else { return None };
             let allowed: Vec<String> = match ic.component.as_str() {
-                "sh:InConstraintComponent" => {
-                    ic.payload.get("in")?.as_list()?.iter().map(|v| value_key(ic, v, prefixes)).collect()
-                }
+                "sh:InConstraintComponent" => ic
+                    .payload
+                    .get("in")?
+                    .as_list()?
+                    .iter()
+                    .map(|v| value_key(ic, v, prefixes))
+                    .collect(),
                 "sh:HasValueConstraintComponent" => {
-                    vec![value_key(ic, ic.payload.get("hasValue")?.as_str()?, prefixes)]
+                    vec![value_key(
+                        ic,
+                        ic.payload.get("hasValue")?.as_str()?,
+                        prefixes,
+                    )]
                 }
                 _ => return None,
             };
@@ -887,7 +985,9 @@ fn resolve_constraint(
         }
         "sh:InConstraintComponent" => {
             let values = c.payload.get("in")?.as_list()?;
-            Some(Constraint::In(values.iter().map(|v| value_key(c, v, prefixes)).collect()))
+            Some(Constraint::In(
+                values.iter().map(|v| value_key(c, v, prefixes)).collect(),
+            ))
         }
         "sh:HasValueConstraintComponent" => {
             let v = c.payload.get("hasValue")?.as_str()?;
@@ -896,10 +996,18 @@ fn resolve_constraint(
         "sh:MaxLengthConstraintComponent" => Some(Constraint::MaxLength(int("maxLength")? as u32)),
         "sh:MinLengthConstraintComponent" => Some(Constraint::MinLength(int("minLength")? as u32)),
         "sh:LengthConstraintComponent" => Some(Constraint::Length(int("length")? as u32)),
-        "sh:MinInclusiveConstraintComponent" => Some(Constraint::MinInclusive(float("minInclusive")?)),
-        "sh:MaxInclusiveConstraintComponent" => Some(Constraint::MaxInclusive(float("maxInclusive")?)),
-        "sh:MinExclusiveConstraintComponent" => Some(Constraint::MinExclusive(float("minExclusive")?)),
-        "sh:MaxExclusiveConstraintComponent" => Some(Constraint::MaxExclusive(float("maxExclusive")?)),
+        "sh:MinInclusiveConstraintComponent" => {
+            Some(Constraint::MinInclusive(float("minInclusive")?))
+        }
+        "sh:MaxInclusiveConstraintComponent" => {
+            Some(Constraint::MaxInclusive(float("maxInclusive")?))
+        }
+        "sh:MinExclusiveConstraintComponent" => {
+            Some(Constraint::MinExclusive(float("minExclusive")?))
+        }
+        "sh:MaxExclusiveConstraintComponent" => {
+            Some(Constraint::MaxExclusive(float("maxExclusive")?))
+        }
         // The other property is read from the same element, so it resolves to
         // a field key exactly as the path does.
         "sh:LessThanConstraintComponent" => {
@@ -955,7 +1063,9 @@ pub fn load_shape_table(
         Some(manifest) => {
             let mut m: HashMap<String, Vec<String>> = HashMap::new();
             for (stem, tag) in manifest {
-                m.entry((*stem).to_string()).or_default().push((*tag).to_string());
+                m.entry((*stem).to_string())
+                    .or_default()
+                    .push((*tag).to_string());
             }
             m
         }
@@ -989,7 +1099,9 @@ pub fn load_shape_table(
     // Profile identity — which IRI a dataset declares, which code that is —
     // comes from the PROF descriptors for every family. A dataset names them in
     // `dcterms:conformsTo` (NC) or `md:Model.profile` (CGMES).
-    let prof_dir = dir.parent().map_or_else(|| dir.join("PROF"), |p| p.join("PROF"));
+    let prof_dir = dir
+        .parent()
+        .map_or_else(|| dir.join("PROF"), |p| p.join("PROF"));
     let index = crate::import::import_profile_index(&prof_dir)?;
     let mut profile_iris: Vec<(String, String)> = index
         .iter()
@@ -999,7 +1111,12 @@ pub fn load_shape_table(
     let mut profiles: Vec<String> = index.iter().map(|p| p.keyword.clone()).collect();
     profiles.sort();
 
-    Ok(ShapeTable { shapes, profile_iris, profiles, stats })
+    Ok(ShapeTable {
+        shapes,
+        profile_iris,
+        profiles,
+        stats,
+    })
 }
 
 /// The profile code given to files only the combined manifest imports.
@@ -1039,7 +1156,8 @@ pub fn profile_files(
         }
     }
     for file in merged_only {
-        map.entry(file).or_insert_with(|| vec![MERGED_PROFILE.to_string()]);
+        map.entry(file)
+            .or_insert_with(|| vec![MERGED_PROFILE.to_string()]);
     }
     for v in map.values_mut() {
         v.sort();

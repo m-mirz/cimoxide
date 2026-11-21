@@ -1,5 +1,5 @@
-use std::path::Path;
 use cimmodel::CimDataset;
+use std::path::Path;
 
 #[test]
 fn decode_small_file() {
@@ -18,15 +18,27 @@ fn decode_eq_file_fields() {
     let ds = CimDataset::decode_file(path).expect("decode failed");
 
     // BaseVoltage.nominalVoltage (f64 field) should be decoded
-    let bv = ds.entries.get("BV.110").expect("BaseVoltage BV.110 not found");
+    let bv = ds
+        .entries
+        .get("BV.110")
+        .expect("BaseVoltage BV.110 not found");
     assert_eq!(bv.type_name(), "BaseVoltage");
     // Check raw block has the field
-    assert!(bv.fields().contains_key("BaseVoltage.nominalVoltage"), "missing nominalVoltage field");
+    assert!(
+        bv.fields().contains_key("BaseVoltage.nominalVoltage"),
+        "missing nominalVoltage field"
+    );
 
     // VoltageLevel → BaseVoltage (MridRef) should be decoded
-    let vl = ds.entries.get("VL.110").expect("VoltageLevel VL.110 not found");
+    let vl = ds
+        .entries
+        .get("VL.110")
+        .expect("VoltageLevel VL.110 not found");
     assert_eq!(vl.type_name(), "VoltageLevel");
-    assert!(vl.fields().contains_key("VoltageLevel.BaseVoltage"), "missing BaseVoltage ref");
+    assert!(
+        vl.fields().contains_key("VoltageLevel.BaseVoltage"),
+        "missing BaseVoltage ref"
+    );
 }
 
 #[test]
@@ -55,7 +67,10 @@ fn repeated_text_field_keeps_all_values() {
     let fm_mrid = &ds.by_type["FullModel"][0];
     let fm = &ds.entries[fm_mrid];
     let Some(cimmodel::FieldValue::TextList(profiles)) = fm.get("Model.profile") else {
-        panic!("both md:Model.profile values must survive decoding, got {:?}", fm.get("Model.profile"));
+        panic!(
+            "both md:Model.profile values must survive decoding, got {:?}",
+            fm.get("Model.profile")
+        );
     };
     assert_eq!(
         profiles,

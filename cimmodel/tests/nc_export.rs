@@ -88,7 +88,12 @@ fn an_export_decodes_to_the_same_dataset() {
 fn elements_of_another_profile_are_left_out() {
     let xml = export(CO, "AE");
     assert!(!xml.contains("Contingency rdf:"), "{xml}");
-    assert!(xml.contains(r#"<dcterms:conformsTo rdf:resource="https://ap.cim4.eu/AssessedElement/2.4"/>"#), "{xml}");
+    assert!(
+        xml.contains(
+            r#"<dcterms:conformsTo rdf:resource="https://ap.cim4.eu/AssessedElement/2.4"/>"#
+        ),
+        "{xml}"
+    );
 }
 
 /// A reference into another vocabulary is written back in it: the decoder
@@ -104,7 +109,10 @@ fn a_property_reference_keeps_its_namespace() {
 </rdf:RDF>"#
     );
     let out = export(&xml, "RA");
-    assert!(out.contains(r#"rdf:resource="http://iec.ch/TC57/CIM100#Switch.open""#), "{out}");
+    assert!(
+        out.contains(r#"rdf:resource="http://iec.ch/TC57/CIM100#Switch.open""#),
+        "{out}"
+    );
 }
 
 /// CGMES content in the dataset belongs to the CGMES profiles.

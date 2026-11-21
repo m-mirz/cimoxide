@@ -15,7 +15,7 @@
 use std::error::Error;
 use std::fmt::Write;
 
-use crate::base::{foreign_class, ClassDef, Element, FastMap, FastSet, FieldValue, Value};
+use crate::base::{ClassDef, Element, FastMap, FastSet, FieldValue, Value, foreign_class};
 use crate::convert_nc::Prefixes;
 use crate::decode::{CimDataset, FieldForm};
 use crate::registry::type_registry;
@@ -101,10 +101,13 @@ impl Differences {
                 (Some((b, foreign)), Some((a, _))) => {
                     let gone = without(b, a);
                     let came = without(a, b);
-                    let types = |e: &Element| e.types().map(|c| c.qualified).collect::<FastSet<_>>();
+                    let types =
+                        |e: &Element| e.types().map(|c| c.qualified).collect::<FastSet<_>>();
                     let (tb, ta) = (types(b), types(a));
-                    let lost: Vec<&'static ClassDef> = b.types().filter(|c| !ta.contains(c.qualified)).collect();
-                    let gained: Vec<&'static ClassDef> = a.types().filter(|c| !tb.contains(c.qualified)).collect();
+                    let lost: Vec<&'static ClassDef> =
+                        b.types().filter(|c| !ta.contains(c.qualified)).collect();
+                    let gained: Vec<&'static ClassDef> =
+                        a.types().filter(|c| !tb.contains(c.qualified)).collect();
                     if !gone.is_empty() || !lost.is_empty() {
                         put(&mut d.reverse, statements(id, &lost, gone), foreign);
                         named(&mut d.reverse, before, id, b);
@@ -134,7 +137,8 @@ fn lookup<'a>(ds: &'a CimDataset, id: &str) -> Option<(&'a Element, bool)> {
 
 /// The key a CIM object has for identifier `id`: its text after the last `#`.
 fn fragment(id: &str) -> &str {
-    id.rsplit_once('#').map_or(id, |(_, f)| if f.is_empty() { id } else { f })
+    id.rsplit_once('#')
+        .map_or(id, |(_, f)| if f.is_empty() { id } else { f })
 }
 
 /// Into a block: a typed CIM object among its objects, anything else among
@@ -167,7 +171,11 @@ fn without(a: &Element, b: &Element) -> Vec<(&'static str, FieldValue)> {
 /// `values`, as a typed element of the first type (the rest beside it), or an
 /// `rdf:Description` without one; written `rdf:about`, as they describe an
 /// object defined elsewhere.
-fn statements(id: &str, types: &[&'static ClassDef], values: Vec<(&'static str, FieldValue)>) -> Element {
+fn statements(
+    id: &str,
+    types: &[&'static ClassDef],
+    values: Vec<(&'static str, FieldValue)>,
+) -> Element {
     let mut e = Element::new(foreign_class(RDF, "Description"), id.to_string());
     e.set_types(types);
     e.mark_described();
@@ -181,14 +189,29 @@ fn statements(id: &str, types: &[&'static ClassDef], values: Vec<(&'static str, 
 /// `rdf:Description`'s keys being declared by no class of its: as `like`
 /// (the object they are about, in `from`) has them, read or declared.
 fn named(block: &mut CimDataset, from: &CimDataset, id: &str, like: &Element) {
-    let Some(e) = block.foreign.get(id).filter(|e| untyped(e)) else { return };
+    let Some(e) = block.foreign.get(id).filter(|e| untyped(e)) else {
+        return;
+    };
     let reg = type_registry();
     let class = e.class().qualified;
     for &key in e.fields().keys() {
-        let form = from.field_forms.get(&(like.type_name(), key)).copied().unwrap_or_default();
-        let ns = form.ns.or_else(|| reg.attr_of(like.class(), key).map(|a| a.ns));
+        let form = from
+            .field_forms
+            .get(&(like.type_name(), key))
+            .copied()
+            .unwrap_or_default();
+        let ns = form
+            .ns
+            .or_else(|| reg.attr_of(like.class(), key).map(|a| a.ns));
         let resource_ns = form.resource_ns;
-        block.field_forms.insert((class, key), FieldForm { ns, datatype: form.datatype, resource_ns });
+        block.field_forms.insert(
+            (class, key),
+            FieldForm {
+                ns,
+                datatype: form.datatype,
+                resource_ns,
+            },
+        );
     }
 }
 
@@ -196,7 +219,12 @@ fn named(block: &mut CimDataset, from: &CimDataset, id: &str, like: &Element) {
 /// the header in namespace `ns` ([`DM`] or [`DCATCIM`]) holding its
 /// statements (`rdf:parseType="Statements"`), written as a document's objects
 /// are.
-pub(crate) fn write_blocks(out: &mut String, prefixes: &mut Prefixes, d: &Differences, ns: &'static str) -> Result<(), Box<dyn Error>> {
+pub(crate) fn write_blocks(
+    out: &mut String,
+    prefixes: &mut Prefixes,
+    d: &Differences,
+    ns: &'static str,
+) -> Result<(), Box<dyn Error>> {
     let nc = ns == DCATCIM;
     let prefix = prefixes.of(ns);
     for &which in &d.blocks {
@@ -213,7 +241,10 @@ pub(crate) fn write_blocks(out: &mut String, prefixes: &mut Prefixes, d: &Differ
         if inner.is_empty() {
             write!(out, "\n    <{prefix}:{name} rdf:parseType=\"Statements\"/>")?;
         } else {
-            write!(out, "\n    <{prefix}:{name} rdf:parseType=\"Statements\">\n{inner}    </{prefix}:{name}>")?;
+            write!(
+                out,
+                "\n    <{prefix}:{name} rdf:parseType=\"Statements\">\n{inner}    </{prefix}:{name}>"
+            )?;
         }
     }
     Ok(())
@@ -295,7 +326,11 @@ impl CimDataset {
     pub fn apply(&mut self, d: &Differences) -> Applied {
         let mut applied = Applied::default();
         let miss = |applied: &mut Applied, block, subject: &str, statement| {
-            applied.unmatched.push(Unmatched { block, subject: subject.to_string(), statement });
+            applied.unmatched.push(Unmatched {
+                block,
+                subject: subject.to_string(),
+                statement,
+            });
         };
 
         // Preconditions hold in the model as it is.
@@ -304,14 +339,24 @@ impl CimDataset {
             if !untyped(e) {
                 for t in e.types() {
                     if !held.is_some_and(|o| o.types().any(|c| c.qualified == t.qualified)) {
-                        miss(&mut applied, Block::Preconditions, id, Statement::Type(t.qualified));
+                        miss(
+                            &mut applied,
+                            Block::Preconditions,
+                            id,
+                            Statement::Type(t.qualified),
+                        );
                     }
                 }
             }
             for (key, fv) in e.fields() {
                 for v in fv.values() {
                     if !held.is_some_and(|o| o.has_value(key, &v.owned())) {
-                        miss(&mut applied, Block::Preconditions, id, Statement::Value(key, v.owned()));
+                        miss(
+                            &mut applied,
+                            Block::Preconditions,
+                            id,
+                            Statement::Value(key, v.owned()),
+                        );
                     }
                 }
             }
@@ -335,7 +380,12 @@ impl CimDataset {
         let mut types: FastMap<&str, Vec<&'static ClassDef>> = FastMap::default();
         for &id in &touched {
             let found = lookup(self, id).map(|(e, f)| (e.clone(), f));
-            types.insert(id, found.as_ref().map_or_else(Vec::new, |(e, _)| e.types().collect()));
+            types.insert(
+                id,
+                found
+                    .as_ref()
+                    .map_or_else(Vec::new, |(e, _)| e.types().collect()),
+            );
             was.insert(id, found);
         }
 
@@ -344,12 +394,22 @@ impl CimDataset {
             let Some(object) = self.object_mut(id) else {
                 if !untyped(e) {
                     for t in e.types() {
-                        miss(&mut applied, Block::Reverse, id, Statement::Type(t.qualified));
+                        miss(
+                            &mut applied,
+                            Block::Reverse,
+                            id,
+                            Statement::Type(t.qualified),
+                        );
                     }
                 }
                 for (key, fv) in e.fields() {
                     for v in fv.values() {
-                        miss(&mut applied, Block::Reverse, id, Statement::Value(key, v.owned()));
+                        miss(
+                            &mut applied,
+                            Block::Reverse,
+                            id,
+                            Statement::Value(key, v.owned()),
+                        );
                     }
                 }
                 continue;
@@ -380,7 +440,11 @@ impl CimDataset {
 
         for (id, e) in sorted(&d.forward) {
             let id = id.as_str();
-            let stated: Vec<&'static ClassDef> = if untyped(e) { Vec::new() } else { e.types().collect() };
+            let stated: Vec<&'static ClassDef> = if untyped(e) {
+                Vec::new()
+            } else {
+                e.types().collect()
+            };
             let held = types.get_mut(id).expect("touched");
             for t in &stated {
                 if !held.iter().any(|c| c.qualified == t.qualified) {
@@ -392,7 +456,12 @@ impl CimDataset {
                     // Values for an object that neither is nor is given a type.
                     for (key, fv) in e.fields() {
                         for v in fv.values() {
-                            miss(&mut applied, Block::Forward, id, Statement::Value(key, v.owned()));
+                            miss(
+                                &mut applied,
+                                Block::Forward,
+                                id,
+                                Statement::Value(key, v.owned()),
+                            );
                         }
                     }
                     continue;
@@ -418,14 +487,24 @@ impl CimDataset {
         // What became of each object.
         for &id in &touched {
             let now_types = &types[id];
-            let Some((key, foreign)) = self.key_of(id) else { continue };
+            let Some((key, foreign)) = self.key_of(id) else {
+                continue;
+            };
             match &was[id] {
                 None => applied.added.push(key),
                 Some((before, _)) => {
-                    let object = if foreign { &self.foreign[&key] } else { &self.entries[&key] };
+                    let object = if foreign {
+                        &self.foreign[&key]
+                    } else {
+                        &self.entries[&key]
+                    };
                     if now_types.is_empty() {
                         if object.fields().is_empty() {
-                            let removed = if foreign { self.foreign.remove(&key) } else { self.remove(&key) };
+                            let removed = if foreign {
+                                self.foreign.remove(&key)
+                            } else {
+                                self.remove(&key)
+                            };
                             applied.removed.extend(removed.map(|_| before.clone()));
                         } else {
                             applied.untyped.push(key.clone());
@@ -436,7 +515,11 @@ impl CimDataset {
                         continue;
                     }
                     let mut object = object.clone();
-                    if !now_types.iter().map(|c| c.qualified).eq(object.types().map(|c| c.qualified)) {
+                    if !now_types
+                        .iter()
+                        .map(|c| c.qualified)
+                        .eq(object.types().map(|c| c.qualified))
+                    {
                         object.set_types(now_types);
                     }
                     if let Some(c) = changes(&key, before, &object) {
@@ -458,7 +541,11 @@ impl CimDataset {
     /// The object identifier `id` names, to change.
     fn object_mut(&mut self, id: &str) -> Option<&mut Element> {
         let (key, foreign) = self.key_of(id)?;
-        if foreign { self.foreign.get_mut(&key) } else { self.entries.get_mut(&key) }
+        if foreign {
+            self.foreign.get_mut(&key)
+        } else {
+            self.entries.get_mut(&key)
+        }
     }
 
     /// The key identifier `id`'s object has here, and whether it is foreign.
@@ -478,8 +565,16 @@ impl CimDataset {
 /// How `after` differs from `before`, the same object: its class, and each
 /// field whose values differ. `None` where nothing does.
 fn changes(id: &str, before: &Element, after: &Element) -> Option<Changed> {
-    let retyped = (before.class().qualified != after.class().qualified).then(|| (before.class().qualified, after.class().qualified));
-    let mut keys: Vec<&'static str> = before.fields().keys().chain(after.fields().keys()).copied().collect::<FastSet<_>>().into_iter().collect();
+    let retyped = (before.class().qualified != after.class().qualified)
+        .then(|| (before.class().qualified, after.class().qualified));
+    let mut keys: Vec<&'static str> = before
+        .fields()
+        .keys()
+        .chain(after.fields().keys())
+        .copied()
+        .collect::<FastSet<_>>()
+        .into_iter()
+        .collect();
     keys.sort_unstable();
     let same = |a: Option<&FieldValue>, b: Option<&FieldValue>| match (a, b) {
         (None, None) => true,
@@ -495,7 +590,15 @@ fn changes(id: &str, before: &Element, after: &Element) -> Option<Changed> {
     let fields: Vec<FieldChange> = keys
         .into_iter()
         .filter(|k| !same(before.fields().get(k), after.fields().get(k)))
-        .map(|k| FieldChange { key: k, before: before.fields().get(k).cloned(), after: after.fields().get(k).cloned() })
+        .map(|k| FieldChange {
+            key: k,
+            before: before.fields().get(k).cloned(),
+            after: after.fields().get(k).cloned(),
+        })
         .collect();
-    (retyped.is_some() || !fields.is_empty()).then(|| Changed { id: id.to_string(), retyped, fields })
+    (retyped.is_some() || !fields.is_empty()).then(|| Changed {
+        id: id.to_string(),
+        retyped,
+        fields,
+    })
 }

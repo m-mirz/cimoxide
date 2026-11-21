@@ -11,7 +11,7 @@
 
 pub mod cgmes_manifest;
 pub mod model;
-pub mod simplify;
 pub mod resolve;
+pub mod simplify;
 pub mod skip;
 pub mod ttl_import;

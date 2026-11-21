@@ -55,7 +55,10 @@ pub fn resolve_profiles(
     family: &'static str,
     generated_iris: &'static [(&'static str, &'static str)],
     generated_codes: &'static [&'static str],
-) -> (&'static [(&'static str, &'static str)], &'static [&'static str]) {
+) -> (
+    &'static [(&'static str, &'static str)],
+    &'static [&'static str],
+) {
     #[cfg(feature = "dynamic-shapes")]
     {
         dynamic::resolve_profiles(family, generated_iris, generated_codes)
@@ -68,7 +71,7 @@ pub fn resolve_profiles(
 }
 
 #[cfg(feature = "dynamic-shapes")]
-pub use dynamic::{family_of_dir, intern_shapes, load_from, load_table, ShapeError, SHACL_DIR_ENV};
+pub use dynamic::{SHACL_DIR_ENV, ShapeError, family_of_dir, intern_shapes, load_from, load_table};
 
 #[cfg(feature = "dynamic-shapes")]
 mod dynamic {
@@ -113,7 +116,9 @@ mod dynamic {
                 ),
                 Self::AlreadyLoaded => write!(f, "shapes are already loaded for this family"),
                 Self::UnknownFamily(id) => write!(f, "unknown family: {id}"),
-                Self::Schema(e) => write!(f, "cannot read the schema the shapes resolve against: {e}"),
+                Self::Schema(e) => {
+                    write!(f, "cannot read the schema the shapes resolve against: {e}")
+                }
                 Self::Parse(e) => write!(f, "{e}"),
             }
         }
@@ -186,7 +191,8 @@ mod dynamic {
         }
         family::FAMILIES.iter().copied().find(|f| {
             f.shacl_manifest.is_some_and(|m| {
-                m.iter().any(|(stem, _)| dir.join(format!("{stem}.ttl")).is_file())
+                m.iter()
+                    .any(|(stem, _)| dir.join(format!("{stem}.ttl")).is_file())
             })
         })
     }
@@ -202,7 +208,10 @@ mod dynamic {
         family_id: &'static str,
         generated_iris: &'static [(&'static str, &'static str)],
         generated_codes: &'static [&'static str],
-    ) -> (&'static [(&'static str, &'static str)], &'static [&'static str]) {
+    ) -> (
+        &'static [(&'static str, &'static str)],
+        &'static [&'static str],
+    ) {
         env_loaded(family_id).map_or((generated_iris, generated_codes), |l| (l.1, l.2))
     }
 
@@ -235,7 +244,8 @@ mod dynamic {
                     );
                 }
             }
-            dirs.into_iter().find(|d| family_of_dir(d).is_some_and(|f| f.id == family_id))
+            dirs.into_iter()
+                .find(|d| family_of_dir(d).is_some_and(|f| f.id == family_id))
         });
         let loaded = match (dir, bag_family(family_id)) {
             (Some(dir), Ok(family)) => match load(family, &dir) {
@@ -289,8 +299,7 @@ mod dynamic {
             .iter()
             .map(|(iri, code)| (interner.intern(iri), interner.intern(code)))
             .collect();
-        let codes: Vec<&'static str> =
-            table.profiles.iter().map(|c| interner.intern(c)).collect();
+        let codes: Vec<&'static str> = table.profiles.iter().map(|c| interner.intern(c)).collect();
 
         Ok((Vec::leak(shapes), Vec::leak(iris), Vec::leak(codes)))
     }
@@ -309,7 +318,10 @@ mod dynamic {
         family: &'static Family,
         shacl_dir: &Path,
     ) -> Result<
-        (cimschema::model::CimSpecification, Vec<cimschema::model::CimSpecification>),
+        (
+            cimschema::model::CimSpecification,
+            Vec<cimschema::model::CimSpecification>,
+        ),
         ShapeError,
     > {
         let import = |f: &'static Family, pattern: &str| {
@@ -364,29 +376,35 @@ mod dynamic {
         if shacl_dir
             .parent()
             .and_then(|p| p.file_name())
-            .zip(Path::new(f.default_schema).parent().and_then(Path::parent).and_then(|p| p.file_name()))
+            .zip(
+                Path::new(f.default_schema)
+                    .parent()
+                    .and_then(Path::parent)
+                    .and_then(|p| p.file_name()),
+            )
             .is_some_and(|(a, b)| a == b)
-            && let Some(dir) = std::env::var_os(cimmodel::schema_source::RDFS_DIR_ENV) {
-                return PathBuf::from(dir)
-                    .join(file_name(f.default_schema))
-                    .to_string_lossy()
-                    .into_owned();
-            }
+            && let Some(dir) = std::env::var_os(cimmodel::schema_source::RDFS_DIR_ENV)
+        {
+            return PathBuf::from(dir)
+                .join(file_name(f.default_schema))
+                .to_string_lossy()
+                .into_owned();
+        }
 
         // `application-profiles-library/CGMES/RDFS/<glob>` → `<root>/CGMES/RDFS/<glob>`.
-        let tail: Option<PathBuf> = Path::new(f.default_schema)
-            .components()
-            .skip(1)
-            .fold(None::<PathBuf>, |acc, c| {
-                Some(acc.map_or_else(|| PathBuf::from(c.as_os_str()), |p| p.join(c.as_os_str())))
-            });
+        let tail: Option<PathBuf> =
+            Path::new(f.default_schema)
+                .components()
+                .skip(1)
+                .fold(None::<PathBuf>, |acc, c| {
+                    Some(
+                        acc.map_or_else(|| PathBuf::from(c.as_os_str()), |p| p.join(c.as_os_str())),
+                    )
+                });
         match (root, tail) {
             (Some(root), Some(tail)) => {
                 let candidate = root.join(tail);
-                if candidate
-                    .parent()
-                    .is_some_and(|p| p.is_dir())
-                {
+                if candidate.parent().is_some_and(|p| p.is_dir()) {
                     return candidate.to_string_lossy().into_owned();
                 }
                 f.default_schema.to_string()
@@ -439,7 +457,10 @@ mod dynamic {
                     .map(|p| &*Box::leak(Box::new(prop(p, i))))
                     .collect::<Vec<_>>(),
             ),
-            closed: s.closed.as_ref().map(|c| &*Box::leak(Box::new(closed(c, i)))),
+            closed: s
+                .closed
+                .as_ref()
+                .map(|c| &*Box::leak(Box::new(closed(c, i)))),
             logic: Vec::leak(s.logic.iter().map(|l| logic(l, i)).collect::<Vec<_>>()),
             profiles: i.intern_all(&s.profiles),
             file: i.intern(&s.file),
@@ -521,9 +542,10 @@ mod dynamic {
             r::Constraint::LessThanOrEquals(f) => Constraint::LessThanOrEquals(i.intern(f)),
             r::Constraint::NotClass(v) => Constraint::NotClass(i.intern_all(v)),
             r::Constraint::Length(n) => Constraint::Length(*n),
-            r::Constraint::QualifiedIn { allowed, min } => {
-                Constraint::QualifiedIn { allowed: i.intern_all(allowed), min: *min }
-            }
+            r::Constraint::QualifiedIn { allowed, min } => Constraint::QualifiedIn {
+                allowed: i.intern_all(allowed),
+                min: *min,
+            },
         }
     }
 

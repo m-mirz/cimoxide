@@ -11,9 +11,9 @@
 //! is present and parses as a number.
 
 use cimmodel::CimDataset;
-use cimvalidation::bag::{validate_shapes, Source};
-use cimvalidation::shapes::{Check, Constraint, Path, PropShape, ShapeDef, Target};
 use cimvalidation::Violation;
+use cimvalidation::bag::{Source, validate_shapes};
+use cimvalidation::shapes::{Check, Constraint, Path, PropShape, ShapeDef, Target};
 
 const UNIT: &str = "44444444-4444-4444-4444-444444444444";
 
@@ -72,15 +72,24 @@ static MIN_P: PropShape = PropShape {
     path: Path::Forward("GeneratingUnit.minOperatingP"),
     checks: &[
         check(Constraint::MinInclusive(0.0), "minOperatingP-minInclusive"),
-        check(Constraint::LessThanOrEquals("GeneratingUnit.maxOperatingP"), "minOperatingP-lessThanOrEquals"),
+        check(
+            Constraint::LessThanOrEquals("GeneratingUnit.maxOperatingP"),
+            "minOperatingP-lessThanOrEquals",
+        ),
     ],
 };
 
 static MAX_P: PropShape = PropShape {
     path: Path::Forward("GeneratingUnit.maxOperatingP"),
     checks: &[
-        check(Constraint::MaxExclusive(2000.0), "maxOperatingP-maxExclusive"),
-        check(Constraint::LessThan("GeneratingUnit.nominalP"), "maxOperatingP-lessThan"),
+        check(
+            Constraint::MaxExclusive(2000.0),
+            "maxOperatingP-maxExclusive",
+        ),
+        check(
+            Constraint::LessThan("GeneratingUnit.nominalP"),
+            "maxOperatingP-lessThan",
+        ),
     ],
 };
 
@@ -131,15 +140,24 @@ fn a_value_below_the_minimum_is_flagged() {
 #[test]
 fn a_zero_fails_an_exclusive_minimum() {
     let v = run(&unit("0", "0", ""));
-    assert!(v.is_empty(), "nominalP absent: nothing to compare, got {v:#?}");
+    assert!(
+        v.is_empty(),
+        "nominalP absent: nothing to compare, got {v:#?}"
+    );
     let v = run(&unit("10", "90", "0"));
     // nominalP = 0 also makes maxOperatingP < nominalP false.
-    assert_eq!(names(&v), ["maxOperatingP-lessThan", "nominalP-minExclusive"]);
+    assert_eq!(
+        names(&v),
+        ["maxOperatingP-lessThan", "nominalP-minExclusive"]
+    );
 }
 
 #[test]
 fn less_than_or_equals_compares_two_fields_of_one_element() {
-    assert!(run(&unit("90", "90", "100")).is_empty(), "equal is allowed by lessThanOrEquals");
+    assert!(
+        run(&unit("90", "90", "100")).is_empty(),
+        "equal is allowed by lessThanOrEquals"
+    );
     let v = run(&unit("95", "90", "100"));
     assert_eq!(names(&v), ["minOperatingP-lessThanOrEquals"]);
 }
@@ -180,7 +198,10 @@ static BY_NAME: ShapeDef = ShapeDef {
 #[test]
 fn a_source_reads_only_its_own_family() {
     let ds = unit("10", "90", "100");
-    assert_eq!(names(&validate_shapes(&ds, Source::Cgmes, &[&BY_NAME])), ["name-maxLength"]);
+    assert_eq!(
+        names(&validate_shapes(&ds, Source::Cgmes, &[&BY_NAME])),
+        ["name-maxLength"]
+    );
     assert!(validate_shapes(&ds, Source::Nc, &[&BY_NAME]).is_empty());
     assert!(validate_shapes(&ds, Source::Nc, &[&SHAPE]).is_empty());
 }
@@ -189,7 +210,11 @@ fn a_source_reads_only_its_own_family() {
 fn cgmes_targets(rule: &str) -> Vec<&'static str> {
     let shape = cimvalidation::cgmes_shapes::SHAPES
         .iter()
-        .find(|s| s.props.iter().any(|p| p.checks.iter().any(|c| c.rule_id == rule)))
+        .find(|s| {
+            s.props
+                .iter()
+                .any(|p| p.checks.iter().any(|c| c.rule_id == rule))
+        })
         .unwrap_or_else(|| panic!("no CGMES shape checks {rule}"));
     shape
         .targets
@@ -207,7 +232,10 @@ fn cgmes_targets(rule: &str) -> Vec<&'static str> {
 /// `TapChangerControl`, a subclass of its target.
 #[test]
 fn a_concrete_target_class_does_not_reach_its_subclasses() {
-    assert_eq!(cgmes_targets("eq452:RegulatingControl-RegulatingEquipment"), ["RegulatingControl"]);
+    assert_eq!(
+        cgmes_targets("eq452:RegulatingControl-RegulatingEquipment"),
+        ["RegulatingControl"]
+    );
 }
 
 /// An abstract target has no instances of its own, so it still expands to its
@@ -218,6 +246,16 @@ fn an_abstract_target_class_expands_to_its_concrete_descendants() {
         .iter()
         .find(|s| s.targets.iter().any(|t| matches!(t, Target::Class(c) if c.contains(&"Analog") && c.contains(&"Discrete"))))
         .expect("no shape on abstract Measurement");
-    let classes: Vec<&str> = shape.targets.iter().flat_map(|t| match t { Target::Class(c) => c.to_vec(), _ => Vec::new() }).collect();
-    assert!(classes.contains(&"Discrete") && !classes.contains(&"Measurement"), "{classes:?}");
+    let classes: Vec<&str> = shape
+        .targets
+        .iter()
+        .flat_map(|t| match t {
+            Target::Class(c) => c.to_vec(),
+            _ => Vec::new(),
+        })
+        .collect();
+    assert!(
+        classes.contains(&"Discrete") && !classes.contains(&"Measurement"),
+        "{classes:?}"
+    );
 }

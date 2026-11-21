@@ -1,8 +1,8 @@
 pub mod violation;
 pub use violation::Violation;
 
-pub mod sparql;
 pub mod detect;
+pub mod sparql;
 pub use detect::{detect_config, detect_nc_profiles};
 
 use std::collections::HashSet;
@@ -33,9 +33,11 @@ mod par;
 // Elements of both families are property bags; each family's shapes are a
 // data table interpreted by `bag`.
 pub mod bag;
-pub mod shapes;
 pub mod shape_source;
+pub mod shapes;
+#[rustfmt::skip] // written by cimgen
 pub mod nc_shapes;
+#[rustfmt::skip] // written by cimgen
 pub mod nc_profiles;
 
 /// The NC shape table in force: loaded from SHACL if the `dynamic-shapes`
@@ -46,7 +48,10 @@ pub fn nc_shapes() -> &'static [shapes::ShapeDef] {
 }
 
 /// Profile IRI → short code, and every short code.
-pub type ProfileIndex = (&'static [(&'static str, &'static str)], &'static [&'static str]);
+pub type ProfileIndex = (
+    &'static [(&'static str, &'static str)],
+    &'static [&'static str],
+);
 
 /// The NC profile index in force. Loaded together with the shapes, since an
 /// index and a table from different releases would run the wrong rules.
@@ -101,7 +106,6 @@ pub fn validate_nc_merged(dataset: &cimmodel::CimDataset, cfg: &Config) -> Vec<V
 /// together.
 pub const MERGED_PROFILE: &str = "ALL";
 
-
 // ── CGMES shape table ──────────────────────────────────────────────────────
 //
 // CGMES runs through the same interpreter as NC, reading the typed elements'
@@ -109,7 +113,9 @@ pub const MERGED_PROFILE: &str = "ALL";
 // Its constraint files carry tags rather than profile codes — see
 // `cimschema::shacl::cgmes_manifest` — so one table holds the local,
 // not-solved, cross-profile and header rules apart.
+#[rustfmt::skip] // written by cimgen
 pub mod cgmes_shapes;
+#[rustfmt::skip] // written by cimgen
 pub mod cgmes_profiles;
 
 /// The CGMES shape table in force: loaded from SHACL if the `dynamic-shapes`
@@ -157,7 +163,11 @@ pub fn validate_header(dataset: &cimmodel::CimDataset, _cfg: &Config) -> Vec<Vio
 /// The SHACL half of [`validate_profile_local`] for one CGMES profile: its
 /// local rules. Without the hand-written `sparql` rules or the `cfg.profiles`
 /// filter.
-pub fn validate_profile_shacl(dataset: &cimmodel::CimDataset, profile: &str, _cfg: &Config) -> Vec<Violation> {
+pub fn validate_profile_shacl(
+    dataset: &cimmodel::CimDataset,
+    profile: &str,
+    _cfg: &Config,
+) -> Vec<Violation> {
     run_cgmes(dataset, cgmes_tagged(profile))
 }
 
@@ -190,7 +200,11 @@ pub fn validate_crossprofile_shacl(dataset: &cimmodel::CimDataset, cfg: &Config)
 pub fn cgmes_profile_index() -> ProfileIndex {
     static R: std::sync::OnceLock<ProfileIndex> = std::sync::OnceLock::new();
     *R.get_or_init(|| {
-        shape_source::resolve_profiles("cgmes", cgmes_profiles::PROFILE_IRIS, cgmes_profiles::PROFILES)
+        shape_source::resolve_profiles(
+            "cgmes",
+            cgmes_profiles::PROFILE_IRIS,
+            cgmes_profiles::PROFILES,
+        )
     })
 }
 
@@ -201,7 +215,6 @@ fn cimschema_cross_profiles() -> &'static [&'static str] {
     &["DL", "DY", "GL", "OP", "SV", "TP"]
 }
 
-
 /// Phase 1 — per-profile: run the local (non-crossprofile) SHACL rules and the SPARQL
 /// rules for one profile.
 ///
@@ -209,7 +222,11 @@ fn cimschema_cross_profiles() -> &'static [&'static str] {
 /// must reflect the full set of files, not just this file). If `cfg.profiles` is non-empty
 /// and does not include `profile`, returns an empty vec — this filter applies to both the
 /// SHACL and SPARQL checks.
-pub fn validate_profile_local(dataset: &cimmodel::CimDataset, profile: &str, cfg: &Config) -> Vec<Violation> {
+pub fn validate_profile_local(
+    dataset: &cimmodel::CimDataset,
+    profile: &str,
+    cfg: &Config,
+) -> Vec<Violation> {
     validate_profile_local_in(dataset, &[], profile, cfg)
 }
 
@@ -243,7 +260,6 @@ pub fn validate_profile_local_in(
     v
 }
 
-
 /// Phase 2 — crossprofile: run crossprofile SHACL + cross-profile SPARQL on the merged dataset.
 ///
 /// The two halves run concurrently; the SPARQL half spreads its rule groups
@@ -257,7 +273,11 @@ pub fn validate_crossprofile(dataset: &cimmodel::CimDataset, cfg: &Config) -> Ve
     // CGMES codes first, as in `validate_profile_local`: data without NC
     // never loads the NC table.
     let cgmes = cgmes_profile_index().1;
-    if cfg.profiles.iter().any(|p| !cgmes.contains(&p.as_str()) && nc_profile_index().1.contains(&p.as_str())) {
+    if cfg
+        .profiles
+        .iter()
+        .any(|p| !cgmes.contains(&p.as_str()) && nc_profile_index().1.contains(&p.as_str()))
+    {
         v.extend(validate_nc_merged(dataset, cfg));
     }
     v
@@ -284,8 +304,13 @@ pub fn combined_config(
         cfg.solved |= c.solved;
     }
     cfg.not_solved = !cfg.solved;
-    if let Some(p) = profiles { cfg.profiles = p; }
-    if let Some(s) = solved { cfg.solved = s; cfg.not_solved = !s; }
+    if let Some(p) = profiles {
+        cfg.profiles = p;
+    }
+    if let Some(s) = solved {
+        cfg.solved = s;
+        cfg.not_solved = !s;
+    }
     cfg.common = common;
     cfg.quality = quality;
     cfg.silenced_rules = silenced_rules;
@@ -297,14 +322,20 @@ pub fn combined_config(
 ///
 /// Consumes `per_file` since it merges them into one dataset for phase 2.
 pub fn validate_files(per_file: Vec<cimmodel::CimDataset>, cfg: &Config) -> Vec<Violation> {
-    validate_files_traced(per_file, cfg).into_iter().map(|(_, v)| v).collect()
+    validate_files_traced(per_file, cfg)
+        .into_iter()
+        .map(|(_, v)| v)
+        .collect()
 }
 
 /// [`validate_files`], with each finding's origin: the index into `per_file`
 /// of the file it was found in, or `None` for a finding on the merged dataset.
 /// An object several files write is reported against one of them, which
 /// `cimlsp` needs to put the finding there.
-pub fn validate_files_traced(per_file: Vec<cimmodel::CimDataset>, cfg: &Config) -> Vec<(Option<usize>, Violation)> {
+pub fn validate_files_traced(
+    per_file: Vec<cimmodel::CimDataset>,
+    cfg: &Config,
+) -> Vec<(Option<usize>, Violation)> {
     let set = per_file.as_slice();
     let mut violations: Vec<(Option<usize>, Violation)> = par::par_each(set, |ds| {
         let mut v = validate_header(ds, cfg);
@@ -324,7 +355,11 @@ pub fn validate_files_traced(per_file: Vec<cimmodel::CimDataset>, cfg: &Config) 
     for ds in per_file {
         merged.merge(ds);
     }
-    violations.extend(validate_crossprofile(&merged, cfg).into_iter().map(|v| (None, v)));
+    violations.extend(
+        validate_crossprofile(&merged, cfg)
+            .into_iter()
+            .map(|v| (None, v)),
+    );
 
     if !cfg.silenced_rules.is_empty() {
         let silenced: HashSet<&str> = cfg.silenced_rules.iter().map(String::as_str).collect();

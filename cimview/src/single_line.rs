@@ -62,7 +62,13 @@ pub fn single_line(inside: &Inside) -> Layout {
     let items = &inside.items;
     let n = items.len();
     if n == 0 {
-        return Layout { id: "auto".into(), name: "Single-line".into(), kind: "diagram", unit: Some(1.0), ..Default::default() };
+        return Layout {
+            id: "auto".into(),
+            name: "Single-line".into(),
+            kind: "diagram",
+            unit: Some(1.0),
+            ..Default::default()
+        };
     }
     let mut adj: Vec<Vec<(usize, usize)>> = vec![Vec::new(); n];
     for (k, l) in inside.links.iter().enumerate() {
@@ -74,10 +80,13 @@ pub fn single_line(inside: &Inside) -> Layout {
     let none = inside.groups.len();
     let kv = |g: usize| inside.groups.get(g).and_then(|x| x.kv);
     let mut order: Vec<usize> = (0..=none).collect();
-    order.sort_by(|&a, &b| match (kv(a), kv(b)) {
-        (Some(x), Some(y)) => y.total_cmp(&x),
-        (x, y) => y.is_some().cmp(&x.is_some()),
-    }.then(a.cmp(&b)));
+    order.sort_by(|&a, &b| {
+        match (kv(a), kv(b)) {
+            (Some(x), Some(y)) => y.total_cmp(&x),
+            (x, y) => y.is_some().cmp(&x.is_some()),
+        }
+        .then(a.cmp(&b))
+    });
     let mut rank = vec![0; none + 1];
     for (r, &g) in order.iter().enumerate() {
         rank[g] = r;
@@ -94,14 +103,24 @@ pub fn single_line(inside: &Inside) -> Layout {
         .collect();
     let bays = components(&adj, |i| bus[i] || bar_of[i].is_some());
 
-    let touched: Vec<BTreeSet<usize>> =
-        bays.iter().map(|m| m.iter().flat_map(|&i| adj[i].iter().map(|&(o, _)| o)).filter(|&o| bus[o]).collect()).collect();
+    let touched: Vec<BTreeSet<usize>> = bays
+        .iter()
+        .map(|m| {
+            m.iter()
+                .flat_map(|&i| adj[i].iter().map(|&(o, _)| o))
+                .filter(|&o| bus[o])
+                .collect()
+        })
+        .collect();
 
     // A voltage level's buses take a row each where a feeder joins them.
     let buses: Vec<usize> = (0..n).filter(|&i| bus[i]).collect();
     let mut apart: BTreeSet<(usize, usize)> = BTreeSet::new();
     for (members, on) in bays.iter().zip(&touched) {
-        if members.iter().all(|&i| items[i].junction || is_switch(items[i].class)) {
+        if members
+            .iter()
+            .all(|&i| items[i].junction || is_switch(items[i].class))
+        {
             continue;
         }
         for &a in on {
@@ -127,14 +146,20 @@ pub fn single_line(inside: &Inside) -> Layout {
 
     // Bays left to right: a level's feeders, then its transformers down to the
     // lowest level first; bays on no bus last.
-    let mut placed: Vec<usize> = (0..bays.len()).filter(|&c| !touched[c].is_empty()).collect();
+    let mut placed: Vec<usize> = (0..bays.len())
+        .filter(|&c| !touched[c].is_empty())
+        .collect();
     // The levels a bay spans: its buses', and its items' own (a transformer's
     // side may lead out of the substation, not to a bus of its level).
     let span = |c: usize| {
         let ranks: Vec<usize> = touched[c]
             .iter()
             .map(|&b| rank_of(b))
-            .chain(bays[c].iter().filter_map(|&i| items[i].group.map(|g| rank[g])))
+            .chain(
+                bays[c]
+                    .iter()
+                    .filter_map(|&i| items[i].group.map(|g| rank[g])),
+            )
             .collect();
         (*ranks.iter().min().unwrap(), *ranks.iter().max().unwrap())
     };
@@ -143,7 +168,17 @@ pub fn single_line(inside: &Inside) -> Layout {
         let places: Vec<usize> = touched[c].iter().map(|b| place[b]).collect();
         let first = *places.iter().min().unwrap();
         let last = *places.iter().max().unwrap();
-        (top, top != bottom, if top == bottom { first } else { usize::MAX - bottom }, last, bays[c][0])
+        (
+            top,
+            top != bottom,
+            if top == bottom {
+                first
+            } else {
+                usize::MAX - bottom
+            },
+            last,
+            bays[c][0],
+        )
     });
 
     // Each bay's columns, and each item's row from its buses.
@@ -164,7 +199,11 @@ pub fn single_line(inside: &Inside) -> Layout {
         ranks.dedup();
         let first = ranks[0];
         let from = |r: usize| {
-            let mut seeds: Vec<usize> = touched[c].iter().copied().filter(|&b| rank_of(b) == r).collect();
+            let mut seeds: Vec<usize> = touched[c]
+                .iter()
+                .copied()
+                .filter(|&b| rank_of(b) == r)
+                .collect();
             seeds.sort_by_key(|b| place[b]);
             seeds
         };
@@ -194,32 +233,66 @@ pub fn single_line(inside: &Inside) -> Layout {
         // An item of a level whose buses the bay does not reach (equipment
         // with no level takes its neighbours' then) is in that level's rows,
         // nearer them the farther it is from the buses the bay does reach.
-        let dists: Vec<(usize, Steps)> =
-            ranks.iter().map(|&r| (r, if r == first { dist_top.clone() } else { reach(&adj, &members, &from(r)).0 })).collect();
-        let nearest = |i: usize| dists.iter().filter_map(|(r, d)| d.get(&i).map(|&(d, _)| (*r, d))).min_by_key(|&(r, d)| (d, r));
+        let dists: Vec<(usize, Steps)> = ranks
+            .iter()
+            .map(|&r| {
+                (
+                    r,
+                    if r == first {
+                        dist_top.clone()
+                    } else {
+                        reach(&adj, &members, &from(r)).0
+                    },
+                )
+            })
+            .collect();
+        let nearest = |i: usize| {
+            dists
+                .iter()
+                .filter_map(|(r, d)| d.get(&i).map(|&(d, _)| (*r, d)))
+                .min_by_key(|&(r, d)| (d, r))
+        };
         let mut astray: Vec<(usize, usize, usize)> = Vec::new();
         for &i in &bays[c] {
             let own = items[i].group.map(|g| rank[g]).or_else(|| {
-                let theirs: BTreeSet<usize> = adj[i].iter().filter_map(|&(o, _)| items[o].group.map(|g| rank[g])).collect();
-                (theirs.len() == 1).then(|| *theirs.first().unwrap()).filter(|r| !ranks.contains(r))
+                let theirs: BTreeSet<usize> = adj[i]
+                    .iter()
+                    .filter_map(|&(o, _)| items[o].group.map(|g| rank[g]))
+                    .collect();
+                (theirs.len() == 1)
+                    .then(|| *theirs.first().unwrap())
+                    .filter(|r| !ranks.contains(r))
             });
             let (near, d) = nearest(i).unwrap_or((first, 1));
             match own {
                 Some(r) if !ranks.contains(&r) => astray.push((i, r, d)),
                 _ => {
                     let r = own.unwrap_or(near);
-                    let d = dists.iter().find(|(x, _)| *x == r).and_then(|(_, m)| m.get(&i)).map_or(d, |&(d, _)| d);
+                    let d = dists
+                        .iter()
+                        .find(|(x, _)| *x == r)
+                        .and_then(|(_, m)| m.get(&i))
+                        .map_or(d, |&(d, _)| d);
                     side.insert(i, (r, d, r == top));
                 }
             }
         }
         for &(i, r, d) in &astray {
-            let most = astray.iter().filter(|a| a.1 == r).map(|a| a.2).max().unwrap();
+            let most = astray
+                .iter()
+                .filter(|a| a.1 == r)
+                .map(|a| a.2)
+                .max()
+                .unwrap();
             side.insert(i, (r, most - d + 1, r < first));
         }
         for &i in &bays[c] {
             let (r, d, down) = side[&i];
-            let most = if down { below.entry(r).or_default() } else { above.entry(r).or_default() };
+            let most = if down {
+                below.entry(r).or_default()
+            } else {
+                above.entry(r).or_default()
+            };
             *most = (*most).max(d);
         }
     }
@@ -241,7 +314,12 @@ pub fn single_line(inside: &Inside) -> Layout {
     let mut bottom_row: HashMap<usize, usize> = HashMap::new();
     let mut cursor = 0;
     for &r in &levels {
-        let rows = buses.iter().filter(|&&b| rank_of(b) == r).map(|b| bus_row[b] + 1).max().unwrap_or(0);
+        let rows = buses
+            .iter()
+            .filter(|&&b| rank_of(b) == r)
+            .map(|b| bus_row[b] + 1)
+            .max()
+            .unwrap_or(0);
         let t = cursor + above.get(&r).copied().unwrap_or(0);
         top_row.insert(r, t);
         bottom_row.insert(r, t + rows.max(1) - 1);
@@ -251,7 +329,11 @@ pub fn single_line(inside: &Inside) -> Layout {
 
     let mut at: BTreeMap<usize, (f64, f64)> = BTreeMap::new();
     for (&i, &(r, d, down)) in &side {
-        let row = if down { bottom_row[&r] + d } else { top_row[&r] - d };
+        let row = if down {
+            bottom_row[&r] + d
+        } else {
+            top_row[&r] - d
+        };
         at.insert(i, (lefts[column[i]] + SYMBOL / 2.0, y(row)));
     }
 
@@ -271,7 +353,11 @@ pub fn single_line(inside: &Inside) -> Layout {
         .iter()
         .map(|&b| Bar {
             bus: b,
-            pieces: adj[b].iter().map(|&(e, _)| e).filter(|&e| bar_of[e] == Some(b)).collect(),
+            pieces: adj[b]
+                .iter()
+                .map(|&(e, _)| e)
+                .filter(|&e| bar_of[e] == Some(b))
+                .collect(),
             y: y(top_row[&rank_of(b)] + bus_row[&b]),
             alone: (right, right + 2.0 * SYMBOL),
         })
@@ -298,25 +384,42 @@ pub fn buses(inside: &Inside) -> Vec<bool> {
     let busbar = |i: usize| items[i].class == "BusbarSection";
     let mut bus = vec![false; n];
     for g in 0..=none {
-        let js: Vec<usize> = (0..n).filter(|&i| items[i].junction && items[i].group.unwrap_or(none) == g).collect();
-        if !js.iter().any(|&j| adj[j].iter().any(|&(e, _)| is_switch(items[e].class))) {
+        let js: Vec<usize> = (0..n)
+            .filter(|&i| items[i].junction && items[i].group.unwrap_or(none) == g)
+            .collect();
+        if !js
+            .iter()
+            .any(|&j| adj[j].iter().any(|&(e, _)| is_switch(items[e].class)))
+        {
             js.iter().for_each(|&j| bus[j] = true);
             continue;
         }
-        let bars: Vec<usize> = js.iter().copied().filter(|&j| adj[j].iter().any(|&(e, _)| busbar(e))).collect();
+        let bars: Vec<usize> = js
+            .iter()
+            .copied()
+            .filter(|&j| adj[j].iter().any(|&(e, _)| busbar(e)))
+            .collect();
         if !bars.is_empty() {
             bars.iter().for_each(|&j| bus[j] = true);
         } else if js.iter().any(|&j| adj[j].len() >= 4) {
             // Where four or more meet: a bay's own junctions join three at most
             // (a breaker, a disconnector, an earthing switch).
-            js.iter().filter(|&&j| adj[j].len() >= 4).for_each(|&j| bus[j] = true);
+            js.iter()
+                .filter(|&&j| adj[j].len() >= 4)
+                .for_each(|&j| bus[j] = true);
         } else if let Some(most) = js.iter().map(|&j| adj[j].len()).max().filter(|&d| d >= 3) {
-            js.iter().filter(|&&j| adj[j].len() == most).for_each(|&j| bus[j] = true);
+            js.iter()
+                .filter(|&&j| adj[j].len() == most)
+                .for_each(|&j| bus[j] = true);
         } else {
             // A level of single bays (a generator's): its bus where it is fed, from a
             // transformer or another level, else where most meet.
             let fed = |j: usize| adj[j].iter().any(|&(e, _)| items[e].group != Some(g));
-            let j = js.iter().copied().max_by_key(|&j| (fed(j), adj[j].len(), Reverse(j))).unwrap();
+            let j = js
+                .iter()
+                .copied()
+                .max_by_key(|&j| (fed(j), adj[j].len(), Reverse(j)))
+                .unwrap();
             bus[j] = true;
         }
     }
@@ -339,7 +442,13 @@ pub fn buses(inside: &Inside) -> Vec<bool> {
                 .iter()
                 .copied()
                 .filter(|&i| items[i].junction)
-                .max_by_key(|&j| (adj[j].iter().any(|&(e, _)| busbar(e)), adj[j].len(), Reverse(j)));
+                .max_by_key(|&j| {
+                    (
+                        adj[j].iter().any(|&(e, _)| busbar(e)),
+                        adj[j].len(),
+                        Reverse(j),
+                    )
+                });
             if let Some(j) = likeliest {
                 bus[j] = true;
                 added = true;
@@ -365,7 +474,12 @@ struct Bar {
 /// link routed with a bend at the junction's row in the equipment's column,
 /// ending where it meets a bar.
 fn draw(inside: &Inside, mut at: BTreeMap<usize, (f64, f64)>, bars: &[Bar]) -> Layout {
-    let mut layout = Layout { id: "auto".into(), kind: "diagram", unit: Some(1.0), ..Default::default() };
+    let mut layout = Layout {
+        id: "auto".into(),
+        kind: "diagram",
+        unit: Some(1.0),
+        ..Default::default()
+    };
     let pieces: BTreeSet<usize> = bars.iter().flat_map(|b| b.pieces.iter().copied()).collect();
     let on_bar: BTreeSet<usize> = bars.iter().map(|b| b.bus).collect();
     for bar in bars {
@@ -379,7 +493,10 @@ fn draw(inside: &Inside, mut at: BTreeMap<usize, (f64, f64)>, bars: &[Bar]) -> L
             bar.alone
         } else {
             let lo = xs.iter().copied().fold(f64::INFINITY, f64::min) - SYMBOL / 2.0;
-            (lo, xs.iter().copied().fold(f64::NEG_INFINITY, f64::max) + SYMBOL / 2.0)
+            (
+                lo,
+                xs.iter().copied().fold(f64::NEG_INFINITY, f64::max) + SYMBOL / 2.0,
+            )
         };
         if bar.pieces.is_empty() {
             at.insert(bar.bus, ((lo + hi) / 2.0, bar.y));
@@ -394,7 +511,9 @@ fn draw(inside: &Inside, mut at: BTreeMap<usize, (f64, f64)>, bars: &[Bar]) -> L
         }
     }
     for (k, l) in inside.links.iter().enumerate() {
-        let (Some(&e), Some(&j)) = (at.get(&l.item), at.get(&l.junction)) else { continue };
+        let (Some(&e), Some(&j)) = (at.get(&l.item), at.get(&l.junction)) else {
+            continue;
+        };
         let mut route = vec![e, (e.0, j.1)];
         if !on_bar.contains(&l.junction) {
             route.push(j);
@@ -410,7 +529,11 @@ fn draw(inside: &Inside, mut at: BTreeMap<usize, (f64, f64)>, bars: &[Bar]) -> L
 /// and busbar sections `sizes` has, horizontal) at their height across what
 /// now hangs from them, and every link routed anew; another junction a
 /// point. Positions in pixels.
-pub fn reroute(inside: &Inside, nodes: &BTreeMap<usize, (f64, f64)>, sizes: &BTreeMap<usize, (f64, f64)>) -> Layout {
+pub fn reroute(
+    inside: &Inside,
+    nodes: &BTreeMap<usize, (f64, f64)>,
+    sizes: &BTreeMap<usize, (f64, f64)>,
+) -> Layout {
     // Upright busbars (a diagram's, drawn so): routed as lying ones, x and y swapped.
     if upright(sizes) {
         return transposed(reroute(inside, &swapped(nodes), &swapped(sizes)));
@@ -418,7 +541,9 @@ pub fn reroute(inside: &Inside, nodes: &BTreeMap<usize, (f64, f64)>, sizes: &BTr
     let bus = buses(inside);
     let mut bars: BTreeMap<usize, Bar> = BTreeMap::new();
     for (&i, &(w, _)) in sizes {
-        let Some(&(x, y)) = nodes.get(&i) else { continue };
+        let Some(&(x, y)) = nodes.get(&i) else {
+            continue;
+        };
         if inside.items[i].junction && !bus[i] {
             continue;
         }
@@ -430,7 +555,12 @@ pub fn reroute(inside: &Inside, nodes: &BTreeMap<usize, (f64, f64)>, sizes: &BTr
                 None => continue,
             }
         };
-        let bar = bars.entry(bus).or_insert(Bar { bus, pieces: Vec::new(), y, alone: (x - w / 2.0, x + w / 2.0) });
+        let bar = bars.entry(bus).or_insert(Bar {
+            bus,
+            pieces: Vec::new(),
+            y,
+            alone: (x - w / 2.0, x + w / 2.0),
+        });
         bar.alone = (bar.alone.0.min(x - w / 2.0), bar.alone.1.max(x + w / 2.0));
         if bus != i {
             bar.pieces.push(i);
@@ -460,7 +590,11 @@ fn swapped(m: &BTreeMap<usize, (f64, f64)>) -> BTreeMap<usize, (f64, f64)> {
 fn transposed(mut l: Layout) -> Layout {
     l.nodes = swapped(&l.nodes);
     l.sizes = swapped(&l.sizes);
-    l.edges = l.edges.into_iter().map(|(k, ps)| (k, ps.into_iter().map(swap).collect())).collect();
+    l.edges = l
+        .edges
+        .into_iter()
+        .map(|(k, ps)| (k, ps.into_iter().map(swap).collect()))
+        .collect();
     l
 }
 
@@ -477,8 +611,18 @@ pub fn complete(inside: &Inside, layout: &Layout, at: Option<(f64, f64)>) -> Lay
     let flip = if layout.flip_y { -1.0 } else { 1.0 };
     let screen = |(x, y): (f64, f64)| (x * unit, y * flip * unit);
     let back = |(x, y): (f64, f64)| (x / unit, y * flip / unit);
-    let mut placed: BTreeMap<usize, (f64, f64)> = layout.nodes.iter().filter(|(i, _)| **i < inside.items.len()).map(|(&i, &p)| (i, screen(p))).collect();
-    let mut sizes: BTreeMap<usize, (f64, f64)> = layout.sizes.iter().filter(|(i, _)| placed.contains_key(i)).map(|(&i, &(w, h))| (i, (w * unit, h * unit))).collect();
+    let mut placed: BTreeMap<usize, (f64, f64)> = layout
+        .nodes
+        .iter()
+        .filter(|(i, _)| **i < inside.items.len())
+        .map(|(&i, &p)| (i, screen(p)))
+        .collect();
+    let mut sizes: BTreeMap<usize, (f64, f64)> = layout
+        .sizes
+        .iter()
+        .filter(|(i, _)| placed.contains_key(i))
+        .map(|(&i, &(w, h))| (i, (w * unit, h * unit)))
+        .collect();
     // Upright busbars: placed as for lying ones, x and y swapped, and swapped back.
     let up = upright(&sizes);
     if up {
@@ -489,16 +633,33 @@ pub fn complete(inside: &Inside, layout: &Layout, at: Option<(f64, f64)>) -> Lay
         adj[l.item].push(l.junction);
         adj[l.junction].push(l.item);
     }
-    let mut missing: BTreeSet<usize> = (0..inside.items.len()).filter(|i| !placed.contains_key(i)).collect();
+    let mut missing: BTreeSet<usize> = (0..inside.items.len())
+        .filter(|i| !placed.contains_key(i))
+        .collect();
     let mut drop = at.map(screen).map(|p| if up { swap(p) } else { p });
     let snap = |(x, y): (f64, f64)| ((x / 4.0).round() * 4.0, (y / 14.0).round() * 14.0);
-    while let Some(&next) = missing.iter().max_by_key(|&&i| (adj[i].iter().filter(|n| placed.contains_key(n)).count(), !inside.items[i].junction, Reverse(i))) {
+    while let Some(&next) = missing.iter().max_by_key(|&&i| {
+        (
+            adj[i].iter().filter(|n| placed.contains_key(n)).count(),
+            !inside.items[i].junction,
+            Reverse(i),
+        )
+    }) {
         missing.remove(&next);
-        let near: Vec<usize> = adj[next].iter().copied().filter(|n| placed.contains_key(n)).collect();
+        let near: Vec<usize> = adj[next]
+            .iter()
+            .copied()
+            .filter(|n| placed.contains_key(n))
+            .collect();
         // Right of what is there, `rows` down from `p` clear.
         let free_for = |mut p: (f64, f64), rows: f64, placed: &BTreeMap<usize, (f64, f64)>| {
             for _ in 0..500 {
-                let taken = placed.iter().any(|(i, q)| !sizes.contains_key(i) && (q.0 - p.0).abs() < ROW / 2.0 && q.1 > p.1 - ROW / 2.0 && q.1 < p.1 + ROW * rows - ROW / 2.0);
+                let taken = placed.iter().any(|(i, q)| {
+                    !sizes.contains_key(i)
+                        && (q.0 - p.0).abs() < ROW / 2.0
+                        && q.1 > p.1 - ROW / 2.0
+                        && q.1 < p.1 + ROW * rows - ROW / 2.0
+                });
                 if !taken {
                     break;
                 }
@@ -511,7 +672,11 @@ pub fn complete(inside: &Inside, layout: &Layout, at: Option<(f64, f64)>) -> Lay
         let p = match (drop.take(), near.as_slice()) {
             (Some(mut p), _) => {
                 // Onto a busbar: a row below it.
-                let on_bar = sizes.iter().any(|(i, &(w, _))| placed.get(i).is_some_and(|q| (q.1 - p.1).abs() < ROW / 2.0 && (q.0 - p.0).abs() <= w / 2.0));
+                let on_bar = sizes.iter().any(|(i, &(w, _))| {
+                    placed.get(i).is_some_and(|q| {
+                        (q.1 - p.1).abs() < ROW / 2.0 && (q.0 - p.0).abs() <= w / 2.0
+                    })
+                });
                 if on_bar {
                     p.1 += ROW;
                     // A column of its own, clear of the bays there.
@@ -521,14 +686,24 @@ pub fn complete(inside: &Inside, layout: &Layout, at: Option<(f64, f64)>) -> Lay
                 }
             }
             (None, []) => {
-                let (left, bottom) = placed.values().fold((f64::INFINITY, f64::NEG_INFINITY), |(l, b), p| (l.min(p.0), b.max(p.1)));
-                let start = if left.is_finite() { (left, bottom + 2.0 * ROW) } else { (0.0, 0.0) };
+                let (left, bottom) = placed
+                    .values()
+                    .fold((f64::INFINITY, f64::NEG_INFINITY), |(l, b), p| {
+                        (l.min(p.0), b.max(p.1))
+                    });
+                let start = if left.is_finite() {
+                    (left, bottom + 2.0 * ROW)
+                } else {
+                    (0.0, 0.0)
+                };
                 free(snap(start), &placed)
             }
             (None, [one]) => free(snap((placed[one].0, placed[one].1 + ROW)), &placed),
             (None, many) => {
                 let n = many.len() as f64;
-                let (x, y) = many.iter().fold((0.0, 0.0), |(x, y), m| (x + placed[m].0, y + placed[m].1));
+                let (x, y) = many
+                    .iter()
+                    .fold((0.0, 0.0), |(x, y), m| (x + placed[m].0, y + placed[m].1));
                 snap((x / n, y / n))
             }
         };
@@ -542,9 +717,22 @@ pub fn complete(inside: &Inside, layout: &Layout, at: Option<(f64, f64)>) -> Lay
         out = transposed(out);
     }
     out.nodes = out.nodes.into_iter().map(|(i, p)| (i, back(p))).collect();
-    out.edges = out.edges.into_iter().map(|(k, ps)| (k, ps.into_iter().map(back).collect())).collect();
-    out.sizes = out.sizes.into_iter().map(|(i, (w, h))| (i, (w / unit, h / unit))).collect();
-    (out.id, out.name, out.unit, out.flip_y) = (layout.id.clone(), layout.name.clone(), layout.unit, layout.flip_y);
+    out.edges = out
+        .edges
+        .into_iter()
+        .map(|(k, ps)| (k, ps.into_iter().map(back).collect()))
+        .collect();
+    out.sizes = out
+        .sizes
+        .into_iter()
+        .map(|(i, (w, h))| (i, (w / unit, h / unit)))
+        .collect();
+    (out.id, out.name, out.unit, out.flip_y) = (
+        layout.id.clone(),
+        layout.name.clone(),
+        layout.unit,
+        layout.flip_y,
+    );
     out
 }
 
@@ -558,8 +746,14 @@ pub fn diagram_objects<'a>(inside: &'a Inside, layout: &Layout) -> Vec<crate::ed
     let mut pieces = BTreeSet::new();
     let up = upright(&layout.sizes);
     for (&i, &size) in &layout.sizes {
-        let Some(&at) = layout.nodes.get(&i) else { continue };
-        let ((x, y), (w, _)) = if up { (swap(at), swap(size)) } else { (at, size) };
+        let Some(&at) = layout.nodes.get(&i) else {
+            continue;
+        };
+        let ((x, y), (w, _)) = if up {
+            (swap(at), swap(size))
+        } else {
+            (at, size)
+        };
         let bus = if inside.items[i].junction {
             i
         } else {
@@ -569,7 +763,9 @@ pub fn diagram_objects<'a>(inside: &'a Inside, layout: &Layout) -> Vec<crate::ed
                 None => continue,
             }
         };
-        let span = spans.entry(bus).or_insert((x - w / 2.0, x + w / 2.0, y, up));
+        let span = spans
+            .entry(bus)
+            .or_insert((x - w / 2.0, x + w / 2.0, y, up));
         *span = (span.0.min(x - w / 2.0), span.1.max(x + w / 2.0), y, up);
     }
     let mut out = Vec::new();
@@ -583,11 +779,27 @@ pub fn diagram_objects<'a>(inside: &'a Inside, layout: &Layout) -> Vec<crate::ed
             (None, Some(&p)) => vec![p],
             (None, None) => continue,
         };
-        out.push((it.id.as_str(), if it.label.is_empty() { it.id.as_str() } else { it.label.as_str() }, points));
+        out.push((
+            it.id.as_str(),
+            if it.label.is_empty() {
+                it.id.as_str()
+            } else {
+                it.label.as_str()
+            },
+            points,
+        ));
     }
     for (k, l) in inside.links.iter().enumerate() {
         if let Some(route) = layout.edges.get(&k).filter(|r| !r.is_empty()) {
-            out.push((l.id.as_str(), if l.label.is_empty() { l.id.as_str() } else { l.label.as_str() }, route.clone()));
+            out.push((
+                l.id.as_str(),
+                if l.label.is_empty() {
+                    l.id.as_str()
+                } else {
+                    l.label.as_str()
+                },
+                route.clone(),
+            ));
         }
     }
     out
@@ -625,7 +837,11 @@ type Steps = HashMap<usize, (usize, usize)>;
 
 /// Steps from `seeds` (buses, outside `members`) to each of `members`, with
 /// the order each was reached in; and the item each was reached from.
-fn reach(adj: &[Vec<(usize, usize)>], members: &BTreeSet<usize>, seeds: &[usize]) -> (Steps, HashMap<usize, usize>) {
+fn reach(
+    adj: &[Vec<(usize, usize)>],
+    members: &BTreeSet<usize>,
+    seeds: &[usize],
+) -> (Steps, HashMap<usize, usize>) {
     let mut dist = HashMap::new();
     let mut parent = HashMap::new();
     let mut queue = VecDeque::new();
@@ -653,7 +869,12 @@ fn reach(adj: &[Vec<(usize, usize)>], members: &BTreeSet<usize>, seeds: &[usize]
 
 /// Columns for the tree under `i`: a leaf takes a new one, an item its first
 /// child's, so a chain runs straight down.
-fn columns(i: usize, children: &HashMap<usize, Vec<usize>>, column: &mut [usize], widths: &mut Vec<f64>) {
+fn columns(
+    i: usize,
+    children: &HashMap<usize, Vec<usize>>,
+    column: &mut [usize],
+    widths: &mut Vec<f64>,
+) {
     match children.get(&i) {
         Some(kids) if !kids.is_empty() => {
             for &k in kids {
@@ -677,9 +898,14 @@ mod tests {
     use crate::testing::{collect, validate};
 
     fn grid(case: &str) -> Grid {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../CGMES-Test-Configurations/v3.0").join(case);
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../CGMES-Test-Configurations/v3.0")
+            .join(case);
         let files = collect(&dir);
-        assert!(!files.is_empty(), "missing test data — run `git submodule update --init`");
+        assert!(
+            !files.is_empty(),
+            "missing test data — run `git submodule update --init`"
+        );
         validate(&files).grid
     }
 
@@ -687,12 +913,24 @@ mod tests {
     /// on one spot, and the same each time.
     fn check(name: &str, inside: &Inside) {
         let l = single_line(inside);
-        assert_eq!(l.nodes.len(), inside.items.len(), "{name}: every item placed");
-        assert_eq!(l.edges.len(), inside.links.len(), "{name}: every link routed");
+        assert_eq!(
+            l.nodes.len(),
+            inside.items.len(),
+            "{name}: every item placed"
+        );
+        assert_eq!(
+            l.edges.len(),
+            inside.links.len(),
+            "{name}: every link routed"
+        );
         for (k, route) in &l.edges {
             for w in route.windows(2) {
                 let (a, b) = (w[0], w[1]);
-                assert!(a.0 == b.0 || a.1 == b.1, "{name}: link {} bends off the axes: {route:?}", inside.links[*k].id);
+                assert!(
+                    a.0 == b.0 || a.1 == b.1,
+                    "{name}: link {} bends off the axes: {route:?}",
+                    inside.links[*k].id
+                );
             }
         }
         let mut spots = std::collections::BTreeSet::new();
@@ -700,21 +938,41 @@ mod tests {
             if inside.items[i].junction || l.sizes.contains_key(&i) {
                 continue;
             }
-            assert!(spots.insert(((x * 10.0) as i64, (y * 10.0) as i64)), "{name}: {} on another's spot", inside.items[i].label);
+            assert!(
+                spots.insert(((x * 10.0) as i64, (y * 10.0) as i64)),
+                "{name}: {} on another's spot",
+                inside.items[i].label
+            );
         }
-        assert_eq!(single_line(inside).nodes, l.nodes, "{name}: the same each time");
+        assert_eq!(
+            single_line(inside).nodes,
+            l.nodes,
+            "{name}: the same each time"
+        );
         // Voltage levels apart: each level's rows below the one above it.
         let mut bands: Vec<(f64, f64, f64)> = (0..inside.groups.len())
             .filter_map(|g| {
-                let ys: Vec<f64> = l.nodes.iter().filter(|(i, _)| inside.items[**i].group == Some(g)).map(|(_, p)| p.1).collect();
+                let ys: Vec<f64> = l
+                    .nodes
+                    .iter()
+                    .filter(|(i, _)| inside.items[**i].group == Some(g))
+                    .map(|(_, p)| p.1)
+                    .collect();
                 (!ys.is_empty()).then(|| {
-                    (inside.groups[g].kv.unwrap_or(0.0), ys.iter().copied().fold(f64::MAX, f64::min), ys.iter().copied().fold(f64::MIN, f64::max))
+                    (
+                        inside.groups[g].kv.unwrap_or(0.0),
+                        ys.iter().copied().fold(f64::MAX, f64::min),
+                        ys.iter().copied().fold(f64::MIN, f64::max),
+                    )
                 })
             })
             .collect();
         bands.sort_by(|a, b| b.0.total_cmp(&a.0));
         for w in bands.windows(2) {
-            assert!(w[0].2 < w[1].1 || w[0].0 == w[1].0, "{name}: levels overlap: {bands:?}");
+            assert!(
+                w[0].2 < w[1].1 || w[0].0 == w[1].0,
+                "{name}: levels overlap: {bands:?}"
+            );
         }
     }
 
@@ -730,7 +988,9 @@ mod tests {
         let anvers = &g.inside[&index("Anvers")];
         let l = single_line(anvers);
         // Its three busbar sections are bars; each line hangs below one.
-        let bars: Vec<usize> = (0..anvers.items.len()).filter(|&i| anvers.items[i].class == "BusbarSection").collect();
+        let bars: Vec<usize> = (0..anvers.items.len())
+            .filter(|&i| anvers.items[i].class == "BusbarSection")
+            .collect();
         assert_eq!(bars.len(), 3);
         assert!(bars.iter().all(|b| l.sizes[b].0 > l.sizes[b].1));
         let lowest_bar = bars.iter().map(|b| l.nodes[b].1).fold(f64::MIN, f64::max);
@@ -744,10 +1004,20 @@ mod tests {
         let amsterdam = &g.inside[&index("PP_Amsterdam")];
         let l = single_line(amsterdam);
         let level_y = |g: usize| {
-            amsterdam.items.iter().enumerate().filter(|(_, it)| it.junction && it.group == Some(g)).map(|(i, _)| l.nodes[&i].1).fold(f64::MAX, f64::min)
+            amsterdam
+                .items
+                .iter()
+                .enumerate()
+                .filter(|(_, it)| it.junction && it.group == Some(g))
+                .map(|(i, _)| l.nodes[&i].1)
+                .fold(f64::MAX, f64::min)
         };
-        let mut levels: Vec<(f64, f64)> =
-            amsterdam.groups.iter().enumerate().map(|(g, gr)| (gr.kv.unwrap_or(0.0), level_y(g))).collect();
+        let mut levels: Vec<(f64, f64)> = amsterdam
+            .groups
+            .iter()
+            .enumerate()
+            .map(|(g, gr)| (gr.kv.unwrap_or(0.0), level_y(g)))
+            .collect();
         levels.sort_by(|a, b| b.0.total_cmp(&a.0));
         assert!(levels.windows(2).all(|w| w[0].1 < w[1].1), "{levels:?}");
     }
@@ -762,8 +1032,16 @@ mod tests {
             // A bar itself, or where a busbar section is drawn as one.
             for (i, it) in inside.items.iter().enumerate() {
                 if it.junction {
-                    let on_bar = inside.links.iter().any(|k| k.junction == i && l.sizes.contains_key(&k.item));
-                    assert!(l.sizes.contains_key(&i) || on_bar, "{}: {} a bar", g.nodes[*n].label, it.label);
+                    let on_bar = inside
+                        .links
+                        .iter()
+                        .any(|k| k.junction == i && l.sizes.contains_key(&k.item));
+                    assert!(
+                        l.sizes.contains_key(&i) || on_bar,
+                        "{}: {} a bar",
+                        g.nodes[*n].label,
+                        it.label
+                    );
                 }
             }
         }
@@ -772,8 +1050,14 @@ mod tests {
     /// Every substation of the larger test grids.
     #[test]
     fn test_grids() {
-        for case in ["MiniGrid/MiniGrid-Merged", "SmallGrid/SmallGrid-Merged", "RealGrid/RealGrid-Merged"] {
-            let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../CGMES-Test-Configurations/v3.0").join(case);
+        for case in [
+            "MiniGrid/MiniGrid-Merged",
+            "SmallGrid/SmallGrid-Merged",
+            "RealGrid/RealGrid-Merged",
+        ] {
+            let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../CGMES-Test-Configurations/v3.0")
+                .join(case);
             if !dir.exists() {
                 continue;
             }
@@ -792,7 +1076,11 @@ mod tests {
         let n = g.nodes.iter().position(|n| n.label == "Anvers").unwrap();
         let inside = &g.inside[&n];
         let l = single_line(inside);
-        let line = inside.items.iter().position(|it| it.label == "BE-Line_1").unwrap();
+        let line = inside
+            .items
+            .iter()
+            .position(|it| it.label == "BE-Line_1")
+            .unwrap();
         let mut nodes = l.nodes.clone();
         let far_right = l.nodes.values().map(|p| p.0).fold(f64::MIN, f64::max) + 200.0;
         // The line's whole bay, to the right of everything.
@@ -804,10 +1092,22 @@ mod tests {
         }
         let moved = super::reroute(inside, &nodes, &l.sizes);
         assert_eq!(moved.nodes[&line].0, far_right);
-        let reach = moved.sizes.iter().map(|(i, &(w, _))| moved.nodes[i].0 + w / 2.0).fold(f64::MIN, f64::max);
-        assert!(reach >= far_right, "a busbar reaches the moved bay: {reach} < {far_right}");
+        let reach = moved
+            .sizes
+            .iter()
+            .map(|(i, &(w, _))| moved.nodes[i].0 + w / 2.0)
+            .fold(f64::MIN, f64::max);
+        assert!(
+            reach >= far_right,
+            "a busbar reaches the moved bay: {reach} < {far_right}"
+        );
         for route in moved.edges.values() {
-            assert!(route.windows(2).all(|w| w[0].0 == w[1].0 || w[0].1 == w[1].1), "{route:?}");
+            assert!(
+                route
+                    .windows(2)
+                    .all(|w| w[0].0 == w[1].0 || w[0].1 == w[1].1),
+                "{route:?}"
+            );
         }
     }
 
@@ -819,19 +1119,43 @@ mod tests {
         use crate::index::Index;
         use crate::text::LineIndex;
 
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../CGMES-Test-Configurations/v3.0/MicroGrid/MicroGrid-Type1/MicroGrid-Type1-Merged");
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(
+            "../CGMES-Test-Configurations/v3.0/MicroGrid/MicroGrid-Type1/MicroGrid-Type1-Merged",
+        );
         let read = collect(&dir);
         let set = validate(&read);
-        let violations = |set: &crate::testing::Set| set.grid.nodes.iter().map(|n| n.findings.violation).sum::<usize>() + set.grid.elsewhere.violation;
+        let violations = |set: &crate::testing::Set| {
+            set.grid
+                .nodes
+                .iter()
+                .map(|n| n.findings.violation)
+                .sum::<usize>()
+                + set.grid.elsewhere.violation
+        };
         let before = violations(&set);
-        let n = set.grid.nodes.iter().position(|n| n.label == "Anvers").unwrap();
+        let n = set
+            .grid
+            .nodes
+            .iter()
+            .position(|n| n.label == "Anvers")
+            .unwrap();
         let inside = &set.grid.inside[&n];
         let auto = single_line(inside);
 
-        let names: Vec<String> = read.iter().map(|(p, _)| p.to_string_lossy().into_owned()).collect();
+        let names: Vec<String> = read
+            .iter()
+            .map(|(p, _)| p.to_string_lossy().into_owned())
+            .collect();
         let lines: Vec<LineIndex> = read.iter().map(|(_, t)| LineIndex::new(t)).collect();
         let indexes: Vec<Index> = read.iter().map(|(_, t)| Index::build(t)).collect();
-        let files: Vec<File> = (0..read.len()).map(|i| File { name: &names[i], text: &read[i].1, lines: &lines[i], index: &indexes[i] }).collect();
+        let files: Vec<File> = (0..read.len())
+            .map(|i| File {
+                name: &names[i],
+                text: &read[i].1,
+                lines: &lines[i],
+                index: &indexes[i],
+            })
+            .collect();
         let dl = names.iter().find(|n| n.contains("_DL_")).unwrap();
         let mut counter = 0u64;
         let mut random = || {
@@ -840,28 +1164,57 @@ mod tests {
             b[..8].copy_from_slice(&counter.to_le_bytes());
             b
         };
-        let written = diagram(&files, dl, None, "Anvers single-line", &super::diagram_objects(inside, &auto), &mut random).unwrap();
+        let written = diagram(
+            &files,
+            dl,
+            None,
+            "Anvers single-line",
+            &super::diagram_objects(inside, &auto),
+            &mut random,
+        )
+        .unwrap();
         let edited: Vec<(std::path::PathBuf, std::sync::Arc<str>)> = read
             .iter()
             .zip(&names)
             .map(|((p, t), name)| {
-                let edits: Vec<_> = written.edits.iter().filter(|(n, _)| n == name).flat_map(|(_, e)| e.clone()).collect();
-                (p.clone(), std::sync::Arc::from(crate::text::apply(t, &edits)))
+                let edits: Vec<_> = written
+                    .edits
+                    .iter()
+                    .filter(|(n, _)| n == name)
+                    .flat_map(|(_, e)| e.clone())
+                    .collect();
+                (
+                    p.clone(),
+                    std::sync::Arc::from(crate::text::apply(t, &edits)),
+                )
             })
             .collect();
         let again = validate(&edited);
         assert_eq!(violations(&again), before, "no violation more");
 
         let inside = &again.grid.inside[&n];
-        let drawn = inside.layouts.iter().find(|l| l.id == format!("dl:{}", written.id)).expect("the diagram, read again");
+        let drawn = inside
+            .layouts
+            .iter()
+            .find(|l| l.id == format!("dl:{}", written.id))
+            .expect("the diagram, read again");
         assert_eq!(drawn.name, "Diagram: Anvers single-line");
         let unit = drawn.unit.unwrap();
         assert!((unit - 1.0).abs() < 1e-9, "drawn at its own scale: {unit}");
-        let near = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 0.01 && (a.1 - b.1).abs() < 0.01;
+        let near =
+            |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 0.01 && (a.1 - b.1).abs() < 0.01;
         for (i, &p) in &auto.nodes {
-            assert!(near(drawn.nodes[i], p), "{}: {:?} ≠ {p:?}", inside.items[*i].label, drawn.nodes[i]);
+            assert!(
+                near(drawn.nodes[i], p),
+                "{}: {:?} ≠ {p:?}",
+                inside.items[*i].label,
+                drawn.nodes[i]
+            );
         }
-        assert_eq!(drawn.sizes.keys().collect::<Vec<_>>(), auto.sizes.keys().collect::<Vec<_>>());
+        assert_eq!(
+            drawn.sizes.keys().collect::<Vec<_>>(),
+            auto.sizes.keys().collect::<Vec<_>>()
+        );
         assert_eq!(drawn.edges.len(), auto.edges.len());
 
         // Written again: its objects replaced, not added to.
@@ -870,25 +1223,60 @@ mod tests {
         let objects = |t: &str| t.matches("<cim:DiagramObject ").count();
         let lines2 = LineIndex::new(&text);
         let index2 = Index::build(&text);
-        let files2 = vec![File { name: dl, text: &text, lines: &lines2, index: &index2 }];
-        let rewritten = diagram(&files2, dl, Some(&written.id), "", &super::diagram_objects(inside, &auto), &mut random).unwrap();
+        let files2 = vec![File {
+            name: dl,
+            text: &text,
+            lines: &lines2,
+            index: &index2,
+        }];
+        let rewritten = diagram(
+            &files2,
+            dl,
+            Some(&written.id),
+            "",
+            &super::diagram_objects(inside, &auto),
+            &mut random,
+        )
+        .unwrap();
         let after = crate::text::apply(&text, &rewritten.edits[0].1);
         assert_eq!(objects(&after), objects(&text));
         assert_eq!(after.matches("Anvers single-line").count(), 1);
 
         // Into MicroGrid's own diagram of Belgium: Anvers' drawing replaced,
         // the rest of the country kept.
-        let mas = set.grid.layouts.iter().find(|l| l.name == "Diagram: MAS BE").unwrap().id.trim_start_matches("dl:").to_string();
+        let mas = set
+            .grid
+            .layouts
+            .iter()
+            .find(|l| l.name == "Diagram: MAS BE")
+            .unwrap()
+            .id
+            .trim_start_matches("dl:")
+            .to_string();
         let shown: Vec<_> = super::diagram_objects(inside, &auto);
         let anew: std::collections::HashSet<&str> = shown.iter().map(|(m, _, _)| *m).collect();
         // MAS BE's objects: of what Anvers' diagram draws, and of the rest.
         let in_mas = |t: &str| {
             let ix = Index::build(t);
             let mut counts = (0, 0);
-            for e in ix.elements.iter().filter(|e| crate::index::local(&e.qname) == "DiagramObject") {
-                let of = |key: &str| e.fields.iter().find(|f| f.key() == key).and_then(|f| f.resource.as_ref()).map(|(m, _)| m.as_str());
+            for e in ix
+                .elements
+                .iter()
+                .filter(|e| crate::index::local(&e.qname) == "DiagramObject")
+            {
+                let of = |key: &str| {
+                    e.fields
+                        .iter()
+                        .find(|f| f.key() == key)
+                        .and_then(|f| f.resource.as_ref())
+                        .map(|(m, _)| m.as_str())
+                };
                 if of("DiagramObject.Diagram") == Some(mas.as_str()) {
-                    if of("DiagramObject.IdentifiedObject").is_some_and(|m| anew.contains(m)) { counts.0 += 1 } else { counts.1 += 1 }
+                    if of("DiagramObject.IdentifiedObject").is_some_and(|m| anew.contains(m)) {
+                        counts.0 += 1
+                    } else {
+                        counts.1 += 1
+                    }
                 }
             }
             counts
@@ -898,7 +1286,12 @@ mod tests {
         let mut t = text.clone();
         for _ in 0..2 {
             let (l2, i2) = (LineIndex::new(&t), Index::build(&t));
-            let f2 = vec![File { name: dl, text: &t, lines: &l2, index: &i2 }];
+            let f2 = vec![File {
+                name: dl,
+                text: &t,
+                lines: &l2,
+                index: &i2,
+            }];
             let w = diagram(&f2, dl, Some(&mas), "", &shown, &mut random).unwrap();
             t = crate::text::apply(&t, &w.edits[0].1);
             assert_eq!(in_mas(&t), (shown.len(), rest_before));

@@ -7,11 +7,12 @@
 use cimmodel::base::{AttrDef, AttrKind, ClassDef};
 use cimmodel::registry::type_registry;
 use lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionTextEdit, DocumentSymbol, Documentation, Hover, HoverContents,
-    InsertTextFormat, Location, MarkupContent, MarkupKind, Position, Range, SymbolKind, TextEdit, Url,
+    CompletionItem, CompletionItemKind, CompletionTextEdit, DocumentSymbol, Documentation, Hover,
+    HoverContents, InsertTextFormat, Location, MarkupContent, MarkupKind, Position, Range,
+    SymbolKind, TextEdit, Url,
 };
 
-use crate::index::{contains, local, lsp, lsp_pos, ours, Element, Field, IdKind, Index, LineIndex};
+use crate::index::{Element, Field, IdKind, Index, LineIndex, contains, local, lsp, lsp_pos, ours};
 use crate::validate::ModelSet;
 
 /// An open document, indexed.
@@ -34,9 +35,18 @@ pub fn class_of(index: &Index, qname: &str) -> Option<&'static ClassDef> {
 enum Target<'a> {
     /// An element's start tag; `id` when on its `rdf:ID` / `rdf:about` value.
     Element { el: &'a Element, id: bool },
-    Field { el: &'a Element, key: &'a str, head: Range },
+    Field {
+        el: &'a Element,
+        key: &'a str,
+        head: Range,
+    },
     /// An `rdf:resource` value: an object's mRID, or an enumeration value.
-    Resource { el: &'a Element, key: &'a str, mrid: &'a str, range: Range },
+    Resource {
+        el: &'a Element,
+        key: &'a str,
+        mrid: &'a str,
+        range: Range,
+    },
 }
 
 fn target_at(index: &Index, pos: Position) -> Option<Target<'_>> {
@@ -50,9 +60,18 @@ fn target_at(index: &Index, pos: Position) -> Option<Target<'_>> {
     }
     let f = el.fields.iter().find(|f| contains(f.full, pos))?;
     if let Some((mrid, range)) = f.resource.as_ref().filter(|(_, r)| contains(*r, pos)) {
-        return Some(Target::Resource { el, key: f.key(), mrid, range: lsp(*range) });
+        return Some(Target::Resource {
+            el,
+            key: f.key(),
+            mrid,
+            range: lsp(*range),
+        });
     }
-    contains(f.head, pos).then(|| Target::Field { el, key: f.key(), head: lsp(f.head) })
+    contains(f.head, pos).then(|| Target::Field {
+        el,
+        key: f.key(),
+        head: lsp(f.head),
+    })
 }
 
 pub fn hover(view: &View, pos: Position) -> Option<Hover> {
@@ -61,22 +80,40 @@ pub fn hover(view: &View, pos: Position) -> Option<Hover> {
             if id && el.id_kind == Some(IdKind::About) {
                 (object_summary(view, &el.mrid)?, el.id_range.map(lsp))
             } else {
-                (class_summary(class_of(view.index, &el.qname)?), Some(lsp(el.head)))
+                (
+                    class_summary(class_of(view.index, &el.qname)?),
+                    Some(lsp(el.head)),
+                )
             }
         }
         Target::Field { el, key, head } => {
             let class = class_of(view.index, &el.qname)?;
-            (attr_summary(type_registry().attr_of(class, key)?, class), Some(head))
+            (
+                attr_summary(type_registry().attr_of(class, key)?, class),
+                Some(head),
+            )
         }
-        Target::Resource { el, key, mrid, range } => {
+        Target::Resource {
+            el,
+            key,
+            mrid,
+            range,
+        } => {
             let text = class_of(view.index, &el.qname)
-                .filter(|c| type_registry().attr_of(c, key).is_some_and(|a| a.kind == AttrKind::Enum))
+                .filter(|c| {
+                    type_registry()
+                        .attr_of(c, key)
+                        .is_some_and(|a| a.kind == AttrKind::Enum)
+                })
                 .and_then(|c| enum_summary(c, mrid));
             (text.or_else(|| object_summary(view, mrid))?, Some(range))
         }
     };
     Some(Hover {
-        contents: HoverContents::Markup(MarkupContent { kind: MarkupKind::Markdown, value: text }),
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: text,
+        }),
         range,
     })
 }
@@ -84,7 +121,11 @@ pub fn hover(view: &View, pos: Position) -> Option<Hover> {
 fn class_summary(class: &ClassDef) -> String {
     let reg = type_registry();
     let chain: Vec<&str> = reg.chain(class).iter().map(|c| c.local).collect();
-    let mut s = format!("**{}**{}\n\n", class.local, if class.concrete { "" } else { " *(abstract)*" });
+    let mut s = format!(
+        "**{}**{}\n\n",
+        class.local,
+        if class.concrete { "" } else { " *(abstract)*" }
+    );
     s.push_str(&format!("`{}`\n\n", chain.join(" → ")));
     if !class.comment.is_empty() {
         s.push_str(&format!("{}\n\n", class.comment));
@@ -105,7 +146,11 @@ fn attr_summary(a: &AttrDef, class: &ClassDef) -> String {
     if !a.xsd.is_empty() {
         s.push_str(&format!(" (`xsd:{}`)", a.xsd));
     }
-    s.push_str(if a.is_list { ", multi-valued" } else { ", single-valued" });
+    s.push_str(if a.is_list {
+        ", multi-valued"
+    } else {
+        ", single-valued"
+    });
     if !a.comment.is_empty() {
         s.push_str(&format!("\n\n{}", a.comment));
     }
@@ -136,7 +181,11 @@ fn enum_summary(class: &ClassDef, id: &str) -> Option<String> {
 fn object_summary(view: &View, mrid: &str) -> Option<String> {
     let (el, index, file) = match definition_of(view, mrid) {
         Some(Def::Here(el)) => (el, view.index, None),
-        Some(Def::Set(f, el)) => (el, &f.index, f.path.file_name().map(|n| n.to_string_lossy().into_owned())),
+        Some(Def::Set(f, el)) => (
+            el,
+            &f.index,
+            f.path.file_name().map(|n| n.to_string_lossy().into_owned()),
+        ),
         None => return Some(format!("`{mrid}` — not defined in this model set")),
     };
     let class = class_of(index, &el.qname).map_or(local(&el.qname), |c| c.local);
@@ -191,12 +240,17 @@ pub fn definition(view: &View, pos: Position) -> Option<Location> {
 /// and the rest of its model set; with `declaration`, also the elements that
 /// write the object.
 pub fn references(view: &View, pos: Position, declaration: bool) -> Vec<Location> {
-    let Some(mrid) = mrid_at(view, pos) else { return Vec::new() };
+    let Some(mrid) = mrid_at(view, pos) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     let mut scan = |url: &Url, index: &Index| {
         for el in &index.elements {
             if declaration && el.mrid == mrid {
-                out.push(Location::new(url.clone(), lsp(el.id_range.unwrap_or(el.head))));
+                out.push(Location::new(
+                    url.clone(),
+                    lsp(el.id_range.unwrap_or(el.head)),
+                ));
             }
             for f in &el.fields {
                 if let Some((m, r)) = &f.resource
@@ -234,7 +288,11 @@ pub fn symbols(view: &View) -> Vec<DocumentSymbol> {
                 .map(|f| DocumentSymbol {
                     name: f.key().to_string(),
                     detail: f.resource.as_ref().map(|(m, _)| m.clone()),
-                    kind: if f.resource.is_some() { SymbolKind::FIELD } else { SymbolKind::PROPERTY },
+                    kind: if f.resource.is_some() {
+                        SymbolKind::FIELD
+                    } else {
+                        SymbolKind::PROPERTY
+                    },
                     tags: None,
                     deprecated: None,
                     range: lsp(f.full),
@@ -243,8 +301,15 @@ pub fn symbols(view: &View) -> Vec<DocumentSymbol> {
                 })
                 .collect();
             // Its class, and where it is: `Breaker · PP_Brussels › 110.0 › Bay 3`.
-            let containers = view.set.map(|s| s.tree.containers(&el.mrid)).unwrap_or_default();
-            let detail = if containers.is_empty() { class.to_string() } else { format!("{class} · {}", containers.join(" › ")) };
+            let containers = view
+                .set
+                .map(|s| s.tree.containers(&el.mrid))
+                .unwrap_or_default();
+            let detail = if containers.is_empty() {
+                class.to_string()
+            } else {
+                format!("{class} · {}", containers.join(" › "))
+            };
             DocumentSymbol {
                 name,
                 detail: Some(detail),
@@ -266,7 +331,10 @@ pub fn symbols(view: &View) -> Vec<DocumentSymbol> {
 pub fn completion(view: &View, pos: Position) -> Vec<CompletionItem> {
     let at = ours(pos);
     if let Some(el) = view.index.element_at(at)
-        && let Some(f) = el.fields.iter().find(|f| f.resource.as_ref().is_some_and(|(_, r)| contains(*r, at)))
+        && let Some(f) = el
+            .fields
+            .iter()
+            .find(|f| f.resource.as_ref().is_some_and(|(_, r)| contains(*r, at)))
     {
         return resource_completion(view, el, f);
     }
@@ -274,15 +342,29 @@ pub fn completion(view: &View, pos: Position) -> Vec<CompletionItem> {
     let line_start = view.text[..offset].rfind('\n').map_or(0, |i| i + 1);
     let typed = &view.text[line_start..offset];
     // Replace from an opening `<` the user has typed, if any.
-    let lt = typed.rfind('<').filter(|i| !typed[*i..].contains(['>', ' ', '"']));
-    let replace = Range::new(lt.map_or(pos, |i| lsp_pos(view.lines.position(view.text, line_start + i))), pos);
+    let lt = typed
+        .rfind('<')
+        .filter(|i| !typed[*i..].contains(['>', ' ', '"']));
+    let replace = Range::new(
+        lt.map_or(pos, |i| {
+            lsp_pos(view.lines.position(view.text, line_start + i))
+        }),
+        pos,
+    );
     let reg = type_registry();
 
     if let Some(el) = view.index.element_at(at) {
-        if contains(el.head, at) || el.fields.iter().any(|f| contains(f.full, at) && f.full.end != at) {
+        if contains(el.head, at)
+            || el
+                .fields
+                .iter()
+                .any(|f| contains(f.full, at) && f.full.end != at)
+        {
             return Vec::new();
         }
-        let Some(class) = class_of(view.index, &el.qname) else { return Vec::new() };
+        let Some(class) = class_of(view.index, &el.qname) else {
+            return Vec::new();
+        };
         let mut attrs: Vec<&AttrDef> = reg.attrs(class).filter(|a| a.used).collect();
         attrs.sort_by_key(|a| a.id);
         return attrs
@@ -294,13 +376,22 @@ pub fn completion(view: &View, pos: Position) -> Vec<CompletionItem> {
                     AttrKind::Association => format!("<{tag} rdf:resource=\"#$1\"/>"),
                     AttrKind::Enum => format!("<{tag} rdf:resource=\"{}$1\"/>", a.value_ns),
                 };
-                item(tag, a.range.to_string(), a.comment, CompletionItemKind::FIELD, snippet, replace)
+                item(
+                    tag,
+                    a.range.to_string(),
+                    a.comment,
+                    CompletionItemKind::FIELD,
+                    snippet,
+                    replace,
+                )
             })
             .collect();
     }
 
     // Between objects: classes of the namespace the document's `cim` binds.
-    let Some(table) = view.index.namespace("cim").and_then(|ns| reg.ns_table(ns)) else { return Vec::new() };
+    let Some(table) = view.index.namespace("cim").and_then(|ns| reg.ns_table(ns)) else {
+        return Vec::new();
+    };
     let mut classes: Vec<&ClassDef> = table.values().copied().filter(|c| c.concrete).collect();
     classes.sort_by_key(|c| c.local);
     classes
@@ -308,7 +399,14 @@ pub fn completion(view: &View, pos: Position) -> Vec<CompletionItem> {
         .map(|c| {
             let tag = format!("cim:{}", c.local);
             let snippet = format!("<{tag} rdf:ID=\"$1\">\n\t$0\n</{tag}>");
-            item(tag, c.origins.join(", "), c.comment, CompletionItemKind::CLASS, snippet, replace)
+            item(
+                tag,
+                c.origins.join(", "),
+                c.comment,
+                CompletionItemKind::CLASS,
+                snippet,
+                replace,
+            )
         })
         .collect()
 }
@@ -318,10 +416,22 @@ pub fn completion(view: &View, pos: Position) -> Vec<CompletionItem> {
 /// ([`crate::edit::candidates`]); for an enumeration, its values.
 fn resource_completion(view: &View, el: &Element, f: &Field) -> Vec<CompletionItem> {
     let reg = type_registry();
-    let Some((_, range)) = &f.resource else { return Vec::new() };
-    let Some(class) = class_of(view.index, &el.qname) else { return Vec::new() };
-    let Some(attr) = reg.attr(class, f.key()) else { return Vec::new() };
-    let entry = |label: String, detail: String, doc: &str, kind, insert: String, filter: String, rank: usize| CompletionItem {
+    let Some((_, range)) = &f.resource else {
+        return Vec::new();
+    };
+    let Some(class) = class_of(view.index, &el.qname) else {
+        return Vec::new();
+    };
+    let Some(attr) = reg.attr(class, f.key()) else {
+        return Vec::new();
+    };
+    let entry = |label: String,
+                 detail: String,
+                 doc: &str,
+                 kind,
+                 insert: String,
+                 filter: String,
+                 rank: usize| CompletionItem {
         label,
         detail: Some(detail),
         documentation: (!doc.is_empty()).then(|| Documentation::String(doc.to_string())),
@@ -333,26 +443,62 @@ fn resource_completion(view: &View, el: &Element, f: &Field) -> Vec<CompletionIt
     };
     match attr.kind {
         AttrKind::Association => {
-            let Some(set) = view.set else { return Vec::new() };
-            let indexes: Vec<&Index> = set.files.iter().map(|x| if x.url == *view.url { view.index } else { &x.index }).collect();
+            let Some(set) = view.set else {
+                return Vec::new();
+            };
+            let indexes: Vec<&Index> = set
+                .files
+                .iter()
+                .map(|x| {
+                    if x.url == *view.url {
+                        view.index
+                    } else {
+                        &x.index
+                    }
+                })
+                .collect();
             crate::edit::candidates(&indexes, &set.tree, &el.mrid, f.key(), 200)
                 .into_iter()
                 .enumerate()
                 .map(|(i, c)| {
-                    let detail = if c.place.is_empty() { c.class.to_string() } else { format!("{} · {}", c.class, c.place) };
+                    let detail = if c.place.is_empty() {
+                        c.class.to_string()
+                    } else {
+                        format!("{} · {}", c.class, c.place)
+                    };
                     let filter = format!("#{} {}", c.label, c.id);
-                    entry(c.label.clone(), detail, "", CompletionItemKind::REFERENCE, c.reference(), filter, i)
+                    entry(
+                        c.label.clone(),
+                        detail,
+                        "",
+                        CompletionItemKind::REFERENCE,
+                        c.reference(),
+                        filter,
+                        i,
+                    )
                 })
                 .collect()
         }
         AttrKind::Enum => {
-            let values = reg.family_of(class.qualified).and_then(|fam| reg.schema(fam)).and_then(|s| s.enumeration(attr.range));
-            values.map_or(&[][..], |e| e.values)
+            let values = reg
+                .family_of(class.qualified)
+                .and_then(|fam| reg.schema(fam))
+                .and_then(|s| s.enumeration(attr.range));
+            values
+                .map_or(&[][..], |e| e.values)
                 .iter()
                 .enumerate()
                 .map(|(i, v)| {
                     let iri = format!("{}{}", attr.value_ns, v.id);
-                    entry(v.id.to_string(), attr.range.to_string(), v.comment, CompletionItemKind::ENUM_MEMBER, iri.clone(), iri, i)
+                    entry(
+                        v.id.to_string(),
+                        attr.range.to_string(),
+                        v.comment,
+                        CompletionItemKind::ENUM_MEMBER,
+                        iri.clone(),
+                        iri,
+                        i,
+                    )
                 })
                 .collect()
         }
@@ -401,7 +547,13 @@ mod tests {
         let url = Url::parse("file:///tmp/eq.xml").unwrap();
         let lines = LineIndex::new(DOC);
         let index = Index::build(DOC);
-        f(&View { url: &url, text: DOC, lines: &lines, index: &index, set: None })
+        f(&View {
+            url: &url,
+            text: DOC,
+            lines: &lines,
+            index: &index,
+            set: None,
+        })
     }
 
     fn hover_text(h: Option<Hover>) -> String {
@@ -420,8 +572,16 @@ mod tests {
             assert!(class.contains("A wire or combination of wires"), "{class}");
 
             let attr = hover_text(hover(v, Position::new(6, 10)));
-            assert!(attr.starts_with("**ACLineSegment.r** — attribute"), "{attr}");
-            let comment = type_registry().by_type_name("ACLineSegment").unwrap().attr("ACLineSegment.r").unwrap().comment;
+            assert!(
+                attr.starts_with("**ACLineSegment.r** — attribute"),
+                "{attr}"
+            );
+            let comment = type_registry()
+                .by_type_name("ACLineSegment")
+                .unwrap()
+                .attr("ACLineSegment.r")
+                .unwrap()
+                .comment;
             assert!(!comment.is_empty() && attr.contains(comment), "{attr}");
 
             let target = hover_text(hover(v, Position::new(7, 58)));
@@ -440,11 +600,25 @@ mod tests {
         let url = Url::parse("file:///tmp/ssh.xml").unwrap();
         let lines = LineIndex::new(doc);
         let index = Index::build(doc);
-        let view = View { url: &url, text: doc, lines: &lines, index: &index, set: None };
+        let view = View {
+            url: &url,
+            text: doc,
+            lines: &lines,
+            index: &index,
+            set: None,
+        };
         let text = hover_text(hover(&view, Position::new(2, 100)));
-        assert!(text.starts_with("**SynchronousMachineOperatingMode.generator** — value of enumeration"), "{text}");
+        assert!(
+            text.starts_with(
+                "**SynchronousMachineOperatingMode.generator** — value of enumeration"
+            ),
+            "{text}"
+        );
         assert!(text.contains("Operating as generator."), "{text}");
-        assert!(text.contains("Synchronous machine operating mode."), "{text}");
+        assert!(
+            text.contains("Synchronous machine operating mode."),
+            "{text}"
+        );
     }
 
     #[test]
@@ -464,10 +638,22 @@ mod tests {
             let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
             assert!(labels.contains(&"cim:ACLineSegment.r"), "{labels:?}");
             assert!(labels.contains(&"cim:IdentifiedObject.name"), "inherited");
-            let r = items.iter().find(|i| i.label == "cim:ACLineSegment.r").unwrap();
-            assert!(matches!(&r.documentation, Some(Documentation::String(d)) if !d.is_empty()), "documented");
-            let Some(CompletionTextEdit::Edit(edit)) = &items[0].text_edit else { panic!() };
-            assert_eq!(edit.range.start, Position::new(8, 4), "replaces the typed `<`");
+            let r = items
+                .iter()
+                .find(|i| i.label == "cim:ACLineSegment.r")
+                .unwrap();
+            assert!(
+                matches!(&r.documentation, Some(Documentation::String(d)) if !d.is_empty()),
+                "documented"
+            );
+            let Some(CompletionTextEdit::Edit(edit)) = &items[0].text_edit else {
+                panic!()
+            };
+            assert_eq!(
+                edit.range.start,
+                Position::new(8, 4),
+                "replaces the typed `<`"
+            );
         });
     }
 

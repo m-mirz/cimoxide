@@ -15,9 +15,10 @@ pub mod difference;
 pub mod registry;
 pub mod schema_source;
 
+#[rustfmt::skip] // written by cimgen
 mod generated;
 pub use generated::*;
 
 pub use base::{Element, FieldValue, Value};
-pub use difference::{Applied, Block, Changed, Differences, FieldChange, Statement, Unmatched};
 pub use decode::{CimDataset, FieldForm};
+pub use difference::{Applied, Block, Changed, Differences, FieldChange, Statement, Unmatched};

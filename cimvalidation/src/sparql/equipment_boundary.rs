@@ -1,7 +1,7 @@
-use cimmodel::base::{FastMap, FastSet};
-use cimmodel::CimDataset;
 use super::Fields;
 use crate::Violation;
+use cimmodel::CimDataset;
+use cimmodel::base::{FastMap, FastSet};
 
 pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
     check_boundary_point_tie_flow(dataset)
@@ -13,7 +13,11 @@ pub fn validate(dataset: &CimDataset) -> Vec<Violation> {
 /// none. Without such an element there is nothing to check, so the boundary
 /// file alone, which holds no terminals, reports nothing.
 fn check_boundary_point_tie_flow(dataset: &CimDataset) -> Vec<Violation> {
-    let tie_flow_terminals: FastSet<&str> = dataset.by_type.get("TieFlow").into_iter().flatten()
+    let tie_flow_terminals: FastSet<&str> = dataset
+        .by_type
+        .get("TieFlow")
+        .into_iter()
+        .flatten()
         .filter_map(|m| Fields::of(&dataset.entries[m]).reference("TieFlow.Terminal"))
         .map(|r| r.trim_start_matches('#'))
         .collect();
@@ -22,15 +26,27 @@ fn check_boundary_point_tie_flow(dataset: &CimDataset) -> Vec<Violation> {
     for mrid in dataset.by_type.get("Terminal").into_iter().flatten() {
         let t = Fields::of(&dataset.entries[mrid]);
         if let (Some(eq), Some(n @ 1..=2), Some(cn)) = (
-            t.reference("Terminal.ConductingEquipment"), t.i64("ACDCTerminal.sequenceNumber"), t.reference("Terminal.ConnectivityNode")) {
-            by_eq.entry(eq.trim_start_matches('#')).or_default().push((n, mrid, cn.trim_start_matches('#')));
+            t.reference("Terminal.ConductingEquipment"),
+            t.i64("ACDCTerminal.sequenceNumber"),
+            t.reference("Terminal.ConnectivityNode"),
+        ) {
+            by_eq.entry(eq.trim_start_matches('#')).or_default().push((
+                n,
+                mrid,
+                cn.trim_start_matches('#'),
+            ));
         }
     }
     // Node → whether a terminal of a spanning element there has a TieFlow.
     let mut at_node: FastMap<&str, bool> = FastMap::default();
     for ts in by_eq.values() {
-        let (Some(t1), Some(t2)) = (ts.iter().find(|t| t.0 == 1), ts.iter().find(|t| t.0 == 2)) else { continue };
-        if t1.2 == t2.2 { continue; }
+        let (Some(t1), Some(t2)) = (ts.iter().find(|t| t.0 == 1), ts.iter().find(|t| t.0 == 2))
+        else {
+            continue;
+        };
+        if t1.2 == t2.2 {
+            continue;
+        }
         for (_, term, cn) in [t1, t2] {
             *at_node.entry(cn).or_default() |= tie_flow_terminals.contains(term);
         }
@@ -39,8 +55,12 @@ fn check_boundary_point_tie_flow(dataset: &CimDataset) -> Vec<Violation> {
     let mut v = Vec::new();
     for mrid in dataset.by_type.get("BoundaryPoint").into_iter().flatten() {
         let bp = Fields::of(&dataset.entries[mrid]);
-        let Some(cn_id) = bp.reference("BoundaryPoint.ConnectivityNode") else { continue };
-        let Some(&has_tie_flow) = at_node.get(cn_id.trim_start_matches('#')) else { continue };
+        let Some(cn_id) = bp.reference("BoundaryPoint.ConnectivityNode") else {
+            continue;
+        };
+        let Some(&has_tie_flow) = at_node.get(cn_id.trim_start_matches('#')) else {
+            continue;
+        };
         let excluded = bp.bool("BoundaryPoint.isExcludedFromAreaInterchange") == Some(true);
         let message = match (excluded, has_tie_flow) {
             (true, true) => "TieFlow is modelled but isExcludedFromAreaInterchange is true.",
@@ -48,13 +68,13 @@ fn check_boundary_point_tie_flow(dataset: &CimDataset) -> Vec<Violation> {
             _ => continue,
         };
         v.push(Violation {
-            object_id:   mrid.clone(),
-            rule_id:     "eqbdn301:BoundaryPoint.isExcludedFromAreaInterchange-requiredTieFlow".into(),
-            name:        "C:301:EQBD:BoundaryPoint.isExcludedFromAreaInterchange:requiredTieFlow".into(),
-            class:       "BoundaryPoint".into(),
-            property:    "isExcludedFromAreaInterchange".into(),
-            message:     message.into(),
-            severity:    "sh:Violation".into(),
+            object_id: mrid.clone(),
+            rule_id: "eqbdn301:BoundaryPoint.isExcludedFromAreaInterchange-requiredTieFlow".into(),
+            name: "C:301:EQBD:BoundaryPoint.isExcludedFromAreaInterchange:requiredTieFlow".into(),
+            class: "BoundaryPoint".into(),
+            property: "isExcludedFromAreaInterchange".into(),
+            message: message.into(),
+            severity: "sh:Violation".into(),
             description: String::new(),
         });
     }

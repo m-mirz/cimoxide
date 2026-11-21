@@ -174,7 +174,10 @@ impl FieldValue {
             FieldValue::Resource(r) => (&[], std::slice::from_ref(r)),
             FieldValue::ResourceList(l) => (&[], l.as_slice()),
         };
-        texts.iter().map(|t| Value::Text(t)).chain(refs.iter().map(|r| Value::Resource(r)))
+        texts
+            .iter()
+            .map(|t| Value::Text(t))
+            .chain(refs.iter().map(|r| Value::Resource(r)))
     }
 }
 
@@ -219,11 +222,27 @@ type Types = Vec<&'static ClassDef>;
 
 impl Element {
     pub fn new(class: &'static ClassDef, mrid: String) -> Self {
-        Self { class, mrid, fields: FieldMap::default(), duplicate_fields: FastSet::default(), langs: None, also: None, described: false }
+        Self {
+            class,
+            mrid,
+            fields: FieldMap::default(),
+            duplicate_fields: FastSet::default(),
+            langs: None,
+            also: None,
+            described: false,
+        }
     }
 
     pub fn with_fields(class: &'static ClassDef, mrid: String, fields: FieldMap) -> Self {
-        Self { class, mrid, fields, duplicate_fields: FastSet::default(), langs: None, also: None, described: false }
+        Self {
+            class,
+            mrid,
+            fields,
+            duplicate_fields: FastSet::default(),
+            langs: None,
+            also: None,
+            described: false,
+        }
     }
 
     pub fn class(&self) -> &'static ClassDef {
@@ -244,8 +263,15 @@ impl Element {
         if self.types().any(|c| c.qualified == other.qualified) {
             return false;
         }
-        let promote = reg.chain(other).iter().any(|c| c.qualified == self.class.qualified);
-        let kept = if promote { std::mem::replace(&mut self.class, other) } else { other };
+        let promote = reg
+            .chain(other)
+            .iter()
+            .any(|c| c.qualified == self.class.qualified);
+        let kept = if promote {
+            std::mem::replace(&mut self.class, other)
+        } else {
+            other
+        };
         self.also.get_or_insert_with(Default::default).push(kept);
         promote
     }
@@ -293,19 +319,28 @@ impl Element {
     /// one. A value written without a tag has no entry, so a field whose
     /// values outnumber its tags has an untagged value.
     pub fn langs(&self, key: &str) -> impl Iterator<Item = &str> {
-        self.langs.iter().flat_map(|l| l.iter()).filter(move |(k, _)| *k == key).map(|(_, l)| &**l)
+        self.langs
+            .iter()
+            .flat_map(|l| l.iter())
+            .filter(move |(k, _)| *k == key)
+            .map(|(_, l)| &**l)
     }
 
     /// Record the `xml:lang` of a text value just added to `key`.
     pub fn add_lang(&mut self, key: &'static str, lang: &str) {
-        self.langs.get_or_insert_with(Default::default).push((key, lang.into()));
+        self.langs
+            .get_or_insert_with(Default::default)
+            .push((key, lang.into()));
     }
 
     /// Hold `key`'s values as references, or as text: what a caller knows
     /// that the class table does not ([`crate::CimDataset::element_from_json`]).
     pub fn retype(&mut self, key: &str, reference: bool) {
         if let Some(value) = self.fields.get_mut(key) {
-            *value = match (std::mem::replace(value, FieldValue::Text(String::new())), reference) {
+            *value = match (
+                std::mem::replace(value, FieldValue::Text(String::new())),
+                reference,
+            ) {
                 (FieldValue::Text(s), true) => FieldValue::Resource(s),
                 (FieldValue::TextList(v), true) => FieldValue::ResourceList(v),
                 (FieldValue::Resource(s), false) => FieldValue::Text(s),
@@ -368,7 +403,9 @@ impl Element {
                     return;
                 }
                 Some(existing @ FieldValue::Resource(_)) => {
-                    let FieldValue::Resource(old) = std::mem::replace(existing, FieldValue::ResourceList(Vec::new())) else {
+                    let FieldValue::Resource(old) =
+                        std::mem::replace(existing, FieldValue::ResourceList(Vec::new()))
+                    else {
                         unreachable!()
                     };
                     *existing = FieldValue::ResourceList(vec![old, new_ref.clone()]);
@@ -384,7 +421,9 @@ impl Element {
                     return;
                 }
                 Some(existing @ FieldValue::Text(_)) => {
-                    let FieldValue::Text(old) = std::mem::replace(existing, FieldValue::TextList(Vec::new())) else {
+                    let FieldValue::Text(old) =
+                        std::mem::replace(existing, FieldValue::TextList(Vec::new()))
+                    else {
                         unreachable!()
                     };
                     *existing = FieldValue::TextList(vec![old, new_text.clone()]);
@@ -405,7 +444,9 @@ impl Element {
     /// Whether `key` holds `value` (a [`FieldValue::Text`] or
     /// [`FieldValue::Resource`]) among its values.
     pub fn has_value(&self, key: &str, value: &FieldValue) -> bool {
-        self.fields.get(key).is_some_and(|held| held.values().any(|v| v == *value))
+        self.fields
+            .get(key)
+            .is_some_and(|held| held.values().any(|v| v == *value))
     }
 
     /// Remove one of `key`'s values (a [`FieldValue::Text`] or
@@ -413,8 +454,14 @@ impl Element {
     /// does. A list left with one value holds it alone; a field left with none
     /// is gone. Returns whether the field held the value.
     pub fn remove_value(&mut self, key: &str, value: &FieldValue) -> bool {
-        let Some(held) = self.fields.get_mut(key) else { return false };
-        let left: Vec<FieldValue> = held.values().filter(|v| *v != *value).map(|v| v.owned()).collect();
+        let Some(held) = self.fields.get_mut(key) else {
+            return false;
+        };
+        let left: Vec<FieldValue> = held
+            .values()
+            .filter(|v| *v != *value)
+            .map(|v| v.owned())
+            .collect();
         if left.len() == held.values().count() {
             return false;
         }
@@ -442,7 +489,9 @@ impl Element {
     /// Make the object's types `types`: the first its class, the others kept
     /// beside it ([`Element::types`]). Nothing for none.
     pub(crate) fn set_types(&mut self, types: &[&'static ClassDef]) {
-        let Some((&first, rest)) = types.split_first() else { return };
+        let Some((&first, rest)) = types.split_first() else {
+            return;
+        };
         self.class = first;
         self.also = (!rest.is_empty()).then(|| Box::new(rest.to_vec()));
     }
@@ -454,7 +503,9 @@ impl Element {
         for (k, v) in &other.fields {
             match v {
                 FieldValue::ResourceList(new_list) => match self.fields.get_mut(k) {
-                    Some(FieldValue::ResourceList(existing)) => existing.extend(new_list.iter().cloned()),
+                    Some(FieldValue::ResourceList(existing)) => {
+                        existing.extend(new_list.iter().cloned())
+                    }
                     _ => {
                         self.fields.insert(*k, v.clone());
                     }
@@ -478,15 +529,19 @@ impl Element {
     /// `xml:lang`, `"_lang"`: key → its tags in value order.
     pub fn to_json_value(&self) -> serde_json::Value {
         let mut map = serde_json::Map::with_capacity(self.fields.len() + 2);
-        map.insert("id".to_string(), serde_json::Value::String(self.mrid.clone()));
+        map.insert(
+            "id".to_string(),
+            serde_json::Value::String(self.mrid.clone()),
+        );
         for (k, v) in &self.fields {
             map.insert(k.to_string(), field_to_json(v));
         }
         if let Some(langs) = &self.langs {
             let mut tags = serde_json::Map::new();
             for (key, lang) in langs.iter() {
-                if let serde_json::Value::Array(list) =
-                    tags.entry(key.to_string()).or_insert_with(|| serde_json::Value::Array(Vec::new()))
+                if let serde_json::Value::Array(list) = tags
+                    .entry(key.to_string())
+                    .or_insert_with(|| serde_json::Value::Array(Vec::new()))
                 {
                     list.push(serde_json::Value::String(lang.to_string()));
                 }
@@ -505,22 +560,36 @@ impl Element {
         value: &serde_json::Value,
     ) -> Result<Self, String> {
         let obj = value.as_object().ok_or("element is not a JSON object")?;
-        let mrid = obj.get("id").and_then(|v| v.as_str()).ok_or("element has no \"id\"")?.to_string();
+        let mrid = obj
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or("element has no \"id\"")?
+            .to_string();
         let mut fields = FieldMap::default();
         for (k, v) in obj {
             if k == "id" || k == "_type" || k == LANG_KEY {
                 continue;
             }
-            let is_ref = reg.attr(class, k).is_some_and(|a| a.kind != AttrKind::Literal);
+            let is_ref = reg
+                .attr(class, k)
+                .is_some_and(|a| a.kind != AttrKind::Literal);
             let value = match v {
                 serde_json::Value::String(s) if is_ref => FieldValue::Resource(s.clone()),
                 serde_json::Value::String(s) => FieldValue::Text(s.clone()),
                 serde_json::Value::Array(items) => {
                     let items: Vec<String> = items
                         .iter()
-                        .map(|i| i.as_str().map(str::to_string).ok_or(format!("{k}: list item is not a string")))
+                        .map(|i| {
+                            i.as_str()
+                                .map(str::to_string)
+                                .ok_or(format!("{k}: list item is not a string"))
+                        })
                         .collect::<Result<_, _>>()?;
-                    if is_ref { FieldValue::ResourceList(items) } else { FieldValue::TextList(items) }
+                    if is_ref {
+                        FieldValue::ResourceList(items)
+                    } else {
+                        FieldValue::TextList(items)
+                    }
                 }
                 other => return Err(format!("{k}: expected a string or an array, got {other}")),
             };
@@ -530,7 +599,12 @@ impl Element {
         if let Some(tags) = obj.get(LANG_KEY).and_then(|t| t.as_object()) {
             for (k, list) in tags {
                 let key = reg.field_key(class, k);
-                for lang in list.as_array().into_iter().flatten().filter_map(|l| l.as_str()) {
+                for lang in list
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|l| l.as_str())
+                {
                     element.add_lang(key, lang);
                 }
             }
@@ -612,7 +686,10 @@ impl Schema {
     /// The enumeration called `name` (`WindingConnection`).
     pub fn enumeration(&self, name: &str) -> Option<&'static EnumDef> {
         let enums: &'static [EnumDef] = self.enums;
-        enums.binary_search_by_key(&name, |e| e.local).ok().map(|i| &enums[i])
+        enums
+            .binary_search_by_key(&name, |e| e.local)
+            .ok()
+            .map(|i| &enums[i])
     }
 
     /// The enumeration value `id` names, as the decoder keeps it
@@ -722,9 +799,17 @@ impl TypeRegistry {
                 by_id.entry(a.id).or_insert(a);
             }
         }
-        self.families.push(FamilyTable { id, prefix, schema, attrs: by_id });
+        self.families.push(FamilyTable {
+            id,
+            prefix,
+            schema,
+            attrs: by_id,
+        });
         for class in classes {
-            self.by_ns.entry(class.ns).or_default().insert(class.local, class);
+            self.by_ns
+                .entry(class.ns)
+                .or_default()
+                .insert(class.local, class);
             self.by_type_name.insert(class.qualified, class);
             if bare_fallback {
                 self.bare.insert(class.local, class);
@@ -786,7 +871,12 @@ impl TypeRegistry {
             .chain
             .iter()
             .filter(|(_, chain)| chain.iter().any(|c| c.qualified == qualified))
-            .filter_map(|(q, _)| self.by_type_name.get(q).filter(|c| c.concrete).map(|c| c.qualified))
+            .filter_map(|(q, _)| {
+                self.by_type_name
+                    .get(q)
+                    .filter(|c| c.concrete)
+                    .map(|c| c.qualified)
+            })
             .collect();
         out.sort_unstable();
         out
@@ -794,7 +884,10 @@ impl TypeRegistry {
 
     /// Every attribute `class` declares, inherited ones included.
     pub fn attrs(&self, class: &ClassDef) -> impl Iterator<Item = &'static AttrDef> + '_ {
-        self.declared.get(class.qualified).into_iter().flat_map(|m| m.values().copied())
+        self.declared
+            .get(class.qualified)
+            .into_iter()
+            .flat_map(|m| m.values().copied())
     }
 
     /// The schema registered as `family` (`"cgmes"`, `"nc"`).
@@ -808,8 +901,13 @@ impl TypeRegistry {
 
     /// The enumeration value `id` (`WindingConnection.D`) in the family of
     /// `class`, which an element of `class` uses it on.
-    pub fn enum_value(&self, class: &ClassDef, id: &str) -> Option<(&'static EnumDef, &'static EnumValueDef)> {
-        self.schema(self.family_of(class.qualified)?)?.enum_value(id)
+    pub fn enum_value(
+        &self,
+        class: &ClassDef,
+        id: &str,
+    ) -> Option<(&'static EnumDef, &'static EnumValueDef)> {
+        self.schema(self.family_of(class.qualified)?)?
+            .enum_value(id)
     }
 
     /// The family a `by_type` key belongs to, by its prefix.

@@ -34,8 +34,7 @@ pub struct Family {
 pub const CGMES: Family = Family {
     id: "cgmes",
     type_prefix: "",
-    default_schema:
-        "application-profiles-library/CGMES/RDFS/61970-600-2_*-AP-Voc-RDFS2020.rdf",
+    default_schema: "application-profiles-library/CGMES/RDFS/61970-600-2_*-AP-Voc-RDFS2020.rdf",
     base_profile: Some("EQ"),
     extra_namespaces: &[
         ("md", "http://iec.ch/TC57/61970-552/ModelDescription/1#"),
