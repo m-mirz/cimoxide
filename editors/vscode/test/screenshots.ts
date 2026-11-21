@@ -204,29 +204,6 @@ export async function run(): Promise<void> {
     await sleep(1500);
     await shot("hover");
   }
-  if (take.includes("delete-preview")) {
-    // Deleting a voltage level with what it holds, in every file, previewed; then discarded.
-    await commands.executeCommand("workbench.action.closeSidebar");
-    await commands.executeCommand("workbench.action.closeAllEditors");
-    const hits = await api.request<Hit[]>("cimoxide/search", { uri: main.toString(), query: "10.5" });
-    const level = hits.find((h) => h.class === "VoltageLevel" && h.place === "PP_Brussels");
-    if (!level) throw new Error("no 10.5 kV level in PP_Brussels");
-    // Settles only once the preview is applied or discarded: not awaited.
-    void commands.executeCommand("cimoxide.model.deleteAll", await api.modelTree.locateId(level.id));
-    await until("the preview", async () => ((await box(".part.panel")).bottom > 0 ? true : undefined));
-    await sleep(2000);
-    // The panel taller, and the first file's first change open in a diff above it.
-    await drag(W / 2, await sashAt("", (await box(".part.panel")).top), W / 2, H * 0.45);
-    await commands.executeCommand("refactorPreview.focus");
-    for (const c of ["list.focusFirst", "list.expand", "list.focusDown", "list.select"]) {
-      await commands.executeCommand(c);
-      await sleep(300);
-    }
-    await sleep(1500);
-    await shot("delete-preview");
-    await commands.executeCommand("refactorPreview.discard");
-    await commands.executeCommand("workbench.action.closePanel");
-  }
   if (take.includes("grid-realgrid")) {
     await commands.executeCommand("workbench.action.closeSidebar");
     await commands.executeCommand("workbench.action.closeAllEditors");
