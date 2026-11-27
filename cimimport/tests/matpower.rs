@@ -438,6 +438,24 @@ fn buses_are_grouped_by_transformer_and_by_name() {
 }
 
 #[test]
+fn a_named_bus_keeps_its_number() {
+    let (_, ds) = decode(&convert("matpower/case_ACTIVSg200.m"));
+    for class in ["TopologicalNode", "ConnectivityNode"] {
+        let named = |number: u32| {
+            let description = format!("MATPOWER bus {number}");
+            let found: Vec<_> = of_type(&ds, class)
+                .into_iter()
+                .filter(|e| e.get_str("IdentifiedObject.description") == Some(&description))
+                .collect();
+            assert_eq!(found.len(), 1, "{class} {description}");
+            found[0].get_str("IdentifiedObject.name").unwrap().to_string()
+        };
+        assert_eq!(named(17), "MASON CITY 0", "{class}");
+        assert_eq!(named(21), "MASON CITY 4", "{class}");
+    }
+}
+
+#[test]
 fn a_ratio_of_one_is_a_line() {
     // RTE writes TAP 1 on its lines: they stay lines, and the substations stay
     // apart.

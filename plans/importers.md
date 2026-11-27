@@ -49,7 +49,7 @@ cimimport/src/
 | `baseKV` of each bus | `BaseVoltage` | one per distinct value |
 | buses joined by transformers, and by name (see [Substation grouping](#substation-grouping)) | `Substation`, one `VoltageLevel` per baseKV in it | gives cimlens a substation view; noted |
 | bus `area` | `SubGeographicalRegion` (one `GeographicalRegion`) | substations go under it |
-| bus | `BusbarSection` + `ConnectivityNode` (EQ), `TopologicalNode` (TP) | name from `bus_name`, else `Bus {i}` |
+| bus | `BusbarSection` + `ConnectivityNode` (EQ), `TopologicalNode` (TP) | name from `bus_name`, else `Bus {i}`; the nodes' description is `MATPOWER bus {i}` |
 | each branch end | a `Breaker` between the busbar's `ConnectivityNode` and one of its own, which the branch's terminal connects to | see [Breakers](#breakers); both nodes in the bus's `TopologicalNode` |
 | bus type 3 | `SynchronousMachine.referencePriority = 1` on its machine | if it has no online generator: first PV bus, as `bustypes` does |
 | bus type 4 (isolated) | the bus is kept; its equipment's terminals get `connected = false` | visible in cimlens, not solved |
@@ -176,8 +176,8 @@ One PR each.
 - The converted SV against gridoxide's solve: equal for cases saved solved, and a measure of how
   far from solved the others are (reported, not failed).
 - Pass: max |ΔV| < 1e-6 pu and max |Δθ| < 1e-6 rad per bus, and the same convergence.
-- This is where the mapping table's open points get settled. A deviation found here is fixed in
-  the converter, not in gridoxide.
+- This is where the mapping table's open points get settled. A deviation found here is fixed
+  where it is: in the converter if it departs from CGMES, in gridoxide if its reading does.
 
 ### 3. CLI and MCP (cimoxide)
 
@@ -221,7 +221,7 @@ Decided 2026-11-27:
 
 ## Status
 
-Phase 1 built, 2026-11-27, on cimoxide's branch `matpower-import` (not yet committed):
+Phase 1 built, 2026-11-27, on cimoxide's branch `matpower-import`:
 `cimimport/` (package `cimoxide-import`, re-exported by the facade as `cimoxide::import`), the
 `benchmark-grids/` submodule at gridoxide's commit, and tests in `cimimport/tests/matpower.rs`.
 
@@ -263,20 +263,33 @@ better: `case14`, `118`, `300`, `1354pegase`, `2869pegase`, `9241pegase`, `ACTIV
 by either path (`case1888rte`, `case6495rte`, `case6515rte`, `case141`, pglib `case3_lmbd` and
 `case300`); phase 2 should start those from the case's voltages.
 
-Two of gridoxide's CGMES readings differ from the converter's output. Phase 2 has to settle them:
+Two of gridoxide's CGMES readings differed from the converter's output, and both were gridoxide's
+(fixed in gridoxide #42):
 
-1. **The slack's magnitude comes from `SvVoltage.v`**, ahead of the regulating control's target.
-   In a case that wasn't saved solved, the slack's `Vm` is only a starting value, while MATPOWER
-   holds the bus at the generator's Vg. This explains `case4_dist`, `case18` and `case3120sp` (up
-   to 0.065 pu). Writing Vg into the SV at the slack makes them agree to 1e-13.
-2. **`RotatingMachine.q` is read without the load-sign negation** that loads get (a choice
-   gridoxide made from RealGrid). The converter writes CGMES's load sign, q = −Qg. A generator
-   on a PQ bus is then injected with the wrong sign: `case2848rte` is off by 7.7e-3 pu, and
-   agrees to 3e-13 with q = +Qg.
+1. **The slack's magnitude came from `SvVoltage.v`**, ahead of the regulating control's target.
+   In a case that wasn't saved solved, the slack's `Vm` is only a starting value. This explained
+   `case4_dist`, `case18` and `case3120sp` (up to 0.065 pu). The SV now fills in only a
+   reference nothing holds, or one a static var compensator with a slope holds.
+2. **`RotatingMachine.q` was read without the load-sign negation** that loads get, which put a
+   generator on a PQ bus the wrong way round: `case2848rte` was off by 7.7e-3 pu. At every
+   fixture machine that holds no voltage, SSH's `q` equals the solved `SvPowerFlow.q`, so the
+   load sign was right; the exception came from MicroGrid's remotely regulating BE-G1.
 
-Recommendation: fix both in gridoxide, since the converter follows CGMES on each.
-1. Take the slack's magnitude from an enabled voltage control's target where there is one.
-2. Look at the machine-Q sign again against a source that has a machine with q ≠ 0.
+### Phase 2
 
-If gridoxide should stay as it is, the converter could write Vg into the SV at regulated buses
-instead, but that loses the case's own Vm there.
+Built 2026-11-28 on gridoxide's branch `matpower-via-cgmes`: `tests/matpower_via_cgmes_test.rs`.
+
+- Every case the converter takes (29 up to 2,000 buses, and 7 larger behind `#[ignore]`) is solved
+  directly and through `BusBranchFromTp` and `NodeBreakerFromEq`. Through the breakers it
+  matches too.
+- Each solve starts from the case's voltages, the CGMES side from the SV, rather than flat: the
+  three RTE cases that diverge from a flat start then converge both ways.
+- Every case agrees to 3e-12 or better (`case141` through the breakers, 2.2e-11). The test
+  bounds it at 1e-9. Tolerance 1e-8: `case141` can't reach 1e-10.
+- pglib's `case300` and `case3_lmbd` are OPF benchmarks whose dispatch has no power-flow
+  solution, and both paths diverge on them; the test expects that.
+- How far each case was saved from its own solution is printed, not failed: 4e-5 to 0.47 pu.
+- To find bus n, the converter now describes each bus's `ConnectivityNode` and `TopologicalNode`
+  as `MATPOWER bus {n}`, which a named bus otherwise loses.
+- 6.6 s unoptimised, the large cases 41 s. gridoxide's CI doesn't run the `cgmes` tests, so
+  neither does it run this one.

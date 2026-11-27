@@ -431,9 +431,13 @@ pub fn convert(
     let mut busbar_terminal = Vec::with_capacity(n);
     for i in 0..n {
         let key = format!("bus:{}", numbers[i]);
+        // The case's own bus number, which a named bus otherwise loses.
+        let number = format!("MATPOWER bus {}", numbers[i]);
         let cn = b.add("ConnectivityNode", &format!("{key}:node"), &names[i]);
+        b.text(&cn, "IdentifiedObject.description", &number);
         b.link(&cn, "ConnectivityNode.ConnectivityNodeContainer", &vl(i));
         let tn = b.add("TopologicalNode", &format!("{key}:tnode"), &names[i]);
+        b.text(&tn, "IdentifiedObject.description", &number);
         b.link(&tn, "TopologicalNode.BaseVoltage", &bv(i));
         b.link(&tn, "TopologicalNode.ConnectivityNodeContainer", &vl(i));
         b.link(&cn, "ConnectivityNode.TopologicalNode", &tn);
