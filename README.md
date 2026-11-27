@@ -113,9 +113,10 @@ see [`cimoxide-mcp/README.md`](cimoxide-mcp/README.md).
 | `cimschema` | RDFS and SHACL parser, shared by `cimgen` and the runtime loaders |
 | `cimvalidation` | SHACL validation through one interpreter (`bag.rs`) over **generated** shape tables; hand-written `sh:sparql` rules in `src/sparql/` |
 | `cimsparql` | SPARQL 1.1 over a decoded dataset, backed by in-memory oxigraph |
-| `cimoxide` | Facade re-exporting `cimmodel` (as `model`), `cimvalidation` and `cimsparql` |
+| `cimoxide` | Facade re-exporting `cimmodel` (as `model`), `cimvalidation`, `cimimport` (as `import`) and `cimsparql` |
 | `cimoxide-cli` | The command-line tool, `cimox` |
 | `cimview` | A model set's grid and tree, with findings, as JSON for whatever draws them |
+| `cimimport` | Other grid formats into CGMES 3.0 (EQ, SSH, TP, SV): MATPOWER `.m` cases so far |
 | `cimoxide-lsp` | `cimlsp`, the language server; its VS Code extension is `editors/vscode/` |
 | `cimoxide-mcp` | `cimmcp`, the MCP server for chat clients |
 | `cimoxide-py` | Python bindings (PyO3, built with `maturin`, outside the Cargo workspace) |
