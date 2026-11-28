@@ -56,9 +56,10 @@ cimimport/src/
 | branch, tap 0, shift 0, same kV | `ACLineSegment` | r, x, b converted from pu to Ω/S on its baseKV; b is `bch`, the full charging |
 | branch with tap ≠ 0, shift ≠ 0 or different kV | `PowerTransformer` + 2 `PowerTransformerEnd` | end 1 `ratedU = tap·baseKV_from`, end 2 `ratedU = baseKV_to` with r, x, b in Ω/S on end 2, which is MATPOWER's model: an ideal tap at the from side, then the series impedance |
 | `shift` | `PhaseTapChangerLinear`, fixed at one step giving the angle | |
+| each branch row | the branch's `ACLineSegment`, `PowerTransformer`, `SeriesCompensator` or `EquivalentBranch` is described as `MATPOWER branch {row}` | |
 | `rateA` / `rateB` / `rateC` | `OperationalLimitSet` per terminal: `CurrentLimit` PATL from rateA, TATL from rateB/C | MVA → A at baseKV; 0 means unlimited, so no limit |
 | `BR_STATUS = 0` | both end breakers `Switch.open = true` (SSH); terminals stay connected | kept, shown as out, closed again in cimlens with a click |
-| gen | `SynchronousMachine` + `ThermalGeneratingUnit` (from `genfuel` where given: hydro, wind, solar, nuclear) + `RegulatingControl` (voltage, target `Vg·baseKV` at its bus) | SSH `p = −Pg`, `q = −Qg`; minQ/maxQ, `GeneratingUnit.minOperatingP/maxOperatingP` from Pmin/Pmax |
+| gen | `SynchronousMachine` + `ThermalGeneratingUnit` (from `genfuel` where given: hydro, wind, solar, nuclear) + `RegulatingControl` (voltage, target `Vg·baseKV` at its bus) | SSH `p = −Pg`, `q = −Qg`; minQ/maxQ, `GeneratingUnit.minOperatingP/maxOperatingP` from Pmin/Pmax; the machine is described as `MATPOWER gen {row}` |
 | `GEN_STATUS ≤ 0` | `Equipment.inService = false` and terminal disconnected | |
 | bus `Pd`, `Qd` | `EnergyConsumer` | only if non-zero |
 | bus `Gs`, `Bs` | `LinearShuntCompensator`, one section | `bPerSection = Bs / baseKV²` (MVAr at 1 pu → S) |
@@ -66,7 +67,7 @@ cimimport/src/
 | branch `PF`, `QF`, `PT`, `QT` (columns 14–17, in solved cases) | `SvPowerFlow` on the branch's two terminals | only if the columns are there |
 | gen `Pg`, `Qg` | `SvPowerFlow` on the machine's terminal | |
 | breakers, branches, machines | `SvStatus.inService` | from the status columns |
-| `gencost`, `dcline`, OPF limits | not mapped (noted) | `dcline` maybe later as `EquivalentInjection` pairs |
+| `gencost`, `dcline` and other tables; bus `ZONE`, gen capability curve, ramp rates and `APF`, branch `ANGMIN`/`ANGMAX`, the OPF result columns | not mapped; each noted where the case gives it | they stay in the `.m`, see [Decisions](#decisions) |
 
 ### Substation grouping
 
@@ -218,6 +219,14 @@ Decided 2026-11-27:
 - Breakers at every branch end, on by default (see [Breakers](#breakers)).
 - SV is always written from the case's voltages (see [SV](#sv)); without it, that information
   in the case would be lost.
+
+Decided 2026-11-28:
+
+- What CGMES has no place for (OPF costs and angle limits, mostly) is not carried in an
+  extension of CGMES: that would tie cimoxide to a vocabulary gridoxide owns. It stays in the
+  `.m` file, and the notes name it. cimlens, which uses both, can keep the `.m` in the model set
+  and hand it to gridoxide with the CGMES model for an OPF; the `MATPOWER bus/gen/branch {row}`
+  descriptions match the rows to the objects.
 
 ## Status
 

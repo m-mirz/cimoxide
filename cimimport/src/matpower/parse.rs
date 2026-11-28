@@ -27,8 +27,12 @@ pub const BUS_AREA: usize = 6;
 pub const VM: usize = 7;
 pub const VA: usize = 8;
 pub const BASE_KV: usize = 9;
+pub const ZONE: usize = 10;
 pub const VMAX: usize = 11;
 pub const VMIN: usize = 12;
+/// `LAM_P`, the first of the OPF results `LAM_P`, `LAM_Q`, `MU_VMAX`, `MU_VMIN`.
+pub const LAM_P: usize = 13;
+pub const MU_VMIN: usize = 16;
 const BUS_COLUMNS: usize = 10;
 
 pub const GEN_BUS: usize = 0;
@@ -41,6 +45,16 @@ pub const MBASE: usize = 6;
 pub const GEN_STATUS: usize = 7;
 pub const PMAX: usize = 8;
 pub const PMIN: usize = 9;
+/// The capability curve, `PC1`, `PC2`, `QC1MIN`, `QC1MAX`, `QC2MIN`, `QC2MAX`.
+pub const PC1: usize = 10;
+pub const QC2MAX: usize = 15;
+/// The ramp rates, `RAMP_AGC`, `RAMP_10`, `RAMP_30`, `RAMP_Q`.
+pub const RAMP_AGC: usize = 16;
+pub const RAMP_Q: usize = 19;
+pub const APF: usize = 20;
+/// The OPF results `MU_PMAX`, `MU_PMIN`, `MU_QMAX`, `MU_QMIN`.
+pub const MU_PMAX: usize = 21;
+pub const MU_QMIN: usize = 24;
 const GEN_COLUMNS: usize = 8;
 
 pub const F_BUS: usize = 0;
@@ -54,10 +68,15 @@ pub const RATE_C: usize = 7;
 pub const TAP: usize = 8;
 pub const SHIFT: usize = 9;
 pub const BR_STATUS: usize = 10;
+pub const ANGMIN: usize = 11;
+pub const ANGMAX: usize = 12;
 pub const PF: usize = 13;
 pub const QF: usize = 14;
 pub const PT: usize = 15;
 pub const QT: usize = 16;
+/// The OPF results `MU_SF`, `MU_ST`, `MU_ANGMIN`, `MU_ANGMAX`.
+pub const MU_SF: usize = 17;
+pub const MU_ANGMAX: usize = 20;
 const BRANCH_COLUMNS: usize = 11;
 
 pub const PQ: f64 = 1.0;
