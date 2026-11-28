@@ -99,6 +99,7 @@ dependencies = [
 name = "cimoxide"
 version = "0.7.2"
 dependencies = [
+ "cimoxide-import",
  "cimoxide-model",
  "cimoxide-sparql",
  "cimoxide-validation",
@@ -125,6 +126,15 @@ dependencies = [
  "quick-xml",
  "sha2",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "cimoxide-import"
+version = "0.7.2"
+dependencies = [
+ "cimoxide-model",
+ "cimoxide-validation",
+ "sha1",
 ]
 
 [[package]]

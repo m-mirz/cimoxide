@@ -23,8 +23,9 @@ cargo fmt --all && cargo fmt --manifest-path cimoxide-py/Cargo.toml   # CI check
 Formatting is rustfmt's defaults, no `rustfmt.toml`; the generated modules are declared
 `#[rustfmt::skip]`.
 
-Submodules: `application-profiles-library/` (ENTSO-E RDFS and SHACL) and
-`CGMES-Test-Configurations/` (real test datasets). `relicapgrid/` (ENTSO-E's ReliCapGrid,
+Submodules: `application-profiles-library/` (ENTSO-E RDFS and SHACL),
+`CGMES-Test-Configurations/` (real test datasets) and `benchmark-grids/` (MATPOWER and other
+cases, for `cimimport`'s tests; the same repo and commit gridoxide pins). `relicapgrid/` (ENTSO-E's ReliCapGrid,
 for `scripts/relicapgrid`'s harness) is `update = none`: fetch it with
 `git submodule update --init --checkout relicapgrid`.
 
@@ -42,6 +43,7 @@ Data flow: RDFS/SHACL → `cimgen` → `cimmodel` (class tables) + `cimvalidatio
 | `cimoxide/` | `cimoxide` | facade re-exporting the above |
 | `cimoxide-cli/` | `cimoxide-cli` (binary `cimox`) | CLI |
 | `cimview/` | `cimoxide-view` | a model set's grid and tree, with findings, as JSON for whatever draws them; its files' index and text edits across them |
+| `cimimport/` | `cimoxide-import` | other grid formats into CGMES 3.0, as text in and files out: MATPOWER `.m` (`matpower::parse` reads, `matpower::map` builds); tests read the `benchmark-grids/` submodule |
 | `cimoxide-lsp/` | `cimoxide-lsp` (binary `cimlsp`) | language server; VS Code extension in `editors/vscode/` |
 | `cimoxide-mcp/` | `cimoxide-mcp` (binary `cimmcp`) | MCP server for chat clients; bundled and registered by the extension |
 | `cimoxide-py/` | — | PyO3 bindings, outside the workspace |

@@ -19,6 +19,9 @@
 /// RDF/XML and JSON (`model::convert`).
 pub use cimmodel as model;
 
+/// Importers from other grid formats (MATPOWER) into CGMES 3.0.
+pub use cimimport as import;
+
 /// SHACL validation against the ENTSO-E profile constraints.
 pub use cimvalidation as validation;
 
