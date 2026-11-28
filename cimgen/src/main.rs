@@ -7,8 +7,8 @@ use cimschema as schema;
 use std::path::Path;
 
 const DEFAULT_OUTPUT: &str = "cimmodel/src/generated";
-const DEFAULT_SHACL: &str = "application-profiles-library/CGMES/SHACL/*.ttl";
-const DEFAULT_NC_SHACL: &str = "application-profiles-library/NCP/SHACL/*.ttl";
+const DEFAULT_SHACL: &str = "CGMES-AP/CGMES/SHACL/*.ttl";
+const DEFAULT_NC_SHACL: &str = "NC-AP/NCP/SHACL/*.ttl";
 const DEFAULT_SHACL_OUTPUT: &str = "cimvalidation/src";
 const DEFAULT_SPARQL_DIR: &str = "cimvalidation/src/sparql";
 const DEFAULT_PYTHON_STUBS_OUTPUT: &str = "cimoxide-py/python/cimoxide";

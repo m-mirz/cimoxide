@@ -22,7 +22,7 @@ fn shacl_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
-        .join("application-profiles-library/NCP/SHACL")
+        .join("NC-AP/NCP/SHACL")
 }
 
 /// A shape rendered as text, for comparing the two tables without depending on
@@ -61,7 +61,7 @@ fn the_cgmes_table_matches_its_runtime_load() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
-        .join("application-profiles-library/CGMES/SHACL");
+        .join("CGMES-AP/CGMES/SHACL");
     let loaded = load_table("cgmes", &dir).expect("could not load CGMES shapes");
     let generated = cimvalidation::cgmes_shapes::SHAPES;
 
@@ -83,19 +83,19 @@ fn the_cgmes_table_matches_its_runtime_load() {
 #[test]
 fn a_directory_is_matched_to_its_family() {
     use cimvalidation::shape_source::family_of_dir;
-    let lib = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("application-profiles-library");
+    let repos = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     assert_eq!(
-        family_of_dir(&lib.join("NCP/SHACL")).map(|f| f.id),
+        family_of_dir(&repos.join("NC-AP/NCP/SHACL")).map(|f| f.id),
         Some("nc")
     );
     assert_eq!(
-        family_of_dir(&lib.join("CGMES/SHACL")).map(|f| f.id),
+        family_of_dir(&repos.join("CGMES-AP/CGMES/SHACL")).map(|f| f.id),
         Some("cgmes")
     );
-    assert_eq!(family_of_dir(&lib.join("CGMES/RDFS")).map(|f| f.id), None);
+    assert_eq!(
+        family_of_dir(&repos.join("CGMES-AP/CGMES/RDFS")).map(|f| f.id),
+        None
+    );
 }
 
 #[test]
@@ -126,7 +126,7 @@ fn a_directory_without_shapes_is_an_error() {
     let rdfs = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
-        .join("application-profiles-library/NCP/RDFS");
+        .join("NC-AP/NCP/RDFS");
     assert!(
         load_table("nc", &rdfs).is_err(),
         "a directory with no .ttl files should not produce a table"

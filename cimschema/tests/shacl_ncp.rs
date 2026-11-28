@@ -12,8 +12,7 @@ use cimschema::shacl::{simplify, ttl_import};
 
 fn ncp_shacl(name: &str) -> PathBuf {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    root.join("application-profiles-library/NCP/SHACL")
-        .join(name)
+    root.join("NC-AP/NCP/SHACL").join(name)
 }
 
 fn parse(name: &str) -> FileResults {
@@ -315,10 +314,8 @@ fn manifests_map_profiles_to_constraint_files() {
 #[test]
 fn profile_descriptors_map_iris_to_codes() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    let profiles = cimschema::import::import_profile_index(
-        &root.join("application-profiles-library/NCP/PROF"),
-    )
-    .expect("cannot read NCP/PROF");
+    let profiles = cimschema::import::import_profile_index(&root.join("NC-AP/NCP/PROF"))
+        .expect("cannot read NCP/PROF");
 
     assert_eq!(profiles.len(), 18, "expected one descriptor per NC profile");
 

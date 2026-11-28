@@ -23,7 +23,8 @@ cargo fmt --all && cargo fmt --manifest-path cimoxide-py/Cargo.toml   # CI check
 Formatting is rustfmt's defaults, no `rustfmt.toml`; the generated modules are declared
 `#[rustfmt::skip]`.
 
-Submodules: `application-profiles-library/` (ENTSO-E RDFS and SHACL),
+Submodules: `CGMES-AP/` and `NC-AP/` (ENTSO-E RDFS and SHACL, which ENTSO-E split out of
+`application-profiles-library`),
 `CGMES-Test-Configurations/` (real test datasets) and `benchmark-grids/` (MATPOWER and other
 cases, for `cimimport`'s tests; the same repo and commit gridoxide pins). `relicapgrid/` (ENTSO-E's ReliCapGrid,
 for `scripts/relicapgrid`'s harness) is `update = none`: fetch it with
@@ -136,7 +137,8 @@ Hand-written SPARQL rules (`src/sparql/`) read attributes through `sparql::Field
 (`f64("Class.attr")`, `reference`, `enumeration`, …): last value of a repeated scalar,
 `true` only for the text `true`, a single-valued reference written twice is absent, and the
 key is the declaring class (`Equipment.inService` on a Breaker). Rules for writing them,
-audited against `application-profiles-library/validate/shacl-sparql/<rule>.rq`:
+audited against the `<rule>.rq` files in `validate/shacl-sparql/` of
+`entsoe/application-profiles-library` at `d8b2d21` (no longer published since its split):
 - **An absent value is not a value.** Never default a missing number to 0; a pattern-bound
   value must be present, an `OPTIONAL` one compared only when given. `bound(?x)` is
   `Fields::has`; a flag is `== Some(true)`.

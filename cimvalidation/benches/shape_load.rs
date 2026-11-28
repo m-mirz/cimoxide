@@ -25,7 +25,7 @@ fn root() -> PathBuf {
 }
 
 fn shacl_dir() -> PathBuf {
-    root().join("application-profiles-library/NCP/SHACL")
+    root().join("NC-AP/NCP/SHACL")
 }
 
 fn ttl_paths() -> Vec<PathBuf> {
@@ -69,7 +69,7 @@ fn bench(c: &mut Criterion) {
     //    cimmodel's schema_load bench, not repeated here.
     let spec = cimschema::import::import_schema_files(
         &root()
-            .join("application-profiles-library/NCP/RDFS/*-AP-Voc-RDFS2020.rdf")
+            .join("NC-AP/NCP/RDFS/*-AP-Voc-RDFS2020.rdf")
             .to_string_lossy(),
         &family::NC,
         false,
@@ -77,7 +77,7 @@ fn bench(c: &mut Criterion) {
     .expect("NC RDFS import failed");
     let cgmes = cimschema::import::import_schema_files(
         &root()
-            .join("application-profiles-library/CGMES/RDFS/61970-600-2_*-AP-Voc-RDFS2020.rdf")
+            .join("CGMES-AP/CGMES/RDFS/61970-600-2_*-AP-Voc-RDFS2020.rdf")
             .to_string_lossy(),
         &family::CGMES,
         false,

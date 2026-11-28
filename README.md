@@ -169,9 +169,9 @@ Class and shape tables are compiled in, but `cimox` and the Python bindings can 
 from the ENTSO-E files instead, so a new profile version is a data load, not a recompile:
 
 ```bash
-CIMOXIDE_RDFS_DIR=application-profiles-library/CGMES/RDFS:application-profiles-library/NCP/RDFS \
+CIMOXIDE_RDFS_DIR=CGMES-AP/CGMES/RDFS:NC-AP/NCP/RDFS \
   cimox validate model.xml
-CIMOXIDE_SHACL_DIR=application-profiles-library/NCP/SHACL:application-profiles-library/CGMES/SHACL \
+CIMOXIDE_SHACL_DIR=NC-AP/NCP/SHACL:CGMES-AP/CGMES/SHACL \
   cimox validate model.xml
 ```
 
@@ -407,9 +407,9 @@ Pass after `--`, e.g. `cargo run -p cimoxide-gen -- --verbose --rule-report`.
 
 | Flag | Default | Effect |
 |---|---|---|
-| `--schema <glob>` | `application-profiles-library/CGMES/RDFS/61970-600-2_*-AP-Voc-RDFS2020.rdf` | RDF/RDFS schema files |
+| `--schema <glob>` | `CGMES-AP/CGMES/RDFS/61970-600-2_*-AP-Voc-RDFS2020.rdf` | RDF/RDFS schema files |
 | `--output <dir>` | `cimmodel/src/generated` | class-table output |
-| `--shacl <glob>` | `application-profiles-library/CGMES/SHACL/*.ttl` | SHACL TTL files |
+| `--shacl <glob>` | `CGMES-AP/CGMES/SHACL/*.ttl` | SHACL TTL files |
 | `--shacl-output <dir>` | `cimvalidation/src` | shape-table output |
 | `--python-stubs-output <dir>` | `cimoxide-py/python/cimoxide` | `.pyi` stubs |
 | `--verbose` / `-v` | off | parse diagnostics |

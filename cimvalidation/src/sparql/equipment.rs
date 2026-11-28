@@ -866,7 +866,7 @@ fn check_nonlinear_shunt_compensator_point_count(dataset: &CimDataset) -> Vec<Vi
                 object_id: nsc_id.clone(), rule_id: "equ:ShuntCompensator.maximumSections-numberOfInstances".into(),
                 name: "C:301:EQ:NonlinearShuntCompensatorPoint:numberOfInstances".into(), class: "NonlinearShuntCompensator".into(),
                 property: "ShuntCompensator.maximumSections".into(),
-                message: format!("The number of NonlinearShuntCompenstorPoint instances ({count}) does not equal to maximumSections ({max_sec})."),
+                message: format!("The number of NonlinearShuntCompensatorPoint instances ({count}) associated with a NonlinearShuntCompensator does not equal ShuntCompensator.maximumSections ({max_sec})."),
                 severity: "sh:Violation".into(), description: String::new(),
             });
         }

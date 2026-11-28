@@ -7,11 +7,11 @@ use cimmodel::base::Schema;
 use cimmodel::schema_source;
 
 fn rdfs_dir() -> &'static Path {
-    Path::new("../application-profiles-library/NCP/RDFS")
+    Path::new("../NC-AP/NCP/RDFS")
 }
 
 fn cgmes_rdfs_dir() -> &'static Path {
-    Path::new("../application-profiles-library/CGMES/RDFS")
+    Path::new("../CGMES-AP/CGMES/RDFS")
 }
 
 /// The loader and `cimgen::generator::classes_gen` build the same table by

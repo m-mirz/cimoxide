@@ -34,7 +34,7 @@ pub struct Family {
 pub const CGMES: Family = Family {
     id: "cgmes",
     type_prefix: "",
-    default_schema: "application-profiles-library/CGMES/RDFS/61970-600-2_*-AP-Voc-RDFS2020.rdf",
+    default_schema: "CGMES-AP/CGMES/RDFS/61970-600-2_*-AP-Voc-RDFS2020.rdf",
     base_profile: Some("EQ"),
     extra_namespaces: &[
         ("md", "http://iec.ch/TC57/61970-552/ModelDescription/1#"),
@@ -50,7 +50,7 @@ pub const CGMES: Family = Family {
 pub const NC: Family = Family {
     id: "nc",
     type_prefix: "nc:",
-    default_schema: "application-profiles-library/NCP/RDFS/*-AP-Voc-RDFS2020.rdf",
+    default_schema: "NC-AP/NCP/RDFS/*-AP-Voc-RDFS2020.rdf",
     base_profile: None,
     extra_namespaces: &[("rdf", "http://www.w3.org/1999/02/22-rdf-syntax-ns#")],
     stereotype_first_wins: true,

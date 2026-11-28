@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
-const RDFS_DIR: &str = "../application-profiles-library/NCP/RDFS";
+const RDFS_DIR: &str = "../NC-AP/NCP/RDFS";
 
 fn rdfs_bytes() -> u64 {
     std::fs::read_dir(RDFS_DIR)
