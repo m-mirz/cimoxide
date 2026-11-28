@@ -182,19 +182,22 @@ mod dynamic {
         family::by_id(id).ok_or_else(|| ShapeError::UnknownFamily(id.to_string()))
     }
 
-    /// Which family's constraint files a SHACL directory holds: NC ships
-    /// per-profile manifests in `Validation/`, CGMES files named in its
-    /// written-out manifest. `None` when it is neither.
+    /// Which family's constraint files a SHACL directory holds, by what the
+    /// files declare (see [`cimschema::profile_file`]): `None` when it holds
+    /// neither family's, or both.
     pub fn family_of_dir(dir: &Path) -> Option<&'static Family> {
-        if dir.join("Validation").is_dir() {
-            return family::by_id("nc");
+        match cimschema::profile_file::families_in(dir, cimschema::profile_file::Role::Shapes)
+            .as_slice()
+        {
+            [family] => Some(family),
+            _ => None,
         }
-        family::FAMILIES.iter().copied().find(|f| {
-            f.shacl_manifest.is_some_and(|m| {
-                m.iter()
-                    .any(|(stem, _)| dir.join(format!("{stem}.ttl")).is_file())
-            })
-        })
+    }
+
+    /// Whether `dir` holds `family`'s constraint files, beside another's or not.
+    fn holds(dir: &Path, family: &Family) -> bool {
+        !cimschema::profile_file::in_dir(dir, family, cimschema::profile_file::Role::Shapes)
+            .is_empty()
     }
 
     pub(super) fn resolve(
@@ -236,7 +239,10 @@ mod dynamic {
             let dirs: Vec<PathBuf> = std::env::split_paths(&dirs).collect();
             static REPORTED: AtomicBool = AtomicBool::new(false);
             if !REPORTED.swap(true, Ordering::SeqCst) {
-                for d in dirs.iter().filter(|d| family_of_dir(d).is_none()) {
+                for d in dirs
+                    .iter()
+                    .filter(|d| !family::FAMILIES.iter().any(|f| holds(d, f)))
+                {
                     eprintln!(
                         "warning: {SHACL_DIR_ENV} names {}, which holds no NC or CGMES \
                          constraint files; ignoring it",
@@ -244,8 +250,8 @@ mod dynamic {
                     );
                 }
             }
-            dirs.into_iter()
-                .find(|d| family_of_dir(d).is_some_and(|f| f.id == family_id))
+            let family = family::by_id(family_id)?;
+            dirs.into_iter().find(|d| holds(d, family))
         });
         let loaded = match (dir, bag_family(family_id)) {
             (Some(dir), Ok(family)) => match load(family, &dir) {
@@ -324,16 +330,23 @@ mod dynamic {
         ),
         ShapeError,
     > {
-        let import = |f: &'static Family, pattern: &str| {
-            cimschema::import::import_schema_files(pattern, f, false)
-                .map_err(|e| ShapeError::Schema(e.to_string()))
+        let import = |f: &'static Family, files: Vocabulary| {
+            match files {
+                Vocabulary::Files(paths) => {
+                    cimschema::import::import_schema_paths(&paths, f, false)
+                }
+                Vocabulary::Pattern(pattern) => {
+                    cimschema::import::import_schema_files(&pattern, f, false)
+                }
+            }
+            .map_err(|e| ShapeError::Schema(e.to_string()))
         };
 
         // `NC-AP/NCP/SHACL` → `NC-AP`: the family's repository, beside which the
         // other families' repositories sit.
         let root = shacl_dir.parent().and_then(Path::parent);
 
-        let spec = import(family, &schema_glob(family, shacl_dir, root))?;
+        let spec = import(family, vocabulary(family, shacl_dir, root))?;
 
         // Every other family, for the cross-family class lists the value-type
         // rules use: NCP's association value-type shapes name CGMES classes
@@ -344,7 +357,7 @@ mod dynamic {
         // reporting as the wrong class.
         let mut others = Vec::new();
         for f in family::FAMILIES.iter().filter(|f| f.id != family.id) {
-            match import(f, &schema_glob(f, shacl_dir, root)) {
+            match import(f, vocabulary(f, shacl_dir, root)) {
                 Ok(s) => others.push(s),
                 Err(e) => eprintln!(
                     "warning: the {} schema could not be read ({e}); its classes will be \
@@ -358,68 +371,69 @@ mod dynamic {
 
     /// Where to look for a family's RDFS.
     ///
-    /// `CIMOXIDE_RDFS_DIR` wins, so a caller already pointing the class table
-    /// somewhere is not silently overridden — but it names one family's
-    /// directory, so it applies only to the family being loaded.
+    /// `CIMOXIDE_RDFS_DIR` wins where it holds this family's vocabulary, so a
+    /// caller already pointing the class table somewhere is not silently
+    /// overridden; it names one family's directory, so the other families
+    /// still come from beside the shapes.
     ///
-    /// Otherwise the family's compiled-in glob is re-rooted at the profiles the
-    /// SHACL directory came from, which keeps a load self-contained and
-    /// independent of the process's working directory: `<root>/CGMES/RDFS`, as
-    /// in a library holding every family (`application-profiles-library` up to
-    /// its split), then `<root>/../CGMES-AP/CGMES/RDFS`, as beside the family's
-    /// own repository (ENTSO-E's CGMES-AP and NC-AP, and cimoxide's checkout).
-    fn schema_glob(f: &'static Family, shacl_dir: &Path, root: Option<&Path>) -> String {
-        let file_name = |p: &str| {
-            Path::new(p)
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "*.rdf".to_string())
-        };
+    /// Otherwise the vocabulary is the one beside the SHACL directory, which
+    /// keeps a load self-contained and independent of the process's working
+    /// directory. For another family than the directory's, that is where its
+    /// repository would sit: `<root>/CGMES/RDFS`, as in a library holding every
+    /// family (`application-profiles-library` up to its split), or
+    /// `<root>/../CGMES-AP/CGMES/RDFS`, beside the family's own repository
+    /// (ENTSO-E's CGMES-AP and NC-AP, and cimoxide's checkout). Either way a
+    /// directory counts only if its files declare themselves the family's
+    /// vocabulary (see [`cimschema::profile_file`]).
+    fn vocabulary(f: &'static Family, shacl_dir: &Path, root: Option<&Path>) -> Vocabulary {
+        use cimschema::profile_file::{Role, in_dir, near};
 
-        // Only for the family whose SHACL directory this is.
-        if shacl_dir
-            .parent()
-            .and_then(|p| p.file_name())
-            .zip(
-                Path::new(f.default_schema)
-                    .parent()
-                    .and_then(Path::parent)
-                    .and_then(|p| p.file_name()),
-            )
-            .is_some_and(|(a, b)| a == b)
-            && let Some(dir) = std::env::var_os(cimmodel::schema_source::RDFS_DIR_ENV)
+        if let Some(files) = std::env::var_os(cimmodel::schema_source::RDFS_DIR_ENV)
+            .map(|dir| in_dir(Path::new(&dir), f, Role::Vocabulary))
+            .filter(|files| !files.is_empty())
         {
-            return PathBuf::from(dir)
-                .join(file_name(f.default_schema))
-                .to_string_lossy()
-                .into_owned();
+            return Vocabulary::Files(files);
         }
 
-        // `CGMES-AP/CGMES/RDFS/<glob>` → `CGMES/RDFS/<glob>`.
-        let tail: Option<PathBuf> =
-            Path::new(f.default_schema)
-                .components()
-                .skip(1)
-                .fold(None::<PathBuf>, |acc, c| {
-                    Some(
-                        acc.map_or_else(|| PathBuf::from(c.as_os_str()), |p| p.join(c.as_os_str())),
-                    )
-                });
-        let Some(root) = root else {
-            return f.default_schema.to_string();
-        };
-        let candidates = [
-            tail.map(|tail| root.join(tail)),
-            root.parent().map(|repos| repos.join(f.default_schema)),
-        ];
+        // Beside the shapes, wherever the SHACL directory's own family keeps it.
+        if let Some(files) = shacl_dir
+            .parent()
+            .map(|parent| near(parent, f, Role::Vocabulary))
+            .filter(|files| !files.is_empty())
+        {
+            return Vocabulary::Files(files);
+        }
+
+        // Where another family's repository would sit.
+        // `CGMES-AP/CGMES/RDFS/<glob>` → `CGMES/RDFS`.
+        let tail: Option<PathBuf> = Path::new(f.default_schema)
+            .parent()
+            .map(|p| p.components().skip(1).collect());
+        let candidates = root.into_iter().flat_map(|root| {
+            [
+                tail.as_ref().map(|tail| root.join(tail)),
+                root.parent().and_then(|repos| {
+                    Path::new(f.default_schema)
+                        .parent()
+                        .map(|dir| repos.join(dir))
+                }),
+            ]
+        });
         candidates
-            .into_iter()
             .flatten()
-            .find(|candidate| candidate.parent().is_some_and(Path::is_dir))
+            .map(|dir| in_dir(&dir, f, Role::Vocabulary))
+            .find(|files| !files.is_empty())
             .map_or_else(
-                || f.default_schema.to_string(),
-                |candidate| candidate.to_string_lossy().into_owned(),
+                || Vocabulary::Pattern(f.default_schema.to_string()),
+                Vocabulary::Files,
             )
+    }
+
+    /// A family's RDFS: the files that declare it, or, with none found, the
+    /// family's compiled-in glob relative to the working directory.
+    enum Vocabulary {
+        Files(Vec<PathBuf>),
+        Pattern(String),
     }
 
     /// Convert an already-resolved table into the `&'static` IR, for a caller

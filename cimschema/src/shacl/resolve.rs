@@ -1039,9 +1039,12 @@ pub struct ShapeTable {
 
 /// Read a family's SHACL directory into a resolved shape table.
 ///
-/// `dir` is the directory holding the constraint files; the profile manifests
-/// are expected in `dir/Validation` and the profile descriptors in
-/// `dir/../PROF`, which is how the ENTSO-E library lays them out.
+/// `dir` is the directory holding the constraint files. The profile manifests
+/// and descriptors are found by what they declare (see
+/// [`crate::profile_file`]): the manifests in `dir` or a directory in it, the
+/// descriptors in `dir`'s parent or a directory in it. That covers ENTSO-E's
+/// layout (`SHACL/Validation/`, `PROF/` beside `SHACL/`) and a copy of every
+/// file in one directory alike.
 pub fn load_shape_table(
     family: &'static Family,
     spec: &CimSpecification,
@@ -1049,10 +1052,14 @@ pub fn load_shape_table(
     dir: &std::path::Path,
     collector: &mut SkipCollector,
 ) -> Result<ShapeTable, Box<dyn std::error::Error>> {
+    use crate::profile_file::{Role, identify, near};
+    // Every `.ttl` but those declaring themselves something else: another
+    // family's, or a manifest. A file without a header is still read.
     let mut ttl_paths: Vec<std::path::PathBuf> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("ttl"))
+        .filter(|p| identify(p).is_none_or(|(f, r)| f.id == family.id && r == Role::Shapes))
         .collect();
     ttl_paths.sort();
     if ttl_paths.is_empty() {
@@ -1069,7 +1076,18 @@ pub fn load_shape_table(
             }
             m
         }
-        None => profile_files(&dir.join("Validation"))?,
+        None => {
+            let manifests = near(dir, family, Role::Manifest);
+            if manifests.is_empty() {
+                return Err(format!(
+                    "no {} validation manifests in {} or a directory in it",
+                    family.id,
+                    dir.display()
+                )
+                .into());
+            }
+            profile_files_of(&manifests)?
+        }
     };
 
     let mut files: Vec<FileResults> = Vec::new();
@@ -1099,10 +1117,11 @@ pub fn load_shape_table(
     // Profile identity — which IRI a dataset declares, which code that is —
     // comes from the PROF descriptors for every family. A dataset names them in
     // `dcterms:conformsTo` (NC) or `md:Model.profile` (CGMES).
-    let prof_dir = dir
-        .parent()
-        .map_or_else(|| dir.join("PROF"), |p| p.join("PROF"));
-    let index = crate::import::import_profile_index(&prof_dir)?;
+    let descriptors = near(dir.parent().unwrap_or(dir), family, Role::Descriptor);
+    if descriptors.is_empty() {
+        return Err(format!("no {} PROF descriptors beside {}", family.id, dir.display()).into());
+    }
+    let index = crate::import::import_profiles(&descriptors)?;
     let mut profile_iris: Vec<(String, String)> = index
         .iter()
         .flat_map(|p| p.iris.iter().map(|i| (i.clone(), p.keyword.clone())))
@@ -1137,15 +1156,22 @@ pub const MERGED_PROFILE: &str = "ALL";
 pub fn profile_files(
     dir: &std::path::Path,
 ) -> Result<HashMap<String, Vec<String>>, Box<dyn std::error::Error>> {
-    let mut map: HashMap<String, Vec<String>> = HashMap::new();
-    let mut merged_only: Vec<String> = Vec::new();
     let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("ttl"))
         .collect();
     paths.sort();
-    for path in &paths {
+    profile_files_of(&paths)
+}
+
+/// [`profile_files`] for the manifests at `paths`.
+pub fn profile_files_of(
+    paths: &[std::path::PathBuf],
+) -> Result<HashMap<String, Vec<String>>, Box<dyn std::error::Error>> {
+    let mut map: HashMap<String, Vec<String>> = HashMap::new();
+    let mut merged_only: Vec<String> = Vec::new();
+    for path in paths {
         let m = crate::shacl::ttl_import::import_manifest(path)?;
         if m.profile == MERGED_PROFILE {
             merged_only = m.imports;

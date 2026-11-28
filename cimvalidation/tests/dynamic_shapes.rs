@@ -98,6 +98,70 @@ fn a_directory_is_matched_to_its_family() {
     );
 }
 
+/// Copies every file of `dirs` (relative to the workspace) into `to`, flat.
+fn copy_flat(dirs: &[&str], to: &Path) {
+    let repos = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let _ = std::fs::remove_dir_all(to);
+    std::fs::create_dir_all(to).unwrap();
+    for dir in dirs {
+        for entry in std::fs::read_dir(repos.join(dir)).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_file() {
+                std::fs::copy(&path, to.join(path.file_name().unwrap())).unwrap();
+            }
+        }
+    }
+}
+
+/// The files say what they are, so their layout doesn't matter: NC's shapes, manifests,
+/// descriptors and vocabulary in one directory, with CGMES's vocabulary beside them, load
+/// to the same table as ENTSO-E's tree.
+#[test]
+fn a_flat_copy_loads_the_same_table() {
+    let flat = Path::new(env!("CARGO_TARGET_TMPDIR")).join("flat-profiles/all");
+    copy_flat(
+        &[
+            "NC-AP/NCP/SHACL",
+            "NC-AP/NCP/SHACL/Validation",
+            "NC-AP/NCP/PROF",
+            "NC-AP/NCP/RDFS",
+            "CGMES-AP/CGMES/RDFS",
+        ],
+        &flat,
+    );
+    assert_eq!(
+        cimvalidation::shape_source::family_of_dir(&flat).map(|f| f.id),
+        Some("nc")
+    );
+    let loaded = load_table("nc", &flat).expect("could not load the flat copy");
+    let tree = load_table("nc", &shacl_dir()).expect("could not load NC shapes");
+    assert_eq!(loaded.len(), tree.len());
+    for (i, (a, b)) in loaded.iter().zip(tree.iter()).enumerate() {
+        assert_eq!(describe(a), describe(b), "shape {i} differs");
+    }
+}
+
+/// A `Validation/` directory is no mark of NC: it used to be how a directory was taken for
+/// NC's, and a CGMES directory holding one was then read as NC.
+#[test]
+fn a_validation_directory_does_not_make_a_family() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("cgmes-with-validation/SHACL");
+    copy_flat(&["CGMES-AP/CGMES/SHACL"], &dir);
+    std::fs::create_dir_all(dir.join("Validation")).unwrap();
+    assert_eq!(
+        cimvalidation::shape_source::family_of_dir(&dir).map(|f| f.id),
+        Some("cgmes")
+    );
+}
+
+/// A directory holding both families' shapes is neither's alone.
+#[test]
+fn a_directory_of_both_families_is_neither_alone() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("both-families/SHACL");
+    copy_flat(&["CGMES-AP/CGMES/SHACL", "NC-AP/NCP/SHACL"], &dir);
+    assert!(cimvalidation::shape_source::family_of_dir(&dir).is_none());
+}
+
 #[test]
 fn an_unknown_family_is_rejected() {
     assert!(matches!(

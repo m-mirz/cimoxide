@@ -17,5 +17,6 @@ pub mod family;
 pub mod import;
 pub mod model;
 pub mod processing;
+pub mod profile_file;
 pub mod shacl;
 pub mod table;
