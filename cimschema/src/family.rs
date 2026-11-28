@@ -27,8 +27,18 @@ pub struct Family {
     /// CGMES relies on the historical last-wins reading.
     pub stereotype_first_wins: bool,
     /// `(TTL file stem, profile tag)` for a family whose SHACL ships no
-    /// per-profile manifests. `None` reads them from `SHACL/Validation/`.
+    /// per-profile manifests. `None` reads the manifests it ships: the files
+    /// whose version IRI starts with [`manifest_prefix`](Self::manifest_prefix).
     pub shacl_manifest: Option<&'static [(&'static str, &'static str)]>,
+    /// How the family's files name themselves: the start of their
+    /// `owl:versionIRI`. See [`crate::profile_file`].
+    pub ontology_prefixes: &'static [&'static str],
+    /// The namespace its shapes and vocabulary bind to `cim:`, which tells it
+    /// from files that share its IRIs but describe another CIM.
+    pub cim_namespace: &'static str,
+    /// The start of a validation manifest's version IRI, for a family that
+    /// ships manifests.
+    pub manifest_prefix: Option<&'static str>,
 }
 
 pub const CGMES: Family = Family {
@@ -42,6 +52,13 @@ pub const CGMES: Family = Family {
     ],
     stereotype_first_wins: false,
     shacl_manifest: Some(crate::shacl::cgmes_manifest::MANIFEST),
+    // The profiles, and the model header (`61970-552`).
+    ontology_prefixes: &[
+        "http://iec.ch/TC57/ns/CIM/",
+        "http://iec.ch/TC57/61970-552/",
+    ],
+    cim_namespace: "http://iec.ch/TC57/CIM100#",
+    manifest_prefix: None,
 };
 
 // NCP's DatasetMetadata profile keyword is "DM", which reads like the `dm` XML
@@ -55,6 +72,14 @@ pub const NC: Family = Family {
     extra_namespaces: &[("rdf", "http://www.w3.org/1999/02/22-rdf-syntax-ns#")],
     stereotype_first_wins: true,
     shacl_manifest: None,
+    ontology_prefixes: &[
+        "https://ap-con.cim4.eu/",
+        "https://ap-val.cim4.eu/",
+        "https://ap-voc.cim4.eu/",
+        "https://ap.cim4.eu/",
+    ],
+    cim_namespace: "https://cim.ucaiug.io/ns#",
+    manifest_prefix: Some("https://ap-val.cim4.eu/"),
 };
 
 pub const FAMILIES: &[&Family] = &[&CGMES, &NC];

@@ -499,9 +499,9 @@ fn run_cgmes_reports(
 /// Generate the shape table for one family.
 ///
 /// The profile-to-file mapping comes from `Family::shacl_manifest` where the
-/// family has one (CGMES), and otherwise is read: `NCP/SHACL/Validation/`
-/// ships one manifest per profile whose `owl:imports` list names exactly the
-/// constraint files that apply.
+/// family has one (CGMES), and otherwise is read from the manifests the family
+/// ships, one per profile, whose `owl:imports` name exactly the constraint
+/// files that apply (NC's, in `NCP/SHACL/Validation/`).
 fn run_bag_shacl(
     spec: &schema::model::CimSpecification,
     others: &[&schema::model::CimSpecification],

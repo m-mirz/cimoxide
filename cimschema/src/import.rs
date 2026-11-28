@@ -104,13 +104,25 @@ pub fn import_schema_files(
         return Err(format!("no schema files matched: {pattern}").into());
     }
     paths.sort();
+    import_schema_paths(&paths, family, verbose)
+}
 
+/// [`import_schema_files`] for the files at `paths`, in that order.
+pub fn import_schema_paths(
+    paths: &[impl AsRef<std::path::Path>],
+    family: &'static Family,
+    verbose: bool,
+) -> Result<CimSpecification, Box<dyn std::error::Error>> {
+    if paths.is_empty() {
+        return Err(format!("no {} schema files given", family.id).into());
+    }
     let mut spec = CimSpecification::new(family);
-    for path in &paths {
+    for path in paths {
+        let path = path.as_ref().to_string_lossy();
         if verbose {
             eprintln!("parsing {path}");
         }
-        parse_file(path, family, &mut spec)?;
+        parse_file(&path, family, &mut spec)?;
     }
 
     super::processing::postprocess(&mut spec);
@@ -639,9 +651,15 @@ pub fn import_profile_index(
         .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("rdf"))
         .collect();
     paths.sort();
+    import_profiles(&paths)
+}
 
+/// [`import_profile_index`] for the descriptors at `paths`.
+pub fn import_profiles(
+    paths: &[std::path::PathBuf],
+) -> Result<Vec<ProfileInfo>, Box<dyn std::error::Error>> {
     let mut out = Vec::new();
-    for path in &paths {
+    for path in paths {
         if let Some(info) = read_profile(path)? {
             out.push(info);
         }

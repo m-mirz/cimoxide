@@ -182,9 +182,13 @@ bare-name fallback.
 Behind features `dynamic-schema` (`cimmodel::schema_source`) and `dynamic-shapes`
 (`cimvalidation::shape_source`, which enables `dynamic-schema`); both off by default, on for
 `cimox` and `cimoxide-py`. Resolution: explicit `load_from` > `CIMOXIDE_RDFS_DIR` /
-`CIMOXIDE_SHACL_DIR` > generated. Each variable is a `PATH`-style list; `family_of_dir`
-assigns each directory to a family (CGMES's `61970-600-2_*` pattern is tried first). A
-SHACL load finds RDFS at `<dir>/../RDFS`. Bad paths warn and fall back.
+`CIMOXIDE_SHACL_DIR` > generated. Each variable is a `PATH`-style list. A file's family and
+role come from what it declares, never from its directory or name
+(`cimschema::profile_file`): the `owl:versionIRI` prefix (`Family::ontology_prefixes`), the
+`cim:` namespace it binds, and for NC `ap-val` manifests. A directory serves each family
+whose files it holds. A SHACL load finds its manifests in `dir` or a directory in it, and
+the PROF and RDFS in `dir`'s parent or a directory in it; another family's RDFS where its
+repository would sit. Bad paths warn and fall back.
 
 `postprocess` in `cimschema` is mandatory for both build-time and runtime parsing.
 `cimmodel/tests/dynamic_schema.rs` and `cimvalidation/tests/dynamic_shapes.rs` compare
@@ -197,7 +201,7 @@ Both families validate through `bag.rs` over a shape table; a `bag::Source` keep
 family's shapes on its own elements. CGMES ships no per-profile manifests, so
 `cimschema::shacl::cgmes_manifest` writes the file → tag mapping (`"EQ"`, `"SSH!NS"` for
 not-solved on the merged dataset, `"X:SV"` for cross-profile, `"HDR"`, `"COMMON"` under
-`--common`). NC reads its manifests from `NCP/SHACL/Validation/`. Profiles are detected from
+`--common`). NC reads the manifests it ships (in `NCP/SHACL/Validation/`). Profiles are detected from
 the header (`md:Model.profile` / `dcterms:conformsTo`) via `PROF/`; no header, nothing runs.
 
 Semantics to preserve:
