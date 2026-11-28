@@ -68,3 +68,32 @@ def test_validate_quality_flag():
 def test_validate_common_flag():
     result = cimoxide.validate_files([td("test_shacl_EQ_001.xml")], common=True)
     assert isinstance(result, list)
+
+
+PROFILES = os.path.join(os.path.dirname(__file__), "../..")
+
+
+def test_validate_sparql_needs_the_profile_files():
+    # The queries come from CIMOXIDE_PROFILES, read once per process: unset at the first
+    # call, it stays unset, so this runs in a process of its own when the variable is set.
+    if os.environ.get("CIMOXIDE_PROFILES"):
+        return
+    import pytest
+
+    with pytest.raises(ValueError, match="CIMOXIDE_PROFILES"):
+        cimoxide.validate_files([td("test_sparql_SV_SOLVED_003.xml")], sparql=True)
+
+
+def test_validate_sparql_runs_the_profiles_queries():
+    if not os.environ.get("CIMOXIDE_PROFILES"):
+        return
+    # The SvVoltage query reads cim:SvVoltage.ToplogicalNode (sic), so where the
+    # hand-written rule reports SVV.BAD, the query does not.
+    path = [td("test_sparql_SV_SOLVED_003.xml")]
+    hand = {v.rule_id for v in cimoxide.validate_files(path, profiles=["SV"], solved=True)}
+    queried = {
+        v.rule_id
+        for v in cimoxide.validate_files(path, profiles=["SV"], solved=True, sparql=True)
+    }
+    assert "svs456:SvVoltage.v-absoluteLimit" in hand
+    assert "svs456:SvVoltage.v-absoluteLimit" not in queried

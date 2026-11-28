@@ -84,6 +84,7 @@ version = "0.7.2"
 dependencies = [
  "cimoxide-model",
  "cimoxide-schema",
+ "cimoxide-sparql",
 ]
 
 [[package]]

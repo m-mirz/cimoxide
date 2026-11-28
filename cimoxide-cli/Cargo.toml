@@ -24,7 +24,7 @@ quick-xml      = { version = "0.37", features = ["encoding"] }
 # On by default: the CLI is an end-user artifact. The library crates stay feature-free, so
 # nothing gridoxide consumes gains an optional-dependency edge.
 default = ["sparql"]
-sparql = ["dep:cimoxide-sparql"]
+sparql = ["dep:cimoxide-sparql", "cimoxide-validation/sparql-shapes"]
 
 [dev-dependencies]
 cimoxide-model = { workspace = true }

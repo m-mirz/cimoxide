@@ -305,8 +305,36 @@ Common without TTL backing.
 | CIMdesk quality | 15 | n/a | n/a |
 | **Total** | **186** | **186** | **100.0%** |
 
-Validation deliberately does not run the TTL's SPARQL through `cimsparql`: it would need a
-graph per run, and the two are not always equivalent (`cimsparql/tests/query.rs`).
+### The profiles' own queries (`--sparql`)
+
+`cimox validate --sparql` runs the constraints' `sh:select` queries as written, with oxigraph
+through `cimsparql`, in place of the hand-written rules they cover; `--sparql=both` keeps the
+hand-written findings and lists on stderr where the two disagree. Python:
+`validate_files(..., sparql=True)`. The queries come from the files `CIMOXIDE_PROFILES` names
+(220 constraints in `CGMES-AP` and `NC-AP`); behind the `sparql-shapes` feature of
+`cimoxide-validation`, on in `cimox` and the wheel.
+
+```bash
+CIMOXIDE_PROFILES=CGMES-AP:NC-AP cimox validate --sparql=both model/*.xml
+```
+
+A model's files go into one store as their merge, where a triple two files both state counts
+once, and an NC file also into a named graph of its own for the rules run on each file.
+CGMES's constraints run on the merge, as ENTSO-E's reference
+validation runs the Complex files they sit in, gated by their file's profile and solved state
+(`cgmes_manifest::sparql_tags`); NC's follow its manifests, per file or on the merge. `$this`
+is joined with the shape's targets, matched literally, and `$PATH` replaced by its path, so a
+query runs once. On merged RealGrid the 105 that apply take 5.9 s; the store holds the model a
+second time.
+
+The hand-written rules stay the default: several queries cannot report what their description
+says, and those rules implement the description. `cimvalidation/tests/sparql_shapes.rs` runs
+both on the rules' fixtures and the CGMES conformance sets and fails on any difference not
+listed with its reason. Of the 25 listed, 15 queries can never fire (misspelt or undefined
+names such as `SvVoltage.ToplogicalNode`, `STRENDS(str(?value), ".")` for a whole number,
+contradictory filters, grouping by the counted terminal), 1 checks less than it describes, 5
+reach the topology only through ConnectivityNodes, 3 read the rule differently (the focus, the
+solved state, per file), and 1 is a duplicate id the decoder merges.
 
 ### CIMdesk quality checks (`--quality`)
 
