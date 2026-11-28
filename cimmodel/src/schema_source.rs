@@ -122,10 +122,7 @@ mod dynamic {
         let Some(family) = family::by_id(family_id) else {
             return generated;
         };
-        let Some(dir) = dirs
-            .iter()
-            .find(|d| family_of_dir(d).is_some_and(|f| f.id == family.id))
-        else {
+        let Some(dir) = dirs.iter().find(|d| holds(d, family)) else {
             return generated;
         };
         match load_family(family, dir) {
@@ -148,7 +145,7 @@ mod dynamic {
             let value = std::env::var_os(RDFS_DIR_ENV)?;
             let dirs: Vec<PathBuf> = std::env::split_paths(&value).collect();
             for d in &dirs {
-                if family_of_dir(d).is_none() {
+                if !family::FAMILIES.iter().any(|f| holds(d, f)) {
                     eprintln!(
                         "warning: {RDFS_DIR_ENV} lists {}, which holds no CGMES or NC RDFS \
                          vocabularies; ignoring it",
@@ -161,28 +158,26 @@ mod dynamic {
         .as_deref()
     }
 
-    /// Which family's vocabularies an RDFS directory holds, by the families'
-    /// file-name patterns. NC's pattern (`*-AP-Voc-RDFS2020.rdf`) also matches
-    /// CGMES's files, so CGMES's narrower one is tried first.
+    /// Which family's vocabularies an RDFS directory holds, by what the files
+    /// declare (see [`cimschema::profile_file`]): `None` when it holds neither
+    /// family's, or both.
     pub fn family_of_dir(dir: &Path) -> Option<&'static Family> {
-        let names: Vec<String> = std::fs::read_dir(dir)
-            .ok()?
-            .filter_map(|e| e.ok())
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .collect();
-        let matches = |f: &Family| {
-            let pattern = Path::new(f.default_schema)
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let (prefix, suffix) = pattern.split_once('*').unwrap_or((&pattern, ""));
-            names
-                .iter()
-                .any(|n| n.starts_with(prefix) && n.ends_with(suffix))
-        };
-        [&family::CGMES, &family::NC]
-            .into_iter()
-            .find(|f| matches(f))
+        match cimschema::profile_file::families_in(dir, cimschema::profile_file::Role::Vocabulary)
+            .as_slice()
+        {
+            [family] => Some(family),
+            _ => None,
+        }
+    }
+
+    /// The files in `dir` that declare themselves `family`'s vocabulary.
+    fn vocabulary(dir: &Path, family: &Family) -> Vec<PathBuf> {
+        cimschema::profile_file::in_dir(dir, family, cimschema::profile_file::Role::Vocabulary)
+    }
+
+    /// Whether `dir` holds `family`'s vocabulary, beside another's or not.
+    fn holds(dir: &Path, family: &Family) -> bool {
+        !vocabulary(dir, family).is_empty()
     }
 
     /// Build a family's class table from RDFS without installing it.
@@ -196,17 +191,18 @@ mod dynamic {
     }
 
     fn load_family(family: &'static Family, dir: &Path) -> Result<&'static Schema, SchemaError> {
-        // Reuse the family's own filename pattern so a directory of mixed
-        // artefacts selects the same files cimgen would.
-        let file_pattern = Path::new(family.default_schema)
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "*.rdf".to_string());
-        let pattern = dir.join(file_pattern);
-
-        let spec =
-            cimschema::import::import_schema_files(&pattern.to_string_lossy(), family, false)
-                .map_err(|e| SchemaError::Parse(e.to_string()))?;
+        // The files that declare themselves the family's, so a directory
+        // holding both families' vocabularies serves each its own.
+        let files = vocabulary(dir, family);
+        if files.is_empty() {
+            return Err(SchemaError::Parse(format!(
+                "no {} vocabulary in {}",
+                family.id,
+                dir.display()
+            )));
+        }
+        let spec = cimschema::import::import_schema_paths(&files, family, false)
+            .map_err(|e| SchemaError::Parse(e.to_string()))?;
         Ok(build(&spec))
     }
 

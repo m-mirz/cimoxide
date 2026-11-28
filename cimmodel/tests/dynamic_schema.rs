@@ -114,13 +114,37 @@ fn a_family_does_not_load_from_another_familys_directory() {
 }
 
 /// `CIMOXIDE_RDFS_DIR` may list both directories; each serves its own family,
-/// although NC's file pattern also matches CGMES's file names.
+/// by what its files declare.
 #[test]
 fn a_directory_is_matched_to_its_family() {
     use schema_source::family_of_dir;
     assert_eq!(family_of_dir(rdfs_dir()).map(|f| f.id), Some("nc"));
     assert_eq!(family_of_dir(cgmes_rdfs_dir()).map(|f| f.id), Some("cgmes"));
     assert!(family_of_dir(Path::new("../testdata")).is_none());
+}
+
+/// Both families' vocabularies in one directory: each loads its own, as from ENTSO-E's tree,
+/// although NC's file names also fit CGMES's.
+#[test]
+fn a_directory_of_both_families_serves_each_its_own() {
+    let both = Path::new(env!("CARGO_TARGET_TMPDIR")).join("both-vocabularies");
+    let _ = std::fs::remove_dir_all(&both);
+    std::fs::create_dir_all(&both).unwrap();
+    for dir in [rdfs_dir(), cgmes_rdfs_dir()] {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            std::fs::copy(&path, both.join(path.file_name().unwrap())).unwrap();
+        }
+    }
+    assert!(schema_source::family_of_dir(&both).is_none());
+    compare(
+        schema_source::load_table("nc", &both).unwrap(),
+        &cimmodel::nc_classes::SCHEMA,
+    );
+    compare(
+        schema_source::load_table("cgmes", &both).unwrap(),
+        &cimmodel::cgmes_classes::SCHEMA,
+    );
 }
 
 #[test]
