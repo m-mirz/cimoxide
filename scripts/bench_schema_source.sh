@@ -52,7 +52,7 @@ done
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ -z "$rdfs_dir" ]; then
-	rdfs_dir="$repo_root/application-profiles-library/NCP/RDFS"
+	rdfs_dir="$repo_root/NC-AP/NCP/RDFS"
 fi
 
 if [ ! -d "$rdfs_dir" ]; then

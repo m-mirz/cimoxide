@@ -59,7 +59,7 @@ done
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ -z "$shacl_dir" ]; then
-	shacl_dir="$repo_root/application-profiles-library/NCP/SHACL"
+	shacl_dir="$repo_root/NC-AP/NCP/SHACL"
 fi
 
 if [ ! -d "$shacl_dir" ]; then

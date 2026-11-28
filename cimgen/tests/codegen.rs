@@ -107,7 +107,7 @@ fn nc_shapes_codegen_stable() {
     h.update(std::fs::read(shacl_out.join("nc_profiles.rs")).unwrap());
     let hash: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
-        hash, "8eab0fb8aeb3147c9c0e45842a4c83818fc4688a6de17bfccc4dc6ee8d08e0ce",
+        hash, "c039ba3404041ee19262f662a198fc4cc65118e0fdd248c95819aa1687f70295",
         "NC shape table drifted — rerun to update hash"
     );
 }
@@ -149,7 +149,7 @@ fn cgmes_shapes_codegen_stable() {
 
 /// Hashes the NC class table on its own, so a CGMES-only change cannot mask an
 /// NC change and vice versa. This is the only mechanical guard that bumping the
-/// `application-profiles-library` submodule did not silently alter the NC
+/// `NC-AP` submodule did not silently alter the NC
 /// surface.
 #[test]
 fn nc_classes_codegen_stable() {

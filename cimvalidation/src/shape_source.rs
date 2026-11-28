@@ -329,7 +329,8 @@ mod dynamic {
                 .map_err(|e| ShapeError::Schema(e.to_string()))
         };
 
-        // `.../NCP/SHACL` → `.../`, the library root every family sits under.
+        // `NC-AP/NCP/SHACL` → `NC-AP`: the family's repository, beside which the
+        // other families' repositories sit.
         let root = shacl_dir.parent().and_then(Path::parent);
 
         let spec = import(family, &schema_glob(family, shacl_dir, root))?;
@@ -361,9 +362,12 @@ mod dynamic {
     /// somewhere is not silently overridden — but it names one family's
     /// directory, so it applies only to the family being loaded.
     ///
-    /// Otherwise the family's compiled-in glob is re-rooted at the library the
+    /// Otherwise the family's compiled-in glob is re-rooted at the profiles the
     /// SHACL directory came from, which keeps a load self-contained and
-    /// independent of the process's working directory.
+    /// independent of the process's working directory: `<root>/CGMES/RDFS`, as
+    /// in a library holding every family (`application-profiles-library` up to
+    /// its split), then `<root>/../CGMES-AP/CGMES/RDFS`, as beside the family's
+    /// own repository (ENTSO-E's CGMES-AP and NC-AP, and cimoxide's checkout).
     fn schema_glob(f: &'static Family, shacl_dir: &Path, root: Option<&Path>) -> String {
         let file_name = |p: &str| {
             Path::new(p)
@@ -391,7 +395,7 @@ mod dynamic {
                 .into_owned();
         }
 
-        // `application-profiles-library/CGMES/RDFS/<glob>` → `<root>/CGMES/RDFS/<glob>`.
+        // `CGMES-AP/CGMES/RDFS/<glob>` → `CGMES/RDFS/<glob>`.
         let tail: Option<PathBuf> =
             Path::new(f.default_schema)
                 .components()
@@ -401,16 +405,21 @@ mod dynamic {
                         acc.map_or_else(|| PathBuf::from(c.as_os_str()), |p| p.join(c.as_os_str())),
                     )
                 });
-        match (root, tail) {
-            (Some(root), Some(tail)) => {
-                let candidate = root.join(tail);
-                if candidate.parent().is_some_and(|p| p.is_dir()) {
-                    return candidate.to_string_lossy().into_owned();
-                }
-                f.default_schema.to_string()
-            }
-            _ => f.default_schema.to_string(),
-        }
+        let Some(root) = root else {
+            return f.default_schema.to_string();
+        };
+        let candidates = [
+            tail.map(|tail| root.join(tail)),
+            root.parent().map(|repos| repos.join(f.default_schema)),
+        ];
+        candidates
+            .into_iter()
+            .flatten()
+            .find(|candidate| candidate.parent().is_some_and(Path::is_dir))
+            .map_or_else(
+                || f.default_schema.to_string(),
+                |candidate| candidate.to_string_lossy().into_owned(),
+            )
     }
 
     /// Convert an already-resolved table into the `&'static` IR, for a caller

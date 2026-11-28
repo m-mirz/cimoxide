@@ -3,7 +3,7 @@
   Network Code Profiles — Contingency (CO) profile sample.
 
   Hand-written: no NC instance data ships with the repo. Prefix bindings follow
-  application-profiles-library/NCP/SHACL/NC-AP-Con-PrefixDeclaration-Complex-SHACL.ttl.
+  NC-AP/NCP/SHACL/NC-AP-Con-PrefixDeclaration-Complex-SHACL.ttl.
 
   Note that `cim` here binds https://cim.ucaiug.io/ns#, not the CGMES
   http://iec.ch/TC57/CIM100#. Both families spell the prefix `cim`, so only the

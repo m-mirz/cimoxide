@@ -27,7 +27,24 @@ import pandas
 import cimoxide
 
 CIMOXIDE_ROOT = Path(__file__).resolve().parents[2]
-APL_DIR = Path(os.environ.get("CIMOXIDE_APL_DIR", CIMOXIDE_ROOT / "application-profiles-library"))
+
+
+def apl_dir() -> Path:
+    """One directory holding CGMES/ and NCP/, the layout ReliCapGrid's validate_instances.py
+    reads: CIMOXIDE_APL_DIR, else links to cimoxide's CGMES-AP and NC-AP submodules, which
+    ENTSO-E split application-profiles-library into."""
+    if "CIMOXIDE_APL_DIR" in os.environ:
+        return Path(os.environ["CIMOXIDE_APL_DIR"])
+    root = Path(__file__).resolve().parent / ".cache" / "apl"
+    root.mkdir(parents=True, exist_ok=True)
+    for family, repo in (("CGMES", "CGMES-AP"), ("NCP", "NC-AP")):
+        link = root / family
+        if not link.is_symlink():
+            link.symlink_to(CIMOXIDE_ROOT / repo / family, target_is_directory=True)
+    return root
+
+
+APL_DIR = apl_dir()
 
 # triplets keeps these per file; they are bookkeeping, not data
 TRIPLETS_META_TYPES = {"Distribution", "NamespaceMap"}

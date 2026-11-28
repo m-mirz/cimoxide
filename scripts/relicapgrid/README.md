@@ -23,8 +23,9 @@ python3 -m venv .venv
 `RELICAPGRID_DIR` points the harness at another checkout instead. `KNOWN`, `TRIAGE`, the edits and
 mutations name mRIDs and files of the pinned commit; moving the submodule means reviewing them.
 
-The APL is cimoxide's `application-profiles-library` submodule (override with
-`CIMOXIDE_APL_DIR`); it carries the CGMES 3.0 and NCP 2.5 that ReliCapGrid's CI uses.
+The APL is cimoxide's `CGMES-AP` and `NC-AP` submodules, linked into one directory in
+`.cache/apl/` for ReliCapGrid's script (override with `CIMOXIDE_APL_DIR`, a directory holding
+`CGMES/` and `NCP/`). They carry the CGMES 3.0 and NCP 2.5 that ReliCapGrid's CI uses.
 
 ## Run
 
