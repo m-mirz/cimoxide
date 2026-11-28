@@ -34,7 +34,7 @@ pub use oxigraph::model::{
     GraphName, Literal, NamedNode, NamedOrBlankNode, Quad, Term, Triple, Variable,
 };
 pub use oxigraph::sparql::{QueryResults, QuerySolution};
-pub use triples::{GraphOptions, Stats, quads};
+pub use triples::{GraphOptions, Stats, quads, quads_in};
 
 /// Anything that can go wrong building or querying the store.
 #[derive(Debug)]
@@ -112,6 +112,51 @@ impl CimStore {
         // The bulk loader buffers; without commit() it drops everything silently.
         loader.commit()?;
         Ok(Self { store, stats })
+    }
+
+    /// Materialise several datasets into the default graph, their merge, and each one given
+    /// a name into a named graph of its own too, so a query can run on one of them
+    /// ([`query_in`](Self::query_in)). A graph of its own costs a second copy of the
+    /// dataset's quads, so only a dataset some query reads alone needs one.
+    ///
+    /// The merge is loaded rather than read as the union of the named graphs: a triple two
+    /// files both state (an object's `rdf:type`, written again by every profile that adds to
+    /// it) is one triple of the merge, as the profiles' queries count it, but a match in
+    /// each graph of a union. FullGrid's SC file restating its transformer ends made every
+    /// end count twice.
+    pub fn from_datasets(graphs: &[(Option<&str>, &CimDataset)]) -> Result<Self, CimSparqlError> {
+        let store = Store::new()?;
+        let mut stats = Stats::default();
+        let opts = GraphOptions::new();
+        let mut loader = store.bulk_loader();
+        for (name, ds) in graphs {
+            loader.load_quads(quads_in(ds, &opts, &mut stats, GraphName::DefaultGraph))?;
+            if let Some(name) = name {
+                let graph = GraphName::NamedNode(NamedNode::new(*name)?);
+                let mut again = Stats::default();
+                loader.load_quads(quads_in(ds, &opts, &mut again, graph))?;
+            }
+        }
+        loader.commit()?;
+        Ok(Self { store, stats })
+    }
+
+    /// Run a query with no prefixes pre-bound, on the named graphs `graphs` as its
+    /// default graph, or on the merge of all of them when `graphs` is empty.
+    pub fn query_in(
+        &self,
+        sparql: &str,
+        graphs: &[&str],
+    ) -> Result<QueryResults<'static>, CimSparqlError> {
+        let mut query = SparqlEvaluator::new().parse_query(sparql)?;
+        if !graphs.is_empty() {
+            let names = graphs
+                .iter()
+                .map(|g| NamedNode::new(*g).map(GraphName::NamedNode))
+                .collect::<Result<Vec<_>, _>>()?;
+            query.dataset_mut().set_default_graph(names);
+        }
+        Ok(query.on_store(&self.store).execute()?)
     }
 
     /// Run a query with the CGMES namespaces pre-bound, so `cim:`, `eu:`, `md:`, `dm:`,
