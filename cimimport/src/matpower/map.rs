@@ -502,6 +502,11 @@ pub fn convert(
             "ACLineSegment"
         };
         let eq = b.add(class, &br.key, &br.name);
+        b.text(
+            &eq,
+            "IdentifiedObject.description",
+            &format!("MATPOWER branch {}", br.row + 1),
+        );
         // MATPOWER's from side, then its to side.
         let sides = [(br.from, 1usize), (br.to, 2usize)];
         let mut terminals = Vec::new();
@@ -829,6 +834,11 @@ pub fn convert(
         }
 
         let sm = b.add("SynchronousMachine", &key, &name);
+        b.text(
+            &sm,
+            "IdentifiedObject.description",
+            &format!("MATPOWER gen {}", k + 1),
+        );
         b.link(&sm, "Equipment.EquipmentContainer", &vl(at));
         b.link(&sm, "RotatingMachine.GeneratingUnit", &unit);
         let mbase = col(g, MBASE, 0.0);
@@ -997,6 +1007,7 @@ pub fn convert(
     for field in &case.unmapped {
         notes.push(format!("mpc.{field} not converted"));
     }
+    notes.extend(ignored_columns(case));
 
     let header = Header {
         time: options
@@ -1010,6 +1021,58 @@ pub fn convert(
         .finish(stem, &header)
         .map_err(|e| MatpowerError::Unsupported(format!("writing the model: {e}")))?;
     Ok(Converted { files, notes })
+}
+
+/// The columns that carry data CGMES has no place for, or that the conversion doesn't map, each
+/// noted where a case gives it. Mostly OPF input and results: the case itself keeps them, and
+/// the descriptions `MATPOWER bus/gen/branch {n}` find its rows again.
+fn ignored_columns(case: &MatpowerCase) -> Vec<String> {
+    // Rows with a non-zero value in columns `first..=last`.
+    let rows = |table: &[Vec<f64>], first: usize, last: usize| {
+        table
+            .iter()
+            .filter(|row| (first..=last).any(|i| col(row, i, 0.0) != 0.0))
+            .count()
+    };
+    let mut notes = Vec::new();
+    let zones: std::collections::BTreeSet<i64> = case
+        .bus
+        .iter()
+        .filter_map(|row| row.get(ZONE).map(|z| *z as i64))
+        .collect();
+    if zones.len() > 1 {
+        notes.push(format!("bus ZONE not converted ({} zones)", zones.len()));
+    }
+    let mut note = |count: usize, what: &str| {
+        if count > 0 {
+            notes.push(format!("{what} of {count} row(s) not converted"));
+        }
+    };
+    note(
+        rows(&case.gens, PC1, QC2MAX),
+        "gen capability curve (PC1 to QC2MAX)",
+    );
+    note(
+        rows(&case.gens, RAMP_AGC, RAMP_Q),
+        "gen ramp rates (RAMP_AGC to RAMP_Q)",
+    );
+    note(rows(&case.gens, APF, APF), "gen APF");
+    // A side limits only when it is non-zero and inside ±360 degrees, as MATPOWER reads it.
+    let limiting = |a: f64| a != 0.0 && a.abs() < 360.0;
+    note(
+        case.branch
+            .iter()
+            .filter(|row| limiting(col(row, ANGMIN, 0.0)) || limiting(col(row, ANGMAX, 0.0)))
+            .count(),
+        "branch angle limits (ANGMIN, ANGMAX)",
+    );
+    note(
+        rows(&case.bus, LAM_P, MU_VMIN)
+            + rows(&case.gens, MU_PMAX, MU_QMIN)
+            + rows(&case.branch, MU_SF, MU_ANGMAX),
+        "OPF results (LAM_P to MU_ANGMAX)",
+    );
+    notes
 }
 
 /// A terminal of `equipment`, at node `cn` and topological node `tn`.

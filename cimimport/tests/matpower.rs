@@ -370,6 +370,37 @@ fn a_flat_start_is_said() {
     );
 }
 
+/// Data CGMES has no place for is named, table by table and column by column.
+#[test]
+fn what_is_not_converted_is_said() {
+    let column_notes = |case: &str| -> Vec<String> {
+        convert(case)
+            .notes
+            .into_iter()
+            .filter(|n| n.contains("not converted") && !n.starts_with("mpc."))
+            .collect()
+    };
+    assert_eq!(
+        column_notes("pglib/pglib_opf_case30_ieee.m"),
+        ["branch angle limits (ANGMIN, ANGMAX) of 41 row(s) not converted"]
+    );
+    assert_eq!(
+        column_notes("matpower/case_ACTIVSg200.m"),
+        [
+            "bus ZONE not converted (6 zones)",
+            "OPF results (LAM_P to MU_ANGMAX) of 200 row(s) not converted"
+        ]
+    );
+    // One zone, and angle limits at ±360 degrees, which limit nothing.
+    assert!(column_notes("matpower/case118.m").is_empty());
+    assert!(
+        convert("matpower/case118.m")
+            .notes
+            .iter()
+            .any(|n| n == "mpc.gencost not converted")
+    );
+}
+
 /// The substations, each as the sorted names of its busbars.
 fn substations(ds: &CimDataset) -> Vec<Vec<String>> {
     let level_of: HashMap<&str, &str> = of_type(ds, "VoltageLevel")
@@ -435,6 +466,42 @@ fn buses_are_grouped_by_transformer_and_by_name() {
     };
     let (_, ds) = decode(&convert_with("matpower/case_ACTIVSg200.m", &options));
     assert_eq!(substations(&ds).len(), 134);
+}
+
+/// Each generator and branch is described by its row, so the case's own data on it (costs,
+/// angle limits) can be found again.
+#[test]
+fn generators_and_branches_keep_their_rows() {
+    let (_, ds) = decode(&convert("matpower/case118.m"));
+    let described = |classes: &[&str], prefix: &str| -> HashMap<usize, String> {
+        classes
+            .iter()
+            .flat_map(|class| of_type(&ds, class))
+            .map(|e| {
+                let row = e
+                    .get_str("IdentifiedObject.description")
+                    .and_then(|d| d.strip_prefix(prefix))
+                    .and_then(|n| n.parse().ok())
+                    .unwrap_or_else(|| panic!("{e:?} has no {prefix:?} description"));
+                (row, e.get_str("IdentifiedObject.name").unwrap().to_string())
+            })
+            .collect()
+    };
+    let gens = described(&["SynchronousMachine"], "MATPOWER gen ");
+    assert_eq!(gens.len(), 54);
+    assert_eq!(gens[&1], "Riversde V2 G1");
+    let branches = described(
+        &[
+            "ACLineSegment",
+            "PowerTransformer",
+            "SeriesCompensator",
+            "EquivalentBranch",
+        ],
+        "MATPOWER branch ",
+    );
+    assert_eq!(branches.len(), 186);
+    assert_eq!(branches[&1], "Riversde V2 - Pokagon V2");
+    assert!((1..=186).all(|row| branches.contains_key(&row)));
 }
 
 #[test]
