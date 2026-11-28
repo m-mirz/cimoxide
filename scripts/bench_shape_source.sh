@@ -62,6 +62,11 @@ if [ -z "$shacl_dir" ]; then
 	shacl_dir="$repo_root/NC-AP/NCP/SHACL"
 fi
 
+# CIMOXIDE_PROFILES takes the shapes with their manifests, PROF and vocabulary,
+# so it names the family's tree above the SHACL directory: the class table is
+# then loaded from RDFS too, as it is whenever the variable is set.
+profiles_dir="$(dirname "$shacl_dir")"
+
 if [ ! -d "$shacl_dir" ]; then
 	echo "NCP SHACL directory not found: $shacl_dir" >&2
 	echo "(did you run 'git submodule update --init --recursive'?)" >&2
@@ -85,11 +90,11 @@ if [ "$skip_criterion" -eq 0 ]; then
 
 	echo "=== 1a. validation throughput, generated vs SHACL-loaded (A/B) ==="
 	echo "--- baseline: generated table ---"
-	env -u CIMOXIDE_SHACL_DIR cargo bench -p cimoxide-validation --features dynamic-shapes \
+	env -u CIMOXIDE_PROFILES cargo bench -p cimoxide-validation --features dynamic-shapes \
 		--bench nc_validate -- --save-baseline generated 2>&1 |
 		grep -E 'time:|thrpt:' || true
 	echo "--- comparison: SHACL-loaded table ---"
-	CIMOXIDE_SHACL_DIR="$shacl_dir" cargo bench -p cimoxide-validation --features dynamic-shapes \
+	CIMOXIDE_PROFILES="$profiles_dir" cargo bench -p cimoxide-validation --features dynamic-shapes \
 		--bench nc_validate -- --baseline generated 2>&1 |
 		grep -E 'time:|thrpt:|change:|Performance|No change' || true
 	echo
@@ -141,12 +146,12 @@ gen_ms=()
 dyn_ms=()
 for ((i = 1; i <= repeat; i++)); do
 	start=$(now_ns)
-	env -u CIMOXIDE_SHACL_DIR "$cimox" validate "$fixture" >/dev/null 2>&1 || true
+	env -u CIMOXIDE_PROFILES "$cimox" validate "$fixture" >/dev/null 2>&1 || true
 	end=$(now_ns)
 	gen_ms+=($(((end - start) / 1000000)))
 
 	start=$(now_ns)
-	CIMOXIDE_SHACL_DIR="$shacl_dir" "$cimox" validate "$fixture" >/dev/null 2>&1 || true
+	CIMOXIDE_PROFILES="$profiles_dir" "$cimox" validate "$fixture" >/dev/null 2>&1 || true
 	end=$(now_ns)
 	dyn_ms+=($(((end - start) / 1000000)))
 done
@@ -161,8 +166,8 @@ echo
 
 echo "=== 4. peak RSS ==="
 if command -v /usr/bin/time >/dev/null 2>&1; then
-	g_rss=$(env -u CIMOXIDE_SHACL_DIR /usr/bin/time -f '%M' "$cimox" validate "$fixture" 2>&1 >/dev/null | tail -1)
-	d_rss=$(CIMOXIDE_SHACL_DIR="$shacl_dir" /usr/bin/time -f '%M' "$cimox" validate "$fixture" 2>&1 >/dev/null | tail -1)
+	g_rss=$(env -u CIMOXIDE_PROFILES /usr/bin/time -f '%M' "$cimox" validate "$fixture" 2>&1 >/dev/null | tail -1)
+	d_rss=$(CIMOXIDE_PROFILES="$profiles_dir" /usr/bin/time -f '%M' "$cimox" validate "$fixture" 2>&1 >/dev/null | tail -1)
 	echo "  generated table : ${g_rss} KB"
 	echo "  SHACL-loaded    : ${d_rss} KB"
 	echo "  difference      : +$((d_rss - g_rss)) KB"

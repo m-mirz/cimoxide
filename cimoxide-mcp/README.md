@@ -74,4 +74,4 @@ Claude Desktop, Cursor, Windsurf, Antigravity and most others take an `mcpServer
 ```
 
 RDFS and SHACL can be loaded at runtime instead of the built-in tables with
-`CIMOXIDE_RDFS_DIR` / `CIMOXIDE_SHACL_DIR` in the server's environment.
+`CIMOXIDE_PROFILES` in the server's environment.

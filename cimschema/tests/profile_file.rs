@@ -74,3 +74,74 @@ fn another_cim_is_no_family() {
     .unwrap();
     assert!(identify(&path).is_none());
 }
+
+/// One search of both repositories finds every file once. CGMES-AP's
+/// `RDFS_Beta_501_Ed2_CD` gives the same IRIs again, and is passed over without a
+/// conflict; its SHACL, written as RDF/XML, is no vocabulary.
+#[test]
+fn a_pool_of_both_repositories_finds_each_file_once() {
+    use cimschema::family::{CGMES, NC};
+    use cimschema::profile_file::Pool;
+    let pool = Pool::scan(&[root().join("CGMES-AP"), root().join("NC-AP")]);
+    assert!(pool.conflicts.is_empty(), "{:?}", pool.conflicts);
+    assert!(pool.empty.is_empty());
+    let count = |dir: &str, extension: &str| files(dir, extension).len();
+    for (family, role, expected) in [
+        (&CGMES, Role::Shapes, count("CGMES-AP/CGMES/SHACL", "ttl")),
+        // Less the 2019 header, which has no version IRI.
+        (
+            &CGMES,
+            Role::Vocabulary,
+            count("CGMES-AP/CGMES/RDFS", "rdf") - 1,
+        ),
+        (
+            &CGMES,
+            Role::Descriptor,
+            count("CGMES-AP/CGMES/PROF", "rdf"),
+        ),
+        (&NC, Role::Shapes, count("NC-AP/NCP/SHACL", "ttl")),
+        (
+            &NC,
+            Role::Manifest,
+            count("NC-AP/NCP/SHACL/Validation", "ttl"),
+        ),
+        (&NC, Role::Vocabulary, count("NC-AP/NCP/RDFS", "rdf")),
+        (&NC, Role::Descriptor, count("NC-AP/NCP/PROF", "rdf")),
+    ] {
+        let found = pool.files(family, role);
+        assert_eq!(found.len(), expected, "{} {role:?}", family.id);
+        assert!(
+            found.iter().all(|p| !p.to_string_lossy().contains("Beta")),
+            "{} {role:?} took a beta file",
+            family.id
+        );
+    }
+}
+
+/// Another version of a profile already found is reported, and the first stays.
+#[test]
+fn another_version_of_a_profile_is_a_conflict() {
+    use cimschema::family::NC;
+    use cimschema::profile_file::Pool;
+    let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("profile-versions");
+    let _ = std::fs::remove_dir_all(&base);
+    let shapes = |version: &str| {
+        format!(
+            "@prefix cim: <https://cim.ucaiug.io/ns#> .\n\
+             <#Ontology> owl:versionIRI <https://ap-con.cim4.eu/Contingency-Simple/{version}> .\n"
+        )
+    };
+    for (dir, version) in [("a", "2.3"), ("b", "2.3"), ("c", "2.4")] {
+        std::fs::create_dir_all(base.join(dir)).unwrap();
+        std::fs::write(base.join(dir).join("Contingency.ttl"), shapes(version)).unwrap();
+    }
+    let pool = Pool::scan(&[base.join("a"), base.join("b"), base.join("c")]);
+    assert_eq!(
+        pool.files(&NC, Role::Shapes),
+        [base.join("a/Contingency.ttl")]
+    );
+    // b is a copy, c another version.
+    assert_eq!(pool.conflicts.len(), 1, "{:?}", pool.conflicts);
+    assert!(pool.conflicts[0].contains("Contingency-Simple/2.4"));
+    assert_eq!(pool.empty, [base.join("b"), base.join("c")]);
+}

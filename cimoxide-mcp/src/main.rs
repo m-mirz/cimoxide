@@ -12,8 +12,8 @@
 //! arguments resolve and what a tool reads when given none. `--set-file`
 //! names a JSON file, `{ "files": [path] }`, listing the set a tool reads
 //! instead when given neither `path` nor `files`: the model set chosen in an
-//! editor, which VS Code's extension keeps there. It is read on every call. RDFS and SHACL directories come from
-//! `CIMOXIDE_RDFS_DIR` / `CIMOXIDE_SHACL_DIR`, as for `cimox`.
+//! editor, which VS Code's extension keeps there. It is read on every call. Profile files come from
+//! `CIMOXIDE_PROFILES`, as for `cimox`.
 
 mod session;
 mod tools;

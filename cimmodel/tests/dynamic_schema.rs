@@ -113,8 +113,8 @@ fn a_family_does_not_load_from_another_familys_directory() {
     assert!(schema_source::load_table("cgmes", rdfs_dir()).is_err());
 }
 
-/// `CIMOXIDE_RDFS_DIR` may list both directories; each serves its own family,
-/// by what its files declare.
+/// Each directory serves the family whose vocabularies it holds, by what its
+/// files declare.
 #[test]
 fn a_directory_is_matched_to_its_family() {
     use schema_source::family_of_dir;
@@ -143,6 +143,25 @@ fn a_directory_of_both_families_serves_each_its_own() {
     );
     compare(
         schema_source::load_table("cgmes", &both).unwrap(),
+        &cimmodel::cgmes_classes::SCHEMA,
+    );
+}
+
+/// What `CIMOXIDE_PROFILES` loads, given ENTSO-E's two repositories: both families'
+/// class tables, the generated ones.
+#[test]
+fn the_profiles_variable_loads_the_generated_tables() {
+    assert_eq!(schema_source::PROFILES_ENV, "CIMOXIDE_PROFILES");
+    let pool = cimschema::profile_file::Pool::scan(&[
+        Path::new("../CGMES-AP").to_path_buf(),
+        Path::new("../NC-AP").to_path_buf(),
+    ]);
+    compare(
+        schema_source::load_pool_table("nc", &pool).unwrap(),
+        &cimmodel::nc_classes::SCHEMA,
+    );
+    compare(
+        schema_source::load_pool_table("cgmes", &pool).unwrap(),
         &cimmodel::cgmes_classes::SCHEMA,
     );
 }

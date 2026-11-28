@@ -73,10 +73,10 @@ echo
 if [ "$skip_decode" -eq 0 ]; then
 	echo "=== 1. decode throughput (criterion A/B, back to back) ==="
 	echo "--- baseline: generated table ---"
-	env -u CIMOXIDE_RDFS_DIR cargo bench -p cimoxide-model --features dynamic-schema --bench nc_decode -- \
+	env -u CIMOXIDE_PROFILES cargo bench -p cimoxide-model --features dynamic-schema --bench nc_decode -- \
 		--save-baseline generated 2>&1 | grep -E 'time:|thrpt:' || true
 	echo "--- comparison: RDFS-loaded table ---"
-	CIMOXIDE_RDFS_DIR="$rdfs_dir" cargo bench -p cimoxide-model --features dynamic-schema --bench nc_decode -- \
+	CIMOXIDE_PROFILES="$rdfs_dir" cargo bench -p cimoxide-model --features dynamic-schema --bench nc_decode -- \
 		--baseline generated 2>&1 | grep -E 'time:|thrpt:|change:|Performance|No change' || true
 	echo
 fi
@@ -100,12 +100,12 @@ gen_ms=()
 dyn_ms=()
 for ((i = 1; i <= repeat; i++)); do
 	start=$(now_ns)
-	env -u CIMOXIDE_RDFS_DIR "$cimox" import "$fixture" >/dev/null
+	env -u CIMOXIDE_PROFILES "$cimox" import "$fixture" >/dev/null
 	end=$(now_ns)
 	gen_ms+=($(((end - start) / 1000000)))
 
 	start=$(now_ns)
-	CIMOXIDE_RDFS_DIR="$rdfs_dir" "$cimox" import "$fixture" >/dev/null
+	CIMOXIDE_PROFILES="$rdfs_dir" "$cimox" import "$fixture" >/dev/null
 	end=$(now_ns)
 	dyn_ms+=($(((end - start) / 1000000)))
 done
@@ -118,8 +118,8 @@ echo
 
 echo "=== 3. peak RSS ==="
 if command -v /usr/bin/time >/dev/null 2>&1; then
-	g_rss=$(env -u CIMOXIDE_RDFS_DIR /usr/bin/time -f '%M' "$cimox" import "$fixture" 2>&1 >/dev/null | tail -1)
-	d_rss=$(CIMOXIDE_RDFS_DIR="$rdfs_dir" /usr/bin/time -f '%M' "$cimox" import "$fixture" 2>&1 >/dev/null | tail -1)
+	g_rss=$(env -u CIMOXIDE_PROFILES /usr/bin/time -f '%M' "$cimox" import "$fixture" 2>&1 >/dev/null | tail -1)
+	d_rss=$(CIMOXIDE_PROFILES="$rdfs_dir" /usr/bin/time -f '%M' "$cimox" import "$fixture" 2>&1 >/dev/null | tail -1)
 	echo "  generated table : ${g_rss} KB"
 	echo "  RDFS-loaded     : ${d_rss} KB"
 	echo "  difference      : +$((d_rss - g_rss)) KB"

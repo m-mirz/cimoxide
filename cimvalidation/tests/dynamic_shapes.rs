@@ -15,7 +15,7 @@
 
 use std::path::{Path, PathBuf};
 
-use cimvalidation::shape_source::{SHACL_DIR_ENV, ShapeError, load_table};
+use cimvalidation::shape_source::{PROFILES_ENV, ShapeError, load_pool_table, load_table};
 use cimvalidation::shapes::ShapeDef;
 
 fn shacl_dir() -> PathBuf {
@@ -77,9 +77,8 @@ fn the_cgmes_table_matches_its_runtime_load() {
     }
 }
 
-/// `CIMOXIDE_SHACL_DIR` may list several directories; each serves the family
-/// whose files it holds, so pointing it at NC's directory alone never makes
-/// CGMES try to load from there.
+/// A SHACL directory is matched to the family whose files it holds, so loading
+/// NC's directory never makes CGMES try to load from there.
 #[test]
 fn a_directory_is_matched_to_its_family() {
     use cimvalidation::shape_source::family_of_dir;
@@ -197,12 +196,23 @@ fn a_directory_without_shapes_is_an_error() {
     );
 }
 
-/// The env var names the same directory the explicit call takes, so the two
-/// must agree about what is in it.
+/// What `CIMOXIDE_PROFILES` loads, given ENTSO-E's two repositories: both families'
+/// tables, shape for shape the generated ones, from one search of both.
 #[test]
-fn the_env_var_names_the_same_directory() {
-    assert_eq!(SHACL_DIR_ENV, "CIMOXIDE_SHACL_DIR");
-    assert!(shacl_dir().is_dir(), "the NCP SHACL directory should exist");
+fn the_profiles_variable_loads_the_generated_tables() {
+    assert_eq!(PROFILES_ENV, "CIMOXIDE_PROFILES");
+    let repos = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let pool = cimschema::profile_file::Pool::scan(&[repos.join("CGMES-AP"), repos.join("NC-AP")]);
+    for (family, generated) in [
+        ("nc", cimvalidation::nc_shapes::SHAPES),
+        ("cgmes", cimvalidation::cgmes_shapes::SHAPES),
+    ] {
+        let loaded = load_pool_table(family, &pool).expect("could not load from the pool");
+        assert_eq!(loaded.len(), generated.len(), "{family}");
+        for (i, (a, b)) in loaded.iter().zip(generated.iter()).enumerate() {
+            assert_eq!(describe(a), describe(b), "{family} shape {i} differs");
+        }
+    }
 }
 
 /// The ordering guard. `nc_shapes()` memoizes, so a `load_from` afterwards

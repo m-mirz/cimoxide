@@ -54,8 +54,7 @@ as a physical location (`sh:Violation` → `error`, `sh:Warning` → `warning`, 
   attributes (inherited included) and of classes.
 
 Initialization options: `{"common": bool, "quality": bool, "silence": [rule ids],
-"onType": bool}`; schemas come from `CIMOXIDE_RDFS_DIR` / `CIMOXIDE_SHACL_DIR` as for
-`cimox`. Any LSP client can run it (`cargo install cimoxide-lsp`, or the binaries on each
+"onType": bool}`; schemas come from `CIMOXIDE_PROFILES` as for `cimox`. Any LSP client can run it (`cargo install cimoxide-lsp`, or the binaries on each
 GitHub release).
 
 The VS Code extension in `editors/vscode/` bundles `cimlsp` per platform and is published to
@@ -169,18 +168,17 @@ Class and shape tables are compiled in, but `cimox` and the Python bindings can 
 from the ENTSO-E files instead, so a new profile version is a data load, not a recompile:
 
 ```bash
-CIMOXIDE_RDFS_DIR=CGMES-AP/CGMES/RDFS:NC-AP/NCP/RDFS \
-  cimox validate model.xml
-CIMOXIDE_SHACL_DIR=NC-AP/NCP/SHACL:CGMES-AP/CGMES/SHACL \
-  cimox validate model.xml
+CIMOXIDE_PROFILES=CGMES-AP:NC-AP cimox validate model.xml
 ```
 
-Resolution is explicit `load_from` > environment variable > generated table. Each variable
-takes one or more directories separated as in `PATH`; each serves the family whose files it
-holds, and a family without one keeps its generated table. A directory that holds neither or
-fails to parse warns and falls back. A SHACL load reads the RDFS of the same release from
-`<dir>/../RDFS`, since shapes and classes must agree. In library crates this sits behind the
-`dynamic-schema` / `dynamic-shapes` features, off by default.
+Resolution is explicit `load_from` > `CIMOXIDE_PROFILES` > generated table. The variable lists
+directories, separated as in `PATH`, searched five levels deep for RDFS, SHACL and PROF files.
+Each file is sorted by what its header declares (its `owl:versionIRI` and the `cim:` namespace
+it binds), not by where it sits or its name, so any layout works, ENTSO-E's former
+`application-profiles-library` included. The first file found for a profile wins; another
+version of it later is reported. A family whose files the directories don't hold keeps its
+generated tables, and one whose files fail to parse warns and falls back. In library crates
+this sits behind the `dynamic-schema` / `dynamic-shapes` features, off by default.
 
 | Cost (`scripts/bench_schema_source.sh`, `bench_shape_source.sh`) | From RDFS | From SHACL |
 |---|---|---|
