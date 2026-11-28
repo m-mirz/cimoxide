@@ -448,7 +448,10 @@ fn a_named_bus_keeps_its_number() {
                 .filter(|e| e.get_str("IdentifiedObject.description") == Some(&description))
                 .collect();
             assert_eq!(found.len(), 1, "{class} {description}");
-            found[0].get_str("IdentifiedObject.name").unwrap().to_string()
+            found[0]
+                .get_str("IdentifiedObject.name")
+                .unwrap()
+                .to_string()
         };
         assert_eq!(named(17), "MASON CITY 0", "{class}");
         assert_eq!(named(21), "MASON CITY 4", "{class}");
