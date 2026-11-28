@@ -7,10 +7,12 @@
 //! Resolution order, highest first:
 //!
 //! 1. [`load_from`] — an explicit call, for libraries and tests
-//! 2. `CIMOXIDE_SHACL_DIR` — for the CLI and the Python bindings. It may list
-//!    several directories, separated as in `PATH`; each serves the family
-//!    whose files it holds (see [`family_of_dir`]), so `…/NCP/SHACL` alone
-//!    still loads only NC, as it always did
+//! 2. `CIMOXIDE_PROFILES` — for the CLI, the servers and the Python bindings.
+//!    It lists directories, separated as in `PATH`, searched for profile
+//!    files, which are sorted by what they declare
+//!    ([`cimschema::profile_file::Pool`]): a family's constraint files,
+//!    manifests, PROF descriptors and vocabulary all come from it, and a family
+//!    it holds no constraint files of keeps its generated table
 //! 3. the generated table
 //!
 //! CGMES classes are compiled structs, so a CGMES table loaded from another
@@ -71,7 +73,9 @@ pub fn resolve_profiles(
 }
 
 #[cfg(feature = "dynamic-shapes")]
-pub use dynamic::{SHACL_DIR_ENV, ShapeError, family_of_dir, intern_shapes, load_from, load_table};
+pub use dynamic::{
+    PROFILES_ENV, ShapeError, family_of_dir, intern_shapes, load_from, load_pool_table, load_table,
+};
 
 #[cfg(feature = "dynamic-shapes")]
 mod dynamic {
@@ -89,10 +93,8 @@ mod dynamic {
         PropShape, ShapeDef, Step, Target,
     };
 
-    /// Environment variable naming SHACL constraint directories — one, or
-    /// several separated as in `PATH`, each serving the family whose files it
-    /// holds.
-    pub const SHACL_DIR_ENV: &str = "CIMOXIDE_SHACL_DIR";
+    pub use cimschema::profile_file::PROFILES_ENV;
+    use cimschema::profile_file::{Pool, Role};
 
     #[derive(Debug)]
     pub enum ShapeError {
@@ -151,7 +153,7 @@ mod dynamic {
 
     /// Load a bag family's shapes from a directory of SHACL TTL files.
     ///
-    /// Takes precedence over `CIMOXIDE_SHACL_DIR`. Must be called before the
+    /// Takes precedence over `CIMOXIDE_PROFILES`. Must be called before the
     /// first validation: the table is memoized, so afterwards this returns
     /// [`ShapeError::TooLate`] rather than being quietly ignored.
     ///
@@ -178,6 +180,16 @@ mod dynamic {
         Ok(load(family, dir)?.0)
     }
 
+    /// Build a family's shape table from the files a [`Pool`] found, without
+    /// installing it: what `CIMOXIDE_PROFILES` would load.
+    pub fn load_pool_table(
+        family_id: &str,
+        pool: &Pool,
+    ) -> Result<&'static [ShapeDef], ShapeError> {
+        let family = bag_family(family_id)?;
+        Ok(load_pool(family, pool)?.0)
+    }
+
     fn bag_family(id: &str) -> Result<&'static Family, ShapeError> {
         family::by_id(id).ok_or_else(|| ShapeError::UnknownFamily(id.to_string()))
     }
@@ -192,12 +204,6 @@ mod dynamic {
             [family] => Some(family),
             _ => None,
         }
-    }
-
-    /// Whether `dir` holds `family`'s constraint files, beside another's or not.
-    fn holds(dir: &Path, family: &Family) -> bool {
-        !cimschema::profile_file::in_dir(dir, family, cimschema::profile_file::Role::Shapes)
-            .is_empty()
     }
 
     pub(super) fn resolve(
@@ -232,51 +238,28 @@ mod dynamic {
             return *cached;
         }
 
-        // The directory, if any, that holds this family's files. A directory
-        // holding neither family's files is reported once, by the first family
-        // to look, rather than silently ignored.
-        let dir: Option<PathBuf> = std::env::var_os(SHACL_DIR_ENV).and_then(|dirs| {
-            let dirs: Vec<PathBuf> = std::env::split_paths(&dirs).collect();
-            static REPORTED: AtomicBool = AtomicBool::new(false);
-            if !REPORTED.swap(true, Ordering::SeqCst) {
-                for d in dirs
-                    .iter()
-                    .filter(|d| !family::FAMILIES.iter().any(|f| holds(d, f)))
-                {
-                    eprintln!(
-                        "warning: {SHACL_DIR_ENV} names {}, which holds no NC or CGMES \
-                         constraint files; ignoring it",
-                        d.display()
-                    );
+        let loaded = match (Pool::from_env(), bag_family(family_id)) {
+            (Some(pool), Ok(family)) if !pool.files(family, Role::Shapes).is_empty() => {
+                match load_pool(family, pool) {
+                    Ok(l) => Some(l),
+                    Err(e) => {
+                        eprintln!(
+                            "warning: {PROFILES_ENV} holds {family_id} constraint files, but \
+                             they could not be loaded ({e}); falling back to the generated \
+                             shape table"
+                        );
+                        None
+                    }
                 }
             }
-            let family = family::by_id(family_id)?;
-            dirs.into_iter().find(|d| holds(d, family))
-        });
-        let loaded = match (dir, bag_family(family_id)) {
-            (Some(dir), Ok(family)) => match load(family, &dir) {
-                Ok(l) => Some(l),
-                Err(e) => {
-                    eprintln!(
-                        "warning: {SHACL_DIR_ENV} names {} but the {family_id} shapes could not \
-                         be loaded ({e}); falling back to the generated shape table",
-                        dir.display()
-                    );
-                    None
-                }
-            },
             _ => None,
         };
         cache.insert(family_id, loaded);
         loaded
     }
 
-    /// Read and intern one family's shapes and profile index.
-    ///
-    /// The shapes resolve against the family's RDFS, which
-    /// `cimmodel::schema_source` already knows how to find: a shape naming a
-    /// class this workspace has no schema for cannot be checked, so the two
-    /// have to agree on what the family contains.
+    /// Read and intern one family's shapes and profile index from a SHACL
+    /// directory, with the vocabulary beside it.
     fn load(family: &'static Family, dir: &Path) -> Result<Loaded, ShapeError> {
         // Fail on the SHACL directory before the schema one, so a bad path is
         // reported as what it is rather than as a missing vocabulary.
@@ -286,11 +269,43 @@ mod dynamic {
                 dir.display()
             )));
         }
-        let (spec, others) = specs(family, dir)?;
+        let files =
+            r::ShapeFiles::in_dir(family, dir).map_err(|e| ShapeError::Parse(e.to_string()))?;
+        // `NC-AP/NCP/SHACL` → `NC-AP`: the family's repository, beside which the
+        // other families' repositories sit.
+        let root = dir.parent().and_then(Path::parent);
+        build(family, &files, &|f| vocabulary(f, dir, root))
+    }
+
+    /// The same from the files a [`Pool`] found, every family's vocabulary
+    /// among them.
+    fn load_pool(family: &'static Family, pool: &Pool) -> Result<Loaded, ShapeError> {
+        let files = r::ShapeFiles {
+            shapes: pool.files(family, Role::Shapes),
+            manifests: pool.files(family, Role::Manifest),
+            descriptors: pool.files(family, Role::Descriptor),
+        };
+        build(family, &files, &|f| {
+            Vocabulary::Files(pool.files(f, Role::Vocabulary))
+        })
+    }
+
+    /// Resolve `files` against the vocabularies `vocabulary` gives, and intern
+    /// the table.
+    ///
+    /// The shapes resolve against the family's RDFS: a shape naming a class
+    /// this workspace has no schema for cannot be checked, so the two have to
+    /// agree on what the family contains.
+    fn build(
+        family: &'static Family,
+        files: &r::ShapeFiles,
+        vocabulary: &dyn Fn(&'static Family) -> Vocabulary,
+    ) -> Result<Loaded, ShapeError> {
+        let (spec, others) = specs(family, vocabulary)?;
         let other_refs: Vec<&cimschema::model::CimSpecification> = others.iter().collect();
 
         let mut collector = SkipCollector::new();
-        let table = r::load_shape_table(family, &spec, &other_refs, dir, &mut collector)
+        let table = r::load_shapes(family, &spec, &other_refs, files, &mut collector)
             .map_err(|e| ShapeError::Parse(e.to_string()))?;
 
         let mut interner = Interner::default();
@@ -310,19 +325,11 @@ mod dynamic {
         Ok((Vec::leak(shapes), Vec::leak(iris), Vec::leak(codes)))
     }
 
-    /// Import the RDFS the shapes resolve against.
-    ///
-    /// Found the way `PROF` is: beside the SHACL directory, which is how the
-    /// ENTSO-E library is laid out. That keeps a load self-contained — one
-    /// directory decides both what the classes are and what the rules are —
-    /// and avoids depending on the process's working directory, which the
-    /// family's compiled-in glob does.
-    ///
-    /// `CIMOXIDE_RDFS_DIR` still wins, so a caller already pointing the class
-    /// table somewhere is not silently overridden.
+    /// Import the RDFS the shapes resolve against: the family's own, and every
+    /// other family's for the cross-family class lists.
     fn specs(
         family: &'static Family,
-        shacl_dir: &Path,
+        vocabulary: &dyn Fn(&'static Family) -> Vocabulary,
     ) -> Result<
         (
             cimschema::model::CimSpecification,
@@ -342,11 +349,7 @@ mod dynamic {
             .map_err(|e| ShapeError::Schema(e.to_string()))
         };
 
-        // `NC-AP/NCP/SHACL` → `NC-AP`: the family's repository, beside which the
-        // other families' repositories sit.
-        let root = shacl_dir.parent().and_then(Path::parent);
-
-        let spec = import(family, vocabulary(family, shacl_dir, root))?;
+        let spec = import(family, vocabulary(family))?;
 
         // Every other family, for the cross-family class lists the value-type
         // rules use: NCP's association value-type shapes name CGMES classes
@@ -357,7 +360,7 @@ mod dynamic {
         // reporting as the wrong class.
         let mut others = Vec::new();
         for f in family::FAMILIES.iter().filter(|f| f.id != family.id) {
-            match import(f, vocabulary(f, shacl_dir, root)) {
+            match import(f, vocabulary(f)) {
                 Ok(s) => others.push(s),
                 Err(e) => eprintln!(
                     "warning: the {} schema could not be read ({e}); its classes will be \
@@ -369,31 +372,20 @@ mod dynamic {
         Ok((spec, others))
     }
 
-    /// Where to look for a family's RDFS.
+    /// Where to look for a family's RDFS, for a SHACL directory loaded on its
+    /// own.
     ///
-    /// `CIMOXIDE_RDFS_DIR` wins where it holds this family's vocabulary, so a
-    /// caller already pointing the class table somewhere is not silently
-    /// overridden; it names one family's directory, so the other families
-    /// still come from beside the shapes.
-    ///
-    /// Otherwise the vocabulary is the one beside the SHACL directory, which
-    /// keeps a load self-contained and independent of the process's working
-    /// directory. For another family than the directory's, that is where its
-    /// repository would sit: `<root>/CGMES/RDFS`, as in a library holding every
-    /// family (`application-profiles-library` up to its split), or
+    /// The vocabulary beside the SHACL directory, which keeps a load
+    /// self-contained and independent of the process's working directory. For
+    /// another family than the directory's, that is where its repository would
+    /// sit: `<root>/CGMES/RDFS`, as in a library holding every family
+    /// (`application-profiles-library` up to its split), or
     /// `<root>/../CGMES-AP/CGMES/RDFS`, beside the family's own repository
     /// (ENTSO-E's CGMES-AP and NC-AP, and cimoxide's checkout). Either way a
     /// directory counts only if its files declare themselves the family's
     /// vocabulary (see [`cimschema::profile_file`]).
     fn vocabulary(f: &'static Family, shacl_dir: &Path, root: Option<&Path>) -> Vocabulary {
-        use cimschema::profile_file::{Role, in_dir, near};
-
-        if let Some(files) = std::env::var_os(cimmodel::schema_source::RDFS_DIR_ENV)
-            .map(|dir| in_dir(Path::new(&dir), f, Role::Vocabulary))
-            .filter(|files| !files.is_empty())
-        {
-            return Vocabulary::Files(files);
-        }
+        use cimschema::profile_file::{in_dir, near};
 
         // Beside the shapes, wherever the SHACL directory's own family keeps it.
         if let Some(files) = shacl_dir

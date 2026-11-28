@@ -134,7 +134,7 @@ turn on `cimoxide.validation.onType` to also run it while typing.
 | `cimoxide.validation.quality` | modelling-quality checks (`--quality`) |
 | `cimoxide.validation.silence` | rule ids not to report |
 | `cimoxide.validation.onType` | revalidate while typing |
-| `cimoxide.schema.rdfsDir` / `cimoxide.schema.shaclDir` | load RDFS / SHACL at runtime instead of the built-in tables |
+| `cimoxide.schema.profileDirs` | load the class and shape tables at runtime from ENTSO-E's profile files instead of the built-in ones |
 | `cimoxide.server.path` | use another `cimlsp` binary |
 | `cimoxide.claimFiles` | open CGMES and NC files as *CIM XML*, not XML |
 | `cimoxide.model.followCursor` | select the object at the cursor in the *CIM Model* view |

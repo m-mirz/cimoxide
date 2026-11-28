@@ -55,19 +55,10 @@ function serverCommand(context: ExtensionContext, name: string, setting: string)
   return bundled;
 }
 
-/** The schema directories, as the servers read them from their environment. */
+/** The profile directories, as the servers read them from their environment. */
 function schemaEnv(): Record<string, string> {
-  const cfg = workspace.getConfiguration("cimoxide");
-  const env: Record<string, string> = {};
-  const rdfs = cfg.get<string>("schema.rdfsDir");
-  const shacl = cfg.get<string>("schema.shaclDir");
-  if (rdfs) {
-    env.CIMOXIDE_RDFS_DIR = rdfs;
-  }
-  if (shacl) {
-    env.CIMOXIDE_SHACL_DIR = shacl;
-  }
-  return env;
+  const dirs = workspace.getConfiguration("cimoxide").get<string>("schema.profileDirs");
+  return dirs ? { CIMOXIDE_PROFILES: dirs } : {};
 }
 
 let watcher: FileSystemWatcher | undefined;

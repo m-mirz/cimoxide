@@ -7,10 +7,11 @@
 //! Resolution order, highest first:
 //!
 //! 1. [`load_from`] — an explicit call, for libraries and tests
-//! 2. `CIMOXIDE_RDFS_DIR` — for the CLI and the Python bindings. It may list
-//!    several directories, separated as in `PATH`; each serves the family
-//!    whose vocabularies it holds (see [`family_of_dir`]), so NC's directory
-//!    alone leaves CGMES on its generated table
+//! 2. `CIMOXIDE_PROFILES` — for the CLI, the servers and the Python bindings.
+//!    It lists directories, separated as in `PATH`, searched for profile files
+//!    that declare themselves a family's vocabulary
+//!    ([`cimschema::profile_file::Pool`]); a family it holds none of keeps its
+//!    generated table
 //! 3. the generated table
 //!
 //! A directory that is missing or fails to parse falls back to the generated
@@ -35,7 +36,9 @@ pub fn resolve(family: &'static str, generated: &'static Schema) -> &'static Sch
 }
 
 #[cfg(feature = "dynamic-schema")]
-pub use dynamic::{RDFS_DIR_ENV, SchemaError, family_of_dir, load_from, load_table};
+pub use dynamic::{
+    PROFILES_ENV, SchemaError, family_of_dir, load_from, load_pool_table, load_table,
+};
 
 #[cfg(feature = "dynamic-schema")]
 mod dynamic {
@@ -49,9 +52,8 @@ mod dynamic {
 
     use crate::base::{AttrDef, AttrKind, ClassDef, EnumDef, EnumValueDef, Schema};
 
-    /// Environment variable naming RDFS directories — one, or several separated
-    /// as in `PATH`, each serving the family whose vocabularies it holds.
-    pub const RDFS_DIR_ENV: &str = "CIMOXIDE_RDFS_DIR";
+    pub use cimschema::profile_file::PROFILES_ENV;
+    use cimschema::profile_file::{Pool, Role};
 
     #[derive(Debug)]
     pub enum SchemaError {
@@ -91,7 +93,7 @@ mod dynamic {
 
     /// Load a family's class table from a directory of RDFS vocabularies.
     ///
-    /// Takes precedence over `CIMOXIDE_RDFS_DIR`. Must be called before the
+    /// Takes precedence over `CIMOXIDE_PROFILES`. Must be called before the
     /// first decode: the registry is memoized, so afterwards this returns
     /// [`SchemaError::TooLate`] rather than being quietly ignored.
     pub fn load_from(family_id: &str, dir: &Path) -> Result<(), SchemaError> {
@@ -116,46 +118,26 @@ mod dynamic {
             return classes;
         }
 
-        let Some(dirs) = env_dirs() else {
+        let Some(pool) = Pool::from_env() else {
             return generated;
         };
         let Some(family) = family::by_id(family_id) else {
             return generated;
         };
-        let Some(dir) = dirs.iter().find(|d| holds(d, family)) else {
+        let files = pool.files(family, Role::Vocabulary);
+        if files.is_empty() {
             return generated;
-        };
-        match load_family(family, dir) {
+        }
+        match load_files(family, &files) {
             Ok(classes) => classes,
             Err(e) => {
                 eprintln!(
-                    "warning: {RDFS_DIR_ENV} set but the {family_id} schema could not be \
+                    "warning: {PROFILES_ENV} set but the {family_id} schema could not be \
                      loaded ({e}); falling back to the generated class table"
                 );
                 generated
             }
         }
-    }
-
-    /// The directories `CIMOXIDE_RDFS_DIR` lists, or `None` when it is unset. A
-    /// directory holding neither family's vocabularies is reported once.
-    fn env_dirs() -> Option<&'static [PathBuf]> {
-        static DIRS: OnceLock<Option<Vec<PathBuf>>> = OnceLock::new();
-        DIRS.get_or_init(|| {
-            let value = std::env::var_os(RDFS_DIR_ENV)?;
-            let dirs: Vec<PathBuf> = std::env::split_paths(&value).collect();
-            for d in &dirs {
-                if !family::FAMILIES.iter().any(|f| holds(d, f)) {
-                    eprintln!(
-                        "warning: {RDFS_DIR_ENV} lists {}, which holds no CGMES or NC RDFS \
-                         vocabularies; ignoring it",
-                        d.display()
-                    );
-                }
-            }
-            Some(dirs)
-        })
-        .as_deref()
     }
 
     /// Which family's vocabularies an RDFS directory holds, by what the files
@@ -173,11 +155,6 @@ mod dynamic {
     /// The files in `dir` that declare themselves `family`'s vocabulary.
     fn vocabulary(dir: &Path, family: &Family) -> Vec<PathBuf> {
         cimschema::profile_file::in_dir(dir, family, cimschema::profile_file::Role::Vocabulary)
-    }
-
-    /// Whether `dir` holds `family`'s vocabulary, beside another's or not.
-    fn holds(dir: &Path, family: &Family) -> bool {
-        !vocabulary(dir, family).is_empty()
     }
 
     /// Build a family's class table from RDFS without installing it.
@@ -201,7 +178,25 @@ mod dynamic {
                 dir.display()
             )));
         }
-        let spec = cimschema::import::import_schema_paths(&files, family, false)
+        load_files(family, &files)
+    }
+
+    /// Build a family's class table from the files a [`Pool`] found, without
+    /// installing it: what `CIMOXIDE_PROFILES` would load.
+    pub fn load_pool_table(family_id: &str, pool: &Pool) -> Result<&'static Schema, SchemaError> {
+        let family = family::by_id(family_id)
+            .ok_or_else(|| SchemaError::UnknownFamily(family_id.to_string()))?;
+        load_files(family, &pool.files(family, Role::Vocabulary))
+    }
+
+    fn load_files(
+        family: &'static Family,
+        files: &[PathBuf],
+    ) -> Result<&'static Schema, SchemaError> {
+        if files.is_empty() {
+            return Err(SchemaError::Parse(format!("no {} vocabulary", family.id)));
+        }
+        let spec = cimschema::import::import_schema_paths(files, family, false)
             .map_err(|e| SchemaError::Parse(e.to_string()))?;
         Ok(build(&spec))
     }

@@ -396,15 +396,10 @@
           "default": false,
           "markdownDescription": "Revalidate while typing, not only on open and save. Each run validates the whole model set — every CIM file in the document's directory."
         },
-        "cimoxide.schema.rdfsDir": {
+        "cimoxide.schema.profileDirs": {
           "type": "string",
           "default": "",
-          "markdownDescription": "RDFS directories to load class tables from instead of the built-in ones (`CIMOXIDE_RDFS_DIR`; a `PATH`-style list)."
-        },
-        "cimoxide.schema.shaclDir": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "SHACL directories to load shapes from instead of the built-in ones (`CIMOXIDE_SHACL_DIR`; a `PATH`-style list)."
+          "markdownDescription": "Directories of ENTSO-E profile files (RDFS, SHACL, PROF) to load class and shape tables from instead of the built-in ones, such as a checkout of `CGMES-AP` and `NC-AP` (`CIMOXIDE_PROFILES`; a `PATH`-style list). Each file is sorted by what it declares, wherever it sits."
         },
         "cimoxide.mcp.enabled": {
           "type": "boolean",

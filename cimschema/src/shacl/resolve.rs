@@ -1037,14 +1037,67 @@ pub struct ShapeTable {
     pub stats: Stats,
 }
 
-/// Read a family's SHACL directory into a resolved shape table.
-///
-/// `dir` is the directory holding the constraint files. The profile manifests
-/// and descriptors are found by what they declare (see
-/// [`crate::profile_file`]): the manifests in `dir` or a directory in it, the
-/// descriptors in `dir`'s parent or a directory in it. That covers ENTSO-E's
-/// layout (`SHACL/Validation/`, `PROF/` beside `SHACL/`) and a copy of every
-/// file in one directory alike.
+/// The files a shape table is read from.
+#[derive(Debug, Default)]
+pub struct ShapeFiles {
+    /// The constraint files, in the order they are read.
+    pub shapes: Vec<std::path::PathBuf>,
+    /// The validation manifests, for a family without a written-out mapping.
+    pub manifests: Vec<std::path::PathBuf>,
+    /// The PROF descriptors.
+    pub descriptors: Vec<std::path::PathBuf>,
+}
+
+impl ShapeFiles {
+    /// A family's files in and beside a SHACL directory.
+    ///
+    /// The constraint files are `dir`'s `.ttl`s, but those declaring themselves
+    /// something else (another family's, or a manifest); a file without a
+    /// header is still read. The manifests and descriptors are found by what
+    /// they declare (see [`crate::profile_file`]): the manifests in `dir` or a
+    /// directory in it, the descriptors in `dir`'s parent or a directory in it.
+    /// That covers ENTSO-E's layout (`SHACL/Validation/`, `PROF/` beside
+    /// `SHACL/`) and a copy of every file in one directory alike.
+    pub fn in_dir(
+        family: &'static Family,
+        dir: &std::path::Path,
+    ) -> Result<ShapeFiles, Box<dyn std::error::Error>> {
+        use crate::profile_file::{Role, identify, near};
+        let mut shapes: Vec<std::path::PathBuf> = std::fs::read_dir(dir)?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("ttl"))
+            .filter(|p| identify(p).is_none_or(|(f, r)| f.id == family.id && r == Role::Shapes))
+            .collect();
+        shapes.sort();
+        if shapes.is_empty() {
+            return Err(format!("no SHACL .ttl files in {}", dir.display()).into());
+        }
+        let manifests = near(dir, family, Role::Manifest);
+        if family.shacl_manifest.is_none() && manifests.is_empty() {
+            return Err(format!(
+                "no {} validation manifests in {} or a directory in it",
+                family.id,
+                dir.display()
+            )
+            .into());
+        }
+        let descriptors = near(dir.parent().unwrap_or(dir), family, Role::Descriptor);
+        if descriptors.is_empty() {
+            return Err(
+                format!("no {} PROF descriptors beside {}", family.id, dir.display()).into(),
+            );
+        }
+        Ok(ShapeFiles {
+            shapes,
+            manifests,
+            descriptors,
+        })
+    }
+}
+
+/// Read a family's SHACL directory into a resolved shape table: [`load_shapes`]
+/// with [`ShapeFiles::in_dir`].
 pub fn load_shape_table(
     family: &'static Family,
     spec: &CimSpecification,
@@ -1052,18 +1105,21 @@ pub fn load_shape_table(
     dir: &std::path::Path,
     collector: &mut SkipCollector,
 ) -> Result<ShapeTable, Box<dyn std::error::Error>> {
-    use crate::profile_file::{Role, identify, near};
-    // Every `.ttl` but those declaring themselves something else: another
-    // family's, or a manifest. A file without a header is still read.
-    let mut ttl_paths: Vec<std::path::PathBuf> = std::fs::read_dir(dir)?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("ttl"))
-        .filter(|p| identify(p).is_none_or(|(f, r)| f.id == family.id && r == Role::Shapes))
-        .collect();
-    ttl_paths.sort();
+    let files = ShapeFiles::in_dir(family, dir)?;
+    load_shapes(family, spec, others, &files, collector)
+}
+
+/// Read a family's constraint files into a resolved shape table.
+pub fn load_shapes(
+    family: &'static Family,
+    spec: &CimSpecification,
+    others: &[&CimSpecification],
+    sources: &ShapeFiles,
+    collector: &mut SkipCollector,
+) -> Result<ShapeTable, Box<dyn std::error::Error>> {
+    let ttl_paths = &sources.shapes;
     if ttl_paths.is_empty() {
-        return Err(format!("no SHACL .ttl files in {}", dir.display()).into());
+        return Err(format!("no {} constraint files", family.id).into());
     }
 
     let profiles_of: HashMap<String, Vec<String>> = match family.shacl_manifest {
@@ -1077,21 +1133,15 @@ pub fn load_shape_table(
             m
         }
         None => {
-            let manifests = near(dir, family, Role::Manifest);
-            if manifests.is_empty() {
-                return Err(format!(
-                    "no {} validation manifests in {} or a directory in it",
-                    family.id,
-                    dir.display()
-                )
-                .into());
+            if sources.manifests.is_empty() {
+                return Err(format!("no {} validation manifests", family.id).into());
             }
-            profile_files_of(&manifests)?
+            profile_files_of(&sources.manifests)?
         }
     };
 
     let mut files: Vec<FileResults> = Vec::new();
-    for path in &ttl_paths {
+    for path in ttl_paths {
         match crate::shacl::ttl_import::import_ttl_file(path) {
             Ok(fr) => files.push(fr),
             Err(e) => eprintln!("warning: skipping {}: {e}", path.display()),
@@ -1117,11 +1167,10 @@ pub fn load_shape_table(
     // Profile identity — which IRI a dataset declares, which code that is —
     // comes from the PROF descriptors for every family. A dataset names them in
     // `dcterms:conformsTo` (NC) or `md:Model.profile` (CGMES).
-    let descriptors = near(dir.parent().unwrap_or(dir), family, Role::Descriptor);
-    if descriptors.is_empty() {
-        return Err(format!("no {} PROF descriptors beside {}", family.id, dir.display()).into());
+    if sources.descriptors.is_empty() {
+        return Err(format!("no {} PROF descriptors", family.id).into());
     }
-    let index = crate::import::import_profiles(&descriptors)?;
+    let index = crate::import::import_profiles(&sources.descriptors)?;
     let mut profile_iris: Vec<(String, String)> = index
         .iter()
         .flat_map(|p| p.iris.iter().map(|i| (i.clone(), p.keyword.clone())))

@@ -181,14 +181,15 @@ bare-name fallback.
 
 Behind features `dynamic-schema` (`cimmodel::schema_source`) and `dynamic-shapes`
 (`cimvalidation::shape_source`, which enables `dynamic-schema`); both off by default, on for
-`cimox` and `cimoxide-py`. Resolution: explicit `load_from` > `CIMOXIDE_RDFS_DIR` /
-`CIMOXIDE_SHACL_DIR` > generated. Each variable is a `PATH`-style list. A file's family and
+`cimox` and `cimoxide-py`. Resolution: explicit `load_from` > `CIMOXIDE_PROFILES` (a
+`PATH`-style list of directories, searched by `cimschema::profile_file::Pool`) > generated.
+Class tables, shapes, manifests and PROF all come from the same files. A file's family and
 role come from what it declares, never from its directory or name
 (`cimschema::profile_file`): the `owl:versionIRI` prefix (`Family::ontology_prefixes`), the
 `cim:` namespace it binds, and for NC `ap-val` manifests. A directory serves each family
-whose files it holds. A SHACL load finds its manifests in `dir` or a directory in it, and
-the PROF and RDFS in `dir`'s parent or a directory in it; another family's RDFS where its
-repository would sit. Bad paths warn and fall back.
+whose files it holds. An explicit `load_from(dir)` of a SHACL directory finds its manifests
+in `dir` or a directory in it, and the PROF and RDFS in `dir`'s parent or a directory in it;
+another family's RDFS where its repository would sit. Bad paths warn and fall back.
 
 `postprocess` in `cimschema` is mandatory for both build-time and runtime parsing.
 `cimmodel/tests/dynamic_schema.rs` and `cimvalidation/tests/dynamic_shapes.rs` compare
