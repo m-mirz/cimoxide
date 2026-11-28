@@ -65,6 +65,9 @@ fn check_linear_shunt_compensator_sections_range(dataset: &CimDataset) -> Vec<Vi
 /// the points whose section number differs from the count, and reports when
 /// that is all of them; a point without a section number, or a compensator
 /// without points, leaves nothing to report.
+/// `sections` must be one of the compensator's points' `sectionNumber`s: reported where no
+/// point has it, a compensator without points included (`FILTER NOT EXISTS` in CGMES-AP's
+/// query, since `e96dd4e`; the query before only compared where points existed).
 fn check_nonlinear_shunt_compensator_sections_valid(dataset: &CimDataset) -> Vec<Violation> {
     // Compensator → its points' section numbers, `None` for a point without one.
     let mut points: HashMap<&str, Vec<Option<f64>>> = HashMap::default();
@@ -99,15 +102,13 @@ fn check_nonlinear_shunt_compensator_sections_valid(dataset: &CimDataset) -> Vec
         let Some(section) = nsc.f64("ShuntCompensator.sections") else {
             continue;
         };
-        let Some(pts) = points.get(mrid.as_str()) else {
-            continue;
-        };
-        if pts.iter().all(|n| n.is_some_and(|n| n != section)) {
+        let pts = points.get(mrid.as_str()).map_or(&[][..], Vec::as_slice);
+        if !pts.contains(&Some(section)) {
             v.push(Violation {
                 object_id: mrid.clone(), rule_id: "sshn301:ShuntCompensator.sections-valueNonLinear".into(),
                 name: "C:301:SSH:ShuntCompensator.sections:valueNonLinear".into(), class: "NonlinearShuntCompensator".into(),
                 property: "ShuntCompensator.sections".into(),
-                message: format!("The value ({}) does not equal one of the NonlinearShuntCompenstorPoint.sectionNumber.", section),
+                message: format!("The value ({section}) does not equal one of the NonlinearShuntCompensatorPoint.sectionNumber values."),
                 severity: "sh:Violation".into(), description: String::new(),
             });
         }

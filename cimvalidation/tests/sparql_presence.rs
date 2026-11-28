@@ -672,7 +672,8 @@ fn not_solved_rules_read_absent_values_as_absent() {
             &[("ShuntCompensator.sections", sections)],
         )
     };
-    assert_eq!(ssh(&nsc("3"), rule, true), 0, "no points");
+    // No point has section 3 when there are none.
+    assert_eq!(ssh(&nsc("3"), rule, true), 1, "no points");
     assert_eq!(
         ssh(
             &format!("{}{}{}", nsc("3"), point("1"), point("2")),
@@ -688,6 +689,16 @@ fn not_solved_rules_read_absent_values_as_absent() {
             true
         ),
         0
+    );
+    // A point without a section number matches nothing, and hides nothing.
+    let unnumbered = r##"<cim:NonlinearShuntCompensatorPoint rdf:ID="_pu"><cim:NonlinearShuntCompensatorPoint.NonlinearShuntCompensator rdf:resource="#_x"/></cim:NonlinearShuntCompensatorPoint>"##;
+    assert_eq!(
+        ssh(
+            &format!("{}{}{unnumbered}", nsc("3"), point("1")),
+            rule,
+            true
+        ),
+        1
     );
 
     let rule = "sshn301:RegulatingControl-requiredAttributes";

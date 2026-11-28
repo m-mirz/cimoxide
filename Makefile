@@ -1,4 +1,4 @@
-SHACL_GLOB := application-profiles-library/CGMES/SHACL/*.ttl
+SHACL_GLOB := CGMES-AP/CGMES/SHACL/*.ttl
 
 .PHONY: all generate build test clean python-dev python-build
 
