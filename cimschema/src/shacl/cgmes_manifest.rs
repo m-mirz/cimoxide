@@ -118,3 +118,92 @@ pub const MANIFEST: &[(&str, &str)] = &[
 
 /// The profiles with cross-profile rules, in the order they run.
 pub const CROSS_PROFILES: &[&str] = &["DL", "DY", "GL", "OP", "SV", "TP"];
+
+/// The constraint files the shape table runs nothing of, because every
+/// constraint in them is `sh:sparql`, tagged for the runner of those queries
+/// (`cimvalidation::sparql_shapes`). Tags as in [`MANIFEST`], and `!S` for a
+/// SolvedMAS file, run on the merged dataset when it is solved.
+pub const SPARQL_ONLY: &[(&str, &str)] = &[
+    (
+        "61970-301_Equipment-AP-Con-Complex-NotSolvedMAS-SHACL",
+        "EQ!NS",
+    ),
+    (
+        "61970-301_EquipmentBoundary-AP-Con-Complex-NotSolvedMAS-SHACL",
+        "EQBD!NS",
+    ),
+    (
+        "61970-301_ShortCircuit-AP-Con-Complex-NotSolvedMAS-SHACL",
+        "SC!NS",
+    ),
+    (
+        "61970-301_StateVariables-AP-Con-Complex-SolvedMAS-SHACL",
+        "SV!S",
+    ),
+    (
+        "61970-301_Topology-AP-Con-Complex-NotSolvedMAS-SHACL",
+        "TP!NS",
+    ),
+    (
+        "61970-452_Equipment-AP-Con-Complex-NotSolvedMAS-SHACL",
+        "EQ!NS",
+    ),
+    (
+        "61970-452_Operation-AP-Con-Complex-NotSolvedMAS-SHACL",
+        "OP!NS",
+    ),
+    ("61970-452_ShortCircuit-AP-Con-Complex-SHACL", "SC"),
+    (
+        "61970-456_AllProfiles-AP-Con-Complex-SolvedMAS-SHACL",
+        "COMMON!S",
+    ),
+    (
+        "61970-456_StateVariables-AP-Con-Complex-SolvedMAS-SHACL",
+        "SV!S",
+    ),
+    (
+        "61970-456_Topology-AP-Con-Complex-NotSolvedMAS-SHACL",
+        "TP!NS",
+    ),
+    (
+        "61970-457_Dynamics-AP-Con-Complex-NotSolvedMAS-SHACL",
+        "DY!NS",
+    ),
+    ("61970-457_Dynamics-AP-Con-Complex-SHACL", "DY"),
+    ("61970-600-1_AllProfiles-AP-Con-Complex-SHACL", "COMMON"),
+    (
+        "61970-600-1_AllProfiles-AP-Con-Complex-SolvedMAS-SHACL",
+        "COMMON!S",
+    ),
+    (
+        "61970-600-2_AllProfiles-AP-Con-Complex-SolvedMAS-SHACL",
+        "COMMON!S",
+    ),
+    ("61970-600-2_ShortCircuit-AP-Con-Complex-SHACL", "SC"),
+    (
+        "61970-600_Equipment-AP-Con-Complex-NotSolvedMAS-SHACL",
+        "EQ!NS",
+    ),
+    (
+        "61970-600_Topology-AP-Con-Complex-NotSolvedMAS-SHACL",
+        "TP!NS",
+    ),
+];
+
+/// The tags of a CGMES constraint file for the SPARQL runner: [`MANIFEST`]'s,
+/// else [`SPARQL_ONLY`]'s.
+pub fn sparql_tags(stem: &str) -> Vec<&'static str> {
+    let tags: Vec<&'static str> = MANIFEST
+        .iter()
+        .filter(|(s, _)| *s == stem)
+        .map(|(_, t)| *t)
+        .collect();
+    if !tags.is_empty() {
+        return tags;
+    }
+    SPARQL_ONLY
+        .iter()
+        .filter(|(s, _)| *s == stem)
+        .map(|(_, t)| *t)
+        .collect()
+}

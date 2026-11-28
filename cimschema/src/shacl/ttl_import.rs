@@ -25,10 +25,12 @@ pub fn import_ttl_file(path: &Path) -> Result<FileResults, Box<dyn std::error::E
 
     let (graph, prefixes) = parse_turtle(&src)?;
     let shapes = extract_shapes(&graph);
+    let sparql = extract_sparql(&graph, &prefixes);
     Ok(FileResults {
         file_name,
         shapes,
         prefixes,
+        sparql,
     })
 }
 
@@ -917,6 +919,157 @@ fn build_node_shape(g: &Graph, id: &str) -> Option<ShapeInfo> {
         closed: closed_properties(g, id),
         deactivated: is_deactivated(g, id),
     })
+}
+
+// ---------------------------------------------------------------------------
+// SPARQL constraints
+// ---------------------------------------------------------------------------
+
+/// Every `sh:sparql` constraint in the graph, with its shape's targets, path,
+/// severity and texts, sorted by shape and constraint id.
+///
+/// A constraint on a property shape takes its focus nodes from the node shapes
+/// that list it in `sh:property`, and from any targets of its own.
+fn extract_sparql(g: &Graph, file_prefixes: &HashMap<String, String>) -> Vec<SparqlConstraint> {
+    // Property shape → the node shapes it is a property of.
+    let mut parents: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut subjects: Vec<&String> = g.keys().collect();
+    subjects.sort();
+    for subject in &subjects {
+        for property in collect_iri_list(g, subject, "sh:property") {
+            if let Some((key, _)) = g.get_key_value(property.as_str()) {
+                parents
+                    .entry(key.as_str())
+                    .or_default()
+                    .push(subject.as_str());
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    for shape in subjects {
+        let constraints = collect_iri_list(g, shape, "sh:sparql");
+        if constraints.is_empty() {
+            continue;
+        }
+        let mut targets = sparql_targets(g, shape, file_prefixes);
+        for parent in parents.get(shape.as_str()).into_iter().flatten() {
+            for t in sparql_targets(g, parent, file_prefixes) {
+                if !targets.contains(&t) {
+                    targets.push(t);
+                }
+            }
+        }
+        let severity = get_str(g, shape, "sh:severity").unwrap_or_else(|| "sh:Violation".into());
+        let shape_message = get_str(g, shape, "sh:message").unwrap_or_default();
+        for constraint in constraints {
+            let Some(select) = get_str(g, &constraint, "sh:select") else {
+                continue;
+            };
+            out.push(SparqlConstraint {
+                rule_id: if shape.starts_with("_:") {
+                    constraint.clone()
+                } else {
+                    shape.clone()
+                },
+                constraint_id: constraint.clone(),
+                targets: targets.clone(),
+                path: extract_path(g, shape),
+                query: query(g, &constraint, select, file_prefixes),
+                severity: severity.clone(),
+                message: get_str(g, &constraint, "sh:message")
+                    .unwrap_or_else(|| shape_message.clone()),
+                name: get_str(g, shape, "sh:name").unwrap_or_default(),
+                description: get_str(g, shape, "sh:description").unwrap_or_default(),
+                deactivated: is_deactivated(g, shape) || is_deactivated(g, &constraint),
+            });
+        }
+    }
+    out
+}
+
+/// A shape's own targets, a SPARQL target's query included.
+fn sparql_targets(
+    g: &Graph,
+    id: &str,
+    file_prefixes: &HashMap<String, String>,
+) -> Vec<SparqlTarget> {
+    let mut targets = Vec::new();
+    let mut push = |t: SparqlTarget| {
+        if !targets.contains(&t) {
+            targets.push(t);
+        }
+    };
+    for (pred, make) in [
+        (
+            "sh:targetClass",
+            SparqlTarget::Class as fn(String) -> SparqlTarget,
+        ),
+        ("sh:targetNode", SparqlTarget::Node),
+        ("sh:targetSubjectsOf", SparqlTarget::SubjectsOf),
+        ("sh:targetObjectsOf", SparqlTarget::ObjectsOf),
+    ] {
+        for v in get_all(g, id, pred) {
+            if let Some(iri) = v.as_iri() {
+                push(make(iri.to_string()));
+            }
+        }
+    }
+    for v in get_all(g, id, "sh:target") {
+        let Some(node) = v.as_iri() else { continue };
+        let is_sparql = get_all(g, node, RDF_TYPE)
+            .iter()
+            .any(|t| t.as_iri() == Some("sh:SPARQLTarget"));
+        if let (true, Some(select)) = (is_sparql, get_str(g, node, "sh:select")) {
+            push(SparqlTarget::Select(query(g, node, select, file_prefixes)));
+        }
+    }
+    targets
+}
+
+/// `select` with the prefixes `id` declares, or the file's where it declares none.
+fn query(
+    g: &Graph,
+    id: &str,
+    select: String,
+    file_prefixes: &HashMap<String, String>,
+) -> SparqlQuery {
+    let prefixes = declared_prefixes(g, id);
+    if prefixes.is_empty() {
+        let mut prefixes: Vec<(String, String)> = file_prefixes
+            .iter()
+            .map(|(p, ns)| (p.clone(), ns.clone()))
+            .collect();
+        prefixes.sort();
+        SparqlQuery {
+            select,
+            prefixes,
+            declared: false,
+        }
+    } else {
+        SparqlQuery {
+            select,
+            prefixes,
+            declared: true,
+        }
+    }
+}
+
+/// The `(prefix, namespace)` pairs `id`'s `sh:prefixes` nodes declare.
+fn declared_prefixes(g: &Graph, id: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for node in collect_iri_list(g, id, "sh:prefixes") {
+        for declaration in collect_iri_list(g, &node, "sh:declare") {
+            if let (Some(prefix), Some(namespace)) = (
+                get_str(g, &declaration, "sh:prefix"),
+                get_str(g, &declaration, "sh:namespace"),
+            ) && !out.iter().any(|(p, _)| *p == prefix)
+            {
+                out.push((prefix, namespace));
+            }
+        }
+    }
+    out
 }
 
 /// The allowed property set of an `sh:closed true` NodeShape, or `None` when

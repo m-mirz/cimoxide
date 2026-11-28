@@ -16,9 +16,22 @@ use cimmodel::registry::type_registry;
 const XSD: &str = "http://www.w3.org/2001/XMLSchema#";
 
 fn schema() -> &'static Schema {
+    family_schema("cgmes")
+}
+
+fn family_schema(family: &str) -> &'static Schema {
     type_registry()
-        .schema("cgmes")
-        .expect("the CGMES family is registered")
+        .schema(family)
+        .unwrap_or_else(|| panic!("the {family} family is registered"))
+}
+
+/// The family of a decoded `type_name`, and its name within it: NC's classes are prefixed
+/// `nc:` (`nc:OrdinaryContingency`), CGMES's are bare.
+fn family_of(type_name: &str) -> (&'static str, &str) {
+    match type_name.strip_prefix("nc:") {
+        Some(local) => ("nc", local),
+        None => ("cgmes", type_name),
+    }
 }
 
 /// Base for identifiers that are neither absolute IRIs nor UUIDs. Nothing in the CGMES test
@@ -50,75 +63,104 @@ pub struct AttrRdf {
     pub kind: Kind,
 }
 
-// Consulted once per field of every element, so indexed once: by class name, and by
-// attribute id (an id names one predicate, whichever class declares it — the first in
-// table order).
-fn type_ns_index() -> &'static HashMap<&'static str, &'static str> {
-    static IDX: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
-    IDX.get_or_init(|| {
-        schema()
-            .classes
-            .iter()
-            .filter(|c| !c.ns.is_empty())
-            .map(|c| (c.local, c.ns))
-            .collect()
-    })
+// Consulted once per field of every element, so indexed once per family: by class name,
+// and by attribute id (an id names one predicate, whichever class declares it — the first
+// in table order).
+struct FamilyIndex {
+    types: HashMap<&'static str, &'static str>,
+    attrs: HashMap<&'static str, AttrRdf>,
 }
 
-fn attr_index() -> &'static HashMap<&'static str, AttrRdf> {
-    static IDX: OnceLock<HashMap<&'static str, AttrRdf>> = OnceLock::new();
-    IDX.get_or_init(|| {
-        // The full XSD IRIs, one per datatype the schema uses.
-        let mut xsd: HashMap<&'static str, &'static str> = HashMap::new();
-        let mut idx = HashMap::new();
-        for a in schema()
-            .classes
-            .iter()
-            .flat_map(|c| c.attrs)
-            .filter(|a| !a.ns.is_empty())
-        {
-            let (kind, range) = match a.kind {
-                AttrKind::Literal => {
-                    let iri = *xsd
-                        .entry(a.xsd)
-                        .or_insert_with(|| Box::leak(format!("{XSD}{}", a.xsd).into_boxed_str()));
-                    (Kind::Literal, iri)
-                }
-                AttrKind::Enum => (Kind::Enum, a.value_ns),
-                AttrKind::Association => (Kind::Association, ""),
-            };
-            idx.entry(a.id).or_insert(AttrRdf {
-                namespace: a.ns,
-                range,
-                kind,
-            });
-        }
-        idx
-    })
+fn index(family: &str) -> &'static FamilyIndex {
+    static CGMES: OnceLock<FamilyIndex> = OnceLock::new();
+    static NC: OnceLock<FamilyIndex> = OnceLock::new();
+    let (cell, id) = if family == "nc" {
+        (&NC, "nc")
+    } else {
+        (&CGMES, "cgmes")
+    };
+    cell.get_or_init(|| build_index(family_schema(id)))
+}
+
+fn build_index(schema: &'static Schema) -> FamilyIndex {
+    let types = schema
+        .classes
+        .iter()
+        .filter(|c| !c.ns.is_empty())
+        .map(|c| (c.local, c.ns))
+        .collect();
+    // The full XSD IRIs, one per datatype the schema uses.
+    let mut xsd: HashMap<&'static str, &'static str> = HashMap::new();
+    let mut attrs = HashMap::new();
+    for a in schema
+        .classes
+        .iter()
+        .flat_map(|c| c.attrs)
+        .filter(|a| !a.ns.is_empty())
+    {
+        let (kind, range) = match a.kind {
+            AttrKind::Literal => {
+                let iri = *xsd
+                    .entry(a.xsd)
+                    .or_insert_with(|| Box::leak(format!("{XSD}{}", a.xsd).into_boxed_str()));
+                (Kind::Literal, iri)
+            }
+            AttrKind::Enum => (Kind::Enum, a.value_ns),
+            AttrKind::Association => (Kind::Association, ""),
+        };
+        attrs.entry(a.id).or_insert(AttrRdf {
+            namespace: a.ns,
+            range,
+            kind,
+        });
+    }
+    FamilyIndex { types, attrs }
 }
 
 /// RDF namespace IRI of a CIM class, e.g. `http://iec.ch/TC57/CIM100-European#` for
 /// `BoundaryPoint`. Trailing `#` included.
 pub fn type_namespace(type_name: &str) -> Option<&'static str> {
-    type_ns_index().get(type_name).copied()
+    let (family, local) = family_of(type_name);
+    index(family).types.get(local).copied()
 }
 
 /// Full class IRI for a decoded `type_name`.
 pub fn type_iri(type_name: &str) -> String {
+    let (family, local) = family_of(type_name);
     format!(
-        "{}{type_name}",
-        type_namespace(type_name).unwrap_or(FALLBACK_NS)
+        "{}{local}",
+        type_namespace(type_name).unwrap_or(fallback_ns(family))
     )
 }
 
+/// Where an unknown class or attribute of `family` goes.
+fn fallback_ns(family: &str) -> &'static str {
+    if family == "nc" { NC_NS } else { FALLBACK_NS }
+}
+
+/// NC's own namespace, for its classes and attributes the schema does not know.
+pub const NC_NS: &str = "https://cim4.eu/ns/nc#";
+
 /// RDF metadata for an `Element::fields` key such as `"ACLineSegment.b0ch"`.
 pub fn attr(attr_id: &str) -> Option<AttrRdf> {
-    attr_index().get(attr_id).copied()
+    index("cgmes").attrs.get(attr_id).copied()
+}
+
+/// [`attr`] for a field of an element of `type_name`, in that element's family.
+pub fn attr_of(type_name: &str, attr_id: &str) -> Option<AttrRdf> {
+    index(family_of(type_name).0).attrs.get(attr_id).copied()
 }
 
 /// Full predicate IRI for an `Element::fields` key.
 pub fn predicate_iri(attr_id: &str) -> String {
     let ns = attr(attr_id).map_or(FALLBACK_NS, |a| a.namespace);
+    format!("{ns}{attr_id}")
+}
+
+/// [`predicate_iri`] for a field of an element of `type_name`.
+pub fn predicate_iri_of(type_name: &str, attr_id: &str) -> String {
+    let family = family_of(type_name).0;
+    let ns = attr_of(type_name, attr_id).map_or(fallback_ns(family), |a| a.namespace);
     format!("{ns}{attr_id}")
 }
 

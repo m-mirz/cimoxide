@@ -136,6 +136,66 @@ pub struct ShapeInfo {
     pub deactivated: bool,
 }
 
+/// What a SPARQL-based constraint or target applies to.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SparqlTarget {
+    /// `sh:targetClass`: instances of the class (simplified IRI).
+    Class(String),
+    /// `sh:targetNode`: one node.
+    Node(String),
+    /// `sh:targetSubjectsOf`: subjects of the predicate.
+    SubjectsOf(String),
+    /// `sh:targetObjectsOf`: objects of the predicate.
+    ObjectsOf(String),
+    /// `sh:target [ a sh:SPARQLTarget ; sh:select … ]`: the `$this` the query selects.
+    Select(SparqlQuery),
+}
+
+/// A SPARQL query as a shape file states it: its text, and the prefixes its
+/// `sh:prefixes` declare.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SparqlQuery {
+    /// `sh:select`, verbatim: `$this`, `$PATH` and the prefixes still unbound.
+    pub select: String,
+    /// `sh:declare`'s `(sh:prefix, sh:namespace)` pairs of the `sh:prefixes`
+    /// nodes, in file order; where the file declares none, its `@prefix` lines,
+    /// sorted.
+    pub prefixes: Vec<(String, String)>,
+    /// Whether [`prefixes`](Self::prefixes) were declared with `sh:declare`, as
+    /// SHACL requires. Ten of ENTSO-E's files don't; their queries run on the
+    /// file's `@prefix` lines, as lenient validators run them.
+    pub declared: bool,
+}
+
+/// One `sh:sparql` constraint, with what it needs to run.
+///
+/// The `sh:select` runs once per focus node with `$this` bound to it and, for a
+/// property shape, `$PATH` replaced by the shape's path; each solution is a
+/// violation of the shape.
+#[derive(Debug, Clone)]
+pub struct SparqlConstraint {
+    /// The shape the constraint belongs to (`equ:ShuntCompensator.maximumSections-numberOfInstances`):
+    /// the rule id, the one the hand-written rules report.
+    pub rule_id: String,
+    /// The constraint node itself (`…-numberOfInstancesSparql`).
+    pub constraint_id: String,
+    /// The focus nodes: the shape's own targets, or those of the node shapes it
+    /// is a property of.
+    pub targets: Vec<SparqlTarget>,
+    /// For a property shape, its `sh:path`, as [`ShapeInfo::path`] gives it.
+    pub path: Vec<String>,
+    pub query: SparqlQuery,
+    /// `sh:severity` of the shape (`sh:Violation` when unset).
+    pub severity: String,
+    /// `sh:message` of the constraint, else of the shape. May hold `{$this}`,
+    /// `{?value}` and other `{?var}` templates.
+    pub message: String,
+    pub name: String,
+    pub description: String,
+    /// `sh:deactivated true` on the shape or the constraint.
+    pub deactivated: bool,
+}
+
 /// All shapes extracted from one TTL file.
 #[derive(Debug)]
 pub struct FileResults {
@@ -150,4 +210,6 @@ pub struct FileResults {
     /// families overlap on 164 local names. Resolving a target or a path
     /// therefore needs the map that was in scope where it was written.
     pub prefixes: HashMap<String, String>,
+    /// The file's `sh:sparql` constraints, in the order of their shapes' ids.
+    pub sparql: Vec<SparqlConstraint>,
 }

@@ -570,8 +570,13 @@ impl PyViolation {
 ///     Enable CIMdesk modeling quality checks (default ``False``).
 /// silence:
 ///     Rule IDs to suppress, e.g. ``["Rule-EQ-1", "Rule-EQ-2"]``.
+/// sparql:
+///     Run the profiles' own ``sh:sparql`` queries, read from the files
+///     ``CIMOXIDE_PROFILES`` names, in place of the hand-written rules for the
+///     constraints they cover (default ``False``).
 #[pyfunction]
-#[pyo3(signature = (paths, profiles=None, solved=None, common=false, quality=false, silence=None))]
+#[pyo3(signature = (paths, profiles=None, solved=None, common=false, quality=false, silence=None, sparql=false))]
+#[allow(clippy::too_many_arguments)]
 fn validate_files(
     paths: Vec<String>,
     profiles: Option<Vec<String>>,
@@ -579,6 +584,7 @@ fn validate_files(
     common: bool,
     quality: bool,
     silence: Option<Vec<String>>,
+    sparql: bool,
 ) -> PyResult<Vec<PyViolation>> {
     // Decode each file into its own dataset, in parallel.
     let path_bufs: Vec<std::path::PathBuf> = paths.iter().map(std::path::PathBuf::from).collect();
@@ -594,9 +600,42 @@ fn validate_files(
         quality,
         silence.unwrap_or_default(),
     );
-    let violations = cimvalidation::validate_files(per_file, &cfg);
-
-    Ok(violations_to_py(violations))
+    if !sparql {
+        return Ok(violations_to_py(cimvalidation::validate_files(
+            per_file, &cfg,
+        )));
+    }
+    #[cfg(feature = "sparql")]
+    {
+        use cimvalidation::sparql_shapes;
+        let rules = sparql_shapes::from_env()
+            .ok_or_else(|| {
+                PyValueError::new_err(
+                    "sparql=True reads the queries from ENTSO-E's profile files; set \
+                     CIMOXIDE_PROFILES to their directories",
+                )
+            })?
+            .map_err(map_err)?;
+        let report = sparql_shapes::validate_files(&per_file, &cfg, &rules);
+        if let Some((rule, error)) = report.failed.first() {
+            return Err(PyRuntimeError::new_err(format!(
+                "SPARQL constraint {rule} failed: {error}"
+            )));
+        }
+        let ids: std::collections::HashSet<&str> = rules
+            .rules
+            .iter()
+            .map(|r| r.constraint.rule_id.as_str())
+            .collect();
+        let mut violations = cimvalidation::validate_files(per_file, &cfg);
+        violations.retain(|v| !ids.contains(v.rule_id.as_str()));
+        violations.extend(report.violations.into_iter().map(|(_, v)| v));
+        Ok(violations_to_py(violations))
+    }
+    #[cfg(not(feature = "sparql"))]
+    Err(PyValueError::new_err(
+        "sparql=True needs the wheel's sparql feature",
+    ))
 }
 
 #[pymodule]

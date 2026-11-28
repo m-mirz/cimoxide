@@ -71,6 +71,19 @@ pub fn quads<'a>(
     opts: &'a GraphOptions,
     stats: &'a mut Stats,
 ) -> impl Iterator<Item = Quad> + 'a {
+    quads_in(ds, opts, stats, GraphName::DefaultGraph)
+}
+
+/// [`quads`] in the graph `graph`.
+///
+/// An NC element (`nc:` type) takes its class's and attributes' namespaces from the NC
+/// schema, where `cim:` is `https://cim.ucaiug.io/ns#`; a CGMES one from CGMES's.
+pub fn quads_in<'a>(
+    ds: &'a CimDataset,
+    opts: &'a GraphOptions,
+    stats: &'a mut Stats,
+    graph: GraphName,
+) -> impl Iterator<Item = Quad> + 'a {
     ds.entries.iter().flat_map(move |(mrid, entry)| {
         let type_name = entry.type_name();
         if let Some(want) = &opts.include_types
@@ -90,20 +103,15 @@ pub fn quads<'a>(
         if opts.emit_rdf_type
             && let Ok(class) = NamedNode::new(iri::type_iri(type_name))
         {
-            out.push(Quad::new(
-                subject.clone(),
-                RDF_TYPE,
-                class,
-                GraphName::DefaultGraph,
-            ));
+            out.push(Quad::new(subject.clone(), RDF_TYPE, class, graph.clone()));
         }
 
         for (key, value) in entry.fields() {
-            let meta = iri::attr(key);
+            let meta = iri::attr_of(type_name, key);
             if meta.is_none() {
                 stats.unmapped_predicates += 1;
             }
-            let Ok(predicate) = NamedNode::new(iri::predicate_iri(key)) else {
+            let Ok(predicate) = NamedNode::new(iri::predicate_iri_of(type_name, key)) else {
                 continue;
             };
             for text in field_values(value) {
@@ -114,7 +122,7 @@ pub fn quads<'a>(
                     subject.clone(),
                     predicate.clone(),
                     object,
-                    GraphName::DefaultGraph,
+                    graph.clone(),
                 ));
             }
         }

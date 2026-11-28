@@ -22,6 +22,7 @@ fn usage() -> ! {
     eprintln!("                 [--format text|json|sarif] <xml-files...>");
     #[cfg(feature = "sparql")]
     {
+        eprintln!("                 [--sparql | --sparql=both]  (with CIMOXIDE_PROFILES)");
         eprintln!("  cimox query  --query \"SELECT ...\" | --file <query.rq>");
         eprintln!("               [--format text|json|csv|tsv] <xml-files...>");
     }
@@ -307,6 +308,9 @@ fn cmd_validate(args: &[String]) {
     let mut enable_quality = false;
     let mut silenced: Vec<String> = Vec::new();
     let mut format = "text";
+    // The profiles' own SPARQL queries: in place of the hand-written rules, or beside them.
+    #[cfg(feature = "sparql")]
+    let mut sparql_mode: Option<&str> = None;
 
     let mut i = 0usize;
     while i < args.len() {
@@ -330,6 +334,14 @@ fn cmd_validate(args: &[String]) {
             }
             "--quality" => {
                 enable_quality = true;
+            }
+            #[cfg(feature = "sparql")]
+            "--sparql" => {
+                sparql_mode = Some("replace");
+            }
+            #[cfg(feature = "sparql")]
+            "--sparql=both" => {
+                sparql_mode = Some("both");
             }
             "--silence" => {
                 i += 1;
@@ -396,9 +408,24 @@ fn cmd_validate(args: &[String]) {
         silenced,
     );
 
+    #[cfg(feature = "sparql")]
+    let queried = sparql_mode.map(|mode| (mode, run_sparql_shapes(&datasets, &cfg)));
+
     // Two-phase validation: per-file local checks in parallel, then crossprofile checks
     // on the merged dataset, with rule silencing applied.
-    let violations = cimvalidation::validate_files(datasets, &cfg);
+    #[allow(unused_mut)]
+    let mut violations = cimvalidation::validate_files(datasets, &cfg);
+
+    #[cfg(feature = "sparql")]
+    if let Some((mode, (ids, found))) = queried {
+        let queried_rule = |v: &cimvalidation::Violation| ids.contains(v.rule_id.as_str());
+        if mode == "replace" {
+            violations.retain(|v| !queried_rule(v));
+            violations.extend(found);
+        } else {
+            report_differences(violations.iter().filter(|v| queried_rule(v)), found.iter());
+        }
+    }
 
     if format == "sarif" {
         let log = sarif::render(&violations, &input_files);
@@ -454,6 +481,73 @@ fn cmd_validate(args: &[String]) {
             process::exit(2);
         }
     }
+}
+
+/// Run the profiles' SPARQL constraints, read from `CIMOXIDE_PROFILES`: the rule ids they
+/// cover, and what they found.
+#[cfg(feature = "sparql")]
+fn run_sparql_shapes(
+    datasets: &[cimmodel::CimDataset],
+    cfg: &cimvalidation::Config,
+) -> (
+    std::collections::HashSet<String>,
+    Vec<cimvalidation::Violation>,
+) {
+    use cimvalidation::sparql_shapes;
+    let rules = match sparql_shapes::from_env() {
+        Some(Ok(rules)) => rules,
+        Some(Err(e)) => {
+            eprintln!("error: reading the SPARQL constraints: {e}");
+            process::exit(1);
+        }
+        None => {
+            eprintln!(
+                "error: --sparql reads the queries from ENTSO-E's profile files; set \
+                 CIMOXIDE_PROFILES to their directories (e.g. CGMES-AP:NC-AP)"
+            );
+            process::exit(1);
+        }
+    };
+    for (rule, why) in &rules.skipped {
+        eprintln!("warning: SPARQL constraint {rule} not run: {why}");
+    }
+    let report = sparql_shapes::validate_files(datasets, cfg, &rules);
+    for (rule, error) in &report.failed {
+        eprintln!("warning: SPARQL constraint {rule} failed: {error}");
+    }
+    let ids = rules
+        .rules
+        .iter()
+        .map(|r| r.constraint.rule_id.clone())
+        .collect();
+    (ids, report.violations.into_iter().map(|(_, v)| v).collect())
+}
+
+/// `--sparql=both`: where the hand-written rules and the profiles' queries disagree, on
+/// stderr.
+#[cfg(feature = "sparql")]
+fn report_differences<'a>(
+    hand: impl Iterator<Item = &'a cimvalidation::Violation>,
+    queried: impl Iterator<Item = &'a cimvalidation::Violation>,
+) {
+    use std::collections::BTreeSet;
+    let key = |v: &cimvalidation::Violation| (v.rule_id.clone(), v.object_id.clone());
+    let hand: BTreeSet<(String, String)> = hand.map(key).collect();
+    let queried: BTreeSet<(String, String)> = queried.map(key).collect();
+    let (only_hand, only_query): (Vec<_>, Vec<_>) = (
+        hand.difference(&queried).collect(),
+        queried.difference(&hand).collect(),
+    );
+    for (rule, object) in &only_hand {
+        eprintln!("differs: {rule} ({object}): found by the hand-written rule only");
+    }
+    for (rule, object) in &only_query {
+        eprintln!("differs: {rule} ({object}): found by the profile's query only");
+    }
+    eprintln!(
+        "{} finding(s) where the hand-written rules and the profiles' queries differ.",
+        only_hand.len() + only_query.len()
+    );
 }
 
 /// `cimox query` — run a SPARQL query over the merged input files.

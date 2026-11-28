@@ -226,6 +226,7 @@ def validate_files(
     common: bool = False,
     quality: bool = False,
     silence: list[str] | None = None,
+    sparql: bool = False,
 ) -> list[Violation]:
     """Validate a set of CGMES profile files using two-phase validation.
 
@@ -250,5 +251,9 @@ def validate_files(
         Enable CIMdesk modeling quality checks (default ``False``).
     silence:
         Rule IDs to suppress, e.g. ``["Rule-EQ-1"]``.
+    sparql:
+        Run the profiles' own ``sh:sparql`` queries, read from the files
+        ``CIMOXIDE_PROFILES`` names, in place of the hand-written rules for
+        the constraints they cover (default ``False``).
     """
     ...

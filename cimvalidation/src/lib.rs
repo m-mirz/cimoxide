@@ -35,6 +35,8 @@ mod par;
 pub mod bag;
 pub mod shape_source;
 pub mod shapes;
+#[cfg(feature = "sparql-shapes")]
+pub mod sparql_shapes;
 #[rustfmt::skip] // written by cimgen
 pub mod nc_shapes;
 #[rustfmt::skip] // written by cimgen

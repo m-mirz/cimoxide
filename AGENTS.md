@@ -145,6 +145,10 @@ audited against the `<rule>.rq` files in `validate/shacl-sparql/` of
 - Where the SPARQL cannot report (misspelt property, contradictory bindings, …), implement
   its `sh:description` and say so at the rule.
 - Don't hand-write a rule the shape table already runs (`sh:and`/`sh:xone` node shapes).
+- `cimvalidation::sparql_shapes` (feature `sparql-shapes`) runs the queries as written;
+  `tests/sparql_shapes.rs` compares it with the hand-written rules and lists every
+  difference with its reason (`KNOWN`). A change to a rule that moves a difference updates
+  that table.
 - `Fields::of_class`/`get` match the exact class; a lookup through a reference uses
   `Fields::of`.
 - The Complex `*SolvedMAS`/`*NotSolvedMAS` rules (`sparql::mas_groups`) and the `!NS`

@@ -23,10 +23,15 @@ default = []
 # the class table: a shape table built from one release and a class table from
 # another would disagree about what a class is.
 dynamic-shapes = ["dep:cimoxide-schema", "cimoxide-model/dynamic-schema"]
+# Run the profiles' own sh:sparql queries with oxigraph (sparql_shapes), as a
+# reference beside the hand-written rules. Off by default: it holds the model in
+# an RDF store too, and oxigraph does not build for wasm as it is.
+sparql-shapes = ["dep:cimoxide-schema", "dep:cimoxide-sparql"]
 
 [dependencies]
 cimoxide-model = { workspace = true }
 cimoxide-schema = { workspace = true, optional = true }
+cimoxide-sparql = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
